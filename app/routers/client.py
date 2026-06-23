@@ -21,7 +21,7 @@ import re
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException
+from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -327,6 +327,27 @@ async def client_narrate(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning(f"[client] narrate failed: {e}")
         return JSONResponse({"error": "narration unavailable"}, status_code=503)
+
+
+@router.post("/stt")
+async def client_stt(audio: UploadFile = File(...)):
+    """Voice input for the web client's AI chat — Whisper speech-to-text. Same-origin helper (no
+    app-user auth, like /narrate); returns 503 if STT (faster-whisper) isn't installed."""
+    from app.services import stt_service
+    if not stt_service.is_available():
+        return JSONResponse({"error": "voice input unavailable"}, status_code=503)
+    try:
+        data = await audio.read()
+    except Exception:
+        return JSONResponse({"error": "bad audio"}, status_code=400)
+    if len(data) < 100:
+        return JSONResponse({"error": "audio too small"}, status_code=400)
+    try:
+        text = await stt_service.transcribe_audio(data)
+    except Exception as e:
+        logger.warning(f"[client] stt failed: {e}")
+        return JSONResponse({"error": "transcription failed"}, status_code=503)
+    return JSONResponse({"text": text or ""})
 
 
 @router.post("/summarize")

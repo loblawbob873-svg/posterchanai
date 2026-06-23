@@ -2434,30 +2434,32 @@
       });
     }catch(_){ toast('narration failed'); }
   }
-  // Mobile long-press a post → Read Aloud (delegated; ignores presses on links/buttons/media/inputs).
+  // Press-and-hold a post → Read Aloud. Pointer events cover BOTH mobile long-press AND desktop
+  // click-and-hold in one path. Ignores holds on links/buttons/media/inputs; a real drag/scroll cancels.
   (function(){
     let t=null, sx=0, sy=0;
     const start=e=>{
+      if(e.pointerType==='mouse' && e.button!==0) return;   // left button only on desktop
       const note=e.target.closest && e.target.closest('.note[data-id]'); if(!note) return;
       if(e.target.closest('a,button,img,video,input,textarea,[contenteditable]')) return;
       const id=note.dataset.id; if(!id) return;
-      const tt=e.touches && e.touches[0]; sx=tt?tt.clientX:0; sy=tt?tt.clientY:0;
+      sx=e.clientX; sy=e.clientY;
       clearTimeout(t);
       t=setTimeout(()=>{ t=null;
         try{ navigator.vibrate && navigator.vibrate(15); }catch(_){}
-        // swallow the synthetic click that follows touchend, so long-press doesn't ALSO open the thread
+        // swallow the click that follows release, so press-and-hold doesn't ALSO open the thread
         const swallow=ev=>{ ev.stopPropagation(); ev.preventDefault(); };
         document.addEventListener('click', swallow, {capture:true, once:true});
-        setTimeout(()=>document.removeEventListener('click', swallow, {capture:true}), 800);
+        setTimeout(()=>document.removeEventListener('click', swallow, {capture:true}), 900);
         narratePost(id);
       }, 550);
     };
     const cancel=()=>{ clearTimeout(t); t=null; };
-    const move=e=>{ const tt=e.touches && e.touches[0]; if(tt && Math.hypot(tt.clientX-sx, tt.clientY-sy) > 12) cancel(); };   // ignore finger jitter; cancel only on real scroll
-    document.addEventListener('touchstart', start, {passive:true});
-    document.addEventListener('touchend', cancel, {passive:true});
-    document.addEventListener('touchmove', move, {passive:true});
-    document.addEventListener('touchcancel', cancel, {passive:true});
+    const move=e=>{ if(Math.hypot(e.clientX-sx, e.clientY-sy) > 12) cancel(); };   // ignore jitter; cancel on real drag/scroll
+    document.addEventListener('pointerdown', start, {passive:true});
+    document.addEventListener('pointerup', cancel, {passive:true});
+    document.addEventListener('pointermove', move, {passive:true});
+    document.addEventListener('pointercancel', cancel, {passive:true});
   })();
   // Summarize the post (and its surrounding thread) via the node's AI backend, shown in a modal.
   async function summarizePost(id){
@@ -4543,6 +4545,7 @@
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
+        <button class="mini" id="ai-mic" title="Voice input (speech-to-text)">🎤</button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
         <button class="btn btn-neon" id="ai-send">▶</button>
       </div>
@@ -4554,6 +4557,7 @@
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
     $('#ai-attach').onclick=()=>$('#ai-file').click();
     $('#ai-file').onchange=e=>aiAddFiles([...e.target.files]).then(()=>{ e.target.value=''; });
+    { const mic=$('#ai-mic'); if(mic) mic.onclick=aiToggleMic; }
     $('#ai-send').onclick=aiSend;
     const ta=$('#ai-input');
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
@@ -4707,7 +4711,60 @@
     const box=$('#ai-msgs'); if(!box) return null;
     const w=box.querySelector('.ai-welcome'); if(w) w.remove();   // first real message → drop the splash
     const el=document.createElement('div'); el.className='ai-msg '+(role==='user'?'user':'assistant');
-    el.innerHTML=`<div class="ai-bubble">${html}</div>`; box.appendChild(el); aiScroll(); return el;
+    el.innerHTML=`<div class="ai-bubble">${html}</div>`;
+    if(role!=='user'){   // 🔊 read the assistant reply aloud (built-in TTS); reads the final text on click
+      const spk=document.createElement('button'); spk.textContent='🔊'; spk.title='Read aloud';
+      spk.style.cssText='background:none;border:none;cursor:pointer;opacity:.55;font-size:13px;padding:2px 4px;align-self:flex-start';
+      spk.onclick=()=>{ const b=el.querySelector('.ai-bubble'); aiSpeak(b?b.textContent:''); };
+      el.appendChild(spk);
+    }
+    box.appendChild(el); aiScroll(); return el;
+  }
+  // Speak arbitrary text via the node's built-in TTS (reused for AI replies). User-gesture click → play OK.
+  async function aiSpeak(text){
+    text=(text||'').replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim().slice(0,2000);
+    if(!text){ return; }
+    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
+    toast('🔊 reading…');
+    try{
+      const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.audio){ toast(j.error||'narration unavailable'); return; }
+      _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio); _narrateAudio.play().catch(()=>toast('tap 🔊 to play'));
+    }catch(_){ toast('narration failed'); }
+  }
+  // 🎤 Voice input: record a clip, transcribe via the node's Whisper STT, append to the AI input.
+  let _aiRec=null, _aiChunks=[];
+  async function aiToggleMic(){
+    const mic=$('#ai-mic');
+    if(_aiRec && _aiRec.state==='recording'){ _aiRec.stop(); return; }
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){ toast('voice input not supported on this browser'); return; }
+    let stream;
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(_){ toast('microphone permission denied'); return; }
+    try{
+      _aiChunks=[];
+      const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4',''].find(t=>!t || MediaRecorder.isTypeSupported(t));
+      _aiRec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+      _aiRec.ondataavailable=e=>{ if(e.data && e.data.size) _aiChunks.push(e.data); };
+      _aiRec.onstop=async()=>{
+        try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+        if(mic){ mic.style.color=''; mic.textContent='🎤'; }
+        const blob=new Blob(_aiChunks,{type:(_aiRec&&_aiRec.mimeType)||'audio/webm'});
+        if(blob.size<200){ return; }
+        toast('transcribing…');
+        const fd=new FormData(); fd.append('audio', blob, 'voice.webm');
+        try{
+          const r=await fetch('/client/stt',{method:'POST',body:fd});
+          const j=await r.json().catch(()=>({}));
+          if(!r.ok || !(j.text||'').trim()){ toast(j.error||'voice input unavailable'); return; }
+          const ta=$('#ai-input'); if(ta){ ta.value=(ta.value?ta.value.trim()+' ':'')+j.text.trim(); ta.focus(); ta.dispatchEvent(new Event('input')); }
+        }catch(_){ toast('voice input failed'); }
+      };
+      _aiRec.start();
+      if(mic){ mic.style.color='#ff4d6d'; mic.textContent='⏹'; }
+      toast('🎤 recording — tap to stop');
+    }catch(_){ try{ stream.getTracks().forEach(t=>t.stop()); }catch(__){} toast('could not start recording'); }
   }
   function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
   function aiHandle(d){
