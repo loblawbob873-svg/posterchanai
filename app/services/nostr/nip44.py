@@ -44,10 +44,26 @@ def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
     return out[:length]
 
 
+_CONV_KEY_CACHE: dict = {}
+_CONV_KEY_MAX = 8192
+
+
 def get_conversation_key(seckey: bytes, pubkey_xonly: bytes) -> bytes:
-    """Symmetric per-pair key: HKDF-extract(salt='nip44-v2', ikm=ecdh_x). Same for (a,B) and (b,A)."""
+    """Symmetric per-pair key: HKDF-extract(salt='nip44-v2', ikm=ecdh_x). Same for (a,B) and (b,A).
+
+    CACHED per (seckey, pubkey): the ECDH is pure-Python secp256k1 point-mul (expensive), and the same
+    pair recurs constantly — every DM, social-relay notification, DVM job, and game-state decrypt for a
+    given peer re-derives the identical key. The key is deterministic, so caching is exact."""
+    ck = (bytes(seckey), bytes(pubkey_xonly))
+    v = _CONV_KEY_CACHE.get(ck)
+    if v is not None:
+        return v
     shared_x = _ecdh_x(seckey, pubkey_xonly)
-    return _hkdf_extract(b"nip44-v2", shared_x)
+    v = _hkdf_extract(b"nip44-v2", shared_x)
+    if len(_CONV_KEY_CACHE) >= _CONV_KEY_MAX:   # simple bound — keys are cheap to recompute on miss
+        _CONV_KEY_CACHE.clear()
+    _CONV_KEY_CACHE[ck] = v
+    return v
 
 
 def _message_keys(conversation_key: bytes, nonce: bytes):

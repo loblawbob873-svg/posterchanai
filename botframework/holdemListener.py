@@ -615,8 +615,14 @@ def _post_result(state, gameid, parent_id, showdown, announce=True):
                     _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
                 except Exception:
                     pass
+        elif (not showdown) and not state.get("board") and not closing:
+            # Trivial PRE-FLOP fold-win (someone folded before the flop → no community cards). Posting it
+            # spams the timeline with an empty-board image right after the prior hand — this is the rapid
+            # "2 hands over, one without cards" players saw (hand N showdown, then a freshly-dealt hand
+            # the bot instantly folds). Settle silently + deal on; it still shows in-app / in the DM.
+            pass
         else:
-            # Per-hand result (mid-table), or a GROUP game's final hand. ONE post with the table image.
+            # Per-hand result (showdown / post-flop fold), or a GROUP game's final hand. ONE post.
             _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
                         f"{head} {summary}.  ({pot_won} chips){_footer()}", png)
             if closing and not private:
