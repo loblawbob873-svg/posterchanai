@@ -218,6 +218,8 @@ def _read_config() -> dict:
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
             "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
+            # Keep the cached set if a crawl resolves < this fraction of it (partial-crawl protection).
+            "wot_shrink_guard_ratio": float(g("nostr_relay_wot_shrink_guard_ratio", "0.85") or 0.85),
             # Minimum gap between FULL graph crawls triggered by the refresh-wot control msg (signup/
             # follow/bot/admin). New members are added incrementally (wot-add); the expensive crawl is
             # throttled so a burst of activity can't run back-to-back full rebuilds and peg a core.
@@ -418,15 +420,16 @@ async def _main(cfg: dict) -> None:
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.stop_event = asyncio.Event()
 
-    # WoT build cadence: ONCE A DAY. The gate is already warm from the snapshot
-    # (load_from_store above), so on a (re)start we only re-crawl the 37k follow graph if it's
-    # been >= a day since the last successful build. Otherwise a frequent restart (every deploy)
-    # would re-crawl every time and peg a core — that's the churn. Build on startup only when
-    # the cache is empty or stale; the daily refresh below maintains it after that.
+    # WoT build on startup ONLY when there is NO cached snapshot (first run / cleared cache). If the
+    # gate is warm from the persisted snapshot (load_from_store above), we use it as-is and let the
+    # NIGHTLY task refresh the full graph — even if the snapshot is stale. This guarantees that a
+    # restart (a deploy, a test, a crash) never triggers a 37k-follow crawl. The nightly job (+ overdue
+    # safety net) keeps the cache current; new members are admitted incrementally (wot-add) meanwhile.
     if not cfg["wot_enabled"]:
         logger.info("[nostr-relay] WoT disabled — open publishing; skipping trust-graph build, "
                     "daily refresh, metadata backfill, sync sweep and firehose (no cross-node work)")
-    elif not gate.members() or _wot_stale(cfg):
+    elif not gate.members():
+        logger.info("[nostr-relay] no cached WoT snapshot — building the trust graph now (first run)")
         asyncio.create_task(_initial_wot_build(gate, store, cfg, _relay.stop_event))
     else:
         logger.info("[nostr-relay] WoT warm from snapshot (%d members) — last build %dh ago, "
@@ -837,8 +840,11 @@ async def _build_wot(gate, store, cfg) -> int:
         store, cfg["upstream"], cfg["seeds"],
         depth=cfg["wot_depth"], direct=cfg["direct"],
         batch=cfg["author_batch"], pace=cfg["request_pace_sec"],
-        min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"])
-    if n > len(set(cfg["seeds"]) | set(cfg["operator"])):  # follows actually resolved
+        min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"],
+        min_keep_ratio=cfg.get("wot_shrink_guard_ratio", 0.85))
+    # Refresh the daily stamp only on a CLEAN build (follows resolved AND not a kept-cache partial), so
+    # a partial crawl stays "due" and retries next cycle instead of marking the cache fresh.
+    if n > len(set(cfg["seeds"]) | set(cfg["operator"])) and not gate.last_build_partial:
         _write_wot_stamp(cfg)
     return n
 

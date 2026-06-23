@@ -27,6 +27,7 @@ class WotGate:
         # from a store scan on (re)load — kept separate so the daily WoT rebuild can't undo it.
         self._bridged: set = set()
         self.built_at: float = 0.0
+        self.last_build_partial: bool = False   # last crawl looked partial (kept cache) → don't stamp it
 
     def add_members(self, pubkeys) -> None:
         """Add members immediately (e.g. a freshly-followed signup) without a full rebuild."""
@@ -110,10 +111,13 @@ class WotGate:
 
     async def build(self, store, upstream_relays, seeds_hex, depth: int = 1, direct: bool = False,
                     *, batch: int = 200, pace: float = 1.0, min_followers: int = 2,
-                    max_members: int = 0) -> int:
+                    max_members: int = 0, min_keep_ratio: float = 0.85) -> int:
         """Build the WoT and swap it in. Depth 1 = seeds + their follows; depth 2 also adds
         friends-of-friends (followed by >= `min_followers` of your follows), capped at
-        `max_members` (highest-occurrence kept). Falls back to the prior set on total failure."""
+        `max_members` (highest-occurrence kept). Falls back to the prior set on total failure, and
+        KEEPS the cached set if a crawl resolves < `min_keep_ratio` of the cached size (partial crawl
+        protection — an upstream timeout must not shrink/degrade the trusted set)."""
+        self.last_build_partial = False
         seeds = [s for s in (seeds_hex or []) if s]
         if not seeds or depth < 1:
             self._members = frozenset(seeds)
@@ -146,7 +150,19 @@ class WotGate:
             logger.info("[nostr-relay] WoT depth-2: +%d friends-of-friends (>=%d followers)",
                         len(members) - len(seeds) - len(follows1), min_followers)
 
-        self._members = frozenset(members)
+        new_members = frozenset(members)
+        prior = self._members
+        # STRONG CACHE: a crawl that resolves far fewer members than the cached set is almost always a
+        # PARTIAL crawl (an upstream relay timed out), not thousands of real unfollows. Keep the cached
+        # set and flag the build partial so the caller won't refresh the daily stamp (it stays due and
+        # retries next cycle) — degrading a 40k-member gate to 31k on a flaky crawl is the bug we saw.
+        if prior and len(new_members) < min_keep_ratio * len(prior):
+            self.last_build_partial = True
+            logger.warning("[nostr-relay] WoT crawl got %d members vs cached %d (< %d%%) — looks partial, "
+                           "KEEPING the cached set (not degrading)",
+                           len(new_members), len(prior), int(min_keep_ratio * 100))
+            return len(self.members())
+        self._members = new_members
         self.built_at = time.time()
         await self._persist(store, self._members)
         total = len(self.members())
