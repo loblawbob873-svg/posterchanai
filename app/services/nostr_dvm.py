@@ -83,29 +83,6 @@ def is_enabled(settings: Optional[dict] = None) -> bool:
     return _truthy(_settings(settings).get("nostr_dvm_enabled", False))
 
 
-def worker_pubkeys(settings: Optional[dict] = None) -> list:
-    """The compute cluster = the relay's Web-of-Trust SEED npubs (Relay → Web of Trust → Seed npubs).
-    The cluster is defined entirely in relay settings: add every node's relay npub to every node's WoT
-    seeds, and that's the whole config — these npubs are the dispatch peers AND the trusted requesters,
-    and the relay's existing WoT gate already accepts their events (seeds are WoT members)."""
-    raw = _settings(settings).get("nostr_relay_wot_seeds", "") or ""
-    out: list = []
-    for tok in raw.replace(",", "\n").split():
-        tok = tok.strip()
-        if not tok:
-            continue
-        pk = nostr_service.to_pubkey_hex(tok)
-        if pk and pk not in out:
-            out.append(pk)
-    return out
-
-
-def peers(settings: Optional[dict] = None) -> list:
-    """Cluster pubkeys other than this node — the remote candidates for dispatch."""
-    me = node_pubkey()
-    return [pk for pk in worker_pubkeys(settings) if pk != me]
-
-
 def peers_list(settings: Optional[dict] = None) -> list:
     """The SHARED CLUSTER — peers you share compute with. Each non-blank line of `nostr_dvm_peers` is a
     connection card `npub relay`: a peer's npub and the relay to reach it on. Sharing is MUTUAL — if you
@@ -313,7 +290,7 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     if req_kind is None:
         return None
     if worker_pubkey is None:
-        worker_pubkey = _pick_peer(peers(s))
+        worker_pubkey = _pick_peer([p["pubkey"] for p in providers(s)])
     if not worker_pubkey:
         return None
     sk = node_seckey()
