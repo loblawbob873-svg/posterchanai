@@ -5662,10 +5662,16 @@
     VIEW='hashtag'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], '#t':[tag], limit:60 }]); }catch(_){}
+    // The relay's #t filter is case-SENSITIVE, but trending lowercases tags AND counts inline #hashtags —
+    // so a post tagged "LillyPhillips" (or one that only writes #LillyPhillips in its text) trended yet the
+    // exact-lowercase #t query returned nothing. Also pull a content SEARCH, then keep only posts that
+    // genuinely use the tag: a case-insensitive `t` tag OR an inline #tag in the text (matches trending).
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], '#t':[tag], limit:60 }, { kinds:[1], search:tag, limit:80 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='hashtag') return;
-    const posts=evs.filter(e=>e.kind===1).sort((a,b)=>b.created_at-a.created_at);
+    const _t=tag.replace(/[^a-z0-9_]/g,''), _rx=new RegExp('(^|\\s)#'+_t+'\\b','i');
+    const posts=evs.filter(e=>e.kind===1 && ((e.tags||[]).some(t=>t[0]==='t'&&String(t[1]||'').toLowerCase().replace(/^#/,'')===tag) || _rx.test(e.content||'')))
+                   .sort((a,b)=>b.created_at-a.created_at);
     feed.innerHTML = `<div class="search-section-title"># ${enc(tag)}</div>` +
       (posts.length ? `<div id="hashtag-posts">${posts.map(noteHtml).join('')}</div>` : `<div class="empty">No posts found for #${enc(tag)} yet.</div>`);
     hydrate(feed);
