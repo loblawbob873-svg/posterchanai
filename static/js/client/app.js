@@ -2413,6 +2413,8 @@
     pk = pk || ev.pubkey;
     let body=(mediaParts(ev.content).text || ev.content || '');
     body=body.replace(/https?:\/\/\S+/gi,' ').replace(/\b(?:nostr|wss?):\S+/gi,' ')
+             .replace(/\bwww\.\S+/gi,' ')   // scheme-less URLs (www.x.com)
+             .replace(/\b[a-z0-9-]+\.(?:com|net|org|io|gg|tv|xyz|co|app|me|info|dev|news|social|place|lol|sh|gov|edu)\b\S*/gi,' ')   // bare domains
              .replace(/#[\p{L}\p{N}_]+/gu,' ').replace(/\s+/g,' ').trim();
     if(!body){ toast('nothing to read aloud'); return; }
     const who=profOf(pk)||{}; const name=((who.display_name||who.name||'someone')+'').replace(/[#@_]/g,' ').replace(/\s+/g,' ').trim()||'someone';
@@ -2424,23 +2426,37 @@
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.audio){ toast(j.error||'narration unavailable'); return; }
       _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio);
-      _narrateAudio.play().catch(()=>toast('tap 🔊 again to play'));
+      _narrateAudio.play().catch(()=>{   // autoplay blocked (e.g. fired from a long-press timer) — play on the next tap
+        toast('tap anywhere to play 🔊');
+        const go=()=>{ document.removeEventListener('click',go); document.removeEventListener('touchend',go); try{ _narrateAudio && _narrateAudio.play(); }catch(_){} };
+        document.addEventListener('click', go, {once:true});
+        document.addEventListener('touchend', go, {once:true});
+      });
     }catch(_){ toast('narration failed'); }
   }
   // Mobile long-press a post → Read Aloud (delegated; ignores presses on links/buttons/media/inputs).
   (function(){
-    let t=null;
+    let t=null, sx=0, sy=0;
     const start=e=>{
       const note=e.target.closest && e.target.closest('.note[data-id]'); if(!note) return;
       if(e.target.closest('a,button,img,video,input,textarea,[contenteditable]')) return;
       const id=note.dataset.id; if(!id) return;
+      const tt=e.touches && e.touches[0]; sx=tt?tt.clientX:0; sy=tt?tt.clientY:0;
       clearTimeout(t);
-      t=setTimeout(()=>{ t=null; try{ navigator.vibrate && navigator.vibrate(15); }catch(_){} narratePost(id); }, 550);
+      t=setTimeout(()=>{ t=null;
+        try{ navigator.vibrate && navigator.vibrate(15); }catch(_){}
+        // swallow the synthetic click that follows touchend, so long-press doesn't ALSO open the thread
+        const swallow=ev=>{ ev.stopPropagation(); ev.preventDefault(); };
+        document.addEventListener('click', swallow, {capture:true, once:true});
+        setTimeout(()=>document.removeEventListener('click', swallow, {capture:true}), 800);
+        narratePost(id);
+      }, 550);
     };
     const cancel=()=>{ clearTimeout(t); t=null; };
+    const move=e=>{ const tt=e.touches && e.touches[0]; if(tt && Math.hypot(tt.clientX-sx, tt.clientY-sy) > 12) cancel(); };   // ignore finger jitter; cancel only on real scroll
     document.addEventListener('touchstart', start, {passive:true});
     document.addEventListener('touchend', cancel, {passive:true});
-    document.addEventListener('touchmove', cancel, {passive:true});
+    document.addEventListener('touchmove', move, {passive:true});
     document.addEventListener('touchcancel', cancel, {passive:true});
   })();
   // Summarize the post (and its surrounding thread) via the node's AI backend, shown in a modal.
