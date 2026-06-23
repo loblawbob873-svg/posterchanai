@@ -2909,7 +2909,8 @@
   function blobThumb(b){
     const t=b.type||'', ext=(t.split('/')[1]||'file').slice(0,10);
     if(/image/.test(t)) return `<img src="${enc(thumbUrl(b.url))}" loading="lazy">`;
-    if(/video/.test(t)) return `<div class="file-icon">🎬<span>${enc(ext)}</span></div>`;
+    // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
+    if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
     const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
     return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
@@ -3094,11 +3095,12 @@
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
   // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
   const FilesIdx = {
-    data: { folders: ['Music'], files: {} }, _pulled:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
-    _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{}};
+    _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
       if(!this.data.files||typeof this.data.files!=='object') this.data.files={};
+      if(!Array.isArray(this.data.encFolders)) this.data.encFolders=[];   // names of encrypted folders
       if(!this.data.folders.includes('Music')) this.data.folders.unshift('Music'); return this.data; },
     loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){}
       try{ this._mkWrapped = localStorage.getItem(this._key()+'_mk') || this._mkWrapped; }catch(_){} return this._norm(); },
@@ -3132,9 +3134,9 @@
     push(){ this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
     async _save(){
       try{ this._norm();
-        const idx={folders:this.data.folders, files:this.data.files}; const json=JSON.stringify(idx);
+        const idx={folders:this.data.folders, files:this.data.files, encFolders:this.data.encFolders}; const json=JSON.stringify(idx);
         const ptr={}; if(this._mkWrapped) ptr.mk=this._mkWrapped;
-        if(json.length < 45000){ ptr.folders=idx.folders; ptr.files=idx.files; }   // small → inline (NIP-44 doc)
+        if(json.length < 45000){ ptr.folders=idx.folders; ptr.files=idx.files; ptr.encFolders=idx.encFolders; }   // small → inline (NIP-44 doc)
         else {                                                                       // large → encrypted Blossom blob
           const mk=await this._ensureMK(); ptr.mk=this._mkWrapped;
           const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {noMirror:true});
@@ -3150,8 +3152,9 @@
     beginBatch(){ this._batch=true; },
     async endBatch(){ this._batch=false; await this._save(); },
     folders(){ return this._norm().folders; },
-    addFolder(name){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); this.push(); return true; },
-    removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
+    isEncFolder(name){ return name==='Music' || this._norm().encFolders.includes(name); },   // Music is always encrypted
+    addFolder(name, enc){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },
+    removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); this.data.encFolders=this.data.encFolders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
     meta(sha){ return this._norm().files[sha]||null; },
     folderOf(sha){ const m=this._norm().files[sha]; return (m&&m.folder)||''; },
     setFile(sha, m){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
@@ -3171,21 +3174,21 @@
     const folders=FilesIdx.folders();
     const folderBar = `<div class="folder-bar">
         <button class="folder-chip${_filesFolder===''?' active':''}" data-folder="">🗂 All</button>
-        ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':'📁'} ${enc(f)}</button>`).join('')}
+        ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder">＋ New folder</button>
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder">🗑 Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
       ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder">📁 choose folder</button>
-          <div class="muted small">→ ${_filesFolder?('📁 '+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':''}</div></div>
+          <div class="muted small">→ ${_filesFolder?((FilesIdx.isEncFolder(_filesFolder)?'🔒 ':'📁 ')+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
       : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
            <button class="btn btn-cyan" id="bl-request">🌸 Request upload access</button></div>`;
     pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
     $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
-    { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=()=>{ const n=prompt('New folder name:'); if(n&&FilesIdx.addFolder(n)){ _filesFolder=n.trim().slice(0,40); renderBlossom(); } else if(n) toast('folder exists'); }; }
+    { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',pane); if(df) df.onclick=()=>{ if(confirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     if(canUp){
       const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
@@ -3211,14 +3214,27 @@
   }
   function _renderFilesGrid(grid, list){
     if(!grid) return;
-    // hide encrypted music ciphertext from the normal grid — those live in the Music folder's track list
-    const inFolder = list.filter(b=> !(FilesIdx.meta(b.sha256)||{}).enc && (_filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder));
+    // hide encrypted MUSIC ciphertext from the normal grid (it lives in the Music folder's track list);
+    // encrypted files in other folders DO show, as lock cards that decrypt in-browser on open.
+    const inFolder = list.filter(b=>{
+      const m=FilesIdx.meta(b.sha256)||{};
+      if(m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;
+      return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
+    });
     grid.innerHTML = inFolder.length ? inFolder.map(b=>{
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||'';
+      if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
+        const ext=((m.mime||'').split('/')[1]||'enc').slice(0,10);
+        return `<div class="file-card enc" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext)}</span></div></a>
+          <button class="del" data-sha="${b.sha256}">✕</button>
+          <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):'encrypted'}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
+      }
       return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
         <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):(((b.size||0)/1024|0)+'KB')}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
     }).join('') : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
+    $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
     $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
     $$('.movebtn',grid).forEach(b=> b.onclick=(e)=>_moveMenu(e.currentTarget, b.dataset.sha));
@@ -3267,10 +3283,45 @@
     const x=b.querySelector('.upbadge-x'); if(x) x.onclick=()=>{ if(done){ _uploadBadge(null); } else { _uploadCancel=true; const t=b.querySelector('.upbadge-txt'); if(t) t.textContent='stopping…'; } };
     if(done) _uploadBadgeT=setTimeout(()=>_uploadBadge(null), 12000);
   }
+  // New-folder dialog: name + Encrypted/Public. An encrypted folder AES-encrypts everything dropped in
+  // it (client-side, under your master key) before upload — Blossom only ever sees ciphertext.
+  function _newFolderModal(){
+    modal(`<h3>📁 New folder</h3>
+      <label class="fld">Name<input class="input" id="nf-name" placeholder="Folder name" maxlength="40"></label>
+      <div class="fld">Contents
+        <label class="nf-opt"><input type="radio" name="nf-enc" value="0" checked> 🌐 <b>Public</b><span class="muted small"> — files upload as-is, shareable by URL</span></label>
+        <label class="nf-opt"><input type="radio" name="nf-enc" value="1"> 🔒 <b>Encrypted</b><span class="muted small"> — encrypted on this device; only you can open them</span></label>
+      </div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-ghost small" id="nf-cancel">Cancel</button><button class="btn btn-neon small" id="nf-create">Create</button></div>`,
+      root=>{
+        const nm=$('#nf-name',root); if(nm) nm.focus();
+        const c=$('#nf-cancel',root); if(c) c.onclick=closeModal;
+        const go=()=>{ const name=((nm&&nm.value)||'').trim().slice(0,40); if(!name){ toast('enter a name'); return; }
+          const isEnc=(($('input[name="nf-enc"]:checked',root)||{}).value==='1');
+          if(FilesIdx.addFolder(name, isEnc)){ _filesFolder=name; closeModal(); renderBlossom(); } else toast('folder exists'); };
+        const g=$('#nf-create',root); if(g) g.onclick=go;
+        if(nm) nm.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+      });
+  }
+  // Encrypt ANY file with the master key (IV from content → identical input dedups), upload the
+  // ciphertext (noMirror), and record it like a music track so trackUrl() can decrypt it on open.
+  async function uploadEncFile(file, folder, statEl){
+    if(!signer.nip44enc) throw new Error("signer can't encrypt (needs NIP-44)");
+    const setS=t=>{ if(statEl) statEl.textContent=t; };
+    const mk=await FilesIdx._ensureMK();
+    const buf=new Uint8Array(await file.arrayBuffer());
+    setS('encrypting…');
+    const blob=await _masterEncrypt(mk, buf, await _contentIV(buf));
+    setS('uploading…');
+    const url=await uploadBlob(new File([blob],(file.name||'file')+'.enc',{type:'application/octet-stream'}), {noMirror:true});
+    const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
+    FilesIdx.setFile(sha,{name:file.name||'file', folder, mime:file.type||'application/octet-stream', enc:true, mk:true, size:buf.length, ts:Math.floor(Date.now()/1000)});
+  }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
     _uploadCancel=false;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
+    const encFolder=!music && FilesIdx.isEncFolder(folder);   // non-Music encrypted folder → encrypt every file
     const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
     const q=$('#bl-queue');
     if(q) q.innerHTML = big ? `<div class="up-summary" id="up-sum">Preparing ${files.length} files…</div>`
@@ -3286,6 +3337,10 @@
           else if(_musicHasSrc(files[i])){ skip++; if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
           else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
             if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress
+        } else if(encFolder){
+          await uploadEncFile(files[i], folder, stat);
+          ok++; if(stat){ stat.textContent='🔒'; stat.className='up-stat ok'; }
+          if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         } else {
           if(stat) stat.textContent='uploading…';
           const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);

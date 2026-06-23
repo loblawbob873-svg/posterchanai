@@ -407,6 +407,12 @@ a.btn.full{display:block}
 .file-card .del{position:absolute;top:6px;right:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:#ff6b8b;cursor:pointer;padding:2px 7px}
 .file-card .copy{position:absolute;top:6px;right:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 7px;font-size:13px}
 .file-card .copy:hover{border-color:var(--cyan,#5ff)}
+.file-card.enc{border-color:rgba(255,210,90,.45)}
+.file-card.enc .file-icon{background:radial-gradient(ellipse at center,rgba(255,210,90,.10),#120c24)}
+.file-card.enc .enc-open{cursor:pointer;display:block}
+.nf-opt{display:block;margin:8px 0;padding:9px 11px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px;text-transform:none;letter-spacing:0;font-weight:500}
+.nf-opt:hover{border-color:var(--cyan)}
+.nf-opt input{margin-right:7px}
 .uploader{padding:18px;border-bottom:1px solid var(--line)}
 /* Files: folder bar + drag-drop upload zone (cyberpunk) */
 .folder-bar{display:flex;gap:7px;flex-wrap:wrap;padding:12px 16px 0}

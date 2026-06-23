@@ -64,6 +64,44 @@ def _thumb_put(sha: str, data: bytes):
             _thumb_cache.popitem(last=False)
 
 
+def _video_thumb_bytes(data: bytes, size: int = 320) -> "bytes | None":
+    """Extract a single frame from video bytes via ffmpeg → downscaled JPEG. Returns None if ffmpeg
+    is missing or the video can't be decoded (the Files grid then falls back to a 🎬 icon). Tries a
+    1s seek first (avoids a black opening frame), then t=0 for very short clips."""
+    import subprocess, tempfile, os
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5, check=True)
+    except Exception:
+        return None
+    tin = tout = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".vid", delete=False) as f:
+            f.write(data)
+            tin = f.name
+        tout = tin + ".jpg"
+        vf = f"scale={size}:-2"
+        for ss in ("1", "0"):
+            try:
+                subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", tin, "-frames:v", "1",
+                                "-vf", vf, "-f", "image2", tout],
+                               capture_output=True, timeout=20)
+            except Exception:
+                continue
+            if os.path.exists(tout) and os.path.getsize(tout) > 0:
+                with open(tout, "rb") as f:
+                    return f.read()
+        return None
+    except Exception:
+        return None
+    finally:
+        for p in (tin, tout):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+
+
 def _strip_ext(token: str) -> str:
     return token.split(".", 1)[0].strip().lower()
 
@@ -173,18 +211,28 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
                         headers={**headers, "Content-Length": str(blob.size)})
 
     # ?thumb=1 → a downscaled JPEG for grid cells (saves serving the full-res image). Cached in RAM.
-    if request.query_params.get("thumb") and mime.startswith("image/"):
+    # Images compress directly; videos get an ffmpeg-extracted frame (covers old + new uploads with no
+    # batch step — the grid requests it on demand). An empty-bytes sentinel caches "no thumbnail" so a
+    # video ffmpeg can't decode isn't re-run on every render.
+    if request.query_params.get("thumb") and (mime.startswith("image/") or mime.startswith("video/")):
         t = _thumb_get(sha)
         if t is None:
             data = await blossom_service.read_full(db, blob)
             if data is None:
                 return _err(404, "blob bytes unavailable")
-            try:
-                from app.services.media_service import compress_image
-                t = await asyncio.to_thread(compress_image, data, 320, 70)
-            except Exception:
-                t = data   # undecodable → fall back to the original bytes
-            _thumb_put(sha, t)
+            if mime.startswith("video/"):
+                t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
+                _thumb_put(sha, t if t is not None else b"")   # sentinel: don't retry a failed decode
+            else:
+                try:
+                    from app.services.media_service import compress_image
+                    t = await asyncio.to_thread(compress_image, data, 320, 70)
+                except Exception:
+                    t = data   # undecodable → fall back to the original bytes
+                _thumb_put(sha, t)
+        if not t:   # cached no-thumbnail sentinel (video undecodable / ffmpeg missing) — cache the
+            # negative so the grid's <img> onerror→icon fallback doesn't re-request it on every render
+            return Response(status_code=404, headers={**_CORS, "Cache-Control": "public, max-age=86400"})
         return Response(t, media_type="image/jpeg",
                         headers={**headers, "Content-Length": str(len(t))})
 

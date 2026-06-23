@@ -577,24 +577,22 @@ def _post_result(state, gameid, parent_id, showdown, announce=True):
     state["status"] = "done"
     _save_game(gameid, state)
     private = bool(state.get("private"))
-    # PUBLIC result post for EVERY hand (winner + table image + app promo). Solo games post standalone
-    # (their id is synthetic → no phantom e-root); multiplayer threads under the table root.
     head = "🏁 #holdem showdown!" if showdown else "🏁 #holdem hand over —"
     pot_won = sum(state.get("winners", {}).values())
-    body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
-    if announce:
-        # reveal=True (not showdown): on a FOLD win there's no showdown + a pre-flop fold has no
-        # community cards, so reveal=showdown rendered a fully blank card image. render_table only
-        # reveals NON-folded players (the winner here), so folders still stay hidden — but the result
-        # always shows real cards instead of empty slots.
-        _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
-                    body, _board_png(state, reveal=True))
-    # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
+    # Decide whether the table is CLOSING before posting. The closing hand used to post twice — the
+    # per-hand result AND a wrap-up — which is the "2 handover posts" double. next_hand() builds a
+    # fresh state and does NOT mutate `state`, so the table image below still renders the finished
+    # hand's cards even though we compute the next deal first.
     nxt, _ = _G.next_hand(state)
-    if nxt is None:
-        if private:
-            # SOLO wrap-up: per-hand results stayed in-app; on table close post ONE public result
-            # (final chip outcome + table image + app promo), and DM the player too.
+    closing = nxt is None
+    if announce:
+        # reveal=True: on a FOLD win there's no showdown + a pre-flop fold has no community cards, so
+        # reveal=showdown rendered a fully blank image. render_table only reveals NON-folded players
+        # (the winner), so folders still stay hidden — the result always shows the winner's real cards.
+        png = _board_png(state, reveal=True)
+        if closing and private:
+            # SOLO table close: a SINGLE public post with the final chip outcome + table image (this
+            # used to be a per-hand post AND this wrap-up → the double). DM the player too.
             bot = state.get("bot")
             humans = [p for p in state["seats"] if p != bot]
             lines = []
@@ -608,21 +606,25 @@ def _post_result(state, gameid, parent_id, showdown, announce=True):
                 else:
                     lines.append(f"{nm} cashed out with {fs} chips")
             outcome = "; ".join(lines) if lines else "table closed"
-            body = f"🏁 #holdem — {outcome}.{_footer()}"
-            if announce:
+            try:
+                _do_publish(None, None, state["seats"], f"🏁 #holdem — {outcome}.{_footer()}", png)
+            except Exception as e:
+                print(f"[holdem] solo wrap-up post failed: {e}", flush=True)
+            for h in humans:
                 try:
-                    _do_publish(None, None, state["seats"], body, _board_png(state, reveal=True))
-                except Exception as e:
-                    print(f"[holdem] solo wrap-up post failed: {e}", flush=True)
-                for h in humans:
-                    try:
-                        _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
-                    except Exception:
-                        pass
-        elif announce:
-            _do_publish(gameid, parent_id, state["seats"],
-                        "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
+                    _nk.send_dm(h, f"🏁 {outcome}. gg! Start a new game from the Hold'em tab.")
+                except Exception:
+                    pass
+        else:
+            # Per-hand result (mid-table), or a GROUP game's final hand. ONE post with the table image.
+            _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
+                        f"{head} {summary}.  ({pot_won} chips){_footer()}", png)
+            if closing and not private:
+                _do_publish(gameid, parent_id, state["seats"],
+                            "🃏 Table closed — not enough players to continue. gg!" + _footer(), None)
+    if closing:
         return
+    # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
     nxt["private"] = private
     # carry the just-finished result into the next hand's doc so the web UI can show "you won X"
     # (the previous hand's done-doc is overwritten immediately by this re-deal — same d-tag).
