@@ -52,10 +52,6 @@ from . import negentropy
 
 logger = logging.getLogger(__name__)
 
-# Distributed-LB (DVM) job + result kinds — request (5050/5100/5201/5202) and result (+1000). Mirrors
-# app.services.nostr_dvm.DVM_KINDS, duplicated here so the relay subprocess stays import-light.
-_DVM_KINDS = frozenset({5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202})
-
 
 def _is_ephemeral(kind: int) -> bool:
     """NIP-01 ephemeral range: transmit to subscribers but never persist."""
@@ -397,12 +393,7 @@ class RelayServer:
         # relay is internal/localhost-bound and shouldn't run the trust graph), every author is
         # accepted; the bridge/language/word filters above + below still apply.
         _wot = self.cfg.get("wot_enabled", True)
-        # Distributed-LB (DVM) job/result events: the cluster's dedicated worker keys aren't social
-        # WoT members, so accept these kinds when the author is a configured DVM worker npub. Contained
-        # exception — only the fixed DVM kinds, only from the allowlisted cluster keys.
-        if kind in _DVM_KINDS and ev.get("pubkey", "") in self.cfg.get("dvm_npubs", ()):
-            pass   # fall through to the filters below; skip the WoT author gate
-        elif kind == 4:
+        if kind == 4:
             # NIP-04: the author IS the real sender, so apply the normal WoT gate to them (lets
             # our web-of-trust members DM each other THROUGH this relay) OR accept it as an
             # operator's inbox (a DM addressed to one of our own users).

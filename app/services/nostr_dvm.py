@@ -13,8 +13,8 @@ path, the ai.poster.place web client, or any third-party DVM client/worker later
 Design (deliberately simple — "listen for events from a trusted npub, process, return"):
   * A node's DVM identity IS its INSTALLATION key — the operator/relay nsec already in the keystore,
     which is distinct per node and already Blossom-authorized. No separate worker key to generate/set.
-  * ONE setting `nostr_dvm_worker_npubs` = the cluster's node npubs (the LB list). Peers = list−self.
-    The same list is the trusted-requester allowlist (cluster nodes serve each other).
+  * The cluster = the relay's Web-of-Trust SEED npubs (Admin → Relay). Peers = seeds − self; the same
+    seeds are the trusted-requester allowlist, and the relay's WoT gate already accepts their events.
   * Job request kinds are per task (NIP-90 5xxx range); result kind = request + 1000. Payload is
     NIP-44-encrypted to the recipient and the result is signature-verified before use.
 """
@@ -83,10 +83,13 @@ def is_enabled(settings: Optional[dict] = None) -> bool:
 
 
 def worker_pubkeys(settings: Optional[dict] = None) -> list:
-    """Cluster worker pubkeys (hex) parsed from the `nostr_dvm_worker_npubs` list."""
-    raw = _settings(settings).get("nostr_dvm_worker_npubs", "") or ""
+    """The compute cluster = the relay's Web-of-Trust SEED npubs (Relay → Web of Trust → Seed npubs).
+    The cluster is defined entirely in relay settings: add every node's relay npub to every node's WoT
+    seeds, and that's the whole config — these npubs are the dispatch peers AND the trusted requesters,
+    and the relay's existing WoT gate already accepts their events (seeds are WoT members)."""
+    raw = _settings(settings).get("nostr_relay_wot_seeds", "") or ""
     out: list = []
-    for tok in raw.replace(",", "\n").split("\n"):
+    for tok in raw.replace(",", "\n").split():
         tok = tok.strip()
         if not tok:
             continue
@@ -97,13 +100,14 @@ def worker_pubkeys(settings: Optional[dict] = None) -> list:
 
 
 def peers(settings: Optional[dict] = None) -> list:
-    """Worker pubkeys other than this node — the remote candidates for dispatch."""
+    """Cluster pubkeys other than this node — the remote candidates for dispatch."""
     me = node_pubkey()
     return [pk for pk in worker_pubkeys(settings) if pk != me]
 
 
 def is_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
-    """A worker only serves jobs from npubs in the cluster list (anti-abuse allowlist)."""
+    """A worker only serves jobs from cluster nodes (the WoT seeds) — not arbitrary WoT members, so a
+    social follow can't burn GPUs."""
     return pubkey_hex in worker_pubkeys(settings)
 
 
@@ -211,7 +215,9 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     try:
         peer_bytes = bytes.fromhex(worker_pubkey)
         enc = nip44.encrypt_to(sk, peer_bytes, json.dumps(params))
-        tags = [["p", worker_pubkey], ["t", task],
+        # nofederate: a DVM job is cluster-internal — the relay must NEVER broadcast it to public
+        # upstream relays (see nostr_relay.server._broadcastable). Keeps job traffic off the network.
+        tags = [["p", worker_pubkey], ["t", task], ["nofederate"],
                 ["expiration", str(int(time.time()) + int(budget) + 30)]]
         ev = nostr_event.build_event(sk, req_kind, enc, tags)
         # direct=True: the cluster job relay is the app's OWN relay — connect straight to it, never

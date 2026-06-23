@@ -49,33 +49,6 @@ async function copyRelayKey(which) {
     if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // last resort (http / locked-down clipboard)
 }
 
-// Distributed-LB (DVM): this node's worker npub (paste into every node's Worker npubs list).
-async function loadDvmNpub() {
-    const el = document.getElementById('dvm-node-npub');
-    if (!el) return;
-    try {
-        const r = await fetch('/api/admin/dvm-info').then(r => r.json());
-        el.value = (r && r.npub) ? r.npub : '(unavailable)';
-    } catch (_) { el.value = '(failed to load)'; }
-}
-async function copyDvmNpub() {
-    const btn = (typeof event !== 'undefined') && event.target;
-    const el = document.getElementById('dvm-node-npub');
-    const v = el && el.value;
-    if (!v || v[0] === '(') { alert('No npub loaded yet.'); return; }
-    let ok = false;
-    try { await navigator.clipboard.writeText(v); ok = true; } catch (_) { }
-    if (!ok) {
-        const t = document.createElement('textarea');
-        t.value = v; t.style.position = 'fixed'; t.style.opacity = '0';
-        document.body.appendChild(t); t.focus(); t.select();
-        try { ok = document.execCommand('copy'); } catch (_) { }
-        t.remove();
-    }
-    if (btn) { const o = btn.textContent; btn.textContent = ok ? '✓ copied' : '⚠ failed'; setTimeout(() => { btn.textContent = o; }, 1500); }
-    if (!ok) window.prompt('Copy this node npub:', v);
-}
-
 // On-demand model download (kind = chat | image | music). Models aren't auto-downloaded; this
 // fires the background download and polls status so the admin SEES completion (✓) or errors (✗).
 async function downloadModel(kind, btnId, statusId){
@@ -754,7 +727,6 @@ document.getElementById('refreshImageQueueBtn').addEventListener('click', refres
 
 // Initialize
 loadSettings();
-loadDvmNpub();
 
 // External Storage Management
 let allUsers = [];
