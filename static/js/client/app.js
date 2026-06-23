@@ -1729,7 +1729,7 @@
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
-          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
+          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
         <div class="txt${longTxt?' clamp':''}">${linkify(bodyTxt)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${mp.gallery}

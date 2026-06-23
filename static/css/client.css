@@ -250,6 +250,7 @@ a.btn.full{display:block}
 .note .handle{color:var(--muted);font-size:15.5px}
 .note .time{color:var(--muted);font-size:16.5px;margin-left:auto;cursor:pointer}
 .note .time:hover{color:var(--cyan)}
+.note .pin-badge{font-size:14px;filter:drop-shadow(0 0 5px rgba(0,240,255,.6))}   /* marks YOUR pinned posts */
 .note .txt{margin:6px 0;line-height:1.62;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:18.5px;
   color:#eceefb;font-weight:500;letter-spacing:.2px}
 /* Wall-of-text guard: clamp long posts (noteCard adds .clamp) and fade the bottom; the "Show more"
