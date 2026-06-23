@@ -445,6 +445,33 @@ def nostr_relay_backfill_me(admin: User = Depends(get_admin_user)):
     return trigger_backfill(pk)
 
 
+class OnionToggle(BaseModel):
+    enabled: bool
+
+
+@router.get("/onion")
+def get_onion(admin: User = Depends(get_admin_user)):
+    """Current .onion state for this deployment (enabled flag + the persistent address, if up)."""
+    from app.services import tor_service, settings_store
+    return {"enabled": settings_store.get_bool("onion_enabled"),
+            "address": tor_service.get_onion_address()}
+
+
+@router.post("/onion")
+def set_onion(body: OnionToggle, admin: User = Depends(get_admin_user)):
+    """One-click enable/disable this deployment's .onion hidden service. Persists onion_enabled (to
+    the Nostr settings store) and applies it LIVE on the primary Tor daemon via SIGHUP — no full
+    restart. The address persists across restarts (Tor keys on disk). Returns the address once Tor
+    has written it (may be null on the first enable — the UI polls GET /onion). Requires Tor running."""
+    from app.services import tor_service, settings_store
+    if tor_service.primary_service() is None:
+        raise HTTPException(status_code=409, detail="Enable the Managed Tor Service first.")
+    settings_store.put("onion_enabled", "true" if body.enabled else "false")
+    target = f"127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
+    addr = tor_service.set_onion(body.enabled, target)
+    return {"enabled": body.enabled, "address": addr}
+
+
 @router.put("/settings")
 def update_settings(
     data: SettingsUpdate,

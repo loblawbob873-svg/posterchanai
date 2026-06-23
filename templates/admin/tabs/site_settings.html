@@ -187,6 +187,52 @@ newsweek.com|Newsweek"></textarea>
     </fieldset>
 
     <fieldset>
+        <legend>Onion Site (.onion)</legend>
+        <div class="form-group">
+            <small>Expose this deployment over Tor at a persistent <code>.onion</code> address (requires the Managed Tor Service above). One click generates it and applies it live — no restart. The address survives restarts (Tor keys persist in the data dir).</small>
+        </div>
+        <div class="form-group">
+            <button type="button" class="btn-primary" id="onion-toggle">🧅 Generate .onion site</button>
+            <span id="onion-status" class="muted" style="margin-left:10px;font-size:13px"></span>
+        </div>
+        <div class="form-group" id="onion-addr-row" style="display:none">
+            <label for="onion-addr">Your .onion address</label>
+            <div style="display:flex;gap:8px;align-items:center">
+                <input type="text" id="onion-addr" readonly value="" style="flex:1;font-family:monospace">
+                <button type="button" class="btn-secondary btn-small" id="onion-copy">📋 Copy</button>
+            </div>
+        </div>
+    </fieldset>
+    <script>
+    (function(){
+      const btn=document.getElementById('onion-toggle'), st=document.getElementById('onion-status');
+      const row=document.getElementById('onion-addr-row'), addr=document.getElementById('onion-addr');
+      const copy=document.getElementById('onion-copy');
+      if(!btn) return;
+      let enabled=false, poll=null;
+      function render(s){
+        enabled=!!s.enabled;
+        btn.textContent = enabled ? '🧅 Disable .onion site' : '🧅 Generate .onion site';
+        if(s.address){ addr.value=s.address; row.style.display=''; st.textContent=''; if(poll){clearInterval(poll);poll=null;} }
+        else { row.style.display='none'; st.textContent = enabled ? 'starting… Tor is generating the address (a few seconds)' : ''; }
+      }
+      async function load(){ try{ const r=await fetch('/api/admin/onion'); if(r.ok) render(await r.json()); }catch(_){} }
+      btn.onclick=async()=>{
+        btn.disabled=true; st.textContent='applying…';
+        try{
+          const r=await csrfFetch('/api/admin/onion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!enabled})});
+          if(r.status===409){ st.textContent='Enable the Managed Tor Service first.'; btn.disabled=false; return; }
+          render(await r.json());
+          if(enabled && !addr.value){ let n=0; if(poll)clearInterval(poll); poll=setInterval(async()=>{ if(++n>12){clearInterval(poll);poll=null;return;} try{ const rr=await fetch('/api/admin/onion'); if(rr.ok){ const jj=await rr.json(); if(jj.address) render(jj); } }catch(_){} },2000); }
+        }catch(e){ st.textContent='failed: '+e; }
+        btn.disabled=false;
+      };
+      copy.onclick=()=>{ addr.select(); try{ navigator.clipboard.writeText(addr.value); }catch(_){ document.execCommand('copy'); } st.textContent='copied'; setTimeout(()=>{st.textContent='';},1500); };
+      load();
+    })();
+    </script>
+
+    <fieldset>
         <legend>Second Tor Daemon (load-balancing)</legend>
         <div class="form-group">
             <label for="tor2_enabled">

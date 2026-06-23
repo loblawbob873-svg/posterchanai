@@ -302,6 +302,9 @@ class SettingsResponse(BaseModel):
     tor2_control_port: str = "9063"
     tor2_exit_nodes: str = "{ca}"
     tor2_data_dir: str = "/var/lib/posterchanai/tor2"
+    # Onion (v3 hidden service) — expose this deployment at a persistent .onion address (primary Tor
+    # daemon hosts it; keys persist in the tor data dir → same address across restarts).
+    onion_enabled: str = "false"
     # Built-in HTTP proxy settings
     proxy_enabled: str = "false"
     proxy_listen_host: str = "127.0.0.1"

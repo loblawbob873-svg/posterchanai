@@ -34,6 +34,8 @@ class TorService:
         dns_port: int = 9055,
         exit_nodes: str = "{us}",
         data_dir: str = "/var/lib/posterchanai/tor",
+        onion_enabled: bool = False,
+        onion_target: str = "",
     ):
         self.listen_host = listen_host
         self.socks_port = socks_port
@@ -41,6 +43,12 @@ class TorService:
         self.dns_port = dns_port
         self.exit_nodes = exit_nodes
         self.data_dir = Path(data_dir)
+        # Onion (v3 hidden service): exposes the app over Tor at a persistent .onion address. The keys
+        # live in <data_dir>/onion_service (persist across restarts → same address). onion_target is
+        # the local "host:port" to forward to (the app's port).
+        self.onion_enabled = onion_enabled
+        self.onion_target = onion_target
+        self.onion_dir = self.data_dir / "onion_service"
 
         self._process: Optional[subprocess.Popen] = None
         self._running = False
@@ -112,9 +120,43 @@ Log notice file {self.data_dir}/tor.log
 # Disable unnecessary features
 AvoidDiskWrites 1
 """
-        logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, DNS {self.listen_host}:{self.dns_port}, exits={self.exit_nodes}")
+        if self.onion_enabled and self.onion_target:
+            # v3 hidden service exposing the app over Tor. Keys persist in onion_dir → stable .onion.
+            config += f"""
+# Hidden service (.onion) for this deployment
+HiddenServiceDir {self.onion_dir}
+HiddenServiceVersion 3
+HiddenServicePort 80 {self.onion_target}
+"""
+        logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, DNS {self.listen_host}:{self.dns_port}, exits={self.exit_nodes}, onion={'on' if self.onion_enabled else 'off'}")
         torrc_path.write_text(config)
         return torrc_path
+
+    def get_onion_address(self):
+        """The .onion hostname Tor generated for the hidden service, or None if not up yet."""
+        try:
+            hn = (self.onion_dir / "hostname").read_text().strip()
+            return hn or None
+        except Exception:
+            return None
+
+    def reload_onion(self, enabled: bool, target: str = "") -> bool:
+        """Turn the hidden service on/off LIVE: rewrite the torrc and SIGHUP Tor — it reloads its
+        config and creates (or drops) the .onion without a full process restart. Keys in onion_dir
+        persist, so re-enabling yields the SAME address. Returns True if the reload signal was sent."""
+        self.onion_enabled = enabled
+        if target:
+            self.onion_target = target
+        try:
+            self._create_torrc()
+            if self._process and self._process.poll() is None:
+                import signal
+                os.kill(self._process.pid, signal.SIGHUP)
+                logger.info(f"[TOR] reloaded torrc via SIGHUP (onion={'on' if enabled else 'off'})")
+                return True
+        except Exception as e:
+            logger.error(f"[TOR] reload_onion failed: {e}")
+        return False
 
     def start(self) -> bool:
         """Start the Tor process. Returns immediately; bootstrap completes in background."""
@@ -300,9 +342,12 @@ def start_tor_service(
     dns_port: int = 9055,
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
+    onion_enabled: bool = False,
+    onion_target: str = "",
 ) -> Optional[TorService]:
     """Start ONE Tor instance and return it. Call once per daemon — the second daemon uses its own
-    ports + data dir + exit region so the HTTP proxy can load-balance across two independent circuits."""
+    ports + data dir + exit region so the HTTP proxy can load-balance across two independent circuits.
+    onion_* (primary daemon only) exposes the app at a persistent .onion address."""
     service = TorService(
         listen_host=listen_host,
         socks_port=socks_port,
@@ -310,6 +355,8 @@ def start_tor_service(
         dns_port=dns_port,
         exit_nodes=exit_nodes,
         data_dir=data_dir,
+        onion_enabled=onion_enabled,
+        onion_target=onion_target,
     )
     if service.start():
         _services.append(service)
@@ -328,3 +375,24 @@ def stop_tor_service():
             pass
     _services.clear()
     TorService._instance = None
+
+
+def primary_service():
+    """The first/primary Tor instance — it hosts the deployment's .onion hidden service."""
+    return _services[0] if _services else None
+
+
+def set_onion(enabled: bool, target: str = ""):
+    """Enable/disable the deployment's .onion on the primary daemon (live SIGHUP reload). Returns the
+    .onion address (may be None on the very first enable — Tor needs a moment; poll get_onion_address)."""
+    svc = primary_service()
+    if not svc:
+        return None
+    svc.reload_onion(enabled, target)
+    return svc.get_onion_address()
+
+
+def get_onion_address():
+    """The deployment's current .onion address (from the primary daemon), or None."""
+    svc = primary_service()
+    return svc.get_onion_address() if svc else None

@@ -473,6 +473,7 @@ async def startup():
                 listen_host = _ss.get("tor_listen_host", "127.0.0.1")
                 socks_port = _ss.get("tor_socks_port", "9052")
                 control_port = _ss.get_int("tor_control_port", 9053)
+                _app_port = os.getenv("POSTERCHANAI_PORT", "3051")   # the .onion forwards Tor → the app
                 tor_service = start_tor_service(
                     listen_host=listen_host,
                     socks_port=int(socks_port),
@@ -480,6 +481,8 @@ async def startup():
                     dns_port=_ss.get_int("tor_dns_port", control_port + 2),
                     exit_nodes=_ss.get("tor_exit_nodes", "{us}"),
                     data_dir=_ss.get("tor_data_dir", "/var/lib/posterchanai/tor"),
+                    onion_enabled=_ss.get_bool("onion_enabled"),
+                    onion_target=f"127.0.0.1:{_app_port}",
                 )
                 if tor_service:
                     logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")

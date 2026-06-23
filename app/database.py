@@ -433,6 +433,9 @@ When asked to write or modify code or files:
             "tor2_control_port": "9063",
             "tor2_exit_nodes": "{ca}",
             "tor2_data_dir": "/var/lib/posterchanai/tor2",
+            # Onion (.onion v3 hidden service) — off by default; the primary Tor daemon hosts it and
+            # the keys persist in its data dir (same address across restarts).
+            "onion_enabled": os.environ.get("POSTERCHANAI_ONION_ENABLED", "false"),
         }
 
         # Settings live in the Nostr relay datastore (NO SQL Setting table). Populate the in-process
