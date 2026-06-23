@@ -93,6 +93,9 @@ a.btn.full{display:block}
 @keyframes gl{0%{clip-path:inset(0 0 86% 0)}25%{clip-path:inset(60% 0 20% 0)}50%{clip-path:inset(20% 0 60% 0)}75%{clip-path:inset(86% 0 0 0)}100%{clip-path:inset(40% 0 40% 0)}}
 
 /* ===== app shell ===== */
+/* Keep height:100vh (NOT 100dvh): 100vh sizes to the TALL viewport, which lets mobile browsers
+   (Firefox especially) auto-hide their address bar for a fullscreen feel. 100dvh sizes to the small
+   dynamic viewport that RESERVES room for the chrome, so the toolbar stays pinned — a regression. */
 .app{display:grid;grid-template-columns:360px 1fr;height:100vh}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto;
   background:rgba(10,10,16,.55)}   /* neutral dark so the body's cyan/magenta gradient doesn't tint the left column differently from center/right */
@@ -379,6 +382,8 @@ a.btn.full{display:block}
 .feed:has(.dm-wrap){overflow:hidden;padding:0;min-height:0}
 .dm-msgs{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;display:flex;flex-direction:column;gap:8px}
 .bubble{flex:none;width:-moz-fit-content;width:fit-content;max-width:74%;min-width:0;padding:11px 15px;border-radius:14px;font-size:18.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.dm-older{flex:none;align-self:center;margin:2px 0 8px;padding:6px 16px;border-radius:12px;background:rgba(0,240,255,.1);border:1px solid var(--line);color:var(--cyan);font-size:13px;cursor:pointer}
+.dm-older:hover{background:rgba(0,240,255,.18)}
 /* own messages: simple cyberpunk cyan (no magenta gradient) */
 .bubble.me{align-self:flex-end;background:rgba(0,255,255,.12);border:1px solid var(--neon);color:var(--text);border-bottom-right-radius:4px;box-shadow:0 0 10px rgba(0,255,255,.16)}
 .bubble.them{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}

@@ -26,7 +26,12 @@
     {% block content %}{% endblock %}
     {% block scripts %}{% endblock %}
     <script>
-        if ('serviceWorker' in navigator) {
+        // IMPORTANT: only manage service workers when this page is the TOP-LEVEL document. The /client
+        // Nostr PWA preloads /admin in a HIDDEN IFRAME — and getRegistrations()+unregister() below would
+        // otherwise nuke EVERY service worker for the origin, INCLUDING the /client PWA's own SW. That
+        // forced the PWA to reload (controllerchange handler), which on Firefox re-reveals the browser
+        // toolbar and made cached code "stick". Embedded in an iframe → do nothing.
+        if ('serviceWorker' in navigator && window.self === window.top) {
             // Unregister old service workers first
             navigator.serviceWorker.getRegistrations().then(function(registrations) {
                 for(let registration of registrations) {

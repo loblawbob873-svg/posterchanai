@@ -392,7 +392,13 @@
   let _routing = false;
   function _navUrl(path){
     if(_routing) return;                       // don't re-push while we're decoding the current URL
-    try{ if(location.pathname !== path) history.pushState({}, '', path); }catch(_){}
+    // Stay INSIDE the PWA scope (/client, per the manifest). Pushing a bare "/" (or "/note1…") sends the
+    // URL OUT of scope, which makes the browser reveal its address-bar/toolbar — the "toolbar appears on
+    // login" bug (login's first switchView pushes "/"). When served under /client, prefix the base so the
+    // URL stays in-scope; _entityFromPath already strips the /client prefix when decoding.
+    const inClient = location.pathname === '/client' || location.pathname.startsWith('/client/');
+    const target = inClient ? ('/client' + (path === '/' ? '' : path)) : path;
+    try{ if(location.pathname !== target) history.pushState({}, '', target); }catch(_){}
   }
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
   function _webLink(entity){ return (location.origin||'') + '/' + entity; }
@@ -591,11 +597,17 @@
   function startApp(){
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
-    // Warm the admin session, then PRELOAD the hidden admin iframe so opening Admin is instant
-    // (no timeline→spinner→blank-iframe flicker on the first open after a reload).
-    if(IS_ADMIN) setTimeout(()=>{ ensureAiSession().then(a=>{ if(a && a.is_admin) _preloadAdmin(); }).catch(()=>{}); }, 1500);
+    // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends
+    // base.html, whose script unregisters ALL service workers for the origin — including THIS PWA's —
+    // forcing a reload that (on Firefox) reveals the browser toolbar and made code-updates churn. The
+    // iframe's own SW also served a cached /admin, so even the base.html fix couldn't reach it. Admin
+    // now loads on first open instead (slightly slower first paint; no PWA-wide damage).
+    if(IS_ADMIN) setTimeout(()=>{ ensureAiSession().catch(()=>{}); }, 1500);
     else if(CFG.admin_unclaimed) setTimeout(maybeClaimAdmin, 1200);   // fresh install: offer first-run admin setup
-    try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(_){}
+    // Do NOT auto-request notification permission on login: in a PWA (Firefox especially) the permission
+    // prompt pops the browser's chrome — the URL/shield/hamburger TOOLBAR — the instant you sign in, and
+    // it can stay. Browsers also discourage auto-requests. In-app toasts work without it; OS
+    // notifications are opt-in via Settings (a user gesture) instead. [was: Notification.requestPermission]
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
     $('#btn-logout').onclick = logout;
     { const b=$('#btn-install'); if(b){
@@ -875,6 +887,10 @@
   // ---------- view routing ----------
   function switchView(v){
     if(window.PC_NOSTR_ONLY && v==='ai') v='home';   // AI disabled in Nostr-only deployments
+    // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
+    // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
+    // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
+    if(VIEW==='messages' && v!=='messages') dmActive=null;
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -2338,10 +2354,17 @@
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['holdem','🃏',"Texas Hold'em"],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    // Games live in their OWN sub-sheet (one 🎮 Games row here) so the 6 of them don't crowd the More sheet.
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['__games','🎮','Games'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); if(b.dataset.v==='logout') logout(); else if(b.dataset.v==='profile') renderProfileView(ME.pubkey); else switchView(b.dataset.v); });
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__games'){ closeModal(); gamesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+    });
+  }
+  function gamesMenu(){
+    const items=[['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['holdem','🂡',"Texas Hold'em"]];
+    modal(`<h3>🎮 Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
   }
   function renderDrafts(){
@@ -2882,8 +2905,21 @@
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
   function _followTs(pk, fallback){ if(!(pk in _followSeen)){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
   function _notifTs(e){ return e.kind===3 ? (_followSeen[e.pubkey]!=null?_followSeen[e.pubkey]:e.created_at) : e.created_at; }
-  function watchNotifications(){
+  async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
+    // Seed the known-follower set from the FULL current follower list BEFORE going live. kind-3 is the
+    // follower's whole contact list, republished on every edit — so without a comprehensive seed, a
+    // fresh client / cleared storage / a follower beyond the live sub's 150-cap re-pings as a "new
+    // follow" every time anyone edits their list. We mark every existing follower as already-seen (their
+    // _followSeen time = last-checked), so only a pubkey we've NEVER recorded — a genuinely new follower
+    // arriving live — pings/badges. (the recurring "follow spam from people who followed long ago")
+    try{
+      const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
+      let changed=false;
+      for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
+        if(!(e.pubkey in _followSeen)){ _followSeen[e.pubkey]=seenNotif.last; changed=true; } }
+      if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
+    }catch(_){}
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984], limit:150 }], {
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
@@ -3013,6 +3049,10 @@
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
   const dmPeers = new Map();  // peer -> [{ev, text}]
   let dmActive = null;
+  const _dmFull = new Set();   // peers whose full DM history has been backfilled on open (once each)
+  const _dmShown = new Map();  // pk -> how many recent messages are rendered (paginated)
+  const _DM_INIT = 1, _DM_STEP = 20;   // show last 1 on open (instant); "load older" reveals 20 more at a time
+  let _dmScrollTop = false;    // next thread render keeps the top (after "load older") instead of bottom
   let _dmLoaded=false, _dmUnread=0;
   async function ensureDMs(){
     if(_dmLoaded) return; _dmLoaded=true;
@@ -3030,7 +3070,8 @@
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
-      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(ev.pubkey); } if(VIEW==='messages') renderMessages(); }
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(ev.pubkey); }
+        _scheduleDmRefresh(); }   // debounced: never rebuilds per-message (would thrash + drop the mobile overlay)
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
     // subscribe with no `since` and let Store dedup skip the ones we've already unwrapped.
@@ -3060,7 +3101,7 @@
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
     if(live && !mine && !MUTED.has(peer)){ _dmUnread++; bumpDm(); _dmNotify(peer); }
-    if(VIEW==='messages'){ if(dmActive===peer) renderDmThread(peer); else renderMessages(); }
+    _scheduleDmRefresh();
     return true;
   }
   // Send a DM: NIP-17 gift wraps for local-key users, legacy NIP-04 for NIP-07 (no exposed secret).
@@ -3096,7 +3137,7 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at }); arr.sort((a,b)=>a.t-b.t);
-    if(VIEW==='messages' && dmActive===peer) renderDmThread(peer);
+    _scheduleDmRefresh();
     return true;
   }
   async function decryptMsg(peer, m){
@@ -3108,6 +3149,10 @@
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     const feed=$('#feed');
+    // Preserve the list scroll across the rebuild. A background refresh (the NIP-17 history replay)
+    // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
+    // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
+    const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
     feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
     const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
@@ -3117,11 +3162,15 @@
       return `<div class="dm-peer" data-peer="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
     $('#dm-new').onclick=newDmModal;
+    if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
     // lazily decrypt ONLY the last message of each peer for the preview (not every message)
     const need=peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
     if(need.length) Promise.all(need.map(pk=>decryptMsg(pk, dmPeers.get(pk).slice(-1)[0]))).then(()=>{ if(VIEW==='messages' && !dmActive) renderMessages(); });
-    if(dmActive && dmPeers.has(dmActive)) renderDmThread(dmActive);
+    // Preserve an OPEN conversation across re-renders: re-apply `has-active` to the rebuilt list (it's
+    // what shows the thread as a full-screen overlay on mobile) — without this, any renderMessages()
+    // (incoming DM, refresh) drops the class and bounces the user back to the conversation list.
+    if(dmActive && dmPeers.has(dmActive)){ list.classList.add('has-active'); renderDmThread(dmActive); }
   }
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function newDmModal(){
@@ -3157,14 +3206,49 @@
       to.focus();
     });
   }
-  function openDm(pk){ dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
+  function openDm(pk){ _dmShown.delete(pk); dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
+  // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
+  // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
+  // thrash (and re-scrolled to bottom each time). One debounced render absorbs the whole burst.
+  let _dmRefreshTimer=null, _dmThreadSig='';
+  function _threadSig(pk){ const arr=dmPeers.get(pk)||[]; return pk+'|'+(arr.length?(arr[arr.length-1].id||''):'')+'|'+(_dmShown.get(pk)||_DM_INIT); }
+  function _scheduleDmRefresh(){
+    if(_dmRefreshTimer || VIEW!=='messages') return;
+    _dmRefreshTimer=setTimeout(()=>{ _dmRefreshTimer=null; if(VIEW!=='messages') return;
+      if(dmActive){
+        // Skip the rebuild if the VISIBLE window is unchanged — the NIP-17 replay streams OLDER history
+        // in, which doesn't touch the newest message we show, so re-rendering would just flicker.
+        const sig=_threadSig(dmActive); if(sig===_dmThreadSig) return; _dmThreadSig=sig;
+        renderDmThread(dmActive);
+      } else renderMessages(); }, 350);
+  }
   async function renderDmThread(pk){
-    const wrap=$('#dm-thread'); if(!wrap)return; const p=profOf(pk); const msgs=dmPeers.get(pk)||[];
-    // decrypt this conversation's messages on open (bounded to one peer's thread)
+    const wrap=$('#dm-thread'); if(!wrap)return;
+    // Backfill this conversation's FULL history once (the initial bulk fetch caps at limit:300 across
+    // ALL peers, so a busy inbox leaves old threads showing only their newest message). NIP-17 is
+    // already fully loaded by its no-limit live sub; this targeted query backfills LEGACY kind-4 for
+    // this peer. Runs in the background so the thread still renders instantly from what's cached.
+    if(!_dmFull.has(pk)){ _dmFull.add(pk);
+      Relay.query([{kinds:[4], authors:[pk], '#p':[ME.pubkey]}, {kinds:[4], authors:[ME.pubkey], '#p':[pk]}])
+        .then(evs=>{ let added=false; for(const e of (evs||[])){ Store.saveEvent(e); if(ingestDM(e)) added=true; }
+          if(added) _scheduleDmRefresh(); })   // re-render only if new msgs arrived (no loop: _dmFull set)
+        .catch(()=>{});
+    }
+    const p=profOf(pk); const all=dmPeers.get(pk)||[];
+    // PAGINATION: render only the last N messages (3 on open) so a long thread opens instantly on mobile;
+    // "Load older" reveals 20 more each tap. Decrypt ONLY the visible slice — decryption (ECDH+AES per
+    // message) is the slow/glitchy part, so decrypting a whole history on open is what lagged.
+    const shown=Math.min(all.length, _dmShown.get(pk)||_DM_INIT);
+    const start=all.length-shown;
+    const msgs=all.slice(start);
     for(const m of msgs){ if(m.text==null) await decryptMsg(pk,m); }
     if(dmActive!==pk) return;   // user switched away while decrypting
+    // Was the user pinned to the bottom before this re-render? If they'd scrolled up to read, DON'T
+    // yank them back down when a background message lands (part of "the window keeps moving").
+    const _prev=$('#dm-msgs'); const _atBottom = !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
+    const older = start>0 ? `<button class="dm-older" id="dm-older">⬆ Load older (${start})</button>` : '';
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
-      <div class="dm-msgs" id="dm-msgs">${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
+      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
       <div class="dm-compose">
         <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
         <div class="dm-tools">
@@ -3188,7 +3272,9 @@
     const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value='';
       try{ await sendDm(pk, t); }catch(e){ toast('dm failed: '+e.message);} };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
-    const m=$('#dm-msgs'); if(m)m.scrollTop=m.scrollHeight;
+    { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
+    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight; }
+    _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
   }
 
   // ---------- profile ----------
