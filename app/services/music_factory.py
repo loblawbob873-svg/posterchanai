@@ -122,9 +122,10 @@ async def generate_music_for_user(
 
     # Round-robin across remote nodes AND this node's local acestep, so songs spread over both
     # machines. A forwarded request (/api/generate-music) is local_only — it generates HERE.
-    # Distributed-LB (DVM) over Nostr replaces the IP peer list when enabled (peers = worker npubs).
+    # A node load-balances its OWN work over the IP LB; Nostr dispatch is the separate machine-sharing
+    # path (provider/consumer), so own-serving never auto-dispatches over Nostr.
     from app.services import nostr_dvm
-    dvm_on = nostr_dvm.is_enabled() and not local_only
+    dvm_on = False
     if local_only:
         candidates = [_LOCAL]
     elif dvm_on:

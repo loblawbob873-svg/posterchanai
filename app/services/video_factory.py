@@ -139,9 +139,10 @@ async def generate_video_for_user(
             raise VideoError("Local video generation is disabled on this node.")
         candidates = [_LOCAL]
     else:
-        # Distributed-LB (DVM) over Nostr replaces the IP peer list when enabled (peers = worker npubs).
+        # A node load-balances its OWN work over the IP LB; Nostr dispatch is the separate machine-
+        # sharing path (provider/consumer), so own-serving never auto-dispatches over Nostr.
         from app.services import nostr_dvm
-        dvm_on = nostr_dvm.is_enabled()
+        dvm_on = False
         candidates = nostr_dvm.peers() if dvm_on else parse_video_server_urls(cfg["server_urls"])
         if cfg["local_enabled"]:
             candidates = candidates + [_LOCAL]

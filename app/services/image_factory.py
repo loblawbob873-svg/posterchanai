@@ -155,10 +155,10 @@ async def generate_image_with_load_balancing(
     # from the peer list — otherwise self is a candidate twice and the rotation wastes a slot
     # forwarding to itself instead of reaching real peers (e.g. nas). parse_server_urls has the
     # robust local-IP detection (ip addr / outbound-socket), so it reliably drops this node's IP.
-    # Distributed-LB (DVM) over Nostr REPLACES the IP/HTTP peer list when enabled: peers are worker
-    # npubs and the remote hop is a Nostr job event (see app.services.nostr_dvm). Local path unchanged.
+    # A node load-balances its OWN work over the IP LB (server_urls); Nostr dispatch is the separate
+    # machine-sharing path (provider/consumer), so own-serving never auto-dispatches over Nostr.
     from app.services import nostr_dvm
-    dvm_on = nostr_dvm.is_enabled(settings) and not local_only
+    dvm_on = False
     if dvm_on:
         remote = nostr_dvm.peers(settings)
     else:
