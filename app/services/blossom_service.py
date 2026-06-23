@@ -451,7 +451,7 @@ def _mirror_worker() -> None:
         loop.close()
 
 
-async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
+async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True) -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
     (without `url`, which the router fills from the request base)."""
     cfg = _cfg(db)
@@ -496,7 +496,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str) -> dict:
     # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
     # touches the request's event loop and is paced/serialised (saves bandwidth, polite to mirrors).
     # Only newly-stored blobs are queued — a re-upload of the same hash is already mirrored.
-    if cfg["mirror_servers"]:
+    if mirror and cfg["mirror_servers"]:
         _enqueue_mirror(sha256, data, mime, cfg["mirror_servers"])
     return _descriptor_fields(blob)
 

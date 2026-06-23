@@ -642,6 +642,12 @@
         b.onclick=async()=>{ if(!_deferredInstall) return; _deferredInstall.prompt();
           try{ await _deferredInstall.userChoice; }catch(_){} _deferredInstall=null; b.classList.add('hidden'); }; } }
     $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
+    { const nm=$('#nav-music'); if(nm) nm.onclick=openMusic; }
+    // Collapsible "Files" group (Blossom + Music), like Games/Discover.
+    { const ft=$('#files-toggle'); if(ft){ const sub=$('#files-sub'), chev=$('#files-chev');
+        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
+        apply(ClientSettings.get('filesOpen', false));
+        ft.onclick=()=>{ const o=!ClientSettings.get('filesOpen', false); ClientSettings.set('filesOpen', o); apply(o); }; } }
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
@@ -2382,10 +2388,10 @@
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     // Games live in their OWN sub-sheet (one 🎮 Games row here) so the 6 of them don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['__games','🎮','Games'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['__games','🎮','Games'],['__music','🎵','Music'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
     modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__games'){ closeModal(); gamesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__music'){ closeModal(); openMusic(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
   function gamesMenu(){
@@ -2647,13 +2653,15 @@
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
   function extFor(file){ const n=(file.name||'').match(/\.([a-z0-9]{2,5})$/i); if(n) return n[1].toLowerCase(); return _MIME_EXT[file.type]||''; }
-  async function uploadBlob(file){
+  async function uploadBlob(file, opts){
     const server=mediaServer(); if(!server) throw new Error('no media server set');
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     const auth=await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+    const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
+    if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
     let res;
     try {
-      res=await fetch(server+'/upload',{ method:'PUT', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' }, body:buf });
+      res=await fetch(server+'/upload',{ method:'PUT', headers:hdr, body:buf });
     } catch(e){
       // fetch rejects (vs. an HTTP error) only when the browser can't complete the request at all:
       // server unreachable, blocked mixed content (http:// on this https page), or — most often for
@@ -2844,6 +2852,28 @@
   // (encrypted artifacts under your storage key, only readable here). The active tab is remembered
   // so re-rendering after an upload/delete stays put.
   let _filesTab = 'public';
+  function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; switchView('blossom'); }   // the file-manager Music folder
+  function openMusic(){   // the Music nav button → shuffle-play your whole library right away
+    FilesIdx.loadLocal();
+    const go=()=>{ const tracks=musicTracks(null);
+      if(!tracks.length){   // no music yet → open the Music folder + guide them
+        openMusicFolder();
+        modal(`<h3>🎵 Your music library is empty</h3>
+          <p class="muted small">Add some songs to start playing:</p>
+          <div class="muted small" style="line-height:1.9;margin:10px 0">
+            1. You're now in <b>Files → 🎵 Music</b><br>
+            2. <b>Drag &amp; drop audio files</b> into the drop zone (or tap “choose files”)<br>
+            3. Each track is <b>Opus-compressed + encrypted</b> automatically<br>
+            4. Then the <b>🎵 Music</b> button shuffle-plays your whole library
+          </div>
+          <div class="row" style="justify-content:flex-end"><button class="btn btn-cyan" id="nm-ok">Got it</button></div>`,
+          root=>{ const b=$('#nm-ok',root); if(b) b.onclick=closeModal; });
+        return;
+      }
+      MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
+      MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); };
+    if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(go); } else go();
+  }
   async function renderBlossom(){
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
@@ -2859,22 +2889,61 @@
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
   // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
   const FilesIdx = {
-    data: { folders: ['Music'], files: {} }, _pulled:false, _t:null,
+    data: { folders: ['Music'], files: {} }, _pulled:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{}};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
       if(!this.data.files||typeof this.data.files!=='object') this.data.files={};
       if(!this.data.folders.includes('Music')) this.data.folders.unshift('Music'); return this.data; },
-    loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){} return this._norm(); },
-    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); }catch(_){} },
-    async pull(){ try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
-      const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-      if(r&&r.ok&&r.index&&typeof r.index==='object'&&r.index.files){ this.data=r.index; this.saveLocal(); } }catch(_){} return this._norm(); },
-    push(){ this.saveLocal(); clearTimeout(this._t); this._t=setTimeout(async()=>{
+    loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){}
+      try{ this._mkWrapped = localStorage.getItem(this._key()+'_mk') || this._mkWrapped; }catch(_){} return this._norm(); },
+    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); if(this._mkWrapped) localStorage.setItem(this._key()+'_mk', this._mkWrapped); }catch(_){} },
+    // The master key (AES-256) is generated once, NIP-44 self-wrapped, and kept in the index pointer.
+    async _ensureMK(){
+      if(this.mk) return this.mk;
+      if(this._mkWrapped){ try{ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }catch(_){} }
+      this.mk=crypto.getRandomValues(new Uint8Array(32));
+      this._mkWrapped=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
+      return this.mk;
+    },
+    async pull(){
       try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+        const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+        const ptr=r&&r.ok&&r.index;
+        if(ptr&&typeof ptr==='object'){
+          if(ptr.mk) this._mkWrapped=ptr.mk;
+          if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
+            await this._ensureMK();
+            const br=await fetch(mediaServer()+'/'+ptr.indexSha);
+            if(br.ok){ const idx=JSON.parse(new TextDecoder().decode(await _masterDecrypt(this.mk, new Uint8Array(await br.arrayBuffer()))));
+              if(idx&&idx.files) this.data=idx; }
+          } else if(ptr.files){ this.data=ptr; }     // v1: small index stored inline in the pointer
+          this.saveLocal();
+        }
+      }catch(_){}
+      return this._norm();
+    },
+    push(){ this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
+    async _save(){
+      try{ this._norm();
+        const idx={folders:this.data.folders, files:this.data.files}; const json=JSON.stringify(idx);
+        const ptr={}; if(this._mkWrapped) ptr.mk=this._mkWrapped;
+        if(json.length < 45000){ ptr.folders=idx.folders; ptr.files=idx.files; }   // small → inline (NIP-44 doc)
+        else {                                                                       // large → encrypted Blossom blob
+          const mk=await this._ensureMK(); ptr.mk=this._mkWrapped;
+          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {noMirror:true});
+          ptr.indexSha=_shaFromUrl(url);
+        }
+        const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
         await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:this.data})}); }catch(_){} }, 700); },
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr})});
+        if(ptr.indexSha && this._lastIndexSha && this._lastIndexSha!==ptr.indexSha) _delBlobSilent(this._lastIndexSha);   // GC the superseded index blob
+        if(ptr.indexSha) this._lastIndexSha=ptr.indexSha;
+      }catch(e){ console.warn('files-index save failed', e); }
+    },
+    beginBatch(){ this._batch=true; },
+    async endBatch(){ this._batch=false; await this._save(); },
     folders(){ return this._norm().folders; },
     addFolder(name){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); this.push(); return true; },
     removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
@@ -2957,11 +3026,14 @@
     files=files.filter(Boolean); if(!files.length) return;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
     const q=$('#bl-queue'); if(q) q.innerHTML=files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
+    FilesIdx.beginBatch();   // collapse the index save (a 2000-file import must NOT re-save the index per file)
+    let done=0;
     for(let i=0;i<files.length;i++){
       const stat=$('#up-stat-'+i);
       try{
         if(music){
           if(!(files[i].type||'').startsWith('audio/')){ if(stat) stat.textContent='skipped (not audio)'; continue; }
+          if(_musicHasSrc(files[i])){ if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } continue; }   // resume: skip done files
           await uploadMusicTrack(files[i], stat); if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
         } else {
           if(stat) stat.textContent='uploading…';
@@ -2969,8 +3041,10 @@
           if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
           if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
         }
+        if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }   // checkpoint every 25 so a crash mid-import keeps progress
       }catch(e){ if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
     }
+    await FilesIdx.endBatch();
     toast('done'); setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
   }
 
@@ -2986,31 +3060,51 @@
     const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain)); return {ct,key,iv}; }
   async function _aesDecrypt(ct,key,iv){ const ck=await crypto.subtle.importKey('raw',key,'AES-GCM',false,['decrypt']);
     return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
+  // SCALABLE encryption (Phase 2.5): ONE master key (wrapped once) + the IV prepended to the blob. For
+  // tracks the IV is DERIVED from the content (sha256(plain)[:12]) → identical input → identical
+  // ciphertext/hash → Blossom DEDUP + resumable import. For the index a random IV is used (it changes).
+  async function _contentIV(plain){ return new Uint8Array(await crypto.subtle.digest('SHA-256', plain)).slice(0,12); }
+  async function _masterEncrypt(mk, plain, iv){ iv = iv || crypto.getRandomValues(new Uint8Array(12));
+    const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['encrypt']);
+    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain));
+    const out=new Uint8Array(12+ct.length); out.set(iv,0); out.set(ct,12); return out; }
+  async function _masterDecrypt(mk, blob){ const iv=blob.slice(0,12), ct=blob.slice(12);
+    const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['decrypt']);
+    return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
+  // Already-imported check (resume a bulk import): match a source file by name+size.
+  function _musicHasSrc(file){ const fs=FilesIdx._norm().files; for(const sha in fs){ const m=fs[sha]; if(m&&m.folder==='Music'&&m.srcName===file.name&&m.srcSize===file.size) return true; } return false; }
   async function uploadMusicTrack(file, statEl){
     if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
     const setS=t=>{ if(statEl) statEl.textContent=t; };
+    const mk=await FilesIdx._ensureMK();
     setS('compressing…');
     const auth=await sign(27235,'music',[['p',ME.pubkey]]);
     const cr=await fetch('/client/music-compress',{method:'POST',headers:{'X-Pubkey':ME.pubkey,'X-Auth':btoa(JSON.stringify(auth))},body:file});
     if(!cr.ok){ let m='compress failed'; try{ m=(await cr.json()).error||m; }catch(_){} throw new Error(m); }
     const opus=new Uint8Array(await cr.arrayBuffer());
     setS('encrypting…');
-    const {ct,key,iv}=await _aesEncrypt(opus);
-    const keyenc=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(key),iv:_u8b64(iv)}));
+    const blob=await _masterEncrypt(mk, opus, await _contentIV(opus));   // deterministic IV → identical hash → dedup
     setS('uploading…');
-    const url=await uploadBlob(new File([ct],(file.name||'track')+'.enc',{type:'application/octet-stream'}));
+    // noMirror: never DR-mirror encrypted music to the public backup servers (bandwidth/abuse).
+    const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
-    FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,keyenc,size:opus.length,ts:Math.floor(Date.now()/1000)});
+    FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,mk:true,size:opus.length,srcName:file.name,srcSize:file.size,ts:Math.floor(Date.now()/1000)});
   }
-  const _trackUrls={};   // sha -> decrypted object URL (cached for the session)
+  const _trackUrls={}, _trackUrlOrder=[];   // sha -> decrypted object URL (LRU-capped so a long session doesn't leak)
+  async function _delBlobSilent(sha){ try{ const server=mediaServer(); const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+    await fetch(server+'/'+sha,{method:'DELETE',headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))}}); }catch(_){} }
   async function trackUrl(sha){
     if(_trackUrls[sha]) return _trackUrls[sha];
-    const m=FilesIdx.meta(sha); if(!m||!m.enc||!m.keyenc) throw new Error('not an encrypted track');
+    const m=FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
     const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
-    const ct=new Uint8Array(await r.arrayBuffer());
-    const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey, m.keyenc));
-    const plain=await _aesDecrypt(ct,_b64u8(k),_b64u8(iv));
-    const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; return u;
+    const blob=new Uint8Array(await r.arrayBuffer());
+    let plain;
+    if(m.mk){ plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob); }            // v2 master-key (IV prepended)
+    else if(m.keyenc){ const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey,m.keyenc)); plain=await _aesDecrypt(blob,_b64u8(k),_b64u8(iv)); }  // v1 per-track key
+    else throw new Error('no key');
+    const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; _trackUrlOrder.push(sha);
+    while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
+    return u;
   }
   function musicTracks(list){
     const have=list?new Set(list.map(b=>b.sha256)):null;
@@ -3041,7 +3135,9 @@
     el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _viz:{an:null,raf:0,failed:false},
     ensure(){
       if(this.el) return this.el;
-      const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.body.appendChild(d); this.el=d;
+      // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
+      // position (it would mis-overlap the sidebar + block its clicks). Same fix as the popovers.
+      const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.documentElement.appendChild(d); this.el=d;
       if(!_audioEl) _audioEl=new Audio();
       _audioEl.ontimeupdate=()=>this._tick();
       _audioEl.onended=()=>this.next();
@@ -3053,7 +3149,10 @@
     async play(sha){
       this.ensure();
       if(sha===this.cur && _audioEl.src){ this.toggle(); return; }   // tapping the playing track = pause/resume
-      this.refreshQueue(); if(!this.queue.includes(sha)) this.queue.unshift(sha);
+      // keep a STABLE play order — only (re)build the queue when it's empty or doesn't contain this track,
+      // NOT on every track, so auto-advance plays in order instead of jumping around ("shuffling everything").
+      if(!this.queue.length || !this.queue.includes(sha)) this.refreshQueue();
+      if(!this.queue.includes(sha)) this.queue.unshift(sha);
       this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
       try{ const u=await trackUrl(sha); this._loading=false; _audioEl.src=u; await _audioEl.play(); }
       catch(e){ this._loading=false; toast('play failed: '+(e.message||e)); }

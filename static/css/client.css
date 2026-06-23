@@ -437,8 +437,11 @@ a.btn.full{display:block}
 /* ── Floating cyberpunk music player (hovers over every view; minimizable; draggable) ── */
 #music-player.hidden{display:none}
 #music-player.mp{position:fixed;right:18px;bottom:88px;width:338px;z-index:120;background:linear-gradient(160deg,#1a0c36,#0a0418);border:1.5px solid var(--cyan,#0ff);border-radius:18px;box-shadow:0 0 32px rgba(0,240,255,.35),inset 0 0 38px rgba(255,0,255,.07);overflow:hidden;font-size:13px;-webkit-user-select:none;user-select:none}
-#music-player.mp.playing{animation:mpglow 2.6s ease-in-out infinite}
+#music-player.mp.playing{animation:mpglow 2.6s ease-in-out infinite, mpwiggle .55s ease-in-out infinite}
 @keyframes mpglow{0%,100%{box-shadow:0 0 30px rgba(0,240,255,.4),inset 0 0 36px rgba(255,0,255,.07);border-color:var(--cyan,#0ff)}50%{box-shadow:0 0 50px rgba(255,0,230,.5),0 0 80px rgba(0,240,255,.28),inset 0 0 42px rgba(0,240,255,.1);border-color:#ff2bd6}}
+@keyframes mpwiggle{0%,100%{transform:rotate(-1deg) translateY(0)}25%{transform:rotate(1.2deg) translateY(-2px)}50%{transform:rotate(-0.7deg) translateY(0)}75%{transform:rotate(1deg) translateY(-2px)}}
+#music-player.mp-mini.playing{animation:mpglow 2.6s ease-in-out infinite, mpwiggle .55s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){#music-player.mp.playing,#music-player.mp-mini.playing{animation:mpglow 2.6s ease-in-out infinite}}
 .mp-scan{position:absolute;inset:0;pointer-events:none;z-index:3;background:repeating-linear-gradient(0deg,rgba(0,240,255,.06) 0 1px,transparent 1px 3px);mix-blend-mode:screen;opacity:.5;animation:mpscan 8s linear infinite}
 @keyframes mpscan{to{background-position:0 240px}}
 .mp-viz{display:block;width:100%;height:56px;background:radial-gradient(ellipse at bottom,rgba(0,240,255,.1),transparent 70%);border-bottom:1px solid rgba(0,240,255,.15)}

@@ -107,8 +107,10 @@ async def upload(request: Request, db: Session = Depends(get_db)):
         return _err(403, "not authorized to upload (needs the can_blossom privilege)")
 
     mime = request.headers.get("content-type", "") or "application/octet-stream"
+    # X-No-Mirror: client opt-out of DR mirroring (encrypted music — don't push it to public backups).
+    no_mirror = request.headers.get("x-no-mirror", "") in ("1", "true", "yes")
     try:
-        await blossom_service.save_blob(db, pubkey, data, mime)
+        await blossom_service.save_blob(db, pubkey, data, mime, mirror=not no_mirror)
     except Exception as e:
         logger.error("[blossom] upload failed: %s", e, exc_info=True)
         return _err(500, "storage error")
