@@ -139,15 +139,15 @@ seeded from env on first run (override at `docker run -e ...`):
 | `POSTERCHANAI_IMAGE_MODEL_PATH` | `Lykon/dreamshaper-8` | image model (HF repo) |
 | `DOWNLOAD_MODEL` | `1` | auto-download the LLM |
 | `POSTERCHANAI_LOW_VRAM` | (unset) | `1` = diffusers model-offload (run SDXL on a small GPU) |
-| `POSTERCHANAI_TOR_ENABLED` / `_PROXY_ENABLED` / `_BT_ENABLED` | `true` | Tor + outbound HTTP proxy + torrenting (binaries ship in the image; set `false` to opt out) |
+| `POSTERCHANAI_TOR_ENABLED` / `_PROXY_ENABLED` / `_BT_ENABLED` | `false` | Tor + outbound HTTP proxy + torrenting (binaries ship in the image; set `true` to opt in) |
 
-**Tor / HTTP proxy / torrenting are ON by default** (every install type) and pre-wired:
-the app starts Tor (SOCKS5 :9052), the outbound HTTP proxy (:8118 → Tor), and the libtorrent
-client (routed through that proxy). Only the features that explicitly use the proxy (torrents,
-nitter, bots) route through Tor — model download, the relay, and Blossom go direct — so a slow
-Tor bootstrap won't block startup. Opt out per piece with
-`-e POSTERCHANAI_TOR_ENABLED=false` / `_PROXY_ENABLED=false` / `_BT_ENABLED=false`, or toggle in
-Admin. (Only seeded on first run; existing nodes keep their current settings.)
+**Tor / HTTP proxy / torrenting are OFF by default** and opt-in: the binaries ship in the image,
+but nothing auto-starts a Tor process at boot. When you enable Tor, **PosterChanAI starts and
+manages the daemon itself** (SOCKS5 :9052), along with the outbound HTTP proxy (:8118 → Tor) and
+the libtorrent client (routed through that proxy). They're a chain (torrents → the :8118 proxy →
+Tor), so they default off together. Opt in per piece with
+`-e POSTERCHANAI_TOR_ENABLED=true` / `_PROXY_ENABLED=true` / `_BT_ENABLED=true`, or toggle in
+Admin → Services. (Only seeded on first run; existing nodes keep their current settings.)
 
 ## Bring your own image models
 

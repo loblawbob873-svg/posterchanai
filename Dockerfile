@@ -231,12 +231,16 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_MODEL_URL=https://huggingface.co/lukey03/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated-Q4_K_M.gguf \
     POSTERCHANAI_LLM_TOOLS_MODEL= \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
-    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15
-# Tor / built-in HTTP proxy / torrenting ship ready (the `tor` binary + libtorrent are
-# installed) AND are ON by default on first run — the app starts Tor (SOCKS5), the outbound
-# HTTP proxy (:8118 → Tor), and the libtorrent client (routed through that proxy) itself.
-# Opt out per piece at first run with -e POSTERCHANAI_TOR_ENABLED=false
-# -e POSTERCHANAI_PROXY_ENABLED=false -e POSTERCHANAI_BT_ENABLED=false, or toggle in Admin.
+    POSTERCHANAI_IMAGE_MODEL_TYPE=sd15 \
+    POSTERCHANAI_TOR_ENABLED=false \
+    POSTERCHANAI_PROXY_ENABLED=false \
+    POSTERCHANAI_BT_ENABLED=false
+# Tor / built-in HTTP proxy / torrenting ship installed (the `tor` binary + libtorrent are in the
+# image) but are OFF by default — PosterChanAI starts and manages the Tor daemon (SOCKS5) itself
+# when you enable it, so nothing auto-starts a Tor process at boot. They're a chain (torrents → the
+# :8118 HTTP proxy → Tor), so they default off together. Opt in at first run with
+# -e POSTERCHANAI_TOR_ENABLED=true -e POSTERCHANAI_PROXY_ENABLED=true -e POSTERCHANAI_BT_ENABLED=true,
+# or toggle in Admin → Services (seeded only on first run, so this never overrides an existing choice).
 
 EXPOSE 3051
 # Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which
