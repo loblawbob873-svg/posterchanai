@@ -92,6 +92,7 @@
                                                     (tpl)=>window.nostr.signEvent(tpl), peer, text);
         s.nip17unwrap = (wrap) => _nip17unwrapVia((p,ct)=>window.nostr.nip44.decrypt(p,ct), wrap);
         s.nip44dec = (peer, ct) => window.nostr.nip44.decrypt(peer, ct);
+        s.nip44enc = (peer, text) => window.nostr.nip44.encrypt(peer, text);
       }
       return s;
     }
@@ -105,6 +106,7 @@
                                                  (tpl)=>Nip46.signEvent(tpl), peer, text),
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip46.nip44dec(peer, ct),
+        nip44enc: (peer, text) => Nip46.nip44enc(peer, text),
       };
     }
     return {  // local key — crypto in the worker
@@ -113,6 +115,7 @@
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
       nip04dec: (peer, ct) => Relay.worker.call('nip04dec', { peer, ct }).then(r=>r.pt),
       nip44dec: (peer, ct) => Relay.worker.call('nip44dec', { peer, ct }).then(r=>r.pt),
+      nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
       nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text }),
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
@@ -2850,6 +2853,7 @@
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:this.data})}); }catch(_){} }, 700); },
     folders(){ return this._norm().folders; },
     addFolder(name){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); this.push(); return true; },
+    removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
     meta(sha){ return this._norm().files[sha]||null; },
     folderOf(sha){ const m=this._norm().files[sha]; return (m&&m.folder)||''; },
     setFile(sha, m){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
@@ -2871,6 +2875,7 @@
         <button class="folder-chip${_filesFolder===''?' active':''}" data-folder="">🗂 All</button>
         ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':'📁'} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder">＋ New folder</button>
+        ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder">🗑 Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
       ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple hidden>
@@ -2883,6 +2888,7 @@
     pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
     $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=()=>{ const n=prompt('New folder name:'); if(n&&FilesIdx.addFolder(n)){ _filesFolder=n.trim().slice(0,40); renderBlossom(); } else if(n) toast('folder exists'); }; }
+    { const df=$('#bl-delfolder',pane); if(df) df.onclick=()=>{ if(confirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     if(canUp){
       const fileInput=$('#bl-file',pane), drop=$('#bl-drop',pane);
       $('#bl-pick',pane).onclick=()=>fileInput.click();
@@ -2894,11 +2900,12 @@
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
-    if(list!==null) _renderFilesGrid($('#bl-grid',pane), list);
+    if(list!==null){ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); }
   }
   function _renderFilesGrid(grid, list){
     if(!grid) return;
-    const inFolder = list.filter(b=> _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder);
+    // hide encrypted music ciphertext from the normal grid — those live in the Music folder's track list
+    const inFolder = list.filter(b=> !(FilesIdx.meta(b.sha256)||{}).enc && (_filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder));
     grid.innerHTML = inFolder.length ? inFolder.map(b=>{
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||'';
       return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
@@ -2919,20 +2926,98 @@
     const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
     openMenuPopover(anchor, opts, v=>{ FilesIdx.move(sha, v==='__all'?'':v); toast('moved'); renderBlossom(); });
   }
-  // Upload a batch ONE AT A TIME (sequential) into the current folder, with a per-file progress queue.
+  // Upload a batch ONE AT A TIME (sequential), into the current folder, with a per-file progress queue.
+  // In the Music folder, audio files go through the compress→encrypt pipeline; everything else uploads
+  // straight to Blossom.
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
+    const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
     const q=$('#bl-queue'); if(q) q.innerHTML=files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
     for(let i=0;i<files.length;i++){
-      const stat=$('#up-stat-'+i); if(stat) stat.textContent='uploading…';
+      const stat=$('#up-stat-'+i);
       try{
-        const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
-        if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_filesFolder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
-        if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+        if(music){
+          if(!(files[i].type||'').startsWith('audio/')){ if(stat) stat.textContent='skipped (not audio)'; continue; }
+          await uploadMusicTrack(files[i], stat); if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+        } else {
+          if(stat) stat.textContent='uploading…';
+          const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
+          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+          if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+        }
       }catch(e){ if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
     }
-    toast('uploaded '+files.length+' file'+(files.length>1?'s':'')); setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 600);
+    toast('done'); setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
   }
+
+  // ---- Music: Opus-compressed + AES-256-GCM-encrypted tracks in the Music folder ----------------------
+  // raw audio → server Opus transcode (compression) → AES-GCM encrypt (random per-file key) → upload the
+  // CIPHERTEXT to the user's Blossom → store the NIP-44 self-wrapped key in the index. Playback fetches
+  // the ciphertext, unwraps the key, decrypts in-browser → object URL. So Blossom only ever holds opaque
+  // ciphertext; only the owner's signer can unwrap it.
+  function _u8b64(u8){ let s='',C=0x8000; for(let i=0;i<u8.length;i+=C) s+=String.fromCharCode.apply(null,u8.subarray(i,i+C)); return btoa(s); }
+  function _b64u8(b){ const s=atob(b),u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; }
+  async function _aesEncrypt(plain){ const key=crypto.getRandomValues(new Uint8Array(32)),iv=crypto.getRandomValues(new Uint8Array(12));
+    const ck=await crypto.subtle.importKey('raw',key,'AES-GCM',false,['encrypt']);
+    const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain)); return {ct,key,iv}; }
+  async function _aesDecrypt(ct,key,iv){ const ck=await crypto.subtle.importKey('raw',key,'AES-GCM',false,['decrypt']);
+    return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
+  async function uploadMusicTrack(file, statEl){
+    if(!signer.nip44enc) throw new Error('signer can\'t encrypt (needs NIP-44)');
+    const setS=t=>{ if(statEl) statEl.textContent=t; };
+    setS('compressing…');
+    const auth=await sign(27235,'music',[['p',ME.pubkey]]);
+    const cr=await fetch('/client/music-compress',{method:'POST',headers:{'X-Pubkey':ME.pubkey,'X-Auth':btoa(JSON.stringify(auth))},body:file});
+    if(!cr.ok){ let m='compress failed'; try{ m=(await cr.json()).error||m; }catch(_){} throw new Error(m); }
+    const opus=new Uint8Array(await cr.arrayBuffer());
+    setS('encrypting…');
+    const {ct,key,iv}=await _aesEncrypt(opus);
+    const keyenc=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(key),iv:_u8b64(iv)}));
+    setS('uploading…');
+    const url=await uploadBlob(new File([ct],(file.name||'track')+'.enc',{type:'application/octet-stream'}));
+    const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
+    FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,keyenc,size:opus.length,ts:Math.floor(Date.now()/1000)});
+  }
+  const _trackUrls={};   // sha -> decrypted object URL (cached for the session)
+  async function trackUrl(sha){
+    if(_trackUrls[sha]) return _trackUrls[sha];
+    const m=FilesIdx.meta(sha); if(!m||!m.enc||!m.keyenc) throw new Error('not an encrypted track');
+    const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
+    const ct=new Uint8Array(await r.arrayBuffer());
+    const {k,iv}=JSON.parse(await signer.nip44dec(ME.pubkey, m.keyenc));
+    const plain=await _aesDecrypt(ct,_b64u8(k),_b64u8(iv));
+    const u=URL.createObjectURL(new Blob([plain],{type:m.mime||'audio/ogg'})); _trackUrls[sha]=u; return u;
+  }
+  function musicTracks(list){
+    const have=list?new Set(list.map(b=>b.sha256)):null;
+    return Object.keys(FilesIdx._norm().files)
+      .filter(sha=> FilesIdx.folderOf(sha)==='Music' && FilesIdx.meta(sha).enc && (!have||have.has(sha)))
+      .map(sha=>({sha, m:FilesIdx.meta(sha)})).sort((a,b)=>(b.m.ts||0)-(a.m.ts||0));
+  }
+  function _renderMusicList(grid, list){
+    if(!grid) return;
+    const tracks=musicTracks(list);
+    grid.className='music-list';
+    grid.innerHTML = tracks.length ? tracks.map(t=>`<div class="track" data-sha="${t.sha}">
+        <button class="track-play" data-sha="${t.sha}">▶</button>
+        <span class="track-name">${enc(t.m.name||'track')}</span>
+        <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
+        <button class="track-del" data-sha="${t.sha}" title="Delete">✕</button>
+      </div>`).join('') : '<div class="empty">No music yet — drop audio files here. They\'re Opus-compressed + encrypted automatically.</div>';
+    $$('.track-play',grid).forEach(b=> b.onclick=()=>_playInline(b.dataset.sha));
+    $$('.track-del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+  }
+  let _audioEl=null, _curSha=null;
+  async function _playInline(sha){
+    try{
+      if(!_audioEl){ _audioEl=new Audio(); _audioEl.onplay=_audioEl.onpause=_audioEl.onended=_syncTrackBtns; }
+      if(_curSha===sha && _audioEl.src){ if(_audioEl.paused) await _audioEl.play(); else _audioEl.pause(); return; }
+      _syncTrackBtns('…',sha);
+      const u=await trackUrl(sha); _curSha=sha; _audioEl.src=u; await _audioEl.play(); _syncTrackBtns();
+    }catch(e){ toast('play failed: '+(e.message||e)); _syncTrackBtns(); }
+  }
+  function _syncTrackBtns(loadTxt, loadSha){ $$('.track-play').forEach(b=>{
+    b.textContent = (loadSha&&b.dataset.sha===loadSha)?'…' : (b.dataset.sha===_curSha && _audioEl && !_audioEl.paused)?'⏸':'▶'; }); }
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
   async function renderAiFiles(pane){
@@ -2967,7 +3052,7 @@
     if(!confirm('Delete this blob?'))return; const server=mediaServer();
     const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
-    if(res.ok){ toast('deleted'); renderBlossom(); } else toast('delete failed');
+    if(res.ok){ FilesIdx.forget(sha); delete _trackUrls[sha]; toast('deleted'); renderBlossom(); } else toast('delete failed');
   }
 
   // ---------- notifications ----------

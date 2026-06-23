@@ -1311,6 +1311,29 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
 
 
+# ----- music: transcode an upload to Opus (compression) — client then encrypts + uploads to Blossom -----
+@router.post("/music-compress")
+async def music_compress(request: Request, db: Session = Depends(get_db)):
+    """Transcode an uploaded audio file to Opus (~96 kbps) to save bandwidth. Stateless — returns the
+    compressed bytes; the client encrypts them and uploads the ciphertext to its own Blossom. Gated by
+    a self-signed Nostr auth (any signed-in user) so the transcode CPU isn't an anonymous abuse surface."""
+    pk = nostr_service.to_pubkey_hex(request.headers.get("x-pubkey", ""))
+    if not pk or not _verify_self_auth(request.headers.get("x-auth", ""), pk):
+        return JSONResponse({"error": "auth required"}, status_code=403)
+    data = await request.body()
+    if not data:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    if len(data) > 300 * 1024 * 1024:
+        return JSONResponse({"error": "too large (max 300 MB)"}, status_code=413)
+    from app.services.media_service import compress_audio_opus
+    try:
+        out = await asyncio.to_thread(compress_audio_opus, data)
+    except Exception as e:
+        return JSONResponse({"error": f"transcode failed: {e}"}, status_code=500)
+    return Response(content=out, media_type="audio/ogg",
+                    headers={"Cache-Control": "no-store"})
+
+
 # ----- delete my account (the AI app account + all its data) -----
 class DeleteAccountReq(BaseModel):
     pubkey: str

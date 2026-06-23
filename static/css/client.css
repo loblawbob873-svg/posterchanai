@@ -424,6 +424,16 @@ a.btn.full{display:block}
 .up-name{color:#cfe9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-stat{color:var(--muted);flex:none}.up-stat.ok{color:#5dffb0}.up-stat.err{color:#ff6b8b}
 .file-card[draggable]{cursor:grab}.file-card .movebtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px}.file-card .movebtn:hover{color:var(--cyan)}
+.folder-chip.delfolder{color:#ff6b8b;border-color:rgba(255,107,139,.5)}.folder-chip.delfolder:hover{background:rgba(255,107,139,.14);border-color:#ff6b8b}
+/* Music folder: encrypted track list (cyberpunk) */
+.music-list{display:flex;flex-direction:column;gap:8px;padding:16px}
+.track{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:13px;background:linear-gradient(180deg,#160a28,#100420);border:1px solid rgba(0,240,255,.3);transition:.12s}
+.track:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,240,255,.18)}
+.track-play{flex:none;width:40px;height:40px;border-radius:50%;border:2px solid var(--cyan);background:rgba(0,240,255,.1);color:var(--cyan);font-size:15px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:.12s}
+.track-play:hover{background:var(--cyan);color:#04121a;box-shadow:0 0 14px rgba(0,240,255,.5)}
+.track-name{flex:1;min-width:0;color:#eaf0ff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.track-meta{flex:none;color:var(--muted);font-size:12px}
+.track-del{flex:none;background:none;border:none;color:#ff6b8b;cursor:pointer;font-size:14px;padding:2px 6px;opacity:.7}.track-del:hover{opacity:1}
 .blossom-locked{margin:16px;padding:18px 20px;border-radius:14px;text-align:center}
 .blossom-locked b{font-size:16px}
 .blossom-locked p{margin:6px 0 12px}

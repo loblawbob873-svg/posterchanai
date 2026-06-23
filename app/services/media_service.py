@@ -173,6 +173,30 @@ def resolve_ffmpeg() -> str:
     return _FFMPEG_BIN
 
 
+def compress_audio_opus(data: bytes, bitrate: str = "96k") -> bytes:
+    """Transcode arbitrary audio bytes to Opus in an Ogg container at `bitrate` (default 96k — great
+    quality-per-byte for music, e.g. a 50 MB WAV → ~3-4 MB) via the system ffmpeg, to save storage and
+    bandwidth. Returns the compressed bytes. Raises on failure."""
+    ff = resolve_ffmpeg()
+    fd, inp = tempfile.mkstemp(suffix=".audio")
+    os.close(fd)
+    out = inp + ".ogg"
+    try:
+        with open(inp, "wb") as f:
+            f.write(data)
+        subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", inp,
+                        "-vn", "-c:a", "libopus", "-b:a", bitrate, "-application", "audio", out],
+                       check=True, capture_output=True, timeout=600)
+        with open(out, "rb") as f:
+            return f.read()
+    finally:
+        for p in (inp, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def ffmpeg_available() -> bool:
     try:
         subprocess.run([resolve_ffmpeg(), '-version'], capture_output=True, timeout=5, check=True)
