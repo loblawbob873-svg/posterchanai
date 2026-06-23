@@ -464,8 +464,10 @@ async def _spawn_job(ev: dict) -> None:
 
 
 async def _run_local(task: str, params: dict) -> dict:
-    """Run a job on THIS node's GPU via the existing local-execution paths (local_only=True so they
-    never bounce back out to the network). Opens a fresh DB session (worker runs outside requests)."""
+    """Serve a job by handing it to THIS node's own IP load balancer (chat_server_urls) + local GPU —
+    `dvm_offload=False` so it spreads across this node's cluster (e.g. server1 + nas) WITHOUT
+    re-dispatching back out over Nostr (no loop). The peer that picks up an HTTP-forwarded request sees
+    a plain local request. Opens a fresh DB session (the worker runs outside requests)."""
     from app.database import SessionLocal
     db = SessionLocal()
     try:
@@ -474,7 +476,7 @@ async def _run_local(task: str, params: dict) -> dict:
             b64 = await generate_image_with_load_balancing(
                 db, params.get("prompt", ""), params.get("negative_prompt", ""),
                 params.get("width"), params.get("height"), params.get("steps"),
-                params.get("cfg"), local_only=True)
+                params.get("cfg"), local_only=False, dvm_offload=False)
             if not b64:
                 return {"error": "image generation returned nothing"}
             ref = await put_media(base64.b64decode(b64))
@@ -483,7 +485,7 @@ async def _run_local(task: str, params: dict) -> dict:
             from app.services.music_factory import generate_music_for_user
             audio, ext = await generate_music_for_user(
                 db, params.get("prompt", ""), params.get("lyrics", ""),
-                params.get("duration"), params.get("steps"), local_only=True)
+                params.get("duration"), params.get("steps"), local_only=False, dvm_offload=False)
             ref = await put_media(audio)
             if not ref:
                 return {"error": "blossom upload failed"}
@@ -492,18 +494,37 @@ async def _run_local(task: str, params: dict) -> dict:
         if task == "video":
             from app.services.video_factory import generate_video_for_user
             mp4 = await generate_video_for_user(
-                db, params.get("prompt", ""), params.get("negative_prompt", ""), local_only=True)
+                db, params.get("prompt", ""), params.get("negative_prompt", ""),
+                local_only=False, dvm_offload=False)
             ref = await put_media(mp4)
             return ref or {"error": "blossom upload failed"}
         if task == "chat":
-            from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
-            prepare_vram_for_llm(db)
-            service = get_inference_service(db)
+            messages = params.get("messages", [])
             kwargs = {k: params[k] for k in
                       ("temperature", "top_p", "max_tokens", "stop", "model", "tools", "tool_choice")
                       if params.get(k) is not None}
-            result = await service.chat_completion(messages=params.get("messages", []),
-                                                   stream=False, **kwargs)
+            # Hand to this node's IP LB (chat_server_urls) so it spreads across the cluster, exactly
+            # like the media tasks — NOT the DVM consumer path (which would re-offload over Nostr → loop).
+            import os as _os
+            from app.services.load_balancer import LoadBalancer, parse_server_urls
+            s = settings_store.all_settings()
+            servers = parse_server_urls(s.get("chat_server_urls", ""), exclude_self=False)
+            if servers:
+                try:
+                    _lp = s.get("llm_model_path", "")
+                    model = kwargs.get("model") or (_os.path.basename(_lp) if _lp else "default")
+                    timeout = int(s.get("ollama_timeout", "300000") or "300000") / 1000
+                    lb_kw = {k: kwargs[k] for k in ("temperature", "top_p", "max_tokens", "stop", "tools", "tool_choice") if k in kwargs}
+                    lbres = await LoadBalancer(servers, timeout=timeout, model=model).chat(messages=messages, **lb_kw)
+                    if isinstance(lbres, dict) and "error" not in lbres:
+                        return {"completion": lbres}
+                except Exception as e:
+                    logger.info("[dvm] chat LB hop failed (%s) → local", e)
+            # Local fallback (no LB configured, or it failed)
+            from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
+            prepare_vram_for_llm(db)
+            service = get_inference_service(db)
+            result = await service.chat_completion(messages=messages, stream=False, **kwargs)
             if "error" in result:
                 return {"error": result["error"].get("message", "inference error")}
             return {"completion": result}

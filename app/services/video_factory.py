@@ -120,6 +120,7 @@ async def generate_video_for_user(
     prompt: str,
     negative_prompt: str = "",
     local_only: bool = False,
+    dvm_offload: bool = True,
 ) -> bytes:
     """Generate a clip with node→node load balancing + (local) GPU lock + VRAM swap. Returns the
     assembled, branded MP4 bytes. `local_only` skips remote nodes (set by /api/generate-video).
@@ -141,8 +142,9 @@ async def generate_video_for_user(
     else:
         # This node distributes its OWN work over the IP LB; the CONSUMER side adds remote PROVIDERS
         # (machines others shared with us, reached over Nostr) as extra round-robin candidates.
+        # dvm_offload=False (serving a DVM job): use the IP LB but NOT Nostr providers (else loop).
         from app.services import nostr_dvm
-        prov = {p["pubkey"]: p["relay"] for p in nostr_dvm.providers()}
+        prov = {} if not dvm_offload else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers()}
         candidates = list(prov) + parse_video_server_urls(cfg["server_urls"])
         if cfg["local_enabled"]:
             candidates = candidates + [_LOCAL]

@@ -106,6 +106,7 @@ async def generate_music_for_user(
     duration: Optional[float] = None,
     steps: Optional[int] = None,
     local_only: bool = False,
+    dvm_offload: bool = True,
 ) -> Tuple[bytes, str]:
     """Generate a song with node→node load balancing + (local) GPU lock + VRAM swap. Returns
     (audio_bytes, ext). `local_only` skips remote nodes (set by the /api/generate-music endpoint so
@@ -124,8 +125,10 @@ async def generate_music_for_user(
     # machines. A forwarded request (/api/generate-music) is local_only — it generates HERE.
     # A node load-balances its OWN work over the IP LB; Nostr dispatch is the separate machine-sharing
     # path (provider/consumer), so own-serving never auto-dispatches over Nostr.
+    # dvm_offload=False (serving a DVM job): use the IP LB but NOT Nostr providers (else it re-offloads
+    # the job back out over Nostr and loops).
     from app.services import nostr_dvm
-    prov = {} if local_only else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers()}
+    prov = {} if (local_only or not dvm_offload) else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers()}
     if local_only:
         candidates = [_LOCAL]
     else:

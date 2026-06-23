@@ -133,6 +133,7 @@ async def generate_image_with_load_balancing(
     steps: Optional[int] = None,
     cfg: Optional[float] = None,
     local_only: bool = False,
+    dvm_offload: bool = True,
 ) -> Optional[str]:
     """
     Generate an image with node→node load balancing. Round-robins across [remote nodes…, local] so
@@ -157,9 +158,11 @@ async def generate_image_with_load_balancing(
     # robust local-IP detection (ip addr / outbound-socket), so it reliably drops this node's IP.
     # This node distributes its OWN work over the IP LB (server_urls); the CONSUMER side adds remote
     # PROVIDERS (machines others shared with us, reached over Nostr) as extra round-robin candidates.
+    # dvm_offload=False (a DVM worker serving someone else's job): spread over the IP LB (server_urls)
+    # but DON'T add Nostr providers — that would re-dispatch the job back out over Nostr and loop.
     from app.services import nostr_dvm
     from app.services.load_balancer import parse_server_urls
-    prov = {} if local_only else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers(settings)}
+    prov = {} if (local_only or not dvm_offload) else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers(settings)}
     remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
 
     candidates = ([_LOCAL] if allow_local else []) + list(prov) + remote
