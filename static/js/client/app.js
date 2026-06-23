@@ -2828,36 +2828,110 @@
     if(_filesTab==='ai') return renderAiFiles(pane);
     return renderPublicFiles(pane);
   }
-  // Public tab — your own/built-in Blossom blobs (shareable). Uploader + grid.
+  // Folder index — the folder tree + each file's {name,folder,...}. One encrypted doc under the storage
+  // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
+  // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
+  const FilesIdx = {
+    data: { folders: ['Music'], files: {} }, _pulled:false, _t:null,
+    _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
+    _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{}};
+      if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
+      if(!this.data.files||typeof this.data.files!=='object') this.data.files={};
+      if(!this.data.folders.includes('Music')) this.data.folders.unshift('Music'); return this.data; },
+    loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){} return this._norm(); },
+    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); }catch(_){} },
+    async pull(){ try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+      const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      if(r&&r.ok&&r.index&&typeof r.index==='object'&&r.index.files){ this.data=r.index; this.saveLocal(); } }catch(_){} return this._norm(); },
+    push(){ this.saveLocal(); clearTimeout(this._t); this._t=setTimeout(async()=>{
+      try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+        await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:this.data})}); }catch(_){} }, 700); },
+    folders(){ return this._norm().folders; },
+    addFolder(name){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); this.push(); return true; },
+    meta(sha){ return this._norm().files[sha]||null; },
+    folderOf(sha){ const m=this._norm().files[sha]; return (m&&m.folder)||''; },
+    setFile(sha, m){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, m); this.push(); },
+    move(sha, folder){ this._norm(); this.data.files[sha]=Object.assign(this.data.files[sha]||{}, {folder}); this.push(); },
+    forget(sha){ this._norm(); delete this.data.files[sha]; this.push(); },
+  };
+  function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
+  let _filesFolder = '';   // current folder ('' = All)
+  // Public tab — your Blossom blobs, organised into client-side folders. Drag-drop + folders + grid.
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
+    FilesIdx.loadLocal();
+    if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(()=>{ if(VIEW==='blossom') renderBlossom(); }); }
     pane.innerHTML='<div class="spinner"></div>';
     const canUp=await blossomCanUpload();
+    const folders=FilesIdx.folders();
+    const folderBar = `<div class="folder-bar">
+        <button class="folder-chip${_filesFolder===''?' active':''}" data-folder="">🗂 All</button>
+        ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':'📁'} ${enc(f)}</button>`).join('')}
+        <button class="folder-chip newfolder" id="bl-newfolder">＋ New folder</button>
+      </div>`;
     const head = canUp
-      ? `<div class="uploader"><input type="file" id="bl-file" multiple> <button class="btn btn-cyan small" id="bl-up">Upload</button> <span class="muted small">→ ${enc(server)}</span></div>`
-      : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
+      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple hidden>
+          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button>
+          <div class="muted small">→ ${_filesFolder?('📁 '+enc(_filesFolder)):'All files'} · uploaded one at a time</div></div>
+          <div class="up-queue" id="bl-queue"></div></div>`
+      : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
            <button class="btn btn-cyan" id="bl-request">🌸 Request upload access</button></div>`;
     pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
+    $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
+    { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=()=>{ const n=prompt('New folder name:'); if(n&&FilesIdx.addFolder(n)){ _filesFolder=n.trim().slice(0,40); renderBlossom(); } else if(n) toast('folder exists'); }; }
     if(canUp){
-      $('#bl-up',pane).onclick=async()=>{ const files=[...$('#bl-file',pane).files]; if(!files.length)return;
-        for(let i=0;i<files.length;i++){ try{ await uploadBlob(files[i]); toast(`uploaded ${i+1}/${files.length}`); }catch(e){ if(_blossomDenied(e)){ requestBlossomAccess(); } toast('upload failed: '+e.message);} }
-        renderBlossom(); };
-    } else {
-      const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb);
-    }
+      const fileInput=$('#bl-file',pane), drop=$('#bl-drop',pane);
+      $('#bl-pick',pane).onclick=()=>fileInput.click();
+      fileInput.onchange=()=>{ const fs=[...fileInput.files]; fileInput.value=''; uploadFilesSeq(fs); };
+      drop.ondragover=e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); drop.classList.add('over'); } };
+      drop.ondragleave=()=>drop.classList.remove('over');
+      drop.ondrop=e=>{ const fs=[...((e.dataTransfer&&e.dataTransfer.files)||[])]; if(fs.length){ e.preventDefault(); drop.classList.remove('over'); uploadFilesSeq(fs); } };
+    } else { const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb); }
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
-    catch(e){ $('#bl-grid',pane).innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
-    if(list!==null){
-      const grid=$('#bl-grid',pane);
-      grid.innerHTML = list.length ? list.map(b=>
-        `<div class="file-card" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a><button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button><div class="meta"><span>${((b.size||0)/1024|0)}KB</span><span>${(b.type||'').split('/')[1]||''}</span></div></div>`
-      ).join('') : '<div class="empty">No files yet — upload one above.</div>';
-      $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
-      $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
+    if(list!==null) _renderFilesGrid($('#bl-grid',pane), list);
+  }
+  function _renderFilesGrid(grid, list){
+    if(!grid) return;
+    const inFolder = list.filter(b=> _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder);
+    grid.innerHTML = inFolder.length ? inFolder.map(b=>{
+      const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||'';
+      return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
+        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
+        <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):(((b.size||0)/1024|0)+'KB')}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
+    }).join('') : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+    $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    $$('.movebtn',grid).forEach(b=> b.onclick=(e)=>_moveMenu(e.currentTarget, b.dataset.sha));
+    $$('.file-card',grid).forEach(card=> card.ondragstart=e=>{ if(e.dataTransfer) e.dataTransfer.setData('text/sha', card.dataset.sha); });
+    $$('.folder-chip[data-folder]').forEach(chip=>{
+      chip.ondragover=e=>{ e.preventDefault(); chip.classList.add('drop'); };
+      chip.ondragleave=()=>chip.classList.remove('drop');
+      chip.ondrop=e=>{ e.preventDefault(); chip.classList.remove('drop'); const sha=e.dataTransfer&&e.dataTransfer.getData('text/sha'); if(sha){ FilesIdx.move(sha, chip.dataset.folder); toast('moved to '+(chip.dataset.folder||'All')); renderBlossom(); } };
+    });
+  }
+  function _moveMenu(anchor, sha){
+    const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
+    openMenuPopover(anchor, opts, v=>{ FilesIdx.move(sha, v==='__all'?'':v); toast('moved'); renderBlossom(); });
+  }
+  // Upload a batch ONE AT A TIME (sequential) into the current folder, with a per-file progress queue.
+  async function uploadFilesSeq(files){
+    files=files.filter(Boolean); if(!files.length) return;
+    const q=$('#bl-queue'); if(q) q.innerHTML=files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
+    for(let i=0;i<files.length;i++){
+      const stat=$('#up-stat-'+i); if(stat) stat.textContent='uploading…';
+      try{
+        const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
+        if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_filesFolder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+        if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+      }catch(e){ if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
     }
+    toast('uploaded '+files.length+' file'+(files.length>1?'s':'')); setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 600);
   }
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.

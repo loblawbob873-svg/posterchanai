@@ -1280,6 +1280,37 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "drafts": drafts if isinstance(drafts, list) else []})
 
 
+# ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----
+class FilesIndexReq(BaseModel):
+    pubkey: str
+    auth: str
+    index: dict | None = None   # present → save; absent → load
+
+
+@router.post("/files-index")
+async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
+    """Save/load the Files folder index — the folder tree + each file's {name, folder, store, key…},
+    stored as ONE encrypted doc under the user's storage key (cross-device, survives reinstalls). The
+    blobs themselves live in Blossom; this is just the foldering/metadata overlay (+ wrapped keys for
+    encrypted Music tracks)."""
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "index": {}})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    if data.index is not None:
+        await store.put_doc(port, sk, "pcai:files-index", data.index)
+        return JSONResponse({"ok": True})
+    doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
+    return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
+
+
 # ----- delete my account (the AI app account + all its data) -----
 class DeleteAccountReq(BaseModel):
     pubkey: str

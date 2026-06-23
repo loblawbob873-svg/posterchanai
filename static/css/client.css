@@ -407,6 +407,23 @@ a.btn.full{display:block}
 .file-card .copy{position:absolute;top:6px;right:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 7px;font-size:13px}
 .file-card .copy:hover{border-color:var(--cyan,#5ff)}
 .uploader{padding:18px;border-bottom:1px solid var(--line)}
+/* Files: folder bar + drag-drop upload zone (cyberpunk) */
+.folder-bar{display:flex;gap:7px;flex-wrap:wrap;padding:12px 16px 0}
+.folder-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:13px;border:1px solid var(--line);background:rgba(0,240,255,.06);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:.12s;white-space:nowrap}
+.folder-chip:hover{color:var(--text);border-color:var(--cyan);background:rgba(0,240,255,.13)}
+.folder-chip.active{color:#04121a;background:linear-gradient(135deg,var(--neon,#0ff),var(--neon2,#0cf));border-color:transparent;text-shadow:none;box-shadow:0 0 12px rgba(0,240,255,.4)}
+.folder-chip.newfolder{color:var(--neon2,#0cf);border-style:dashed}
+.folder-chip.drop{border-color:#ffd25a;box-shadow:0 0 12px rgba(255,210,90,.5)}
+.drop-zone{margin:12px 16px;border:2px dashed rgba(0,240,255,.4);border-radius:16px;background:radial-gradient(ellipse at center,rgba(0,240,255,.05),transparent);padding:18px;text-align:center;transition:.15s}
+.drop-zone.over{border-color:var(--neon,#0ff);background:rgba(0,240,255,.12);box-shadow:inset 0 0 26px rgba(0,240,255,.18)}
+.dz-inner{display:flex;flex-direction:column;align-items:center;gap:7px;color:var(--muted);font-size:14px}
+.dz-ic{font-size:26px;color:var(--cyan);filter:drop-shadow(0 0 7px rgba(0,240,255,.6))}
+.up-queue{display:flex;flex-direction:column;gap:4px;margin-top:10px;text-align:left}
+.up-queue:empty{display:none}
+.up-item{display:flex;justify-content:space-between;gap:10px;font-size:12px;background:rgba(0,240,255,.05);border-radius:8px;padding:4px 10px}
+.up-name{color:#cfe9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.up-stat{color:var(--muted);flex:none}.up-stat.ok{color:#5dffb0}.up-stat.err{color:#ff6b8b}
+.file-card[draggable]{cursor:grab}.file-card .movebtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px}.file-card .movebtn:hover{color:var(--cyan)}
 .blossom-locked{margin:16px;padding:18px 20px;border-radius:14px;text-align:center}
 .blossom-locked b{font-size:16px}
 .blossom-locked p{margin:6px 0 12px}
