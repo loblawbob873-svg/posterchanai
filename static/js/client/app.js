@@ -3038,14 +3038,14 @@
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;
   const MusicPlayer = {
-    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false,
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _viz:{an:null,raf:0,failed:false},
     ensure(){
       if(this.el) return this.el;
       const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.body.appendChild(d); this.el=d;
       if(!_audioEl) _audioEl=new Audio();
       _audioEl.ontimeupdate=()=>this._tick();
       _audioEl.onended=()=>this.next();
-      _audioEl.onplay=()=>{ this._render(); };
+      _audioEl.onplay=()=>{ this._render(); this._startViz(); };
       _audioEl.onpause=()=>{ this._render(); };
       return d;
     },
@@ -3074,12 +3074,13 @@
       this.ensure(); const d=this.el; const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
       if(this.min){
-        d.className='mp mp-mini';
+        d.className='mp mp-mini'+(playing?' playing':'');
         d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play">${pl}</button><button class="mp-exp" title="Expand">▢</button>`;
       } else {
-        d.className='mp';
+        d.className='mp'+(playing?' playing':'');
         const list=this.queue.map(sha=>{ const mm=FilesIdx.meta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join('');
-        d.innerHTML=`<div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close">✕</button></div>
+        d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close">✕</button></div>
+          <canvas class="mp-viz"></canvas>
           <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
           <div class="mp-seek"><div class="mp-seek-fill"></div></div>
           <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
@@ -3087,6 +3088,7 @@
           <div class="mp-list">${list||'<div class="muted small" style="padding:10px;text-align:center">No tracks in Music yet</div>'}</div>`;
       }
       this._wire(); this._tick(); _updateMusicListBtns();
+      if(!this.min && _audioEl && !_audioEl.paused) this._startViz();
     },
     _wire(){
       const d=this.el, qq=s=>d.querySelector(s), b=(s,fn)=>{ const e=qq(s); if(e) e.onclick=fn; };
@@ -3102,6 +3104,25 @@
       const up=()=>{ on=false; removeEventListener('mousemove',move); removeEventListener('mouseup',up); removeEventListener('touchmove',move); removeEventListener('touchend',up); };
       const down=e=>{ if(e.target.closest('button')) return; const p=e.touches?e.touches[0]:e; const r=d.getBoundingClientRect(); on=true; sx=p.clientX; sy=p.clientY; ox=r.left; oy=r.top; d.style.right='auto'; d.style.bottom='auto'; d.style.left=ox+'px'; d.style.top=oy+'px'; addEventListener('mousemove',move); addEventListener('mouseup',up); addEventListener('touchmove',move,{passive:false}); addEventListener('touchend',up); };
       handle.onmousedown=down; handle.ontouchstart=down; },
+    _startViz(){ if(this._setupViz()){ try{ this._viz.ctx.resume(); }catch(_){} this._drawViz(); } },
+    _setupViz(){ const v=this._viz; if(v.an) return true; if(v.failed) return false;
+      try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC){ v.failed=true; return false; }
+        v.ctx=new AC(); v.src=v.ctx.createMediaElementSource(_audioEl); v.an=v.ctx.createAnalyser();
+        v.an.fftSize=128; v.an.smoothingTimeConstant=0.82; v.src.connect(v.an); v.an.connect(v.ctx.destination); return true;
+      }catch(e){ v.failed=true; return false; } },
+    _drawViz(){ const v=this._viz; if(!v.an) return; if(v.raf) cancelAnimationFrame(v.raf);
+      const dpr=Math.min(2,window.devicePixelRatio||1), data=new Uint8Array(v.an.frequencyBinCount);
+      const loop=()=>{ const cv=this.el&&this.el.querySelector('.mp-viz');
+        if(!cv || this.el.classList.contains('hidden') || this.min || !_audioEl || _audioEl.paused){ v.raf=0; return; }
+        const W=cv.width=Math.floor(cv.clientWidth*dpr), H=cv.height=Math.floor(cv.clientHeight*dpr);
+        if(!W||!H){ v.raf=requestAnimationFrame(loop); return; }
+        const cx=cv.getContext('2d'); v.an.getByteFrequencyData(data); cx.clearRect(0,0,W,H);
+        const n=Math.min(data.length,42), bw=W/n;
+        for(let i=0;i<n;i++){ const h=Math.max(2*dpr,(data[i]/255)*H), x=i*bw;
+          const g=cx.createLinearGradient(0,H,0,H-h); g.addColorStop(0,'#00f0ff'); g.addColorStop(.5,'#7df0ff'); g.addColorStop(1,'#ff2bd6');
+          cx.fillStyle=g; cx.shadowColor='#00f0ff'; cx.shadowBlur=7*dpr; cx.fillRect(x+dpr,H-h,Math.max(1,bw-2*dpr),h); }
+        v.raf=requestAnimationFrame(loop); };
+      v.raf=requestAnimationFrame(loop); },
   };
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
