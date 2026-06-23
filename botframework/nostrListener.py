@@ -85,6 +85,7 @@ _rr_starts = SlidingWindowLimiter(0, _RR_PER_HOUR, _RR_WINDOW)   # global-only: 
 _rr_threads: dict = {}    # thread-root id -> bot reply count (random-reply-initiated threads only)
 _rr_seen: set = set()     # note ids already considered (bounded)
 _rr_cursor = [0]          # newest created_at seen, so each poll only scans new notes
+_rr_next_scan = [0.0]     # throttle: replies are ≤N/hour, so scan the timeline every ~45s, not every poll
 
 
 def _rr_in_quiet() -> bool:
@@ -362,6 +363,10 @@ def process_random_replies():
     capped at _RR_MAX_THREAD bot replies (enforced in process_mentions). No-op unless enabled."""
     if not _RR_ENABLED or _rr_in_quiet():
         return
+    now_ts = time.time()
+    if now_ts < _rr_next_scan[0]:
+        return                       # throttled — the per-note cursor still catches everything next scan
+    _rr_next_scan[0] = now_ts + 45
     own = _nk._PUBKEY
     if not own:
         return

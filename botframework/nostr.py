@@ -415,31 +415,19 @@ def get_mentions(limit=40):
 
 
 def wait_for_relay(max_wait=90, interval=2):
-    """Block until the local relay answers a trivial query, or `max_wait` seconds elapse. Game/listener
-    bots are spawned at the SAME instant as the relay subprocess (a deploy/restart), so they begin
-    polling against a down/restarting relay — a start/move that lands in that window is claimed but its
-    publish fails, and the game silently never starts (every game bot went dead after a deploy until a
-    manual bounce). Calling this once before the poll loop makes the bot establish a working connection
-    first. Returns True once the relay responds; logs + returns False if it never does (start anyway).
-
-    NOTE: we connect + REQ directly rather than via query(), because query() swallows connection
-    errors and returns [] (it can't distinguish "relay down" from "no matching events") — so it would
-    make this wait a no-op. _connect() raises on a failed/handshake-incomplete connection, which is the
-    signal we actually need."""
+    """Block until the local relay accepts a websocket connection (or `max_wait` elapses). Game bots are
+    spawned at the same instant as the relay subprocess on a deploy/restart, so they begin polling
+    against a relay that isn't up yet — a start/move in that window is claimed but its publish fails and
+    the game silently never starts. _connect() raises while the relay is still coming up (unlike
+    query(), which swallows the error), so we loop on it. Returns True once reachable, else False."""
     if not _PUBKEY or not _RELAYS:
         return True
-    import time as _t, json as _json, uuid as _uuid
+    import time as _t
     relay = _RELAYS[0]
 
     async def _probe():
-        sid = _uuid.uuid4().hex[:8]
-        async with _svc.relay._connect(relay, False) as ws:   # raises if the relay isn't accepting yet
-            await ws.send(_json.dumps(["REQ", sid, {"kinds": [0], "limit": 1}]))
-            await asyncio.wait_for(ws.recv(), timeout=8)       # any EVENT/EOSE/NOTICE frame = serving
-            try:
-                await ws.send(_json.dumps(["CLOSE", sid]))
-            except Exception:
-                pass
+        async with _svc.relay._connect(relay, False):
+            pass   # handshake completed → the relay is up and serving
 
     deadline = _t.time() + max_wait
     while _t.time() < deadline:
