@@ -78,7 +78,7 @@
         if(!d.startsWith('pcai:connect4:')) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || (s.p1!==PC.ME.pubkey && s.p2!==PC.ME.pubkey)) continue;
-        const gid=s.root||d.slice('pcai:connect4:'.length);
+        const gid=s.root||d.slice('pcai:connect4:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
@@ -91,7 +91,7 @@
       const active=g.status==='active';
       if(!confirm(active?'Resign and remove this game?':'Remove this game?')) return;
       if(active){ try{ await move(g,'resign'); }catch(_){} }
-      _hide(g.root); _load();
+      _hide(g._gid||g.root); _load();
     }
     function _colFull(cells, c){ return !!cells[0*COLS+c]; }   // top cell of column filled = full
     function _boardHtml(cells){

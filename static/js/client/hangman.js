@@ -78,7 +78,7 @@
         if(!d.startsWith('pcai:hangman:')) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || (s.guesser!==PC.ME.pubkey && s.opponent!==PC.ME.pubkey)) continue;
-        const gid=s.root||d.slice('pcai:hangman:'.length);
+        const gid=s.root||d.slice('pcai:hangman:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
@@ -91,7 +91,7 @@
       const active=g.status==='active';
       if(!confirm(active?'Give up and remove this game?':'Remove this game?')) return;
       if(active && g.guesser===PC.ME.pubkey){ try{ await guess(g,'resign'); }catch(_){} }
-      _hide(g.root); _load();
+      _hide(g._gid||g.root); _load();
     }
     // Cyberpunk gallows drawn client-side from the wrong-guess count (the bot doesn't post mid-game).
     function _gallows(w){

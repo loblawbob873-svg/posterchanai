@@ -325,6 +325,7 @@ a.btn.full{display:block}
 /* compose / modal */
 .modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
 .modal{width:min(720px,96vw);max-height:92vh;overflow:auto;border-radius:18px;padding:22px}
+.modal.cmp-drop{outline:2px dashed var(--neon,#0ff);outline-offset:-8px;background:rgba(0,240,255,.06)}
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:21px}
 .modal textarea{min-height:220px;resize:vertical;font-size:15px}
 .cmp-tabs{display:flex;gap:6px;margin-bottom:6px}
@@ -885,7 +886,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .ai-gate .btn{margin-top:6px}
 
 /* ===== AI chat (merged web UI) ===== */
-.ai-chat{display:flex;flex-direction:column;height:100%;min-height:0}
+.ai-chat{display:flex;flex-direction:column;height:100%;min-height:0;position:relative}
+.ai-chat.ai-drop::after{content:"⬆ Drop files to attach";position:absolute;inset:8px;z-index:5;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--neon,#0ff);border:2px dashed var(--neon,#0ff);border-radius:16px;background:rgba(0,240,255,.10);pointer-events:none}
 .ai-bar{display:flex;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
 .ai-bar .input{margin:0;flex:1;max-width:420px;font-size:14px;padding:8px 12px}
 .ai-msgs{flex:1;min-height:0;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:12px}

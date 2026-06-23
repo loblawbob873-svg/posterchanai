@@ -105,7 +105,7 @@
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || !Array.isArray(s.seats) || !s.seats.includes(PC.ME.pubkey)) continue;
         if(Array.isArray(s.left) && s.left.includes(PC.ME.pubkey)) continue;  // you left this table — don't resurrect it
-        const gid=s.root||d.slice('pcai:holdem:'.length);
+        const gid=s.root||d.slice('pcai:holdem:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
@@ -208,7 +208,7 @@
     async function leaveTable(g){
       if(!confirm('Leave this table? The hand continues with the others.')) return;
       try{ await move(g,'leave'); }catch(_){}
-      _hide(g.root); _load();
+      _hide(g._gid||g.root); _load();
     }
     async function move(game, action, amount){
       // Moves go through the reliable kind-30078 command channel (not a flaky NIP-17 DM). Retry a few

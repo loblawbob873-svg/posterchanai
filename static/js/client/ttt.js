@@ -77,7 +77,7 @@
         if(!d.startsWith('pcai:ttt:')) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || (s.x!==PC.ME.pubkey && s.o!==PC.ME.pubkey)) continue;
-        const gid=s.root||d.slice('pcai:ttt:'.length);
+        const gid=s.root||d.slice('pcai:ttt:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
@@ -90,7 +90,7 @@
       const active=g.status==='active';
       if(!confirm(active?'Resign and remove this game?':'Remove this game?')) return;
       if(active){ try{ await move(g,'resign'); }catch(_){} }
-      _hide(g.root); _load();
+      _hide(g._gid||g.root); _load();
     }
     function _boardHtml(cells){
       let h='<div class="ttt-board">';

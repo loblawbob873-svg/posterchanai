@@ -17,7 +17,7 @@
       const active = g.status==='active';
       if(!confirm(active ? 'Resign and remove this game?' : 'Remove this game from your list?')) return;
       if(active){ try{ await chessMove(g, 'resign'); }catch(_){} }   // tell the bot you resigned
-      _hideGame(g.root);
+      _hideGame(g._gid||g.root);
       _loadMyChessGames();
     }
 
@@ -108,7 +108,7 @@
         if(!d.startsWith('pcai:chesstr:') || d.startsWith('pcai:chesstr:player:')) continue;
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || (s.white!==PC.ME.pubkey && s.black!==PC.ME.pubkey)) continue;
-        const gid=s.root||d.slice('pcai:chesstr:'.length);
+        const gid=s.root||d.slice('pcai:chesstr:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;   // resigned/quit or cleared from this device
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }

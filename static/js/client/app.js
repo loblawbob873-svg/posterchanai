@@ -2716,6 +2716,16 @@
           try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
           catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent=''; e.target.value=''; };
+      // drag & drop files onto the composer → upload + append URLs (same as 📎 Attach / paste)
+      { const _cmpDrop=async files=>{ files=files.filter(Boolean); if(!files.length)return;
+          for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
+            try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+            catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
+          $('#cmp-status',root).textContent=''; };
+        root.addEventListener('dragover',e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); root.classList.add('cmp-drop'); } });
+        root.addEventListener('dragleave',e=>{ if(e.target===root) root.classList.remove('cmp-drop'); });
+        root.addEventListener('drop',async e=>{ if(!(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')))return; e.preventDefault(); root.classList.remove('cmp-drop'); await _cmpDrop([...(e.dataTransfer.files||[])]); });
+      }
       $('#cmp-draft',root).onclick=()=>{
         const body=ta.value.trim(); if(!body){ toast('nothing to save'); return; }
         Drafts.save({id:draftId, text:body, reply, replyPk, quote}); closeModal(); toast('saved to drafts');
@@ -3095,7 +3105,7 @@
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
   // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
   const FilesIdx = {
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -3120,20 +3130,28 @@
         const ptr=r&&r.ok&&r.index;
         if(ptr&&typeof ptr==='object'){
           if(ptr.mk) this._mkWrapped=ptr.mk;
+          let idx=null;
           if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
-            await this._ensureMK();
+            this._lastIndexSha=ptr.indexSha;        // remember it so the NEXT save GCs this superseded blob
+            await this._ensureMK();                 // (without this, every session leaked its old index blob)
             const br=await fetch(mediaServer()+'/'+ptr.indexSha);
-            if(br.ok){ const idx=JSON.parse(new TextDecoder().decode(await _masterDecrypt(this.mk, new Uint8Array(await br.arrayBuffer()))));
-              if(idx&&idx.files) this.data=idx; }
-          } else if(ptr.files){ this.data=ptr; }     // v1: small index stored inline in the pointer
-          this.saveLocal();
+            if(br.ok){ const d=JSON.parse(new TextDecoder().decode(await _masterDecrypt(this.mk, new Uint8Array(await br.arrayBuffer()))));
+              if(d&&d.files) idx=d; }
+          } else if(ptr.files){ idx=ptr; }          // v1: small index stored inline in the pointer
+          // Don't clobber edits made WHILE this (possibly slow blob-fetch) pull was in flight — local is
+          // newer and syncs on the next save. Without this, creating a folder + uploading during the
+          // initial load got wiped: the files lost their metadata and vanished / showed as octet-stream.
+          if(idx && !this._dirty){ this.data=idx; this.saveLocal(); }
         }
+        this._pullDone=true;   // only AFTER a successful pull is it safe to GC orphan index blobs (we now
+                               // know _lastIndexSha + the real file metadata — see _gcOrphanIndexBlobs)
       }catch(_){}
       return this._norm();
     },
-    push(){ this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
+    push(){ this._dirty=true; this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
     async _save(){
       try{ this._norm();
+        this._dirty=false;   // capture point: edits AFTER this re-mark dirty (and reschedule) so pull won't clobber them
         const idx={folders:this.data.folders, files:this.data.files, encFolders:this.data.encFolders}; const json=JSON.stringify(idx);
         const ptr={}; if(this._mkWrapped) ptr.mk=this._mkWrapped;
         if(json.length < 45000){ ptr.folders=idx.folders; ptr.files=idx.files; ptr.encFolders=idx.encFolders; }   // small → inline (NIP-44 doc)
@@ -3210,15 +3228,17 @@
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
-    if(list!==null){ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); }
+    if(list!==null){ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); _gcOrphanIndexBlobs(list); }
   }
   function _renderFilesGrid(grid, list){
     if(!grid) return;
     // hide encrypted MUSIC ciphertext from the normal grid (it lives in the Music folder's track list);
     // encrypted files in other folders DO show, as lock cards that decrypt in-browser on open.
     const inFolder = list.filter(b=>{
-      const m=FilesIdx.meta(b.sha256)||{};
-      if(m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;
+      if(b.sha256===FilesIdx._lastIndexSha) return false;                      // the encrypted Files index blob itself
+      const m=FilesIdx.meta(b.sha256);
+      if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
+      if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
       return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
     });
     grid.innerHTML = inFolder.length ? inFolder.map(b=>{
@@ -3402,6 +3422,32 @@
     const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
     FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,mk:true,size:opus.length,srcName:file.name,srcSize:file.size,ts:Math.floor(Date.now()/1000)});
+  }
+  // One-time-per-session cleanup of leaked Files-index blobs (the old cross-session GC bug left stale
+  // encrypted index blobs on Blossom — the "OCTET-STE" files filling the drive). A blob qualifies only
+  // if it has NO file metadata, is octet-stream, small, AND decrypts with the master key to an object
+  // shaped like an index ({files, folders}) — so it can never touch a real user file (those have meta,
+  // and random/other ciphertext fails AES-GCM auth and is skipped).
+  let _idxGcDone=false;
+  async function _gcOrphanIndexBlobs(list){
+    // CRITICAL: wait until pull() finished. Before it does, _lastIndexSha is null and FilesIdx.files is
+    // empty, so the user's LIVE index blob (which is {files,folders}-shaped) would not be excluded and
+    // would be deleted, destroying the whole index. Re-runs after pull's .then() re-renders.
+    if(_idxGcDone || !FilesIdx._pullDone) return;
+    _idxGcDone=true;
+    try{
+      const cur=FilesIdx._lastIndexSha;
+      const cands=(list||[]).filter(b=> b.sha256!==cur && !FilesIdx.meta(b.sha256) && /octet-stream/.test(b.type||'') && (b.size||0)<5*1024*1024).slice(0,40);
+      if(!cands.length) return;
+      const mk=await FilesIdx._ensureMK(); if(!mk) return;
+      for(const b of cands){
+        try{
+          const r=await fetch(mediaServer()+'/'+b.sha256); if(!r.ok) continue;
+          let obj=null; try{ obj=JSON.parse(new TextDecoder().decode(await _masterDecrypt(mk, new Uint8Array(await r.arrayBuffer())))); }catch(_){ continue; }
+          if(obj && typeof obj==='object' && obj.files && obj.folders) await _delBlobSilent(b.sha256);   // a stale Files index → reclaim it
+        }catch(_){}
+      }
+    }catch(_){}
   }
   const _trackUrls={}, _trackUrlOrder=[];   // sha -> decrypted object URL (LRU-capped so a long session doesn't leak)
   async function _delBlobSilent(sha){ try{ const server=mediaServer(); const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
@@ -4439,6 +4485,20 @@
         if(f) files.push(f.name?f:new File([f],'pasted-'+Date.now()+'.png',{type:f.type||'image/png'})); } }
       if(files.length){ e.preventDefault(); await aiAddFiles(files); toast(files.length+' image'+(files.length>1?'s':'')+' attached'); }
     });
+    // Drag-and-drop files onto the chat → attach them (same as the 📎 button). Recurses dropped folders.
+    { const chat=feed.querySelector('.ai-chat');
+      if(chat){
+        chat.addEventListener('dragover',e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); chat.classList.add('ai-drop'); } });
+        chat.addEventListener('dragleave',e=>{ if(e.target===chat) chat.classList.remove('ai-drop'); });
+        chat.addEventListener('drop',async e=>{ if(!(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files'))) return;
+          e.preventDefault(); chat.classList.remove('ai-drop');
+          const dt=e.dataTransfer, items=dt&&dt.items, entries=[];
+          if(items&&items.length&&items[0].webkitGetAsEntry){ for(let i=0;i<items.length;i++){ const en=items[i].webkitGetAsEntry(); if(en) entries.push(en); } }
+          let files=[];
+          if(entries.length){ files=await _walkEntries(entries); } else { files=[...((dt&&dt.files)||[])]; }
+          if(files.length){ await aiAddFiles(files); toast(files.length+' file'+(files.length>1?'s':'')+' attached'); }
+        });
+      } }
     $('#ai-msgs').addEventListener('click',e=>{
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }

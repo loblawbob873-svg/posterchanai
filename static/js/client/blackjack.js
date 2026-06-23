@@ -121,7 +121,7 @@
         let s; try{ s=JSON.parse(e.content||'{}'); }catch(_){ continue; }
         if(!s || !Array.isArray(s.seats) || !s.seats.includes(PC.ME.pubkey)) continue;
         if(Array.isArray(s.left) && s.left.includes(PC.ME.pubkey)) continue;
-        const gid=s.root||d.slice('pcai:blackjack:'.length);
+        const gid=s.root||d.slice('pcai:blackjack:'.length); s._gid=gid;   // remember the EXACT key so removal matches (solo/rootless games have no s.root)
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
@@ -211,7 +211,7 @@
     async function leaveTable(g){
       if(!confirm('Leave this table? You keep your chips.')) return;
       try{ await _cmd({action:'leave', gameid:g.root}); }catch(_){}
-      _hide(g.root); _load();
+      _hide(g._gid||g.root); _load();
     }
 
     (window.PCGames = window.PCGames || {}).blackjack = render;
