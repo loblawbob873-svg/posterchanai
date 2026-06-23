@@ -695,7 +695,7 @@
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
     else switchView('global');   // land on Nostrverse (global feed) by default
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
-    setInterval(refreshRightbar, 90000);   // routinely refresh trending + prepend new hot posts
+    setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
     setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
@@ -5626,6 +5626,10 @@
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
   function refreshRightbar(){
     if(document.hidden || !document.querySelector('.rightbar')) return;
+    // Only auto-refresh the (heavy: 300-event trending tally + follow reposts) rightbar while the user is
+    // on a feed it belongs to. Refreshing trending/hot every interval while reading a Community/Profile/
+    // Files view was needless CPU + relay load for content that isn't even being looked at.
+    if(VIEW!=='home' && VIEW!=='global') return;
     loadTrendingTags(); loadDiscover(); loadFollows(); refreshHotTop();
   }
   // Curated hashtag shortcuts — friendly entry points into popular communities for new users.
@@ -5642,7 +5646,7 @@
   async function loadTrendingTags(){
     const el=document.getElementById('rb-trending'); if(!el) return;
     const since=Math.floor(Date.now()/1000)-24*3600;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], since, limit:600 }]); }catch(_){}
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[1], since, limit:300 }]); }catch(_){}   // 300 recent posts is plenty for the tag tally; 600 doubled the relay serialize + client regex cost
     const tally={};
     for(const e of evs){
       const seen=new Set();
@@ -5740,7 +5744,7 @@
     const el=document.getElementById('rb-follows'); if(!el) return;
     const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
     const since=Math.floor(Date.now()/1000)-24*3600;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], authors, since, limit:1000 }]); }catch(_){}
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], authors, since, limit:500 }]); }catch(_){}
     const tally={}, icon={};
     for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
