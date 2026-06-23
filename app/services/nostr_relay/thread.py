@@ -38,15 +38,16 @@ _FH_SEEN: set = set()
 _FH_SEEN_ORDER: deque = deque(maxlen=30000)
 
 
-def _fh_seen(eid: str) -> bool:
-    """True if this id was already processed this session (a dup from another relay). Records it on miss."""
+def _fh_mark(eid: str) -> None:
+    """Record an id as HANDLED (confirmed stored), so a later duplicate from another relay skips the
+    has_event() DB round-trip. Only call after the event is actually stored — marking before storage
+    would let a transient add failure permanently drop the event (a dup would be wrongly skipped)."""
     if eid in _FH_SEEN:
-        return True
+        return
     if len(_FH_SEEN_ORDER) >= _FH_SEEN_ORDER.maxlen:
         _FH_SEEN.discard(_FH_SEEN_ORDER[0])   # leftmost is about to be evicted by the append below
     _FH_SEEN.add(eid)
     _FH_SEEN_ORDER.append(eid)
-    return False
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -502,17 +503,19 @@ async def _main(cfg: dict) -> None:
         eid = ev.get("id")
         if not isinstance(eid, str) or len(eid) != 64:
             return
-        if _fh_seen(eid):
+        if eid in _FH_SEEN:
             return   # already handled this id (dup from another upstream relay) — skip the DB round-trip
         if await store.has_event(eid):
+            _fh_mark(eid)   # already stored → record so future dups skip the DB check
             return
         if not verify_event(ev):
-            return
+            return   # invalid sig — NOT marked (deterministic re-reject is cheap; never store)
         if int(ev.get("kind", 1)) == 1:
             content = ev.get("content", "")
             if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
                 return
         if await store.add_event(ev, origin="wot"):
+            _fh_mark(eid)   # mark seen ONLY after a successful store (so a transient fail can retry)
             server.subs.fanout(ev, server._send)
             # Thread completion: a reply may e-tag parents we don't have. Backfill the ancestor
             # chain (bounded + deduped, parents may be outside the WoT → origin='ancestor') so

@@ -151,11 +151,14 @@
     count(filters, timeout=4000){
       return new Promise((res)=>{
         const id = 'cnt' + Math.random().toString(36).slice(2,9);
-        let best = 0, done = false;
-        const finish = () => { if (done) return; done = true; this._countWaiters.delete(id); res(best); };
-        this._countWaiters.set(id, n => { if (n > best) best = n; });
+        let best = 0, done = false, settle = null;
+        const finish = () => { if (done) return; done = true; clearTimeout(settle); this._countWaiters.delete(id); res(best); };
+        this._countWaiters.set(id, n => {
+          if (n > best) best = n;
+          if (!settle) settle = setTimeout(finish, 300);   // got a reply → resolve ~now (300ms grace for other relays), not after the full timeout
+        });
         this._send(['COUNT', id, ...filters]);
-        setTimeout(finish, timeout);
+        setTimeout(finish, timeout);   // hard fallback if no relay answers at all
       });
     },
     // publish to every connected relay; resolves on the first relay that accepts (OK true)
