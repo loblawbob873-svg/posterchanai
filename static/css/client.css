@@ -36,6 +36,75 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
   background-size:46px 46px;mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 75%)}
 
+/* ===== Live cyberpunk city skyline (pure CSS, GPU-cheap) =====
+   Sits deepest (z-index:-2, behind the grid + all content). READABILITY-SAFE BY DESIGN: the buildings
+   are near-black silhouettes DARKER than --bg (#0a0a0f), so text that sits over a transparent .main
+   only ever gains contrast over them; the only added light is the neon top-edges + a horizon haze,
+   both faint and bottom-weighted so the upper feed area stays clean. Two depth rows drift slowly in
+   parallax (transform-only) — disabled under prefers-reduced-motion. */
+.city-bg{position:fixed;inset:0;pointer-events:none;z-index:-2;overflow:hidden}
+.city-bg::before{content:"";position:absolute;inset:0;   /* rising neon horizon glow */
+  background:
+    radial-gradient(150% 85% at 50% 118%,rgba(0,255,255,.20),transparent 60%),
+    radial-gradient(95% 62% at 14% 122%,rgba(255,0,255,.16),transparent 58%),
+    radial-gradient(95% 62% at 88% 120%,rgba(0,200,255,.13),transparent 58%);
+  animation:city-haze 12s ease-in-out infinite}
+/* Each band = a window-grid + neon-capped DARK silhouette (body fill stays near-black, ~= --bg, so
+   text over the transparent .main never loses contrast) PLUS glowing neon signs, masked into towers
+   and drifting in parallax. Three bands rise to ~70vh for a deep downtown look. Buildings loop
+   seamlessly (drift == mask period); the faint window/sign phase is imperceptible at loop reset. */
+.city-far,.city-mid,.city-near{position:absolute;left:-260px;right:-260px;bottom:0;display:block;will-change:transform}
+.city-far{height:min(70vh,560px);opacity:.9;   /* deepest: tall thin towers, dim */
+  background-image:
+    radial-gradient(ellipse 6px 12px at 70px 22%,rgba(0,255,255,.45),transparent 72%),
+    repeating-linear-gradient(0deg,transparent 0 8px,rgba(0,255,255,.04) 8px 9px),
+    repeating-linear-gradient(90deg,transparent 0 8px,rgba(0,255,255,.04) 8px 9px),
+    linear-gradient(to bottom,rgba(0,255,255,.28) 0 1.5px,rgba(0,255,255,.07) 1.5px,transparent 6px),
+    linear-gradient(to bottom,#090b1c,#06080f);
+  background-size:300px 100%,auto,auto,100% 100%,100% 100%;
+  background-repeat:repeat-x,repeat,repeat,no-repeat,no-repeat;
+  -webkit-mask:repeating-linear-gradient(90deg,#000 0 24px,transparent 24px 96px,#000 96px 120px,transparent 120px 192px);
+  mask:repeating-linear-gradient(90deg,#000 0 24px,transparent 24px 96px,#000 96px 120px,transparent 120px 192px);
+  animation:city-far 185s linear infinite}
+.city-mid{height:min(52vh,430px);   /* middle band: medium towers, cyan+magenta signs */
+  background-image:
+    radial-gradient(ellipse 8px 5px at 50px 42%,rgba(0,255,255,.55),transparent 72%),
+    radial-gradient(ellipse 6px 13px at 185px 24%,rgba(255,0,255,.5),transparent 72%),
+    repeating-linear-gradient(0deg,transparent 0 8px,rgba(0,255,255,.055) 8px 9px),
+    repeating-linear-gradient(90deg,transparent 0 8px,rgba(0,255,255,.055) 8px 9px),
+    linear-gradient(to bottom,rgba(0,255,255,.34) 0 1.5px,rgba(0,255,255,.1) 1.5px,transparent 7px),
+    linear-gradient(to bottom,#080b16,#05060f);
+  background-size:240px 100%,300px 100%,auto,auto,100% 100%,100% 100%;
+  background-repeat:repeat-x,repeat-x,repeat,repeat,no-repeat,no-repeat;
+  -webkit-mask:repeating-linear-gradient(90deg,#000 0 48px,transparent 48px 72px,#000 72px 104px,transparent 104px 128px);
+  mask:repeating-linear-gradient(90deg,#000 0 48px,transparent 48px 72px,#000 72px 104px,transparent 104px 128px);
+  animation:city-mid 135s linear infinite}
+.city-near{height:min(36vh,300px);   /* front: wide dense dark buildings, magenta+amber signs */
+  background-image:
+    radial-gradient(ellipse 7px 14px at 40px 30%,rgba(255,0,255,.6),transparent 72%),
+    radial-gradient(ellipse 13px 5px at 150px 58%,rgba(255,191,0,.6),transparent 72%),
+    repeating-linear-gradient(0deg,transparent 0 8px,rgba(0,255,255,.07) 8px 9px),
+    repeating-linear-gradient(90deg,transparent 0 8px,rgba(0,255,255,.07) 8px 9px),
+    linear-gradient(to bottom,rgba(255,0,255,.4) 0 1.5px,rgba(255,0,255,.12) 1.5px,transparent 7px),
+    linear-gradient(to bottom,#06070f,#030409);
+  background-size:200px 100%,260px 100%,auto,auto,100% 100%,100% 100%;
+  background-repeat:repeat-x,repeat-x,repeat,repeat,no-repeat,no-repeat;
+  -webkit-mask:repeating-linear-gradient(90deg,#000 0 64px,transparent 64px 88px,#000 88px 152px,transparent 152px 176px);
+  mask:repeating-linear-gradient(90deg,#000 0 64px,transparent 64px 88px,#000 88px 152px,transparent 152px 176px);
+  animation:city-near 96s linear infinite}
+/* drift by EXACTLY one mask period → buildings loop seamlessly; over-extend (260px) > period so no edge shows */
+@keyframes city-far{from{transform:translate3d(0,0,0)}to{transform:translate3d(-192px,0,0)}}
+@keyframes city-mid{from{transform:translate3d(0,0,0)}to{transform:translate3d(-128px,0,0)}}
+@keyframes city-near{from{transform:translate3d(0,0,0)}to{transform:translate3d(-176px,0,0)}}
+@keyframes city-haze{0%,100%{opacity:.55}50%{opacity:.85}}
+@media(max-width:820px){   /* trim the towers on phones so they don't dominate a short screen */
+  .city-far{height:min(58vh,380px)} .city-mid{height:min(44vh,270px)} .city-near{height:min(30vh,190px)}
+}
+@media(prefers-reduced-motion:reduce){
+  .city-far,.city-mid,.city-near{animation:none}
+  .city-bg::before{animation:none;opacity:.6}
+}
+
 .glass{background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line)}
 .neon-border{box-shadow:0 0 0 1px rgba(0,255,255,.35),0 0 30px rgba(0,255,255,.2) inset}
 
@@ -98,7 +167,9 @@ a.btn.full{display:block}
    dynamic viewport that RESERVES room for the chrome, so the toolbar stays pinned — a regression. */
 .app{display:grid;grid-template-columns:360px 1fr;height:100vh}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto;
-  background:rgba(10,10,16,.55)}   /* neutral dark so the body's cyan/magenta gradient doesn't tint the left column differently from center/right */
+  /* Clean flat dark panel — near-opaque so the city skyline does NOT bleed into the navbar (it stays
+     in the main background only); keeps the nav labels at full contrast. */
+  background:rgba(11,11,18,.95)}
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
 .nav{display:flex;flex-direction:column;gap:4px}
 .nav-group{display:flex;flex-direction:column;gap:4px}
