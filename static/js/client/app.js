@@ -439,7 +439,7 @@
 
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
-    updateUserCount();   // once on boot; refreshed on login (startApp). No periodic polling — the WoT size barely changes and per-client minute polling is needless server load.
+    updateUserCount(); setInterval(()=>updateUserCount(true), 15000);   // WoT size: boot+login only; online: every 15s (onlineOnly → doesn't touch the frozen users count)
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
@@ -730,15 +730,15 @@
       return a;
     }catch(_){ return ''; }
   }
-  async function updateUserCount(){
+  async function updateUserCount(onlineOnly){
     const uc=$('#user-count'); if(!uc) return;
     let online=0, users=Number(CFG.users)||0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
-      // Use the LIVE WoT size from /stats, not the one-time CFG.users — otherwise a count that was
-      // 0 at page load (relay still building its WoT) never appears until a manual refresh.
-      if(Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
+      // WoT size refreshes ONLY on boot/login (it barely changes — daily rebuild). The 15s poll passes
+      // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
+      if(!onlineOnly && Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
     }catch(_){}
     const parts=[];
     if(users>0) parts.push(WOT_ICON+' '+users.toLocaleString()+' users');
