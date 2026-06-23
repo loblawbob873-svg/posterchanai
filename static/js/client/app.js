@@ -2935,6 +2935,11 @@
     });
   }
   function notifPing(ev){
+    // NEVER toast/OS-notify for follows. kind-3 is a whole contact list, republished on every edit, so
+    // an OLD follower constantly looks "new" — detecting genuine new follows reliably is impossible
+    // (the relay can't be trusted to have every follower's current list). Follows still show in the
+    // Notifications list (Follows tab); they just don't interrupt. Kills the recurring follow spam.
+    if(ev.kind===3) return;
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
     if(MUTED.has(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
@@ -2959,7 +2964,7 @@
     for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
     return out.slice(0,2000);
   }
-  function bumpNotif(){ const n=notifList().filter(e=>_notifTs(e)>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
