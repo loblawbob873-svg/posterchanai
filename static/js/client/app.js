@@ -2971,9 +2971,9 @@
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder">🗑 Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
-      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple hidden>
-          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button>
-          <div class="muted small">→ ${_filesFolder?('📁 '+enc(_filesFolder)):'All files'} · uploaded one at a time</div></div>
+      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple hidden><input type="file" id="bl-folder" webkitdirectory hidden>
+          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder">📁 choose folder</button>
+          <div class="muted small">→ ${_filesFolder?('📁 '+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':''}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
       : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
@@ -2983,12 +2983,21 @@
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=()=>{ const n=prompt('New folder name:'); if(n&&FilesIdx.addFolder(n)){ _filesFolder=n.trim().slice(0,40); renderBlossom(); } else if(n) toast('folder exists'); }; }
     { const df=$('#bl-delfolder',pane); if(df) df.onclick=()=>{ if(confirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     if(canUp){
-      const fileInput=$('#bl-file',pane), drop=$('#bl-drop',pane);
+      const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
       $('#bl-pick',pane).onclick=()=>fileInput.click();
+      { const fb=$('#bl-pickfolder',pane); if(fb) fb.onclick=()=>folderInput&&folderInput.click(); }
       fileInput.onchange=()=>{ const fs=[...fileInput.files]; fileInput.value=''; uploadFilesSeq(fs); };
+      if(folderInput){ try{ folderInput.webkitdirectory=true; folderInput.setAttribute('webkitdirectory',''); folderInput.setAttribute('directory',''); }catch(_){}
+        folderInput.onchange=()=>{ const fs=[...folderInput.files]; folderInput.value=''; uploadFilesSeq(fs); }; }
       drop.ondragover=e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); drop.classList.add('over'); } };
       drop.ondragleave=()=>drop.classList.remove('over');
-      drop.ondrop=e=>{ const fs=[...((e.dataTransfer&&e.dataTransfer.files)||[])]; if(fs.length){ e.preventDefault(); drop.classList.remove('over'); uploadFilesSeq(fs); } };
+      drop.ondrop=e=>{ e.preventDefault(); drop.classList.remove('over');
+        const dt=e.dataTransfer, items=dt&&dt.items, entries=[];
+        // capture FileSystem entries SYNCHRONOUSLY (invalid after the event) so dropped FOLDERS recurse
+        if(items&&items.length&&items[0].webkitGetAsEntry){ for(let i=0;i<items.length;i++){ const en=items[i].webkitGetAsEntry(); if(en) entries.push(en); } }
+        if(entries.length){ _walkEntries(entries).then(fs=>{ if(fs.length) uploadFilesSeq(fs); }); }
+        else { const fs=[...((dt&&dt.files)||[])]; if(fs.length) uploadFilesSeq(fs); }
+      };
     } else { const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb); }
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
@@ -3022,30 +3031,48 @@
   // Upload a batch ONE AT A TIME (sequential), into the current folder, with a per-file progress queue.
   // In the Music folder, audio files go through the compress→encrypt pipeline; everything else uploads
   // straight to Blossom.
+  // Recurse dropped folders → a flat File[] (FileSystem entries captured synchronously from the drop).
+  async function _walkEntries(entries){
+    const out=[];
+    async function walk(entry){
+      if(entry.isFile){ await new Promise(res=>entry.file(f=>{ out.push(f); res(); }, ()=>res())); }
+      else if(entry.isDirectory){ const reader=entry.createReader();
+        await new Promise(res=>{ const read=()=>reader.readEntries(async ents=>{ if(!ents.length){ res(); return; } for(const en of ents){ await walk(en); } read(); }, ()=>res()); read(); }); }
+    }
+    for(const en of entries){ await walk(en); }
+    return out;
+  }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
-    const q=$('#bl-queue'); if(q) q.innerHTML=files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
+    const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
+    const q=$('#bl-queue');
+    if(q) q.innerHTML = big ? `<div class="up-summary" id="up-sum">Preparing ${files.length} files…</div>`
+      : files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
     FilesIdx.beginBatch();   // collapse the index save (a 2000-file import must NOT re-save the index per file)
-    let done=0;
+    let done=0, ok=0, skip=0, fail=0;
     for(let i=0;i<files.length;i++){
-      const stat=$('#up-stat-'+i);
+      const stat=big?null:$('#up-stat-'+i);
       try{
         if(music){
-          if(!(files[i].type||'').startsWith('audio/')){ if(stat) stat.textContent='skipped (not audio)'; continue; }
-          if(_musicHasSrc(files[i])){ if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } continue; }   // resume: skip done files
-          await uploadMusicTrack(files[i], stat); if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+          if(!(files[i].type||'').startsWith('audio/')){ skip++; if(stat) stat.textContent='skipped (not audio)'; }
+          else if(_musicHasSrc(files[i])){ skip++; if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
+          else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+            if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress
         } else {
           if(stat) stat.textContent='uploading…';
           const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
           if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
-          if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+          ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
+          if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
-        if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }   // checkpoint every 25 so a crash mid-import keeps progress
-      }catch(e){ if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
+      }catch(e){ fail++; if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
+      if(big){ const s=$('#up-sum'); if(s) s.textContent=`Uploading… ${i+1} / ${files.length}  —  ✓ ${ok}  ⏭ ${skip}${fail?('  ✗ '+fail):''}`; }
     }
     await FilesIdx.endBatch();
-    toast('done'); setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
+    if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=`Done — ✓ ${ok} added${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`; }
+    toast(`done — ${ok} added${skip?(', '+skip+' skipped'):''}${fail?(', '+fail+' failed'):''}`);
+    setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
   }
 
   // ---- Music: Opus-compressed + AES-256-GCM-encrypted tracks in the Music folder ----------------------
