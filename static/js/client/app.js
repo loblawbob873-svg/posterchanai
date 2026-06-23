@@ -3004,20 +3004,81 @@
         <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
         <button class="track-del" data-sha="${t.sha}" title="Delete">✕</button>
       </div>`).join('') : '<div class="empty">No music yet — drop audio files here. They\'re Opus-compressed + encrypted automatically.</div>';
-    $$('.track-play',grid).forEach(b=> b.onclick=()=>_playInline(b.dataset.sha));
+    $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
     $$('.track-del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
+    _updateMusicListBtns();
   }
-  let _audioEl=null, _curSha=null;
-  async function _playInline(sha){
-    try{
-      if(!_audioEl){ _audioEl=new Audio(); _audioEl.onplay=_audioEl.onpause=_audioEl.onended=_syncTrackBtns; }
-      if(_curSha===sha && _audioEl.src){ if(_audioEl.paused) await _audioEl.play(); else _audioEl.pause(); return; }
-      _syncTrackBtns('…',sha);
-      const u=await trackUrl(sha); _curSha=sha; _audioEl.src=u; await _audioEl.play(); _syncTrackBtns();
-    }catch(e){ toast('play failed: '+(e.message||e)); _syncTrackBtns(); }
-  }
-  function _syncTrackBtns(loadTxt, loadSha){ $$('.track-play').forEach(b=>{
-    b.textContent = (loadSha&&b.dataset.sha===loadSha)?'…' : (b.dataset.sha===_curSha && _audioEl && !_audioEl.paused)?'⏸':'▶'; }); }
+  function _fmtTime(s){ s=Math.floor(s||0); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
+  function _updateMusicListBtns(){ const playing=_audioEl&&!_audioEl.paused; $$('.track-play').forEach(b=> b.textContent=(b.dataset.sha===MusicPlayer.cur&&playing)?'⏸':'▶'); }
+  // The floating cyberpunk player — a persistent widget appended to <body> (NOT #feed), so it hovers over
+  // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
+  let _audioEl=null;
+  const MusicPlayer = {
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false,
+    ensure(){
+      if(this.el) return this.el;
+      const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.body.appendChild(d); this.el=d;
+      if(!_audioEl) _audioEl=new Audio();
+      _audioEl.ontimeupdate=()=>this._tick();
+      _audioEl.onended=()=>this.next();
+      _audioEl.onplay=()=>{ this._render(); };
+      _audioEl.onpause=()=>{ this._render(); };
+      return d;
+    },
+    refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
+    async play(sha){
+      this.ensure();
+      if(sha===this.cur && _audioEl.src){ this.toggle(); return; }   // tapping the playing track = pause/resume
+      this.refreshQueue(); if(!this.queue.includes(sha)) this.queue.unshift(sha);
+      this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
+      try{ const u=await trackUrl(sha); this._loading=false; _audioEl.src=u; await _audioEl.play(); }
+      catch(e){ this._loading=false; toast('play failed: '+(e.message||e)); }
+      this._render();
+    },
+    toggle(){ if(_audioEl){ if(_audioEl.paused) _audioEl.play(); else _audioEl.pause(); } },
+    next(){ if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);
+      i=this.shuffle ? Math.floor(Math.random()*this.queue.length) : (i+1)%this.queue.length; this.play(this.queue[i]); },
+    prev(){ if(_audioEl && _audioEl.currentTime>3){ _audioEl.currentTime=0; return; }
+      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length]); },
+    seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
+    setMin(m){ this.min=m; this._render(); },
+    close(){ if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden'); },
+    _tick(){ if(!this.el||this.el.classList.contains('hidden')||this.min) return;
+      const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
+      if(_audioEl && _audioEl.duration){ if(f) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%'; if(c) c.textContent=_fmtTime(_audioEl.currentTime); if(du) du.textContent=_fmtTime(_audioEl.duration); } },
+    _render(){
+      this.ensure(); const d=this.el; const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
+      const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
+      if(this.min){
+        d.className='mp mp-mini';
+        d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play">${pl}</button><button class="mp-exp" title="Expand">▢</button>`;
+      } else {
+        d.className='mp';
+        const list=this.queue.map(sha=>{ const mm=FilesIdx.meta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join('');
+        d.innerHTML=`<div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close">✕</button></div>
+          <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
+          <div class="mp-seek"><div class="mp-seek-fill"></div></div>
+          <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
+          <div class="mp-controls"><button class="mp-prev" title="Previous">⏮</button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next">⏭</button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle">🔀</button></div>
+          <div class="mp-list">${list||'<div class="muted small" style="padding:10px;text-align:center">No tracks in Music yet</div>'}</div>`;
+      }
+      this._wire(); this._tick(); _updateMusicListBtns();
+    },
+    _wire(){
+      const d=this.el, qq=s=>d.querySelector(s), b=(s,fn)=>{ const e=qq(s); if(e) e.onclick=fn; };
+      b('.mp-play',()=>this.toggle()); b('.mp-min',()=>this.setMin(true)); b('.mp-exp',()=>this.setMin(false));
+      b('.mp-close',()=>this.close()); b('.mp-prev',()=>this.prev()); b('.mp-next',()=>this.next());
+      b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
+      const seek=qq('.mp-seek'); if(seek) seek.onclick=e=>{ const r=seek.getBoundingClientRect(); this.seekTo((e.clientX-r.left)/r.width); };
+      d.querySelectorAll('.mp-track').forEach(t=> t.onclick=()=>this.play(t.dataset.sha));
+      this._drag(qq('.mp-head')||qq('.mp-eq')||d);
+    },
+    _drag(handle){ if(!handle) return; const d=this.el; let sx,sy,ox,oy,on=false;
+      const move=e=>{ if(!on) return; const p=e.touches?e.touches[0]:e; d.style.left=Math.max(0,Math.min(innerWidth-50,ox+p.clientX-sx))+'px'; d.style.top=Math.max(0,Math.min(innerHeight-40,oy+p.clientY-sy))+'px'; if(e.cancelable)e.preventDefault(); };
+      const up=()=>{ on=false; removeEventListener('mousemove',move); removeEventListener('mouseup',up); removeEventListener('touchmove',move); removeEventListener('touchend',up); };
+      const down=e=>{ if(e.target.closest('button')) return; const p=e.touches?e.touches[0]:e; const r=d.getBoundingClientRect(); on=true; sx=p.clientX; sy=p.clientY; ox=r.left; oy=r.top; d.style.right='auto'; d.style.bottom='auto'; d.style.left=ox+'px'; d.style.top=oy+'px'; addEventListener('mousemove',move); addEventListener('mouseup',up); addEventListener('touchmove',move,{passive:false}); addEventListener('touchend',up); };
+      handle.onmousedown=down; handle.ontouchstart=down; },
+  };
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
   async function renderAiFiles(pane){
