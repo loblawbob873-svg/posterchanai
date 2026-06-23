@@ -491,8 +491,8 @@ class RelayServer:
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
-        events = await self.store.query(filters)
-        self._send(conn, ["COUNT", sub_id, {"count": len(events)}])
+        n = await self.store.count_filtered(filters)   # SQL COUNT(*) — don't materialize rows just to len()
+        self._send(conn, ["COUNT", sub_id, {"count": n}])
 
     # --- NIP-77 negentropy --------------------------------------------------
 

@@ -101,6 +101,9 @@ CREATE INDEX IF NOT EXISTS idx_events_kind_created ON events(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_created      ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_expiration   ON events(expiration);
 CREATE INDEX IF NOT EXISTS idx_events_content_fts  ON events USING gin (to_tsvector('simple', content));
+-- The hottest read is a profile's own posts: authors=[pk] AND kinds IN (...) ORDER BY created_at DESC.
+-- A composite (pubkey, kind, created_at DESC) serves it without a separate sort.
+CREATE INDEX IF NOT EXISTS idx_events_pubkey_kind_created ON events(pubkey, kind, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS event_tags (
     event_id TEXT NOT NULL,
@@ -109,6 +112,8 @@ CREATE TABLE IF NOT EXISTS event_tags (
     PRIMARY KEY (event_id, tag, value)
 );
 CREATE INDEX IF NOT EXISTS idx_event_tags_tv ON event_tags(tag, value);
+-- Needed so deleting an event's tags (prune / NIP-09 / author purge) is an index lookup, not a scan.
+CREATE INDEX IF NOT EXISTS idx_event_tags_event ON event_tags(event_id);
 
 CREATE TABLE IF NOT EXISTS wot (
     pubkey   TEXT PRIMARY KEY,
@@ -719,35 +724,53 @@ class RelayStore:
     def _prune_sync(self) -> int:
         conn = self._conn()
         removed = 0
+        gone: list = []   # ids deleted this pass → their event_tags must be removed too (no FK CASCADE)
         prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
         # NIP-40 expiration sweep FIRST — unconditional: an expired event is gone per the AUTHOR's
         # explicit intent, so unlike the age-based prune below this ignores kind allowlist AND the
         # preserve clause (even a local user's / profile / DM event with an `expiration` tag goes).
-        cur = conn.execute(
-            "DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ?",
-            (int(time.time()),))
-        removed += cur.rowcount or 0
+        rows = conn.execute(
+            "DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ? RETURNING id",
+            (int(time.time()),)).fetchall()
+        gone += [r["id"] for r in rows]; removed += len(rows)
         # Age-based auto-cleaner: delete only old feed content (kinds in _PRUNABLE_KINDS — notes/
         # reposts/reactions/comments + public chat/articles/streams), and only synced copies (the
         # preserve clause keeps origin='direct' and local users'). Everything else (profiles,
         # contacts, relay/identity lists, DMs, channel/community defs, …) is never touched.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
-            cur = conn.execute(
+            rows = conn.execute(
                 f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
-                f"AND {preserve}", (cutoff,))
-            removed += cur.rowcount or 0
+                f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
+            gone += [r["id"] for r in rows]; removed += len(rows)
         # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:
-            cur = conn.execute(
+            rows = conn.execute(
                 f"DELETE FROM events WHERE kind IN ({prunable}) AND {preserve} AND id IN "
-                "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
-                (self.max_events,))
-            removed += cur.rowcount or 0
-        # event_tags are purged automatically by the ON DELETE CASCADE FK when their event is
-        # deleted — no orphan sweep needed (the old NOT IN anti-join pinned a CPU core for minutes).
+                "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?) RETURNING id",
+                (self.max_events,)).fetchall()
+            gone += [r["id"] for r in rows]; removed += len(rows)
+        # There is NO FK CASCADE — purge the deleted events' tags ourselves (batched), else event_tags
+        # grows unbounded and slows every #e/#p/#t filter. (The old global NOT-IN anti-join pinned a
+        # core for minutes; deleting only THIS pass's ids via the event_id index is cheap.)
+        for i in range(0, len(gone), 500):
+            chunk = gone[i:i + 500]
+            conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({','.join('?' * len(chunk))})", chunk)
         conn.commit()
+        # One-time reclaim of orphans left by the previous (tag-leaking) prune. Guarded by a relay_kv
+        # flag so it runs ONCE, here in the nightly prune (off-peak), not on every startup. NOT EXISTS
+        # uses the event_tags(event_id) + events(id PK) indexes — far cheaper than the old NOT IN.
+        try:
+            done = conn.execute("SELECT value FROM relay_kv WHERE key='event_tags_orphans_cleaned'").fetchone()
+            if not done:
+                conn.execute("DELETE FROM event_tags WHERE NOT EXISTS "
+                             "(SELECT 1 FROM events e WHERE e.id = event_tags.event_id)")
+                conn.execute("INSERT INTO relay_kv (key, value) VALUES ('event_tags_orphans_cleaned','1') "
+                             "ON CONFLICT (key) DO NOTHING")
+                conn.commit()
+        except Exception as e:
+            logger.warning("[nostr-relay] one-time event_tags orphan cleanup skipped: %s", e)
         return removed
 
     async def prune(self) -> int:
@@ -758,3 +781,25 @@ class RelayStore:
 
     async def count(self) -> int:
         return await self._r(self._count_sync)
+
+    def _count_filtered_sync(self, filters: list) -> int:
+        """COUNT(*) for a NIP-45 COUNT request — never materializes or json.loads rows (the old path
+        loaded up to 1000 full kind-3 contact-list blobs just to len() them: the 'profile click' spike)."""
+        conn = self._conn()
+        total = 0
+        for flt in (filters or []):
+            built = self._build_where(flt)
+            if built is None:
+                continue
+            where, params = built
+            sql = "SELECT COUNT(*) AS c FROM events e"
+            if where:
+                sql += " WHERE " + " AND ".join(where)
+            try:
+                total += conn.execute(sql, params).fetchone()["c"]
+            except Exception:
+                continue
+        return total
+
+    async def count_filtered(self, filters: list) -> int:
+        return await self._r(self._count_filtered_sync, filters)

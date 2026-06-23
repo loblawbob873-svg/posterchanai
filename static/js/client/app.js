@@ -4146,7 +4146,13 @@
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
-    $('#show-followers').onclick=()=>peopleModal('Followers', _prof.followers||[]);
+    $('#show-followers').onclick=async()=>{   // lazy-load the follower LIST only when actually opened (count was already fetched via NIP-45)
+      if(!_prof.followers || !_prof.followers.length){
+        const fe=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]);
+        _prof.followers=[...new Set(fe.map(e=>e.pubkey))];
+      }
+      peopleModal('Followers', _prof.followers||[]);
+    };
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
     else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk); }
     { const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn); }   // ☰ on own + others' profiles
@@ -4154,16 +4160,15 @@
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
     (async()=>{
-      const [k3, followerEvs, pinList] = await Promise.all([
+      const [k3, followerCount, pinList] = await Promise.all([
         Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
-        Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]),
+        Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
         Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
       ]);
       if(VIEW!=='profile' || _prof.pk!==pk) return;
       _prof.following = k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
-      _prof.followers = [...new Set(followerEvs.map(e=>e.pubkey))];
       const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
-      const fr=$('#show-followers b'); if(fr) fr.textContent=_prof.followers.length+(followerEvs.length>=1000?'+':'');
+      const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
       const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
       if(pinIds.length){
         const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));

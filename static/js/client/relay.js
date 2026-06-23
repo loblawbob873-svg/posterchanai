@@ -58,6 +58,7 @@
     _conns: new Map(),        // url -> Conn
     _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set}
     _okWaiters: new Map(),    // eventId -> { settle(fn) }
+    _countWaiters: new Map(), // countId -> resolve(n)  (NIP-45 COUNT)
     _verify: false,           // true when connected to user relays (untrusted -> verify sigs)
     _vq: [], _vt: null,       // verify queue for untrusted events
     _ready: false,
@@ -105,6 +106,8 @@
       } else if (typ === 'OK'){
         const w = this._okWaiters.get(m[1]);
         if (w && m[2]){ this._okWaiters.delete(m[1]); w.settle({ ok: true, msg: m[3]||'' }); }   // first accept wins
+      } else if (typ === 'COUNT'){
+        const w = this._countWaiters.get(m[1]); if (w) w((m[2] && m[2].count) || 0);   // NIP-45 reply
       }
     },
     async _flush(){
@@ -139,6 +142,19 @@
           onEvent: ev => got.push(ev),    // pool already deduped by id before delivery
           onEose: finish
         });
+        setTimeout(finish, timeout);
+      });
+    },
+    // NIP-45 COUNT: ask the relay for a COUNT(*) instead of fetching the events. Resolves with the
+    // highest count any relay reports (the local relay answers fast). Used for follower/following
+    // tallies so opening a profile doesn't pull 1000 full contact-list events.
+    count(filters, timeout=4000){
+      return new Promise((res)=>{
+        const id = 'cnt' + Math.random().toString(36).slice(2,9);
+        let best = 0, done = false;
+        const finish = () => { if (done) return; done = true; this._countWaiters.delete(id); res(best); };
+        this._countWaiters.set(id, n => { if (n > best) best = n; });
+        this._send(['COUNT', id, ...filters]);
         setTimeout(finish, timeout);
       });
     },
