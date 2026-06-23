@@ -155,8 +155,15 @@ async def generate_image_with_load_balancing(
     # from the peer list — otherwise self is a candidate twice and the rotation wastes a slot
     # forwarding to itself instead of reaching real peers (e.g. nas). parse_server_urls has the
     # robust local-IP detection (ip addr / outbound-socket), so it reliably drops this node's IP.
-    from app.services.load_balancer import parse_server_urls
-    remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
+    # Distributed-LB (DVM) over Nostr REPLACES the IP/HTTP peer list when enabled: peers are worker
+    # npubs and the remote hop is a Nostr job event (see app.services.nostr_dvm). Local path unchanged.
+    from app.services import nostr_dvm
+    dvm_on = nostr_dvm.is_enabled(settings) and not local_only
+    if dvm_on:
+        remote = nostr_dvm.peers(settings)
+    else:
+        from app.services.load_balancer import parse_server_urls
+        remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
 
     candidates = ([_LOCAL] if allow_local else []) + remote
     if not candidates:
@@ -178,6 +185,13 @@ async def generate_image_with_load_balancing(
         try:
             if cand == _LOCAL:
                 result = await _generate_image_local(db, settings, prompt, negative_prompt, width, height, steps, cfg)
+            elif dvm_on:
+                logger.info(f"[IMAGE] dispatching to worker {cand[:12]} over Nostr")
+                r = await nostr_dvm.run_remote("image", {
+                    "prompt": prompt, "negative_prompt": negative_prompt,
+                    "width": width, "height": height, "steps": steps, "cfg": cfg,
+                }, settings, worker_pubkey=cand, timeout=timeout)
+                result = r.get("image") if r else None
             else:
                 logger.info(f"[IMAGE] forwarding to remote node {cand}")
                 result = await _generate_image_on_node(cand, timeout, prompt, negative_prompt, width, height, steps, cfg)

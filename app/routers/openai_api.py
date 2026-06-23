@@ -560,9 +560,57 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
         predict_limit = server_num_predict
     max_tokens = min(request.max_tokens, predict_limit) if request.max_tokens is not None else predict_limit
 
+    # Distributed-LB (DVM) over Nostr — when enabled it REPLACES the IP/HTTP LB below. Round-robin
+    # [local]+peers: a peer → dispatch a Nostr job (full response, no token streaming for now); local
+    # (or a failed/timed-out worker) → fall through to local inference. Skipped on LB hops.
+    #
+    # AGENTIC / LONG-RUNNING REQUESTS (request.tools — opencode et al.) are DELIBERATELY excluded:
+    # the DVM path is full-response (no token streaming yet), so a long tool generation (a big file
+    # write at the 16k tool cap can run 100s+) would emit nothing until done — blowing past opencode's
+    # ~125s client read-timeout — and a slow/dead worker would hold await_one for the whole chat budget
+    # before failing over, well past that timeout. Streaming is what keeps an agent alive (per-chunk
+    # timeout reset), and that's deferred. So tool requests stay on the STREAMING path below (IP LB if
+    # still configured, else local) and keep their proven behavior. (The worker CAN run tools — it's
+    # only our coordinator that won't route them here until streaming-DVM lands.)
+    from app.services import nostr_dvm as _dvm
+    if _dvm.is_enabled(settings) and not skip_load_balancer and not request.tools:
+        _peers = _dvm.peers(settings)
+        _cand = _dvm._pick_peer(["__LOCAL__"] + _peers) if _peers else "__LOCAL__"
+        if _cand != "__LOCAL__":
+            _r = await _dvm.run_remote("chat", {
+                "messages": messages, "temperature": temperature, "top_p": top_p,
+                "max_tokens": max_tokens, "stop": getattr(request, "stop", None),
+                "model": request.model, "tools": request.tools, "tool_choice": request.tool_choice,
+            }, settings, worker_pubkey=_cand)
+            if _r and _r.get("completion"):
+                _completion = _r["completion"]
+                for _ch in _completion.get("choices", []) or []:
+                    _m = _ch.get("message", {}) or {}
+                    if _m.get("content"):
+                        _m["content"] = strip_thinking_tags(_m["content"])
+                if request.stream:
+                    async def _dvm_stream():
+                        import json as _json
+                        _c0 = (_completion.get("choices") or [{}])[0]
+                        _msg = _c0.get("message", {}) or {}
+                        _delta = {"role": "assistant", "content": _msg.get("content", "") or ""}
+                        if _msg.get("tool_calls"):
+                            _delta["tool_calls"] = _msg["tool_calls"]
+                        _cid = _completion.get("id", "dvm")
+                        yield "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
+                            "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]}) + "\n\n"
+                        yield "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": _c0.get("finish_reason", "stop")}]}) + "\n\n"
+                        yield "data: [DONE]\n\n"
+                    return StreamingResponse(_dvm_stream(), media_type="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+                return _completion
+            logger.info("[OPENAI API] DVM worker unavailable/failed → local inference")
+        # __LOCAL__ chosen (or no peers) → fall through to local inference below.
+
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
-    if servers and not skip_load_balancer:
+    elif servers and not skip_load_balancer:
         from app.services.load_balancer import get_healthy_server, is_self_url, NoHealthyServersError
 
         # Server-to-server requests don't need authentication

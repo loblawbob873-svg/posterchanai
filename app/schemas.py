@@ -194,6 +194,11 @@ class SettingsResponse(BaseModel):
     # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image, music
     # and video LB (Site → Load Balancing → Server URLs).
     chat_server_urls: str = ""  # Comma-separated list of posterchanai server URLs for load balancing
+    # Nostr-native distributed LB (NIP-90 DVM). When enabled, jobs are dispatched to worker NODES over
+    # Nostr (encrypted job event → worker npub → encrypted result) instead of the IP/HTTP LB above.
+    nostr_dvm_enabled: bool = False
+    nostr_dvm_worker_npubs: str = ""   # cluster worker npubs (the LB list; also the trusted allowlist)
+    nostr_dvm_relay: str = ""          # shared relay ws:// for jobs (blank = this node's local relay)
     # Native LLM health check (ping the loaded model; reload it on repeated failure / high VRAM)
     llm_health_check_enabled: str = "false"
     llm_health_check_interval: str = "90"

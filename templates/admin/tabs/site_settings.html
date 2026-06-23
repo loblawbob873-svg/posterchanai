@@ -25,6 +25,41 @@
     </fieldset>
 
     <fieldset>
+        <legend>Distributed AI over Nostr (DVM)</legend>
+        <div class="form-group">
+            <label for="nostr_dvm_enabled">
+                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Use Nostr-based load balancing
+            </label>
+            <small>When on, GPU jobs (chat, image, music, video) dispatch to worker nodes <strong>over
+                Nostr</strong> — an encrypted job event addressed to a worker's npub, run on its GPU,
+                returned encrypted — <strong>instead of</strong> the IP list above. Groundwork for open
+                distributed AI over Nostr. <strong>Restart the service to apply.</strong></small>
+        </div>
+        <div class="form-group">
+            <label for="dvm-node-npub">This node's worker npub</label>
+            <div style="display:flex;gap:8px;align-items:center">
+                <input type="text" id="dvm-node-npub" readonly placeholder="(loads on open)" style="flex:1">
+                <button type="button" class="btn" onclick="copyDvmNpub()">Copy</button>
+            </div>
+            <small>Paste this into <strong>every</strong> node's “Worker npubs” list (including this one)
+                so jobs can be addressed to this GPU. Auto-generated; its private key never leaves this node.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_dvm_worker_npubs">Worker npubs (the cluster)</label>
+            <textarea id="nostr_dvm_worker_npubs" name="nostr_dvm_worker_npubs" rows="3" placeholder="npub1… (one per line or comma-separated)"></textarea>
+            <small>All cluster worker npubs — this is the LB list (round-robin between them + this node)
+                AND the trusted allowlist (a worker only serves jobs from these npubs). Each node drops
+                its own npub automatically. These keys are also auto-trusted by the job relay's gate.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_dvm_relay">Job relay (ws:// or wss://)</label>
+            <input type="text" id="nostr_dvm_relay" name="nostr_dvm_relay" placeholder="wss://poster.place/relay">
+            <small>The shared relay all nodes use to exchange job/result events. Blank = this node's
+                local relay (single-node only). For a cluster, point every node at ONE relay.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>LLM Health Check</legend>
         <div class="form-group">
             <label for="llm_health_check_enabled">

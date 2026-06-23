@@ -228,3 +228,105 @@ async def query(relays, filters: list, timeout: float = _DEFAULT_QUERY_TIMEOUT,
         return_exceptions=True,
     )
     return sorted(out.values(), key=lambda e: e.get("created_at", 0), reverse=True)
+
+
+async def await_one(relays, filters: list, timeout: float = 60.0, direct: bool = False) -> dict | None:
+    """Open a REQ and return the FIRST event matching `filters` (already-stored OR live-arriving),
+    else None on timeout. Unlike query() (which returns after EOSE), this keeps the subscription open
+    waiting for a live event — used to await an async job RESULT that may not exist yet at subscribe
+    time. Races all relays; first match wins."""
+    relays = normalize_relays(relays)
+    if not relays:
+        return None
+    result: dict = {}
+    done = asyncio.Event()
+
+    async def _one(relay: str) -> None:
+        if not _is_local(relay) and _relay_paused(relay):
+            return
+        sub_id = uuid.uuid4().hex[:16]
+        try:
+            async with _connect(relay, direct) as ws:
+                await ws.send(json.dumps(["REQ", sub_id] + filters))
+                deadline = asyncio.get_event_loop().time() + timeout
+                while not done.is_set():
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, 25))
+                    except asyncio.TimeoutError:
+                        try:
+                            await ws.ping()   # keepalive: a long-running job may take minutes
+                        except Exception:
+                            break
+                        continue
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if (isinstance(msg, list) and len(msg) >= 3 and msg[0] == "EVENT"
+                            and msg[1] == sub_id and isinstance(msg[2], dict) and msg[2].get("id")):
+                        if not done.is_set():
+                            result.update(msg[2])
+                            done.set()
+                        break
+                    # EOSE is ignored on purpose — keep the sub open for a live result.
+                with contextlib.suppress(Exception):
+                    await ws.send(json.dumps(["CLOSE", sub_id]))
+        except Exception as e:
+            logger.debug("[nostr] await_one %s failed: %s", relay, e)
+
+    tasks = [asyncio.create_task(_one(r)) for r in relays]
+    try:
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    for t in tasks:
+        t.cancel()
+    with contextlib.suppress(Exception):
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return dict(result) if result else None
+
+
+async def subscribe(relay: str, filters: list, handler, stop: asyncio.Event, direct: bool = False,
+                    since_now: bool = False) -> None:
+    """Persistent subscription to ONE relay: REQ `filters`, await handler(ev) per live EVENT,
+    auto-reconnecting (capped backoff) until `stop` is set. Used by the DVM worker loop.
+
+    since_now: stamp each filter's `since` with the CURRENT time on every (re)connect, so a reconnect
+    after a drop does NOT replay old / already-handled events — only live ones from now forward."""
+    backoff = 1
+    while not stop.is_set():
+        sub_id = uuid.uuid4().hex[:16]
+        req_filters = [{**f, "since": int(time.time())} for f in filters] if since_now else filters
+        try:
+            async with _connect(relay, direct) as ws:
+                await ws.send(json.dumps(["REQ", sub_id] + req_filters))
+                backoff = 1
+                while not stop.is_set():
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                    except asyncio.TimeoutError:
+                        try:
+                            await ws.ping()
+                        except Exception:
+                            break   # dead connection → reconnect
+                        continue
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if (isinstance(msg, list) and len(msg) >= 3 and msg[0] == "EVENT"
+                            and msg[1] == sub_id and isinstance(msg[2], dict)):
+                        try:
+                            await handler(msg[2])
+                        except Exception as e:
+                            logger.warning("[nostr] subscribe handler error: %s", e)
+        except Exception as e:
+            if not stop.is_set():
+                logger.debug("[nostr] subscribe %s dropped: %s — reconnecting", relay, e)
+        if stop.is_set():
+            break
+        await asyncio.sleep(min(backoff, 30))
+        backoff = min(backoff * 2, 30)

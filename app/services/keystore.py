@@ -81,6 +81,26 @@ def set_storage_seckey(npub: str, sk: bytes) -> None:
         _save(data)
 
 
+# ---- per-node DVM worker key ----
+def get_worker_seckey() -> bytes:
+    """This node's distributed-LB worker identity — a DEDICATED per-node key, auto-generated and
+    persisted on first use. Distinct from `operator_nsec` (which is shared across the cluster to
+    decrypt the relay datastore, so it can't double as an addressable per-worker id) and never leaves
+    this node. Its npub goes in the cluster's worker list so jobs can be addressed to this GPU."""
+    with _LOCK:
+        data = _load()
+        hexsk = data.get("worker_nsec")
+        if hexsk:
+            try:
+                return bytes.fromhex(hexsk)
+            except ValueError:
+                pass
+        sk = os.urandom(32)
+        data["worker_nsec"] = sk.hex()
+        _save(data)
+        return sk
+
+
 # ---- operator key ----
 def get_operator_nsec() -> str | None:
     with _LOCK:

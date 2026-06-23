@@ -157,6 +157,15 @@ def _read_config() -> dict:
             if pk:
                 seeds.append(pk)
 
+        # Distributed-LB (DVM) worker npubs: their job/result events (kinds 5050/5100/5201/5202 +
+        # results) are accepted regardless of the WoT gate, so the cluster's dedicated worker keys
+        # — which aren't social WoT members — can publish jobs through this relay.
+        dvm_npubs = set()
+        for tok in (g("nostr_dvm_worker_npubs", "")).replace(",", "\n").split():
+            pk = nostr_service.to_pubkey_hex(tok.strip())
+            if pk:
+                dvm_npubs.add(pk)
+
         # Upstream relays: BLANK = the bots' DEFAULT_RELAYS (turnkey convenience). But if the admin
         # SET a value that yields no valid URLs, don't silently fall back to ALL defaults — that's
         # the "I changed upstream but it still syncs the defaults" trap. URLs must be ws:// or wss://.
@@ -176,6 +185,7 @@ def _read_config() -> dict:
             "bind": g("nostr_relay_bind", "127.0.0.1"),
             "port": gi("nostr_relay_port", 3052),
             "seeds": seeds,
+            "dvm_npubs": dvm_npubs,   # distributed-LB worker keys exempt from the WoT publish gate
             "upstream": upstream,
             # Bypass the outbound Tor proxy for the relay's OWN upstream traffic (sync/outbox/
             # WoT). Direct is faster and avoids the proxy-startup-race log flood; doesn't change

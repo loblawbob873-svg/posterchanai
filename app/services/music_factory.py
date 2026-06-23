@@ -122,8 +122,13 @@ async def generate_music_for_user(
 
     # Round-robin across remote nodes AND this node's local acestep, so songs spread over both
     # machines. A forwarded request (/api/generate-music) is local_only — it generates HERE.
+    # Distributed-LB (DVM) over Nostr replaces the IP peer list when enabled (peers = worker npubs).
+    from app.services import nostr_dvm
+    dvm_on = nostr_dvm.is_enabled() and not local_only
     if local_only:
         candidates = [_LOCAL]
+    elif dvm_on:
+        candidates = nostr_dvm.peers() + [_LOCAL]
     else:
         candidates = parse_music_server_urls(cfg["server_urls"]) + [_LOCAL]
     candidates = await _rotated(candidates)
@@ -147,6 +152,15 @@ async def generate_music_for_user(
         try:
             if cand == _LOCAL:
                 audio_bytes, ext = await _generate_local(db, cfg, prompt, lyrics, duration, steps, timeout, fmt)
+            elif dvm_on:
+                logger.info(f"[music] dispatching to worker {cand[:12]} over Nostr")
+                r = await nostr_dvm.run_remote("music", {
+                    "prompt": prompt, "lyrics": lyrics, "duration": duration, "steps": steps,
+                }, worker_pubkey=cand, timeout=timeout)
+                if not r or not r.get("audio"):
+                    raise MusicError("worker returned no audio")
+                import base64 as _b64
+                audio_bytes, ext = _b64.b64decode(r["audio"]), r.get("format", fmt)
             else:
                 logger.info(f"[music] generating on remote node {cand}")
                 audio_bytes, ext = await _generate_on_node(cand, prompt, lyrics, duration, steps, timeout, fmt)

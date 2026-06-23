@@ -130,6 +130,7 @@ async def generate_video_for_user(
             "Video generation is turned off. An admin can enable it in Admin → Video."
         )
 
+    dvm_on = False
     if local_only:
         # A forwarded request (from another node's LB). If THIS node has local video disabled (e.g.
         # its GPU is owned by the music server / other work), refuse so the caller falls back instead
@@ -138,7 +139,10 @@ async def generate_video_for_user(
             raise VideoError("Local video generation is disabled on this node.")
         candidates = [_LOCAL]
     else:
-        candidates = parse_video_server_urls(cfg["server_urls"])
+        # Distributed-LB (DVM) over Nostr replaces the IP peer list when enabled (peers = worker npubs).
+        from app.services import nostr_dvm
+        dvm_on = nostr_dvm.is_enabled()
+        candidates = nostr_dvm.peers() if dvm_on else parse_video_server_urls(cfg["server_urls"])
         if cfg["local_enabled"]:
             candidates = candidates + [_LOCAL]
     if not candidates:
@@ -158,6 +162,16 @@ async def generate_video_for_user(
         try:
             if cand == _LOCAL:
                 video_bytes = await _generate_local(db, cfg, prompt, negative_prompt)
+            elif dvm_on:
+                logger.info(f"[video] dispatching to worker {cand[:12]} over Nostr")
+                from app.services import nostr_dvm
+                r = await nostr_dvm.run_remote("video", {
+                    "prompt": prompt, "negative_prompt": negative_prompt,
+                }, worker_pubkey=cand, timeout=cfg["timeout"])
+                if not r or not r.get("video"):
+                    raise VideoError("worker returned no video")
+                import base64 as _b64
+                video_bytes = _b64.b64decode(r["video"])
             else:
                 logger.info(f"[video] generating on remote node {cand}")
                 video_bytes = await _generate_on_node(cand, prompt, negative_prompt, cfg["timeout"])

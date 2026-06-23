@@ -340,6 +340,10 @@ When asked to write or modify code or files:
             # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image,
             # music and video LB (empty = use local backend only).
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
+            # Nostr-native distributed LB (NIP-90 DVM) — opt-in; replaces the IP LB above when on.
+            "nostr_dvm_enabled": "false",
+            "nostr_dvm_worker_npubs": "",  # cluster worker npubs (LB list + trusted allowlist)
+            "nostr_dvm_relay": "",         # shared relay ws:// for jobs (blank = local relay)
             # Native LLM settings (the local LLM backend is always native llama.cpp now). The
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image
             # ships a turnkey native+GPU config); unset → the default below.

@@ -329,6 +329,14 @@ def get_settings(
     return SettingsResponse(**settings)
 
 
+@router.get("/dvm-info")
+def dvm_info(admin: User = Depends(get_admin_user)):
+    """This node's distributed-LB (DVM) worker identity. Its npub goes in every node's worker list +
+    the cluster relay's gate so jobs can be addressed to this GPU."""
+    from app.services import nostr_dvm
+    return {"npub": nostr_dvm.node_npub(), "pubkey": nostr_dvm.node_pubkey()}
+
+
 @router.post("/models/{kind}/download")
 def models_download(kind: str, admin: User = Depends(get_admin_user)):
     """Start an on-demand model download (kind = chat | image | music) in the background. Models are

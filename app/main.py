@@ -327,6 +327,13 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
             try:
+                # Distributed-LB (DVM): listen for GPU jobs addressed to this node over Nostr
+                # (no-op unless nostr_dvm_enabled). Runs in this loop; jobs hop to the GPU lock.
+                from app.services import nostr_dvm
+                nostr_dvm.start_worker()
+            except Exception as e:
+                logging.error(f"Error starting Nostr DVM worker: {e}", exc_info=True)
+            try:
                 # 4chan catalog warm-refresh (15 min, only boards a user viewed → kind-30078 cache)
                 from app.routers.fourchan import start_catalog_refresh
                 start_catalog_refresh()
@@ -562,6 +569,11 @@ async def shutdown():
         try:
             from app.services.reminder_service import stop_reminder_scheduler
             stop_reminder_scheduler()
+        except Exception:
+            pass
+        try:
+            from app.services import nostr_dvm
+            await nostr_dvm.stop_worker()
         except Exception:
             pass
         try:
