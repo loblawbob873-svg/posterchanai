@@ -41,11 +41,31 @@ def _err(status: int, reason: str) -> JSONResponse:
 # Small in-RAM thumbnail cache for the Files grid (`?thumb=1`). Thumbs are tiny (~10-20 KB), so a
 # few hundred entries is a few MB — bounded to avoid unbounded growth. Saves re-encoding + serving
 # full-resolution images just to render a grid cell.
+import os
 from collections import OrderedDict
 import threading
 _thumb_cache: "OrderedDict[str, bytes]" = OrderedDict()
 _thumb_lock = threading.Lock()
 _THUMB_MAX = 400
+# DISK tier: persists thumbnails across restarts so an expensive video ffmpeg / image decode runs ONCE
+# ever — not on every restart or re-list (the cause of one user pegging a core). Tiny JPEGs keyed by
+# sha, plus a `.none` sentinel for undecodable blobs.
+_THUMB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "blossom_thumbs")
+# Cap concurrent thumbnail GENERATION (ffmpeg/Pillow are CPU-bound). Without it a folder of videos
+# spawned ~one ffmpeg per pool thread and pegged every core; 3 leaves headroom for serving requests.
+_thumb_sem = asyncio.Semaphore(3)
+
+
+def _thumb_disk_path(sha: str, ok: bool = True) -> str:
+    return os.path.join(_THUMB_DIR, sha + (".jpg" if ok else ".none"))
+
+
+def _thumb_put_ram(sha: str, data: bytes) -> None:
+    with _thumb_lock:
+        _thumb_cache[sha] = data
+        _thumb_cache.move_to_end(sha)
+        while len(_thumb_cache) > _THUMB_MAX:
+            _thumb_cache.popitem(last=False)
 
 
 def _thumb_get(sha: str):
@@ -53,15 +73,36 @@ def _thumb_get(sha: str):
         t = _thumb_cache.get(sha)
         if t is not None:
             _thumb_cache.move_to_end(sha)
-        return t
+            return t
+    # Disk tier — survives restarts so we never regenerate. `.none` = cached "undecodable" sentinel.
+    try:
+        if os.path.exists(_thumb_disk_path(sha, ok=False)):
+            _thumb_put_ram(sha, b"")
+            return b""
+        p = _thumb_disk_path(sha, ok=True)
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                d = f.read()
+            _thumb_put_ram(sha, d)
+            return d
+    except Exception:
+        pass
+    return None
 
 
-def _thumb_put(sha: str, data: bytes):
-    with _thumb_lock:
-        _thumb_cache[sha] = data
-        _thumb_cache.move_to_end(sha)
-        while len(_thumb_cache) > _THUMB_MAX:
-            _thumb_cache.popitem(last=False)
+def _thumb_put(sha: str, data: bytes) -> None:
+    _thumb_put_ram(sha, data)
+    try:
+        os.makedirs(_THUMB_DIR, exist_ok=True)
+        if data:
+            tmp = _thumb_disk_path(sha) + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, _thumb_disk_path(sha, ok=True))
+        else:
+            open(_thumb_disk_path(sha, ok=False), "wb").close()   # undecodable sentinel
+    except Exception:
+        pass
 
 
 def _video_thumb_bytes(data: bytes, size: int = 320) -> "bytes | None":
@@ -217,19 +258,22 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     if request.query_params.get("thumb") and (mime.startswith("image/") or mime.startswith("video/")):
         t = _thumb_get(sha)
         if t is None:
-            data = await blossom_service.read_full(db, blob)
-            if data is None:
-                return _err(404, "blob bytes unavailable")
-            if mime.startswith("video/"):
-                t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
-                _thumb_put(sha, t if t is not None else b"")   # sentinel: don't retry a failed decode
-            else:
-                try:
-                    from app.services.media_service import compress_image
-                    t = await asyncio.to_thread(compress_image, data, 320, 70)
-                except Exception:
-                    t = data   # undecodable → fall back to the original bytes
-                _thumb_put(sha, t)
+            async with _thumb_sem:               # bound concurrent generation so a list can't peg cores
+                t = _thumb_get(sha)              # re-check: a concurrent request may have just made it
+                if t is None:
+                    data = await blossom_service.read_full(db, blob)
+                    if data is None:
+                        return _err(404, "blob bytes unavailable")
+                    if mime.startswith("video/"):
+                        t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
+                        _thumb_put(sha, t if t is not None else b"")   # sentinel: don't retry a failed decode
+                    else:
+                        try:
+                            from app.services.media_service import compress_image
+                            t = await asyncio.to_thread(compress_image, data, 320, 70)
+                        except Exception:
+                            t = data   # undecodable → fall back to the original bytes
+                        _thumb_put(sha, t)
         if not t:   # cached no-thumbnail sentinel (video undecodable / ffmpeg missing) — cache the
             # negative so the grid's <img> onerror→icon fallback doesn't re-request it on every render
             return Response(status_code=404, headers={**_CORS, "Cache-Control": "public, max-age=86400"})

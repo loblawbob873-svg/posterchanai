@@ -3185,6 +3185,10 @@
   };
   function _shaFromUrl(url){ const m=String(url||'').match(/([0-9a-f]{64})/i); return m?m[1].toLowerCase():''; }
   let _filesFolder = '';   // current folder ('' = All)
+  // Pagination for the FILES GRID only (NOT the Music list — the player needs the whole queue). Render
+  // a page at a time so a big folder doesn't fire hundreds of thumbnail requests (CPU) at once.
+  const _FILES_PAGE = 60;
+  let _filesShown = _FILES_PAGE, _filesShownFolder = null;
   // Public tab — your Blossom blobs, organised into client-side folders. Drag-drop + folders + grid.
   async function renderPublicFiles(pane){
     const server=mediaServer();
@@ -3245,7 +3249,9 @@
       if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
       return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
     });
-    grid.innerHTML = inFolder.length ? inFolder.map(b=>{
+    if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; }   // reset paging on folder change
+    const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
+    grid.innerHTML = inFolder.length ? (_shown.map(b=>{
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||'';
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         const ext=((m.mime||'').split('/')[1]||'enc').slice(0,10);
@@ -3256,7 +3262,8 @@
       return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
         <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):(((b.size||0)/1024|0)+'KB')}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
-    }).join('') : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
     $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
@@ -3445,7 +3452,9 @@
     _idxGcDone=true;
     try{
       const cur=FilesIdx._lastIndexSha;
-      const cands=(list||[]).filter(b=> b.sha256!==cur && !FilesIdx.meta(b.sha256) && /octet-stream/.test(b.type||'') && (b.size||0)<5*1024*1024).slice(0,40);
+      // Index blobs are small JSON ciphertext — only consider small octet-stream blobs, and cap tight
+      // (fetch+AES-decrypt per candidate is CPU; don't churn through big media on every session).
+      const cands=(list||[]).filter(b=> b.sha256!==cur && !FilesIdx.meta(b.sha256) && /octet-stream/.test(b.type||'') && (b.size||0)<512*1024).slice(0,8);
       if(!cands.length) return;
       const mk=await FilesIdx._ensureMK(); if(!mk) return;
       for(const b of cands){
