@@ -583,8 +583,12 @@ def _post_result(state, gameid, parent_id, showdown, announce=True):
     pot_won = sum(state.get("winners", {}).values())
     body = f"{head} {summary}.  ({pot_won} chips){_footer()}"
     if announce:
+        # reveal=True (not showdown): on a FOLD win there's no showdown + a pre-flop fold has no
+        # community cards, so reveal=showdown rendered a fully blank card image. render_table only
+        # reveals NON-folded players (the winner here), so folders still stay hidden — but the result
+        # always shows real cards instead of empty slots.
         _do_publish(None if private else gameid, None if private else parent_id, state["seats"],
-                    body, _board_png(state, reveal=showdown))
+                    body, _board_png(state, reveal=True))
     # PERSISTENT table: deal the next hand (rotate button, carry stacks, drop leavers/busted).
     nxt, _ = _G.next_hand(state)
     if nxt is None:

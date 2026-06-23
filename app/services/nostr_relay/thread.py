@@ -237,7 +237,9 @@ def _read_config() -> dict:
             # live events (30311). Including 0/3/10002 lets the firehose stream WoT members' IDENTITY
             # metadata too, so the relay serves profiles without a separate fetch — same
             # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,30023,30311,34550")
+            # 30402 = NIP-99 classified listings (the Market/Store); 30017/30018 = NIP-15 marketplace
+            # stalls/products — ingest + firehose them so the Discover → Market view sees WoT listings.
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,30023,30311,34550,30402,30017,30018")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't

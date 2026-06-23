@@ -3194,9 +3194,29 @@
       if(!_audioEl) _audioEl=new Audio();
       _audioEl.ontimeupdate=()=>this._tick();
       _audioEl.onended=()=>this.next();
-      _audioEl.onplay=()=>{ this._render(); this._startViz(); };
-      _audioEl.onpause=()=>{ this._render(); };
+      _audioEl.onplay=()=>{ this._render(); this._startViz(); this._media(); };
+      _audioEl.onpause=()=>{ this._render(); this._media(); };
+      // Hardware / keyboard media keys (play/pause, ⏮/⏭) + OS lock-screen controls via MediaSession.
+      if('mediaSession' in navigator){ const ms=navigator.mediaSession; try{
+        ms.setActionHandler('play',          ()=>{ if(_audioEl) _audioEl.play(); });
+        ms.setActionHandler('pause',         ()=>{ if(_audioEl) _audioEl.pause(); });
+        ms.setActionHandler('previoustrack', ()=>this.prev());
+        ms.setActionHandler('nexttrack',     ()=>this.next());
+        ms.setActionHandler('stop',          ()=>this.close());
+        try{ ms.setActionHandler('seekto', e=>{ if(_audioEl && _audioEl.duration && e.seekTime!=null) _audioEl.currentTime=e.seekTime; }); }catch(_){}
+      }catch(_){} }
       return d;
+    },
+    _media(){
+      // Push the current track + play state to the OS media UI so the media keys show the right song.
+      if(!('mediaSession' in navigator)) return;
+      try{
+        const m=this.cur?FilesIdx.meta(this.cur):null;
+        if(window.MediaMetadata) navigator.mediaSession.metadata=new MediaMetadata({
+          title:(m&&m.name)||'Track', artist:'PosterChan', album:'Library',
+          artwork:[{src:LOGO, sizes:'512x512', type:'image/png'}] });
+        navigator.mediaSession.playbackState=(_audioEl && !_audioEl.paused)?'playing':'paused';
+      }catch(_){}
     },
     refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
     async play(sha, opts){
