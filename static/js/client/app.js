@@ -4477,7 +4477,7 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, awaiting:false, _retry:0, _recovTok:0 };
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, awaiting:false };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   async function aiMount(feed){
@@ -4617,41 +4617,27 @@
     const tok=_cookie('access_token');
     const ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
     _ai.ws=ws;
-    ws.onopen=()=>{ _ai._retry=0; const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
+    ws.onopen=()=>{ const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
     ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
-    // This WS has no keepalive: a slow effect/image/video generation can outlast an idle/proxy timeout
-    // so the socket closes mid-flight. The server still finishes + PERSISTS the reply, so the live push
-    // is lost and the answer only showed up after a manual refresh ("sometimes I never get an update").
-    // On an UNEXPECTED close, reconnect (capped backoff); if a reply was in flight, recover it.
-    ws.onclose=()=>{
-      if(_ai.ws!==ws || VIEW!=='ai' || _ai.convId!==id) return;   // replaced, or user navigated away → ignore
-      const n=(_ai._retry=(_ai._retry||0)+1);
-      if(n>6){ if(_ai.awaiting) toast('AI connection lost — pull down to refresh'); return; }
-      setTimeout(()=>{
-        if(_ai.ws!==ws || VIEW!=='ai' || _ai.convId!==id) return;   // a newer socket/conversation took over
-        if(_ai.awaiting) aiRecover(id);   // a reply is pending — reconnect + poll for the persisted answer
-        else aiConnect(id);               // idle drop — silent reconnect, no re-render
-      }, Math.min(700*n, 4000));
-    };
+    // No keepalive on this WS: a slow effect/image/video generation can outlast an idle/proxy timeout
+    // and the socket closes mid-flight. The server still finishes + PERSISTS the reply, so its live push
+    // was lost and the answer only appeared after a manual refresh ("sometimes I never get an update").
+    // If a reply was pending, pull it in (below). Idle drops need nothing — aiWsSend reconnects on send.
+    ws.onclose=()=>{ if(_ai.ws===ws && _ai.awaiting && VIEW==='ai' && _ai.convId===id) aiRecover(id); };
   }
-  // Recover a reply that was being generated when the WS dropped: reconnect, then poll the conversation
-  // until a NEW assistant message lands (covers slow image/video effects that finish after the drop) and
-  // re-render so it appears without a manual refresh. Bounded so it can't poll forever.
+  // The chat WS dropped while a reply was pending. Poll the persisted conversation (HTTP, no socket
+  // needed) until the new assistant message lands — covers slow effects that finish after the drop —
+  // then re-render it (which also reopens the WS). Bounded so it can't poll forever.
   function aiRecover(id){
-    aiConnect(id);
-    const tok=(_ai._recovTok=(_ai._recovTok||0)+1);   // newest recovery wins; older loops self-cancel
-    const box=$('#ai-msgs'); const baseline = box ? box.querySelectorAll('.ai-msg.assistant').length : 0;
+    const had = $('#ai-msgs') ? $('#ai-msgs').querySelectorAll('.ai-msg.assistant').length : 0;
     let tries=0;
-    const tick=async()=>{
-      if(_ai._recovTok!==tok || VIEW!=='ai' || _ai.convId!==id || !_ai.awaiting) return;   // superseded / done / left
-      if(++tries>20) return;   // ~60s ceiling — long enough for a video effect
+    (async function poll(){
+      if(!_ai.awaiting || VIEW!=='ai' || _ai.convId!==id || ++tries>20) return;   // done / left / gave up (~60s)
       let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
-      if(_ai._recovTok!==tok || _ai.convId!==id) return;
-      const asst=((conv&&conv.messages)||[]).filter(m=>m.role==='assistant').length;
-      if(asst>baseline){ _ai.awaiting=false; if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id); return; }
-      setTimeout(tick, 3000);
-    };
-    setTimeout(tick, 1500);
+      const got=((conv&&conv.messages)||[]).filter(m=>m.role==='assistant').length;
+      if(got>had){ _ai.awaiting=false; if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id); return; }
+      setTimeout(poll, 3000);
+    })();
   }
   // Send (or queue) a payload on the chat WS — never fail just because it's mid-connect; queue it
   // and the onopen handler flushes. Reconnects if the socket is closed.
