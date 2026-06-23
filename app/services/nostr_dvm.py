@@ -528,8 +528,10 @@ def start_worker() -> None:
     relay = relay_url(s)
     # since is stamped per-(re)connect by subscribe(since_now=True) so a reconnect never replays old jobs.
     filters = [{"kinds": list(DVM_REQ_KINDS), "#p": [me]}]
-    logger.info("[dvm] worker listening on %s as %s (trusted: %d npubs, max %d in-flight)",
-                relay, node_npub(), len(worker_pubkeys(s)), _MAX_INFLIGHT)
+    _allowed = len(allowed_npubs(s))
+    logger.info("[dvm] worker listening on %s as %s (share allowlist: %d npub%s, max %d in-flight)%s",
+                relay, node_npub(), _allowed, "" if _allowed == 1 else "s", _MAX_INFLIGHT,
+                "" if _allowed else " — empty, so it will serve NO ONE until npubs are added")
     _worker_task = asyncio.create_task(
         nostr_relay.subscribe(relay, filters, _spawn_job, _worker_stop, direct=True, since_now=True))
 
