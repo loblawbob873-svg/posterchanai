@@ -217,6 +217,11 @@ def _read_config() -> dict:
             "max_events": gi("nostr_relay_max_events", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
+            "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
+            # Minimum gap between FULL graph crawls triggered by the refresh-wot control msg (signup/
+            # follow/bot/admin). New members are added incrementally (wot-add); the expensive crawl is
+            # throttled so a burst of activity can't run back-to-back full rebuilds and peg a core.
+            "wot_refresh_min_interval_sec": gi("nostr_relay_wot_refresh_min_interval_sec", 1800),
             "prune_interval_sec": gi("nostr_relay_prune_interval_sec", 86400),  # nightly (was hourly)
             "wot_enabled": gb("nostr_relay_wot_enabled", True),           # off → open publishing + NO trust-graph background work
             "send_only": gb("nostr_relay_send_only", False),              # broadcast to upstream (outbox) but NEVER pull/store their events (no firehose/sync/metadata mirror)
@@ -503,11 +508,18 @@ async def _main(cfg: dict) -> None:
                     logger.debug("[nostr-relay] firehose ancestor backfill failed: %s", e)
 
     async def _maybe_rebuild_wot():
-        # Rebuild the WoT (write-gate membership) at most ONCE A DAY — the stamp decides, not the
-        # timer, so frequent restarts (which reset timers) can't trigger extra 37k crawls.
-        if _wot_stale(cfg):
-            logger.info("[nostr-relay] daily WoT refresh (>= %dh since last build) — rebuilding",
-                        int(cfg["wot_refresh_sec"] / 3600))
+        # The full 37k-follow graph crawl is a NIGHTLY task: it runs only during the configured
+        # low-traffic hour (UTC), and only once it's been ~a day since the last build. The stamp gates
+        # it (not the timer), so frequent restarts can't trigger extra crawls. New members are admitted
+        # incrementally (wot-add) all day; this just refreshes the follows-of-follows graph once a night.
+        # `overdue` is a safety net so the gate can never go badly stale if a night was missed (downtime).
+        age = time.time() - _read_wot_stamp(cfg)
+        hour = datetime.datetime.now(datetime.timezone.utc).hour
+        nightly = hour == cfg.get("wot_refresh_hour", 4) and age >= cfg.get("wot_refresh_sec", 86400) - 4 * 3600
+        overdue = age >= cfg.get("wot_refresh_sec", 86400) * 2
+        if nightly or overdue:
+            logger.info("[nostr-relay] %s WoT refresh — rebuilding the full graph (age %dh)",
+                        "nightly" if nightly else "overdue", int(age / 3600))
             await _build_wot(gate, store, cfg)
 
     _purge_state = {"count": None, "ts": 0}   # last block-purge result, surfaced in relay status
@@ -654,8 +666,18 @@ async def _main(cfg: dict) -> None:
                     except Exception:
                         pass
                     if cmd.get("cmd") == "refresh-wot":
-                        logger.info("[nostr-relay] control: WoT refresh requested")
-                        asyncio.create_task(_safe(_build_wot(gate, store, cfg)))
+                        _st = _wot_refresh_state
+                        _now = time.time()
+                        if _st["task"] is not None and not _st["task"].done():
+                            logger.info("[nostr-relay] WoT refresh already running — request coalesced")
+                        elif _now - _st["last"] < cfg.get("wot_refresh_min_interval_sec", 1800):
+                            logger.info("[nostr-relay] WoT refresh throttled — last full build %ds ago "
+                                        "(new members are added incrementally, no crawl needed)",
+                                        int(_now - _st["last"]))
+                        else:
+                            _st["last"] = _now
+                            _st["task"] = asyncio.create_task(_safe(_build_wot(gate, store, cfg)))
+                            logger.info("[nostr-relay] control: WoT refresh requested")
                     elif cmd.get("cmd") == "wot-add" and cmd.get("pubkeys"):
                         pks = [p for p in cmd["pubkeys"] if p]
                         gate.add_members(pks)                          # immediate (in-memory)
@@ -799,6 +821,13 @@ def _wot_stale(cfg) -> bool:
     """True if it's been >= the daily refresh interval since the last successful build, so a
     restart should rebuild. Within the interval, a restart reuses the snapshot-warmed gate."""
     return (time.time() - _read_wot_stamp(cfg)) >= cfg.get("wot_refresh_sec", 86400)
+
+
+# Coalesce + throttle full WoT rebuilds. Every signup/follow/bot-change drops a "refresh-wot" control
+# msg; without this, each one ran a full 37k-follow-graph crawl, so a burst ran several concurrent/
+# back-to-back crawls and pegged a core. Mutable dict (no `global` needed): one build at a time, and
+# not more often than wot_refresh_min_interval_sec. New members stay instant via the wot-add path.
+_wot_refresh_state = {"task": None, "last": 0.0}
 
 
 async def _build_wot(gate, store, cfg) -> int:

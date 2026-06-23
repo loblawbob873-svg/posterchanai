@@ -833,11 +833,9 @@ async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
     ev = nostr_event.build_event(seckey, 3, (existing.get("content", "") if existing else ""), tags=tags)
     accepted, msg = await _publish_to_relay(port, ev)
     if accepted:
-        try:
-            from app.services.nostr_relay.thread import trigger_wot_refresh
-            trigger_wot_refresh()
-        except Exception:
-            pass
+        # The new member is ALREADY admitted instantly via trigger_wot_add above — do NOT trigger a
+        # full WoT graph crawl here. Per-follow full rebuilds (one per signup) were pegging a core;
+        # the expensive crawl is left to the daily cadence (and the throttled admin/bot refresh path).
         return True, "operator followed you + admitted"
     return True, f"admitted (follow not stored: {msg})"   # WoT-add already done → still usable
 
