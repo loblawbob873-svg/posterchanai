@@ -154,6 +154,11 @@ BOT_BLACKLIST = [
     "anime",
 ]
 
+# Hex pubkeys of our OWN nostr bots (injected by the bot manager as BOT_NOSTR_PUBKEYS). A nostr
+# listener skips notes from any of these so our bots never reply to each other — robust by pubkey,
+# unlike the handle-based BOT_BLACKLIST above (a nostr sender is a pubkey, not a name).
+BOT_NOSTR_PUBKEYS = {p.strip().lower() for p in os.getenv("BOT_NOSTR_PUBKEYS", "").split(",") if p.strip()}
+
 # Phrase that must never be sent as part of a reply/post
 BLOCK_PHRASE = "I am programmed to be a helpful and harmless AI assistant"
 

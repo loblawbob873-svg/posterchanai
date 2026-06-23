@@ -19,7 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-from config import NOSTR_NSEC, BOT_BLACKLIST
+from config import NOSTR_NSEC, BOT_BLACKLIST, BOT_NOSTR_PUBKEYS
 from bot_commands import MEDIA_COMMANDS, NO_CAPTION_COMMANDS, BOT_HELP_TEXT
 from rate_limit import SlidingWindowLimiter
 from ai import generate_reply, is_ai_configured
@@ -437,6 +437,8 @@ def process_mentions():
         user = note.get("user") or {}
         if user.get("pubkey") == own_pubkey:
             continue  # never reply to self
+        if (user.get("pubkey") or "").lower() in BOT_NOSTR_PUBKEYS:
+            continue  # never reply to ANOTHER of our nostr bots (anti-loop, by pubkey)
         if any(b in (user.get("username") or "").lower() for b in blacklist):
             continue
         # Only respond when actually ADDRESSED (first mention / reply to the bot) — not when

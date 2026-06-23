@@ -218,6 +218,35 @@ def _set_internal_blossom(env: dict):
         env["BLOSSOM_SERVERS"] = " ".join(servers)
 
 
+def _all_nostr_bot_pubkeys() -> str:
+    """Hex pubkeys of EVERY nostr-capable bot (derived from each bot's nsec), comma-separated. Injected
+    into each nostr bot's env (BOT_NOSTR_PUBKEYS) so its listener can skip notes from ANOTHER of our
+    bots — a robust, pubkey-based anti-loop the handle-based BOT_BLACKLIST can't do. Best-effort: any
+    failure yields an empty string (the listener then just falls back to the handle blacklist)."""
+    out = set()
+    try:
+        from app.services.nostr import nostr_service
+        db = SessionLocal()
+        try:
+            for b in db.query(Bot).all():
+                try:
+                    nsec = (json.loads(b.config or "{}") or {}).get("nostr_nsec")
+                except Exception:
+                    nsec = None
+                if not nsec:
+                    continue
+                try:
+                    pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(nsec))
+                    out.add(pk if isinstance(pk, str) else pk.hex())
+                except Exception:
+                    pass
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return ",".join(sorted(out))
+
+
 def _build_env(bot_dict: dict, base_env: dict) -> dict:
     """Port of botctl.build_env, reading from a merged bot dict instead of bots_config."""
     env = dict(base_env)
@@ -304,6 +333,12 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # Nostr identity is a secret key (nsec/hex); relays + the external media host come
             # from the bot's config. Blank relays → app defaults.
             setif("nostr_nsec", "NOSTR_NSEC")
+            # Anti-loop: the hex pubkeys of ALL our nostr bots, so this listener never replies to
+            # another of our bots. Robust by pubkey (the handle-based BOT_BLACKLIST can't, since a
+            # nostr sender is a pubkey, not a name).
+            _peers = _all_nostr_bot_pubkeys()
+            if _peers:
+                env["BOT_NOSTR_PUBKEYS"] = _peers
             setif("nostr_profile_name", "NOSTR_PROFILE_NAME")
             setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")

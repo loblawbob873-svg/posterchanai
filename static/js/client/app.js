@@ -3210,9 +3210,12 @@
       // queue-order-previous isn't what you just heard). `opts.back` = we're navigating backward, don't record.
       if(this.cur && this.cur!==sha && !(opts&&opts.back)){ this._history.push(this.cur); if(this._history.length>200) this._history.shift(); }
       this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
-      try{ const u=await trackUrl(sha); this._loading=false; _audioEl.src=u; await _audioEl.play(); }
-      catch(e){ this._loading=false; toast('play failed: '+(e.message||e)); }
-      this._render();
+      try{ const u=await trackUrl(sha);
+        if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
+                                     // don't clobber _audioEl.src (that's the "skip plays the wrong song" bug)
+        this._loading=false; _audioEl.src=u; await _audioEl.play(); }
+      catch(e){ if(this.cur===sha){ this._loading=false; toast('play failed: '+(e.message||e)); } }
+      if(this.cur===sha) this._render();
     },
     toggle(){ if(_audioEl){ if(_audioEl.paused) _audioEl.play(); else _audioEl.pause(); } },
     next(){ if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);

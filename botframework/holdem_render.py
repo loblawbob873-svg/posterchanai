@@ -131,15 +131,19 @@ def render_table(state, reveal=False):
             d.text((cx, cy), "D", font=_font(15), fill=(20, 8, 38, 255), anchor="mm")
         status = ("FOLDED" if pk in folded else ("ALL-IN" if pk in allin else
                   (f"bet {state.get('street_bet', {}).get(pk, 0)}" if state.get('street_bet', {}).get(pk) else "")))
+        # The win amount goes in the LEFT status line (not a right-side badge): at showdown the
+        # revealed hole cards occupy the seat's right edge, and a "+won" badge there sat ON TOP of
+        # them — the winner's cards looked missing. Winners stay highlighted by the GOLD seat border.
+        if won:
+            status = f"WON +{won}"   # winner: just the win — drop the now-redundant all-in/bet state so
+                                     # the line stays short and never runs under the revealed cards (right)
         d.text((x + 12, y + 38), f"stack {state.get('stacks', {}).get(pk, 0)}   {status}",
                font=_font(15), fill=(GOLD if won else SUB), anchor="la")
-        # reveal hole cards at showdown for non-folded players
+        # reveal hole cards at showdown for non-folded players (right edge, now unobscured)
         if reveal and pk not in folded and pk in state.get("hole", {}):
             hc = state["hole"][pk]
             for j, c in enumerate(hc[:2]):
                 _card(d, x + bw - 44 - (1 - j) * 38, y + 6, c, 34, 48)
-        if won:
-            d.text((x + bw - 12, y + 8), f"+{won}", font=_font(18), fill=GOLD, anchor="ra")
     return _png(img)
 
 

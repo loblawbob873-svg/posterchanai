@@ -1877,12 +1877,22 @@ async def get_thumbnail(
                 thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumbnail_path, (size, size))
                 if thumbnail_data:
                     return JSONResponse({"thumbnail": thumbnail_data})
-            # No stored thumbnail: generate on-the-fly for images only (videos would need ffmpeg)
+            # No stored thumbnail: generate on-the-fly.
             if is_image:
                 thumbnail_data = await asyncio.to_thread(generate_thumbnail, full_path, (size, size))
                 if thumbnail_data:
                     return JSONResponse({"thumbnail": thumbnail_data})
-        
+            elif is_video:
+                # Extract a frame with ffmpeg into a thumbnail file, then base64-encode it (same shape
+                # the UI gets for images). generate_thumbnail_for_video_file returns None if ffmpeg is
+                # unavailable or the extract fails → falls through to 404, so the UI shows its icon.
+                thumb_path = await asyncio.to_thread(
+                    generate_thumbnail_for_video_file, user_path, full_path, (size, size))
+                if thumb_path and thumb_path.exists():
+                    thumbnail_data = await asyncio.to_thread(generate_thumbnail, thumb_path, (size, size))
+                    if thumbnail_data:
+                        return JSONResponse({"thumbnail": thumbnail_data})
+
         raise HTTPException(status_code=404, detail="Thumbnail not found.")
     except HTTPException:
         raise
