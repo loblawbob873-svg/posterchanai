@@ -258,6 +258,15 @@ def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
     or has the `can_blossom` privilege."""
     if pubkey_hex in _operator_pubkeys(db) or pubkey_hex in _whitelist_pubkeys(db):
         return True
+    # Distributed-LB (DVM) cluster nodes upload their media job-results (image/music/video) to the
+    # shared Blossom — auto-authorize the configured cluster npubs so no per-node can_blossom grant
+    # is needed. The cluster list is already the DVM trusted-requester allowlist.
+    try:
+        from app.services import nostr_dvm
+        if pubkey_hex in nostr_dvm.worker_pubkeys():
+            return True
+    except Exception:
+        pass
     try:
         npub = nostr_service.npub_of(pubkey_hex)
     except Exception:

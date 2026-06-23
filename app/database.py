@@ -344,6 +344,7 @@ When asked to write or modify code or files:
             "nostr_dvm_enabled": "false",
             "nostr_dvm_worker_npubs": "",  # cluster worker npubs (LB list + trusted allowlist)
             "nostr_dvm_relay": "",         # shared relay ws:// for jobs (blank = local relay)
+            "nostr_dvm_blossom_url": "",   # shared Blossom base URL for media (blank = blossom_public_url)
             # Native LLM settings (the local LLM backend is always native llama.cpp now). The
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image
             # ships a turnkey native+GPU config); unset → the default below.

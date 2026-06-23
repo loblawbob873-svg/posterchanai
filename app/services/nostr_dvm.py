@@ -11,8 +11,9 @@ This is the groundwork for open distributed AI over Nostr: the same protocol ser
 path, the ai.poster.place web client, or any third-party DVM client/worker later.
 
 Design (deliberately simple — "listen for events from a trusted npub, process, return"):
-  * Each node has a DEDICATED worker key (`keystore.get_worker_seckey`); its npub is its address.
-  * ONE setting `nostr_dvm_worker_npubs` = the cluster's worker npubs (the LB list). Peers = list−self.
+  * A node's DVM identity IS its INSTALLATION key — the operator/relay nsec already in the keystore,
+    which is distinct per node and already Blossom-authorized. No separate worker key to generate/set.
+  * ONE setting `nostr_dvm_worker_npubs` = the cluster's node npubs (the LB list). Peers = list−self.
     The same list is the trusted-requester allowlist (cluster nodes serve each other).
   * Job request kinds are per task (NIP-90 5xxx range); result kind = request + 1000. Payload is
     NIP-44-encrypted to the recipient and the result is signature-verified before use.
@@ -21,10 +22,13 @@ Design (deliberately simple — "listen for events from a trusted npub, process,
 import asyncio
 import base64
 import collections
+import hashlib
 import json
 import logging
 import time
 from typing import Optional
+
+import httpx
 
 from app.services import keystore, settings_store
 from app.services.nostr import bip340
@@ -47,16 +51,22 @@ _JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900}
 
 
 # ---------------------------------------------------------------- identity
-def node_seckey() -> bytes:
-    return keystore.get_worker_seckey()
+def node_seckey() -> Optional[bytes]:
+    """This node's DVM identity = its RELAY IDENTITY: the operator nsec in the keystore (the same key
+    shown in Admin → Relay). It's distinct per install and already Blossom-authorized, so there's no
+    separate worker key to generate or set. Returns None only if the relay identity isn't set yet."""
+    op = keystore.get_operator_nsec()
+    return nostr_service.decode_seckey(op) if op else None
 
 
-def node_pubkey() -> str:
-    return bip340.pubkey_from_seckey(node_seckey()).hex()
+def node_pubkey() -> Optional[str]:
+    sk = node_seckey()
+    return bip340.pubkey_from_seckey(sk).hex() if sk else None
 
 
-def node_npub() -> str:
-    return nostr_service.npub_of(node_pubkey())
+def node_npub() -> Optional[str]:
+    pk = node_pubkey()
+    return nostr_service.npub_of(pk) if pk else None
 
 
 # ---------------------------------------------------------------- settings
@@ -106,6 +116,66 @@ def relay_url(settings: Optional[dict] = None) -> str:
     return f"ws://127.0.0.1:{port}/relay"
 
 
+# ---------------------------------------------------------------- media transport (Blossom)
+# Image/music/video results are far too big to inline in a Nostr event (the relay caps messages at
+# 256KB), so the worker uploads the bytes to a SHARED Blossom server and sends only the sha256 over
+# Nostr; the coordinator fetches + verifies the blob. Chat (small text) stays inline.
+def _blossom_base(settings: Optional[dict] = None) -> str:
+    """Base URL of the shared Blossom server the cluster ships media through. Defaults to this node's
+    configured public Blossom URL; every node must point at ONE Blossom server reachable by all."""
+    s = _settings(settings)
+    return ((s.get("nostr_dvm_blossom_url", "") or s.get("blossom_public_url", "")) or "").rstrip("/")
+
+
+def _blossom_auth(sk: bytes, verb: str, sha256: str) -> str:
+    """BUD-01 Authorization header: a kind-24242 event (t=verb, x=sha256, future expiration) signed by
+    this node's relay identity (which is Blossom-authorized)."""
+    ev = nostr_event.build_event(sk, 24242, "",
+        [["t", verb], ["x", sha256], ["expiration", str(int(time.time()) + 300)]])
+    return "Nostr " + base64.b64encode(json.dumps(ev).encode()).decode()
+
+
+async def upload_media(data: bytes, mime: str, settings: Optional[dict] = None) -> Optional[str]:
+    """Upload result bytes to the shared Blossom server; return the sha256, or None on failure."""
+    base, sk = _blossom_base(settings), node_seckey()
+    if not base or not sk:
+        logger.warning("[dvm] no Blossom URL or relay identity — cannot ship media")
+        return None
+    sha = hashlib.sha256(data).hexdigest()
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.put(base + "/upload", content=data,
+                            headers={"Authorization": _blossom_auth(sk, "upload", sha),
+                                     "Content-Type": mime, "X-No-Mirror": "true"})
+        if r.status_code >= 400:
+            logger.warning("[dvm] blossom upload failed %s: %s", r.status_code, r.text[:200])
+            return None
+        return sha
+    except Exception as e:
+        logger.warning("[dvm] blossom upload error: %s", e)
+        return None
+
+
+async def download_media(sha256: str, settings: Optional[dict] = None) -> Optional[bytes]:
+    """Fetch result bytes from the shared Blossom server and verify the hash; None on failure."""
+    base = _blossom_base(settings)
+    if not base:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
+            r = await c.get(base + "/" + sha256)
+        if r.status_code >= 400:
+            logger.warning("[dvm] blossom download %s failed: %s", sha256[:12], r.status_code)
+            return None
+        if hashlib.sha256(r.content).hexdigest() != sha256:
+            logger.warning("[dvm] blossom blob %s hash mismatch — dropping", sha256[:12])
+            return None
+        return r.content
+    except Exception as e:
+        logger.warning("[dvm] blossom download error: %s", e)
+        return None
+
+
 # ---------------------------------------------------------------- coordinator
 _rr = {"i": 0}
 
@@ -134,6 +204,8 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     if not worker_pubkey:
         return None
     sk = node_seckey()
+    if not sk:
+        return None
     relay = relay_url(s)
     budget = float(timeout or _JOB_TIMEOUT.get(task, 300))
     try:
@@ -163,7 +235,22 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
         if out.get("error"):
             logger.warning("[dvm] worker %s error: %s", task, out["error"])
             return None
-        return out
+        # Media (image/music/video) comes back as a Blossom sha256 ref — fetch the bytes and rebuild
+        # the dict shape the factory expects ({"image":b64} / {"audio":b64,"format"} / {"video":b64}).
+        if out.get("blob"):
+            data = await download_media(out["blob"], s)
+            if data is None:
+                logger.warning("[dvm] %s result blob %s fetch failed", task, out["blob"][:12])
+                return None
+            b64 = base64.b64encode(data).decode()
+            if task == "image":
+                return {"image": b64}
+            if task == "music":
+                return {"audio": b64, "format": out.get("format", "ogg")}
+            if task == "video":
+                return {"video": b64}
+            return None
+        return out   # chat: inline {"completion": ...}
     except Exception as e:
         logger.warning("[dvm] run_remote(%s) failed: %s", task, e)
         return None
@@ -270,18 +357,23 @@ async def _run_local(task: str, params: dict) -> dict:
                 db, params.get("prompt", ""), params.get("negative_prompt", ""),
                 params.get("width"), params.get("height"), params.get("steps"),
                 params.get("cfg"), local_only=True)
-            return {"image": b64} if b64 else {"error": "image generation returned nothing"}
+            if not b64:
+                return {"error": "image generation returned nothing"}
+            sha = await upload_media(base64.b64decode(b64), "image/png")
+            return {"blob": sha} if sha else {"error": "blossom upload failed"}
         if task == "music":
             from app.services.music_factory import generate_music_for_user
             audio, ext = await generate_music_for_user(
                 db, params.get("prompt", ""), params.get("lyrics", ""),
                 params.get("duration"), params.get("steps"), local_only=True)
-            return {"audio": base64.b64encode(audio).decode(), "format": ext}
+            sha = await upload_media(audio, "video/mp4" if ext == "mp4" else f"audio/{ext}")
+            return {"blob": sha, "format": ext} if sha else {"error": "blossom upload failed"}
         if task == "video":
             from app.services.video_factory import generate_video_for_user
             mp4 = await generate_video_for_user(
                 db, params.get("prompt", ""), params.get("negative_prompt", ""), local_only=True)
-            return {"video": base64.b64encode(mp4).decode()}
+            sha = await upload_media(mp4, "video/mp4")
+            return {"blob": sha} if sha else {"error": "blossom upload failed"}
         if task == "chat":
             from app.services.inference_factory import get_inference_service
             from app.services.vram_manager import prepare_vram_for_llm
@@ -330,10 +422,14 @@ def start_worker() -> None:
     s = settings_store.all_settings()
     if not is_enabled(s):
         return
+    me = node_pubkey()
+    if not me:
+        logger.warning("[dvm] enabled but no relay identity (operator nsec) — worker not started")
+        return
     _worker_stop = asyncio.Event()
     relay = relay_url(s)
     # since is stamped per-(re)connect by subscribe(since_now=True) so a reconnect never replays old jobs.
-    filters = [{"kinds": list(DVM_REQ_KINDS), "#p": [node_pubkey()]}]
+    filters = [{"kinds": list(DVM_REQ_KINDS), "#p": [me]}]
     logger.info("[dvm] worker listening on %s as %s (trusted: %d npubs, max %d in-flight)",
                 relay, node_npub(), len(worker_pubkeys(s)), _MAX_INFLIGHT)
     _worker_task = asyncio.create_task(

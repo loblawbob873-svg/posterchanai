@@ -36,26 +36,35 @@
                 distributed AI over Nostr. <strong>Restart the service to apply.</strong></small>
         </div>
         <div class="form-group">
-            <label for="dvm-node-npub">This node's worker npub</label>
+            <label for="dvm-node-npub">This node's npub (its Relay identity)</label>
             <div style="display:flex;gap:8px;align-items:center">
                 <input type="text" id="dvm-node-npub" readonly placeholder="(loads on open)" style="flex:1">
                 <button type="button" class="btn" onclick="copyDvmNpub()">Copy</button>
             </div>
-            <small>Paste this into <strong>every</strong> node's “Worker npubs” list (including this one)
-                so jobs can be addressed to this GPU. Auto-generated; its private key never leaves this node.</small>
+            <small>The node uses its <strong>Relay identity</strong> (Admin → Relay) as its DVM address —
+                nothing to set here. Paste this npub into the “Cluster node npubs” list on the OTHER
+                nodes so jobs can be addressed to this GPU.</small>
         </div>
         <div class="form-group">
-            <label for="nostr_dvm_worker_npubs">Worker npubs (the cluster)</label>
+            <label for="nostr_dvm_worker_npubs">Cluster node npubs</label>
             <textarea id="nostr_dvm_worker_npubs" name="nostr_dvm_worker_npubs" rows="3" placeholder="npub1… (one per line or comma-separated)"></textarea>
-            <small>All cluster worker npubs — this is the LB list (round-robin between them + this node)
-                AND the trusted allowlist (a worker only serves jobs from these npubs). Each node drops
-                its own npub automatically. These keys are also auto-trusted by the job relay's gate.</small>
+            <small>Every cluster node's npub (its Relay identity) — this is the LB list (round-robin
+                between them + this node) AND the trusted allowlist (a worker only serves jobs from these
+                npubs). Each node drops its own npub automatically. These keys are also auto-trusted by
+                the job relay's gate.</small>
         </div>
         <div class="form-group">
             <label for="nostr_dvm_relay">Job relay (ws:// or wss://)</label>
             <input type="text" id="nostr_dvm_relay" name="nostr_dvm_relay" placeholder="wss://poster.place/relay">
             <small>The shared relay all nodes use to exchange job/result events. Blank = this node's
                 local relay (single-node only). For a cluster, point every node at ONE relay.</small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_dvm_blossom_url">Media (Blossom) URL</label>
+            <input type="text" id="nostr_dvm_blossom_url" name="nostr_dvm_blossom_url" placeholder="https://media.poster.place">
+            <small>image/music/video results are too big for a Nostr event (256KB cap), so the worker
+                uploads them to a shared <strong>Blossom</strong> server and only the hash travels over
+                Nostr. Blank = use this node's Blossom Public URL. Every node must reach ONE Blossom server.</small>
         </div>
     </fieldset>
 
