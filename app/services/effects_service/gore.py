@@ -379,27 +379,14 @@ def add_cum(data: bytes, count: int = 0) -> bytes:
     return _scatter_overlay(data, _make_cum, count)
 
 
-def _cum_tile(size: int, seed: int, grow: float):
-    """One seeded cum tile (stable shape, `grow`-scaled strands) for the animator."""
-    import random
-    return _make_cum(size, rng=random.Random(seed), grow=grow)
-
-
-def add_cum_animated(data: bytes, count: int = 0) -> bytes:
-    """Scatter cum as a short MP4 — the strands ooze outward then hold. Silent H.264
-    bytes. The splatters are placed once; each frame re-renders them further along."""
-    from app.services.media_service import frames_to_video
-    frames = _scatter_frames(data, _cum_tile, count=count)
-    return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
-
-
 def cum_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:
-    """Scatter splatters over the first image attachment.
+    """Scatter a full glossy splatter over the first image attachment.
 
-    Returns (output_files, summary_text). Mirrors poo_attachments so the web UI,
-    Telegram, Matrix and the fedi bots share one delivery path.
+    Always a still JPEG (the full, fully-grown splatter) — NOT the animated MP4, even when effect
+    animation is enabled. Mirrors poo_attachments so the web UI, Telegram, Matrix and the fedi bots
+    share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
@@ -408,20 +395,8 @@ def cum_attachments(
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        if _effects_animate():
-            try:
-                result = add_cum_animated(data)
-                out: OutputFile = {
-                    "filename": f"{stem}_cum.mp4",
-                    "data": result,
-                    "content_type": "video/mp4",
-                }
-                summary = f"## 💦 Cum\n\n💦 {filename}: {_human_size(len(result))}"
-                return [out], summary
-            except Exception as e:
-                logger.warning(f"animated cum failed for {filename}, using still: {e}")
-        result = add_cum(data)
-        out = {
+        result = add_cum(data)   # full splatter, fully-grown (grow=1.0); still image, no video
+        out: OutputFile = {
             "filename": f"{stem}_cum.jpg",
             "data": result,
             "content_type": "image/jpeg",
