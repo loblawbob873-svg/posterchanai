@@ -125,6 +125,7 @@ async def _connect(relay: str, direct: bool, **kw):
             if base.get("proxy"):
                 logger.warning("[nostr] proxy connect to %s failed (%s) — retrying direct", relay, e)
                 ws = await websockets.connect(relay, open_timeout=_CONNECT_TIMEOUT, proxy=None, **kw)
+                logger.info("[nostr] %s connected DIRECT (Tor proxy unavailable)", relay)
             else:
                 raise
     except Exception:

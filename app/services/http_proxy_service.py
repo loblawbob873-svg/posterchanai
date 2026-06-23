@@ -5,6 +5,7 @@ Replaces Privoxy for torrent traffic routing.
 
 import os
 import sys
+import time
 import asyncio
 import ipaddress
 import socket
@@ -13,6 +14,14 @@ import subprocess
 import threading
 from typing import Optional
 from urllib.parse import urlparse
+
+
+def _socks_target(spec, host):
+    """Parse a backend spec into (host, port, label). Accepts an int/str port, or 'port:label' where
+    label is the Tor exit region (us/ca) — used to make the proxy's logs say which daemon served."""
+    s = str(spec)
+    port, _, label = s.partition(":")
+    return (host, int(port), label or port)
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +51,11 @@ class HttpToSocksProxy:
         # SOCKS backends to load-balance across (one per local Tor daemon). Defaults to the single
         # `socks_port`. Tor-ONLY: if every backend fails we raise (never fall back to a direct
         # connection) so torrent traffic can't leak the real IP.
-        self.socks_targets = [(socks_host, p) for p in (socks_ports or [socks_port])] or [(socks_host, socks_port)]
+        _specs = socks_ports or [socks_port]
+        self.socks_targets = [_socks_target(s, socks_host) for s in _specs] or [(socks_host, socks_port, str(socks_port))]
         self._rr = 0   # round-robin cursor across socks_targets
+        self._stats = {}        # label -> [ok, fail] since the last health summary
+        self._stats_since = 0.0
 
         self._server: Optional[asyncio.AbstractServer] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
@@ -302,15 +314,37 @@ class HttpToSocksProxy:
         n = len(targets)
         start = self._rr % n
         self._rr = (self._rr + 1) % n
+        tried = []
         last_err = None
         for k in range(n):
-            sh, sp = targets[(start + k) % n]
+            sh, sp, label = targets[(start + k) % n]
             try:
-                return await self._socks_connect_one(sh, sp, host, port)
+                rw = await self._socks_connect_one(sh, sp, host, port)
+                self._record(label, True)
+                if tried:   # we failed over from another circuit — say which one actually worked
+                    logger.info(f"[PROXY] {host}:{port} served via Tor[{label}]:{sp} (after {', '.join(tried)} failed)")
+                return rw
             except Exception as e:
                 last_err = e
-                logger.debug(f"[PROXY] SOCKS backend {sh}:{sp} failed for {host}:{port}: {e}")
-        raise last_err or Exception("no SOCKS backend available")
+                self._record(label, False)
+                tried.append(f"Tor[{label}]:{sp}")
+                logger.debug(f"[PROXY] Tor[{label}]:{sp} failed for {host}:{port}: {e}")
+        # every Tor circuit failed — name them so the failure is attributable (the relay then tries direct)
+        raise Exception(f"all Tor backends failed ({', '.join(tried)}): {last_err}")
+
+    def _record(self, label, ok):
+        """Tally per-backend ok/fail and, every ~2 min of traffic, log a one-line health summary so
+        you can see at a glance which Tor daemon is working and which is failing."""
+        s = self._stats.setdefault(label, [0, 0])
+        s[0 if ok else 1] += 1
+        now = time.time()
+        if not self._stats_since:
+            self._stats_since = now
+        elif now - self._stats_since >= 120:
+            summary = " · ".join(f"Tor[{l}] {v[0]}ok/{v[1]}fail" for l, v in self._stats.items())
+            logger.info(f"[PROXY] backend health (last {int(now - self._stats_since)}s): {summary}")
+            self._stats = {}
+            self._stats_since = now
 
     async def _socks_connect_one(self, socks_host: str, socks_port: int, host: str, port: int) -> tuple:
         """Connect to host:port through ONE SOCKS5 proxy (Tor). Tor's SOCKS5 handles hostnames
@@ -497,10 +531,10 @@ def _run_standalone():
     parser.add_argument("--socks-ports", default="", help="CSV of SOCKS ports to load-balance across (Tor daemons)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [http-proxy] %(message)s")
-    _ports = [int(p) for p in args.socks_ports.split(",") if p.strip()] or [args.socks_port]
+    _specs = [p.strip() for p in args.socks_ports.split(",") if p.strip()] or [args.socks_port]
     proxy = HttpToSocksProxy.get_instance(
         listen_host=args.listen_host, listen_port=args.listen_port,
-        socks_host=args.socks_host, socks_ports=_ports,
+        socks_host=args.socks_host, socks_ports=_specs,
     )
 
     async def _serve():

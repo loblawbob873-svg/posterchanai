@@ -521,11 +521,14 @@ async def startup():
                     _pport = _ss.get_int("proxy_listen_port", 8118)
                     # Load-balance across both local Tor daemons' SOCKS ports when the 2nd is on.
                     # Tor-only (no direct fallback) — keeps torrent traffic from ever leaking the real IP.
-                    _socks_ports = [_ss.get_int("proxy_socks_port", 9052)]
-                    # Only LB onto the 2nd daemon's port when WE actually run it (it starts inside the
-                    # tor_enabled block above) — otherwise the proxy would round-robin onto a dead port.
+                    # Label each backend with its exit region (us/ca) so the proxy logs say which Tor
+                    # daemon served/failed each request. Only LB onto the 2nd daemon's port when WE
+                    # actually run it (it starts inside the tor_enabled block) — else a dead port.
+                    _l1 = ((_ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
+                    _socks_ports = [f"{_ss.get_int('proxy_socks_port', 9052)}:{_l1}"]
                     if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
-                        _socks_ports.append(_ss.get_int("tor2_socks_port", 9062))
+                        _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
+                        _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
                     start_http_proxy_process(
                         listen_host=_ss.get("proxy_listen_host", "127.0.0.1"),
                         listen_port=_pport,
