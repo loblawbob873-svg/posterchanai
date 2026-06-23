@@ -3105,7 +3105,7 @@
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
   // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
   const FilesIdx = {
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false, _saving:false,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -3141,7 +3141,7 @@
           // Don't clobber edits made WHILE this (possibly slow blob-fetch) pull was in flight — local is
           // newer and syncs on the next save. Without this, creating a folder + uploading during the
           // initial load got wiped: the files lost their metadata and vanished / showed as octet-stream.
-          if(idx && !this._dirty){ this.data=idx; this.saveLocal(); }
+          if(idx && !this._dirty && !this._saving){ this.data=idx; this.saveLocal(); }
         }
         this._pullDone=true;   // only AFTER a successful pull is it safe to GC orphan index blobs (we now
                                // know _lastIndexSha + the real file metadata — see _gcOrphanIndexBlobs)
@@ -3150,6 +3150,9 @@
     },
     push(){ this._dirty=true; this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
     async _save(){
+      this._saving=true;   // while a save's index-blob upload + POST is in flight the server is NOT yet
+                           // up to date — pull() must not apply stale server data during this window (it
+                           // would wipe the very file being saved). Cleared in finally.
       try{ this._norm();
         this._dirty=false;   // capture point: edits AFTER this re-mark dirty (and reschedule) so pull won't clobber them
         const idx={folders:this.data.folders, files:this.data.files, encFolders:this.data.encFolders}; const json=JSON.stringify(idx);
@@ -3166,6 +3169,7 @@
         if(ptr.indexSha && this._lastIndexSha && this._lastIndexSha!==ptr.indexSha) _delBlobSilent(this._lastIndexSha);   // GC the superseded index blob
         if(ptr.indexSha) this._lastIndexSha=ptr.indexSha;
       }catch(e){ console.warn('files-index save failed', e); }
+      finally{ this._saving=false; }
     },
     beginBatch(){ this._batch=true; },
     async endBatch(){ this._batch=false; await this._save(); },
