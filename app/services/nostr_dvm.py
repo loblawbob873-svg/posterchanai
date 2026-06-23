@@ -25,6 +25,7 @@ import collections
 import hashlib
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -180,6 +181,32 @@ async def download_media(sha256: str, settings: Optional[dict] = None) -> Option
         return None
 
 
+# Media at rest on Blossom is ALWAYS AES-256-GCM ciphertext — the per-job key/iv ride inside the
+# NIP-44-encrypted result event, so the blob is unreadable to anyone who only has the Blossom URL.
+async def put_media(data: bytes, settings: Optional[dict] = None) -> Optional[dict]:
+    """Encrypt the media and upload the CIPHERTEXT; return a ref {blob, key, iv} or None."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key, nonce = os.urandom(32), os.urandom(12)
+    ct = AESGCM(key).encrypt(nonce, data, None)
+    sha = await upload_media(ct, "application/octet-stream", settings)
+    if not sha:
+        return None
+    return {"blob": sha, "key": key.hex(), "iv": nonce.hex()}
+
+
+async def get_media(ref: dict, settings: Optional[dict] = None) -> Optional[bytes]:
+    """Fetch the ciphertext by its hash and AES-256-GCM-decrypt it with the ref's key/iv; None on fail."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    ct = await download_media(ref.get("blob", ""), settings)
+    if ct is None:
+        return None
+    try:
+        return AESGCM(bytes.fromhex(ref["key"])).decrypt(bytes.fromhex(ref["iv"]), ct, None)
+    except Exception as e:
+        logger.warning("[dvm] media decrypt failed: %s", e)
+        return None
+
+
 # ---------------------------------------------------------------- coordinator
 _rr = {"i": 0}
 
@@ -244,9 +271,9 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
         # Media (image/music/video) comes back as a Blossom sha256 ref — fetch the bytes and rebuild
         # the dict shape the factory expects ({"image":b64} / {"audio":b64,"format"} / {"video":b64}).
         if out.get("blob"):
-            data = await download_media(out["blob"], s)
+            data = await get_media(out, s)
             if data is None:
-                logger.warning("[dvm] %s result blob %s fetch failed", task, out["blob"][:12])
+                logger.warning("[dvm] %s result blob %s fetch/decrypt failed", task, out["blob"][:12])
                 return None
             b64 = base64.b64encode(data).decode()
             if task == "image":
@@ -365,21 +392,24 @@ async def _run_local(task: str, params: dict) -> dict:
                 params.get("cfg"), local_only=True)
             if not b64:
                 return {"error": "image generation returned nothing"}
-            sha = await upload_media(base64.b64decode(b64), "image/png")
-            return {"blob": sha} if sha else {"error": "blossom upload failed"}
+            ref = await put_media(base64.b64decode(b64))
+            return ref or {"error": "blossom upload failed"}
         if task == "music":
             from app.services.music_factory import generate_music_for_user
             audio, ext = await generate_music_for_user(
                 db, params.get("prompt", ""), params.get("lyrics", ""),
                 params.get("duration"), params.get("steps"), local_only=True)
-            sha = await upload_media(audio, "video/mp4" if ext == "mp4" else f"audio/{ext}")
-            return {"blob": sha, "format": ext} if sha else {"error": "blossom upload failed"}
+            ref = await put_media(audio)
+            if not ref:
+                return {"error": "blossom upload failed"}
+            ref["format"] = ext
+            return ref
         if task == "video":
             from app.services.video_factory import generate_video_for_user
             mp4 = await generate_video_for_user(
                 db, params.get("prompt", ""), params.get("negative_prompt", ""), local_only=True)
-            sha = await upload_media(mp4, "video/mp4")
-            return {"blob": sha} if sha else {"error": "blossom upload failed"}
+            ref = await put_media(mp4)
+            return ref or {"error": "blossom upload failed"}
         if task == "chat":
             from app.services.inference_factory import get_inference_service
             from app.services.vram_manager import prepare_vram_for_llm
