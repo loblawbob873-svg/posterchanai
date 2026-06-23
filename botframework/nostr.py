@@ -25,7 +25,7 @@ if _REPO_ROOT not in sys.path:
 
 from app.services.nostr import nostr_service as _svc  # noqa: E402
 from config import (  # noqa: E402
-    NOSTR_NSEC, NOSTR_RELAYS, NOSTR_MEDIA_SERVICE, NOSTR_MEDIA_ENDPOINT,
+    NOSTR_NSEC, NOSTR_RELAYS, NOSTR_MEDIA_SERVICE, NOSTR_MEDIA_ENDPOINT, BOT_NOSTR_PUBKEYS,
 )
 
 logger = logging.getLogger(__name__)
@@ -319,6 +319,8 @@ def read_dms(limit: int = 100) -> list:
     if len(_wrap_cache) > _WRAP_CACHE_MAX:       # bound memory (drop oldest insertions)
         for k in list(_wrap_cache)[:len(_wrap_cache) - _WRAP_CACHE_MAX]:
             _wrap_cache.pop(k, None)
+    if BOT_NOSTR_PUBKEYS:   # anti-loop: never act on a DM from another of our bots
+        out = [d for d in out if (d.get("sender") or "").lower() not in BOT_NOSTR_PUBKEYS]
     return out
 
 
@@ -400,7 +402,12 @@ def get_mentions(limit=40):
         logger.warning(f"[nostr] get_mentions failed: {e}")
         return []
     notes = [_shape_note(ev) for ev in events if ev.get("kind") == 1]
-    return [n for n in notes if n]
+    notes = [n for n in notes if n]
+    # Anti-loop at the SOURCE: drop mentions from ANOTHER of our bots so no listener (games included)
+    # ever engages a sibling bot. Covers every get_mentions() consumer in one place.
+    if BOT_NOSTR_PUBKEYS:
+        notes = [n for n in notes if ((n.get("user") or {}).get("pubkey") or "").lower() not in BOT_NOSTR_PUBKEYS]
+    return notes
 
 
 def get_note(note_id):

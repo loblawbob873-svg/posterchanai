@@ -26,7 +26,7 @@ if script_dir not in sys.path:
 import holdem_render
 import holdem_game as _G
 import nostr as _nk
-from config import NOSTR_NSEC
+from config import NOSTR_NSEC, BOT_NOSTR_PUBKEYS
 from app.services.nostr import event as _ev
 from app.services.nostr import nip44 as _nip44
 
@@ -678,7 +678,7 @@ def process_holdem():
     for ev in cmds:
         eid = ev.get("id")
         author = ev.get("pubkey")
-        if not eid or not author or author == own_pk:
+        if not eid or not author or author == own_pk or author.lower() in BOT_NOSTR_PUBKEYS:
             continue
         if ev.get("created_at", 0) < cutoff:
             continue
@@ -695,8 +695,11 @@ def process_holdem():
             traceback.print_exc()
     for note in _nk.get_mentions(limit=40):
         nid = note.get("id")
-        if not nid or (note.get("user") or {}).get("pubkey") == own_pk:
+        _author = (note.get("user") or {}).get("pubkey")
+        if not nid or _author == own_pk:
             continue
+        if (_author or "").lower() in BOT_NOSTR_PUBKEYS:
+            continue   # never engage ANOTHER of our bots — anti-loop (a game bot must not play itself)
         if (note.get("_event") or {}).get("created_at", 0) < cutoff:
             continue
         if seed_mentions:
@@ -726,7 +729,7 @@ def process_holdem():
     for dm in dms:
         rid = dm.get("rumor_id")
         sender = dm.get("sender")
-        if not rid or not sender or sender == own_pk:
+        if not rid or not sender or sender == own_pk or sender.lower() in BOT_NOSTR_PUBKEYS:
             continue
         if dm.get("created_at", 0) < cutoff:
             continue
