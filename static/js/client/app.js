@@ -4477,7 +4477,7 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null };
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, awaiting:false, _retry:0, _recovTok:0 };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   async function aiMount(feed){
@@ -4615,9 +4615,43 @@
     try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } }catch(_){}
     const proto = location.protocol==='https:'?'wss':'ws';
     const tok=_cookie('access_token');
-    _ai.ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
-    _ai.ws.onopen=()=>{ const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ _ai.ws.send(JSON.stringify(p)); }catch(_){} } };
-    _ai.ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
+    const ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
+    _ai.ws=ws;
+    ws.onopen=()=>{ _ai._retry=0; const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
+    ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
+    // This WS has no keepalive: a slow effect/image/video generation can outlast an idle/proxy timeout
+    // so the socket closes mid-flight. The server still finishes + PERSISTS the reply, so the live push
+    // is lost and the answer only showed up after a manual refresh ("sometimes I never get an update").
+    // On an UNEXPECTED close, reconnect (capped backoff); if a reply was in flight, recover it.
+    ws.onclose=()=>{
+      if(_ai.ws!==ws || VIEW!=='ai' || _ai.convId!==id) return;   // replaced, or user navigated away → ignore
+      const n=(_ai._retry=(_ai._retry||0)+1);
+      if(n>6){ if(_ai.awaiting) toast('AI connection lost — pull down to refresh'); return; }
+      setTimeout(()=>{
+        if(_ai.ws!==ws || VIEW!=='ai' || _ai.convId!==id) return;   // a newer socket/conversation took over
+        if(_ai.awaiting) aiRecover(id);   // a reply is pending — reconnect + poll for the persisted answer
+        else aiConnect(id);               // idle drop — silent reconnect, no re-render
+      }, Math.min(700*n, 4000));
+    };
+  }
+  // Recover a reply that was being generated when the WS dropped: reconnect, then poll the conversation
+  // until a NEW assistant message lands (covers slow image/video effects that finish after the drop) and
+  // re-render so it appears without a manual refresh. Bounded so it can't poll forever.
+  function aiRecover(id){
+    aiConnect(id);
+    const tok=(_ai._recovTok=(_ai._recovTok||0)+1);   // newest recovery wins; older loops self-cancel
+    const box=$('#ai-msgs'); const baseline = box ? box.querySelectorAll('.ai-msg.assistant').length : 0;
+    let tries=0;
+    const tick=async()=>{
+      if(_ai._recovTok!==tok || VIEW!=='ai' || _ai.convId!==id || !_ai.awaiting) return;   // superseded / done / left
+      if(++tries>20) return;   // ~60s ceiling — long enough for a video effect
+      let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
+      if(_ai._recovTok!==tok || _ai.convId!==id) return;
+      const asst=((conv&&conv.messages)||[]).filter(m=>m.role==='assistant').length;
+      if(asst>baseline){ _ai.awaiting=false; if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id); return; }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 1500);
   }
   // Send (or queue) a payload on the chat WS — never fail just because it's mid-connect; queue it
   // and the onopen handler flushes. Reconnects if the socket is closed.
@@ -4642,14 +4676,14 @@
       _ai.streamBuf=''; if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.textContent=''; }
     } else if(d.type==='stream_end'){
       if(_ai.streamEl){ const b=_ai.streamEl.querySelector('.ai-bubble'); if(b) b.innerHTML=aiFormat(_ai.streamBuf); }
-      _ai.streamEl=null; _ai.streamBuf=''; aiScroll();
+      _ai.streamEl=null; _ai.streamBuf=''; _ai.awaiting=false; aiScroll();
     } else if(d.type==='text'){
-      aiAddMessage('assistant', aiFormat(d.content||''));
+      aiAddMessage('assistant', aiFormat(d.content||'')); _ai.awaiting=false;
     } else if(d.type==='response'){
-      aiAddMessage('assistant', aiRenderResponse(d.data||{}));
+      aiAddMessage('assistant', aiRenderResponse(d.data||{})); _ai.awaiting=false;
     } else if(d.type==='error'){
       aiAddMessage('assistant', `<span class="ai-err">⚠ ${enc(d.message||'error')}</span>`);
-      _ai.streamEl=null; _ai.streamBuf='';
+      _ai.streamEl=null; _ai.streamBuf=''; _ai.awaiting=false;
     } else if(d.type==='reminder'){
       reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder');   // fired reminder → popup + sound
     }
@@ -4909,6 +4943,7 @@
     const pdfs=att.filter(a=>a.kind==='pdf').map(a=>({base64:a.b64, filename:a.name}));       if(pdfs.length) payload.pdfs=pdfs;
     const docs=att.filter(a=>a.kind==='doc').map(a=>({base64:a.b64, filename:a.name, type:a.ext})); if(docs.length) payload.documents=docs;
     const txts=att.filter(a=>a.kind==='text').map(a=>({content:a.text, filename:a.name}));     if(txts.length) payload.files=txts;
+    _ai.awaiting=true;   // a reply is now pending — if the WS drops before it lands, aiRecover() polls it back
     aiWsSend(payload);   // sends now if open, else queues + (re)connects and flushes on open
     ta.value=''; ta.style.height='auto';
   }
