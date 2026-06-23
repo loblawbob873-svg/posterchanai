@@ -13,7 +13,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import User, SocialReplyMap
+import json
+from app.models import User, SocialReplyMap, UserSetting
 from app.services import misskey_service, pleroma_service, matrix_service
 from app.services import settings_store
 from app.services.nostr import nostr_service
@@ -214,7 +215,43 @@ def _prune(db: Session) -> None:
     db.query(SocialReplyMap).filter(SocialReplyMap.created_at < cutoff).delete(synchronize_session=False)
 
 
+# A follow is a ONE-TIME event, but Pleroma/Misskey re-issue the follow notification with a fresh id
+# (on re-federation / notification grouping / a transient unfollow-refollow) — that new id slips past
+# the since_id cursor, so a follow from days ago gets re-announced. Dedup follows by ACTOR, persisted
+# per user (UserSetting), so a given account's follow is announced exactly once per relay.
+_FOLLOW_TYPES = {"follow", "follow_request", "followRequestAccepted", "receiveFollowRequest"}
+_SEEN_FOLLOWS_CAP = 3000
+
+
+def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social_notif_seen_follows") -> bool:
+    """True (→ caller should skip) if this follow notification's actor was already announced to `user`.
+    No-op for non-follow types. `store_key` lets each relay (Telegram vs Matrix DM) keep its own seen-set
+    so both still notify the follow once. Records the actor on first sight."""
+    if (norm.get("type") or "") not in _FOLLOW_TYPES:
+        return False
+    fkey = f"{norm.get('platform')}:{norm.get('actor')}"
+    row = db.query(UserSetting).filter(UserSetting.user_id == user.id, UserSetting.key == store_key).first()
+    try:
+        seen = set(json.loads(row.value)) if (row and row.value) else set()
+    except Exception:
+        seen = set()
+    if fkey in seen:
+        return True
+    seen.add(fkey)
+    if len(seen) > _SEEN_FOLLOWS_CAP:
+        seen = set(sorted(seen)[-_SEEN_FOLLOWS_CAP:])
+    val = json.dumps(sorted(seen))
+    if row:
+        row.value = val
+    else:
+        db.add(UserSetting(user_id=user.id, key=store_key, value=val))
+    db.commit()
+    return False
+
+
 async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, norm: dict) -> None:
+    if is_dupe_follow(db, user, norm):
+        return  # a follow we've already announced (Pleroma/Misskey re-issued it past the since_id cursor)
     resp = await tg.send_message(chat_id, _format(norm), parse_mode="")
     msg_id = (resp or {}).get("result", {}).get("message_id")
     if not msg_id:

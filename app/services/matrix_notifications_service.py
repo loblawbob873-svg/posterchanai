@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.models import User, UserSetting
 from app.services import misskey_service, pleroma_service, matrix_service
 from app.services import settings_store
-from app.services.social_notifications_service import _norm_pleroma, _norm_misskey
+from app.services.social_notifications_service import _norm_pleroma, _norm_misskey, is_dupe_follow
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +167,13 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         return
     for n in reversed(raw):
         norm = normalize(n)
+        # Skip a follow we've already DM'd (Pleroma/Misskey re-issue follow notifications with a fresh
+        # id that slips past the cursor). Still advance the cursor so it isn't re-fetched forever.
+        if is_dupe_follow(db, user, norm, "matrix_notif_seen_follows"):
+            if n.get("id"):
+                _set_user_setting(db, user.id, cursor_key, n["id"])
+                db.commit()
+            continue
         # Misskey notifications carry no URL; build a viewable note link for context.
         if platform == "misskey" and not norm.get("url") and norm.get("reply_target"):
             norm["url"] = f"{instance_url.rstrip('/')}/notes/{norm['reply_target']}"
