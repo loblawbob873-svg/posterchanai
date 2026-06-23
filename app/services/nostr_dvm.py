@@ -106,10 +106,26 @@ def peers(settings: Optional[dict] = None) -> list:
     return [pk for pk in worker_pubkeys(settings) if pk != me]
 
 
+def allowed_npubs(settings: Optional[dict] = None) -> list:
+    """The SHARE ALLOWLIST: npubs explicitly permitted to send compute jobs to this provider node.
+    This is GPU-access trust, deliberately separate from the relay's social Web of Trust — a follow
+    must NOT grant the ability to burn your GPU. Empty = this node shares with no one."""
+    raw = _settings(settings).get("nostr_dvm_allowed_npubs", "") or ""
+    out: list = []
+    for tok in raw.replace(",", "\n").split():
+        tok = tok.strip()
+        if not tok:
+            continue
+        pk = nostr_service.to_pubkey_hex(tok)
+        if pk and pk not in out:
+            out.append(pk)
+    return out
+
+
 def is_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
-    """A worker only serves jobs from cluster nodes (the WoT seeds) — not arbitrary WoT members, so a
-    social follow can't burn GPUs."""
-    return pubkey_hex in worker_pubkeys(settings)
+    """A provider serves jobs ONLY from npubs on its explicit share allowlist — sharing your GPU is a
+    deliberate grant, never a side effect of a social follow. Blank allowlist → serve no one."""
+    return pubkey_hex in allowed_npubs(settings)
 
 
 def relay_url(settings: Optional[dict] = None) -> str:

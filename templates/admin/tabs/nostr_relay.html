@@ -81,16 +81,26 @@
     </fieldset>
 
     <fieldset>
-        <legend>Distributed compute (DVM load balancing)</legend>
+        <legend>Distributed compute — share this machine over Nostr</legend>
         <div class="form-group">
             <label for="nostr_dvm_enabled">
-                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Distribute GPU jobs across the Web-of-Trust cluster
+                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Share this machine — serve AI jobs for allowed npubs
             </label>
-            <small>When on, image / music / video / non-tool chat are dispatched over Nostr to the
-                <strong>cluster = the Web-of-Trust seed npubs above</strong> (round-robin with this node),
-                run on their GPUs, and returned. To pair nodes: on each node add the other nodes' relay
-                npubs to the <strong>seeds above</strong> AND set them as <strong>Upstream relays</strong>
-                (below) — that's the whole setup. Agentic/streaming (opencode) stays local.
+            <small>When on, this node acts as a <strong>provider</strong>: it listens for AI requests
+                (chat / image / music / video) sent over Nostr by the npubs on your <strong>share allowlist</strong>
+                below, runs each on its own GPU (or its own IP load balancer), and returns the result
+                encrypted. <strong>Your own users are unaffected</strong> — this node still serves them locally /
+                via the IP LB; sharing only adds the ability to run jobs for others. <strong>Restart to
+                apply.</strong></small>
+        </div>
+        <div class="form-group">
+            <label for="nostr_dvm_allowed_npubs">Share allowlist (npubs)</label>
+            <textarea id="nostr_dvm_allowed_npubs" name="nostr_dvm_allowed_npubs" rows="3" placeholder="npub1…&#10;npub1…"></textarea>
+            <small><strong>ONLY</strong> these npubs may send compute jobs to this machine (one per line, npub or
+                hex). <strong>Blank = you share with no one.</strong> This is GPU-access trust, separate from the
+                social Web of Trust above — a follow does NOT grant GPU access. For a request to actually reach
+                this node, each allowed npub must also be able to publish to this relay, so add it to the
+                <strong>Seed npubs</strong> above too (until the relay auto-accepts allowlisted senders).
                 <strong>Restart to apply.</strong></small>
         </div>
         <div class="form-group">

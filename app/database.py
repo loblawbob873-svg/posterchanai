@@ -340,8 +340,10 @@ When asked to write or modify code or files:
             # Load balancing - ONE unified list of posterchanai node URLs that drives chat, image,
             # music and video LB (empty = use local backend only).
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
-            # Nostr-native distributed LB (NIP-90 DVM) — opt-in; cluster = relay WoT seeds.
+            # Nostr-native distributed compute (NIP-90 DVM). Opt-in: turn a node into a PROVIDER that
+            # serves jobs for the npubs on its share allowlist. Own-serving uses the IP LB, not this.
             "nostr_dvm_enabled": "false",
+            "nostr_dvm_allowed_npubs": "",  # share allowlist: npubs allowed to send jobs here (blank = no one)
             "nostr_dvm_blossom_url": "",   # shared Blossom base URL for media (blank = blossom_public_url)
             # Native LLM settings (the local LLM backend is always native llama.cpp now). The
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image
