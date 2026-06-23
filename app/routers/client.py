@@ -188,6 +188,24 @@ def _relay_user_count() -> int:
 import time as _time
 _VIEWERS: "dict[str, float]" = {}
 _VIEWER_WINDOW = 150.0   # seconds — tolerates one missed 60s poll
+_LOCAL_VIDS = {"127.0.0.1", "::1", "localhost", "?"}   # internal/loopback callers are never "people online"
+_BOT_VID_CACHE: "dict" = {"set": set(), "ts": 0.0}
+
+
+def _bot_viewer_ids() -> set:
+    """Viewer-ids that correspond to OUR OWN nostr bots, so they never count as online people. The
+    client viewer-id is 'k'+pubkey[:16] (see _viewerId in app.js). Cached ~5 min — bot keys rarely change."""
+    now = _time.monotonic()
+    if _BOT_VID_CACHE["set"] and (now - _BOT_VID_CACHE["ts"]) < 300:
+        return _BOT_VID_CACHE["set"]
+    s = set()
+    try:
+        from app.services.bot_manager_service import _all_nostr_bot_pubkeys
+        s = {"k" + p[:16] for p in (_all_nostr_bot_pubkeys() or "").split(",") if p}
+    except Exception:
+        pass
+    _BOT_VID_CACHE["set"], _BOT_VID_CACHE["ts"] = s, now
+    return s
 
 
 def _record_viewer(request: Request, vid: str) -> int:
@@ -196,8 +214,10 @@ def _record_viewer(request: Request, vid: str) -> int:
     if not key:
         xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
         key = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "?")
-    _VIEWERS[key] = now
     cutoff = now - _VIEWER_WINDOW
+    # Count REAL people only: skip our own bots (by pubkey-id) and loopback/internal callers.
+    if key and key not in _LOCAL_VIDS and key not in _bot_viewer_ids():
+        _VIEWERS[key] = now
     for _k in [k for k, t in _VIEWERS.items() if t < cutoff]:
         _VIEWERS.pop(_k, None)
     return len(_VIEWERS)

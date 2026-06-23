@@ -32,7 +32,11 @@ logger = logging.getLogger(__name__)
 
 _SECKEY = _svc.decode_seckey(NOSTR_NSEC) if NOSTR_NSEC else None
 _PUBKEY = _svc.derive_pubkey(_SECKEY) if _SECKEY else None
-_RELAYS = _svc.relay.normalize_relays(NOSTR_RELAYS) or _svc.DEFAULT_RELAYS
+# Bots talk ONLY to this node's local WoT relay — never the public upstream list (the local relay
+# handles all federation). The manager always injects NOSTR_RELAYS=ws://127.0.0.1:<relay_port>; if it
+# were ever missing, fall back to the LOCAL relay (NOT the public DEFAULT_RELAYS) so a misconfig can
+# never make a bot ping upstream relays directly.
+_RELAYS = _svc.relay.normalize_relays(NOSTR_RELAYS) or ["ws://127.0.0.1:3052"]
 _MEDIA_CFG = {"service": NOSTR_MEDIA_SERVICE or "blossom", "endpoint": NOSTR_MEDIA_ENDPOINT or ""}
 _meta_cache: dict = {}
 

@@ -439,7 +439,7 @@
 
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
-    updateUserCount(); setInterval(updateUserCount, 60000);   // poll ONLY the online count, once a minute (WoT size comes from CFG)
+    updateUserCount();   // once on boot; refreshed on login (startApp). No periodic polling — the WoT size barely changes and per-client minute polling is needless server load.
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
@@ -622,6 +622,7 @@
 
   // ---------- app start ----------
   function startApp(){
+    updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
     // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends

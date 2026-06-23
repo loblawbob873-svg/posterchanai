@@ -308,14 +308,17 @@ class RelayServer:
         among live connections, so one person's multiple tabs / PWA + signer / reconnects collapse
         to one. Each connection with an unknown IP (extraction failed) counts as its own, and the
         whole thing falls back to the raw connection count if no IPs were captured at all."""
+        if not self._conn_ips:
+            return self._conns   # no IPs captured at all → raw fallback
+        _local = {"127.0.0.1", "::1", "localhost"}
         known, unknown = set(), 0
         for ip in self._conn_ips.values():
-            if ip:
-                known.add(ip)
-            else:
-                unknown += 1
-        n = len(known) + unknown
-        return n if n else self._conns
+            if ip and ip not in _local:
+                known.add(ip)              # a real remote person
+            elif not ip:
+                unknown += 1               # IP unknown → count this conn on its own
+            # loopback (our own bots / internal) is skipped — not a person online
+        return len(known) + unknown
 
     async def _dispatch(self, conn, raw) -> None:
         if isinstance(raw, (bytes, bytearray)):
