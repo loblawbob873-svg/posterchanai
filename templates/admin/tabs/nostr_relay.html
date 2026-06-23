@@ -81,25 +81,25 @@
     </fieldset>
 
     <fieldset>
-        <legend>Distributed compute — share this machine over Nostr</legend>
+        <legend>Distributed compute — share machines over Nostr</legend>
         <div class="form-group">
             <label for="nostr_dvm_enabled">
-                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Share this machine — serve AI jobs for allowed npubs
+                <input type="checkbox" id="nostr_dvm_enabled" name="nostr_dvm_enabled"> Enable shared compute (use + serve the peers below)
             </label>
-            <small>When on, this node acts as a <strong>provider</strong>: it listens for AI requests
-                (chat / image / music / video) sent over Nostr by the npubs on your <strong>share allowlist</strong>
-                below, runs each on its own GPU (or its own IP load balancer), and returns the result
-                encrypted. <strong>Your own users are unaffected</strong> — this node still serves them locally /
-                via the IP LB; sharing only adds the ability to run jobs for others. <strong>Restart to
-                apply.</strong></small>
+            <small>When on, this node joins a <strong>shared cluster</strong> with the peers below: it runs
+                AI jobs (chat / image / music / video) THEY send over Nostr, and it offloads ITS OWN jobs to
+                THEM (round-robin across itself + peers). <strong>Your own users are unaffected</strong> — this
+                node still serves them locally / via the IP LB; sharing only adds peer capacity both ways.
+                <strong>Restart to apply.</strong></small>
         </div>
         <div class="form-group">
-            <label for="nostr_dvm_allowed_npubs">Share allowlist (npubs)</label>
-            <textarea id="nostr_dvm_allowed_npubs" name="nostr_dvm_allowed_npubs" rows="3" placeholder="npub1…&#10;npub1…"></textarea>
-            <small><strong>ONLY</strong> these npubs may send compute jobs to this machine (one per line, npub or
-                hex). <strong>Blank = you share with no one.</strong> This is GPU-access trust, separate from the
-                social Web of Trust above — a follow does NOT grant GPU access, and you do NOT need to add these
-                npubs to the seeds: the relay automatically accepts an allowlisted sender's compute-job events.
+            <label for="nostr_dvm_peers">Shared peers (npub relay)</label>
+            <textarea id="nostr_dvm_peers" name="nostr_dvm_peers" rows="4" placeholder="npub1… wss://their-relay.example/relay&#10;npub1… wss://other.example/relay"></textarea>
+            <small>One peer per line: <strong>their npub + the relay URL to reach them on</strong> (space-separated).
+                <strong>Sharing is MUTUAL — if you list a peer, they may use your GPU AND you may use theirs.</strong>
+                Blank = no sharing. This is GPU-access trust, separate from the social Web of Trust above (a follow
+                does NOT grant access), and you do NOT need to add them to the seeds — the relay auto-accepts a
+                listed peer's compute jobs. (npub-only, no relay = they can use you, but you can't reach them.)
                 <strong>Restart to apply.</strong></small>
         </div>
         <div class="form-group">

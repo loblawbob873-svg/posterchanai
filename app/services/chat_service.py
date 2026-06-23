@@ -135,11 +135,33 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         
         return result
 
+    async def _try_provider(self, messages: list[dict]) -> Optional[str]:
+        """CONSUMER: on a shared peer's turn in the round-robin, offload this chat to that machine over
+        Nostr and return the finished (thinking-stripped) reply; None to run locally (our turn, no peers,
+        or the peer failed/empty). Non-streaming — Nostr has no token stream yet."""
+        from app.services import nostr_dvm
+        provider = nostr_dvm.pick_provider(self._settings)
+        if not provider:
+            return None
+        completion = await nostr_dvm.offload_chat(
+            messages, provider, self._settings, temperature=self.temperature, top_p=self.top_p,
+            max_tokens=self.num_predict, stop=self.stop)
+        if not completion:
+            return None
+        content = self.strip_thinking_tags(
+            (completion.get("choices") or [{}])[0].get("message", {}).get("content", "") or "")
+        return content or None
+
     async def chat(self, messages: list[dict]) -> str:
         """Non-streaming chat completion using inference factory or custom AI service"""
         try:
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
+
+            # Consumer: on a shared peer's turn, offload to it; else run locally / via the IP LB below.
+            reply = await self._try_provider(messages)
+            if reply is not None:
+                return reply
 
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()
@@ -187,6 +209,12 @@ Provide clear, concise responses. Keep confirmations brief and professional."""
         try:
             # Ensure messages alternate user/assistant properly
             messages = self._ensure_alternating_roles(messages)
+
+            # Consumer: on a shared peer's turn, offload to it (one thinking-stripped chunk); else local.
+            reply = await self._try_provider(messages)
+            if reply is not None:
+                yield reply
+                return
 
             # Check for site-wide load balancer first
             load_balancer = self._get_load_balancer()

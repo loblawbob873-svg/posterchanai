@@ -155,17 +155,14 @@ async def generate_image_with_load_balancing(
     # from the peer list — otherwise self is a candidate twice and the rotation wastes a slot
     # forwarding to itself instead of reaching real peers (e.g. nas). parse_server_urls has the
     # robust local-IP detection (ip addr / outbound-socket), so it reliably drops this node's IP.
-    # A node load-balances its OWN work over the IP LB (server_urls); Nostr dispatch is the separate
-    # machine-sharing path (provider/consumer), so own-serving never auto-dispatches over Nostr.
+    # This node distributes its OWN work over the IP LB (server_urls); the CONSUMER side adds remote
+    # PROVIDERS (machines others shared with us, reached over Nostr) as extra round-robin candidates.
     from app.services import nostr_dvm
-    dvm_on = False
-    if dvm_on:
-        remote = nostr_dvm.peers(settings)
-    else:
-        from app.services.load_balancer import parse_server_urls
-        remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
+    from app.services.load_balancer import parse_server_urls
+    prov = {} if local_only else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers(settings)}
+    remote = [] if local_only else parse_server_urls(server_urls, exclude_self=True)
 
-    candidates = ([_LOCAL] if allow_local else []) + remote
+    candidates = ([_LOCAL] if allow_local else []) + list(prov) + remote
     if not candidates:
         logger.error("[IMAGE] No candidates (vram_mode 'llm_only' with no servers configured)")
         return None
@@ -185,12 +182,12 @@ async def generate_image_with_load_balancing(
         try:
             if cand == _LOCAL:
                 result = await _generate_image_local(db, settings, prompt, negative_prompt, width, height, steps, cfg)
-            elif dvm_on:
-                logger.info(f"[IMAGE] dispatching to worker {cand[:12]} over Nostr")
+            elif cand in prov:
+                logger.info(f"[IMAGE] offloading to provider {cand[:12]} over Nostr")
                 r = await nostr_dvm.run_remote("image", {
                     "prompt": prompt, "negative_prompt": negative_prompt,
                     "width": width, "height": height, "steps": steps, "cfg": cfg,
-                }, settings, worker_pubkey=cand, timeout=timeout)
+                }, settings, worker_pubkey=cand, relay=prov[cand], timeout=timeout)
                 result = r.get("image") if r else None
             else:
                 logger.info(f"[IMAGE] forwarding to remote node {cand}")

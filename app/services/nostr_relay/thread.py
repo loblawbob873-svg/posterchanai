@@ -191,12 +191,12 @@ def _read_config() -> dict:
             # ingest_kinds) addressed to this node from the upstream cluster relay — so a node can use
             # ONLY its local relay and still receive jobs/results via the WoT upstream sync.
             "dvm_enabled": gb("nostr_dvm_enabled", False),
-            # Provider SHARE ALLOWLIST → the relay's write-gate accepts these npubs' DVM job-kind events
-            # even if they aren't WoT members (sharing your GPU is a deliberate grant, separate from the
-            # social web of trust). Built from settings here; the worker re-checks via is_trusted.
+            # Shared-cluster PEERS → the relay's write-gate accepts these npubs' DVM job-kind events even
+            # if they aren't WoT members (sharing compute is a deliberate grant, separate from the social
+            # web of trust). Each `nostr_dvm_peers` line is "npub relay"; we take the leading npub.
             "dvm_allowed": frozenset(filter(None,
-                (nostr_service.to_pubkey_hex(_t.strip())
-                 for _t in g("nostr_dvm_allowed_npubs", "").replace(",", "\n").split()))),
+                (nostr_service.to_pubkey_hex(_ln.split()[0])
+                 for _ln in g("nostr_dvm_peers", "").replace(",", "\n").splitlines() if _ln.split()))),
             "dvm_req_kinds": frozenset((5050, 5100, 5201, 5202)),  # NIP-90 request kinds (see nostr_dvm._REQ_KIND)
             # How many upstream relays the firehose streams from (0 = ALL). It's the sole
             # real-time ingestion path now, so default to all for completeness.

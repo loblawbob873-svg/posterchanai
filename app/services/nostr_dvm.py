@@ -106,26 +106,45 @@ def peers(settings: Optional[dict] = None) -> list:
     return [pk for pk in worker_pubkeys(settings) if pk != me]
 
 
-def allowed_npubs(settings: Optional[dict] = None) -> list:
-    """The SHARE ALLOWLIST: npubs explicitly permitted to send compute jobs to this provider node.
-    This is GPU-access trust, deliberately separate from the relay's social Web of Trust — a follow
-    must NOT grant the ability to burn your GPU. Empty = this node shares with no one."""
-    raw = _settings(settings).get("nostr_dvm_allowed_npubs", "") or ""
+def peers_list(settings: Optional[dict] = None) -> list:
+    """The SHARED CLUSTER — peers you share compute with. Each non-blank line of `nostr_dvm_peers` is a
+    connection card `npub relay`: a peer's npub and the relay to reach it on. Sharing is MUTUAL — if you
+    list a peer, they may send jobs to THIS node (trusted) AND this node may offload to them. This is a
+    deliberate grant, separate from the social Web of Trust (a follow does NOT grant GPU access). Blossom
+    is self-describing (each result ref carries the uploader's URL), so a card needs only npub + relay.
+    Returns [{pubkey, npub, relay}] (relay '' if a line gives just an npub). Empty → no sharing."""
     out: list = []
-    for tok in raw.replace(",", "\n").split():
-        tok = tok.strip()
-        if not tok:
+    seen: set = set()
+    for line in (_settings(settings).get("nostr_dvm_peers", "") or "").replace(",", "\n").splitlines():
+        parts = line.split()
+        if not parts:
             continue
-        pk = nostr_service.to_pubkey_hex(tok)
-        if pk and pk not in out:
-            out.append(pk)
+        pk = nostr_service.to_pubkey_hex(parts[0])
+        if not pk or pk in seen:
+            continue
+        seen.add(pk)
+        out.append({"pubkey": pk, "npub": parts[0].strip(), "relay": parts[1].strip() if len(parts) > 1 else ""})
     return out
 
 
+def peer_pubkeys(settings: Optional[dict] = None) -> list:
+    """Pubkeys of all shared-cluster peers — the TRUST set (who may send jobs to this node)."""
+    return [p["pubkey"] for p in peers_list(settings)]
+
+
 def is_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
-    """A provider serves jobs ONLY from npubs on its explicit share allowlist — sharing your GPU is a
-    deliberate grant, never a side effect of a social follow. Blank allowlist → serve no one."""
-    return pubkey_hex in allowed_npubs(settings)
+    """A node serves jobs ONLY from peers in its shared cluster — you listed them, so it's a deliberate
+    grant, never a side effect of a social follow. No peers → serve no one."""
+    return pubkey_hex in peer_pubkeys(settings)
+
+
+def providers(settings: Optional[dict] = None) -> list:
+    """Peers this node can OFFLOAD to — the same mutual cluster, limited to peers that gave a relay (so
+    we can reach them). Sharing is symmetric: the trust set and the offload set are one list. Gated by
+    the master toggle: when shared compute is OFF this node neither serves (no worker) nor offloads."""
+    if not is_enabled(settings):
+        return []
+    return [p for p in peers_list(settings) if p["relay"]]
 
 
 def relay_url(settings: Optional[dict] = None) -> str:
@@ -178,9 +197,10 @@ async def upload_media(data: bytes, mime: str, settings: Optional[dict] = None) 
         return None
 
 
-async def download_media(sha256: str, settings: Optional[dict] = None) -> Optional[bytes]:
-    """Fetch result bytes from the shared Blossom server and verify the hash; None on failure."""
-    base = _blossom_base(settings)
+async def download_media(sha256: str, settings: Optional[dict] = None, base: Optional[str] = None) -> Optional[bytes]:
+    """Fetch result bytes from a Blossom server and verify the hash; None on failure. `base` overrides
+    the server (the ref's own `url` when fetching a remote provider's result); else this node's."""
+    base = (base or _blossom_base(settings) or "").rstrip("/")
     if not base:
         return None
     try:
@@ -208,13 +228,18 @@ async def put_media(data: bytes, settings: Optional[dict] = None) -> Optional[di
     sha = await upload_media(ct, "application/octet-stream", settings)
     if not sha:
         return None
-    return {"blob": sha, "key": key.hex(), "iv": nonce.hex()}
+    ref = {"blob": sha, "key": key.hex(), "iv": nonce.hex()}
+    base = _blossom_base(settings)
+    if base:
+        ref["url"] = base   # self-describing: a remote fetcher (another owner's node) uses THIS URL,
+                            # so a provider connection card needs only npub + relay, not a Blossom URL
+    return ref
 
 
 async def get_media(ref: dict, settings: Optional[dict] = None) -> Optional[bytes]:
     """Fetch the ciphertext by its hash and AES-256-GCM-decrypt it with the ref's key/iv; None on fail."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    ct = await download_media(ref.get("blob", ""), settings)
+    ct = await download_media(ref.get("blob", ""), settings, base=ref.get("url"))
     if ct is None:
         return None
     try:
@@ -277,7 +302,8 @@ def _pick_peer(pk_list: list) -> Optional[str]:
 
 async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
                      worker_pubkey: Optional[str] = None,
-                     timeout: Optional[float] = None) -> Optional[dict]:
+                     timeout: Optional[float] = None,
+                     relay: Optional[str] = None) -> Optional[dict]:
     """Dispatch a job to a peer worker over Nostr and return the decrypted result dict, or None on
     failure/timeout (the caller then falls back to local or the next candidate). The result shape
     mirrors the worker's `_run_local` return: {"image":b64} / {"audio":b64,"format":ext} /
@@ -293,7 +319,7 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     sk = node_seckey()
     if not sk:
         return None
-    relay = relay_url(s)
+    relay = relay or relay_url(s)   # the PROVIDER's relay on the consumer path, else this node's local
     budget = float(timeout or _JOB_TIMEOUT.get(task, 300))
     try:
         enc = await _pack_content(worker_pubkey, params, s)   # inline, or Blossom-spilled if oversized
@@ -345,6 +371,27 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     except Exception as e:
         logger.warning("[dvm] run_remote(%s) failed: %s", task, e)
         return None
+
+
+def pick_provider(settings: Optional[dict] = None) -> Optional[dict]:
+    """CONSUMER round-robin: pick a remote provider (shared machine) to offload to, or None to run the
+    job on THIS node. `[self]+providers` rotation, so we still use our own GPU instead of always
+    offloading. Returns a provider dict {pubkey, npub, relay} or None."""
+    p = providers(settings)
+    if not p:
+        return None
+    cand = _pick_peer(["__LOCAL__"] + p)
+    return None if cand == "__LOCAL__" else cand
+
+
+async def offload_chat(messages: list, provider: dict, settings: Optional[dict] = None, **kw) -> Optional[dict]:
+    """CONSUMER: run a chat completion on a remote PROVIDER over Nostr (its relay). Returns the OpenAI
+    completion dict, or None to fall back locally (the provider failed/timed out). kw passes through
+    temperature/top_p/max_tokens/stop (None dropped)."""
+    params = {"messages": messages}
+    params.update({k: v for k, v in kw.items() if v is not None})
+    r = await run_remote("chat", params, settings, worker_pubkey=provider["pubkey"], relay=provider["relay"])
+    return r["completion"] if (r and r.get("completion")) else None
 
 
 # ---------------------------------------------------------------- worker
@@ -528,10 +575,10 @@ def start_worker() -> None:
     relay = relay_url(s)
     # since is stamped per-(re)connect by subscribe(since_now=True) so a reconnect never replays old jobs.
     filters = [{"kinds": list(DVM_REQ_KINDS), "#p": [me]}]
-    _allowed = len(allowed_npubs(s))
-    logger.info("[dvm] worker listening on %s as %s (share allowlist: %d npub%s, max %d in-flight)%s",
-                relay, node_npub(), _allowed, "" if _allowed == 1 else "s", _MAX_INFLIGHT,
-                "" if _allowed else " — empty, so it will serve NO ONE until npubs are added")
+    _npeers = len(peer_pubkeys(s))
+    logger.info("[dvm] worker listening on %s as %s (%d shared peer%s, max %d in-flight)%s",
+                relay, node_npub(), _npeers, "" if _npeers == 1 else "s", _MAX_INFLIGHT,
+                "" if _npeers else " — no peers, so it will serve NO ONE until peers are added")
     _worker_task = asyncio.create_task(
         nostr_relay.subscribe(relay, filters, _spawn_job, _worker_stop, direct=True, since_now=True))
 

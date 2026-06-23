@@ -198,7 +198,7 @@ class SettingsResponse(BaseModel):
     # (configured in Admin → Relay); jobs are dispatched to those nodes over Nostr (encrypted job →
     # peer → encrypted result) instead of the IP/HTTP LB above.
     nostr_dvm_enabled: bool = False
-    nostr_dvm_allowed_npubs: str = ""  # share allowlist: npubs permitted to send jobs to this provider (blank = no one)
+    nostr_dvm_peers: str = ""          # shared cluster: peer cards, one per line "npub relay" — MUTUAL (they can use you + you can use them)
     nostr_dvm_blossom_url: str = ""    # shared Blossom base URL for media transfer (blank = blossom_public_url)
     # Native LLM health check (ping the loaded model; reload it on repeated failure / high VRAM)
     llm_health_check_enabled: str = "false"

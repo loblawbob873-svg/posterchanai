@@ -125,13 +125,11 @@ async def generate_music_for_user(
     # A node load-balances its OWN work over the IP LB; Nostr dispatch is the separate machine-sharing
     # path (provider/consumer), so own-serving never auto-dispatches over Nostr.
     from app.services import nostr_dvm
-    dvm_on = False
+    prov = {} if local_only else {p["pubkey"]: p["relay"] for p in nostr_dvm.providers()}
     if local_only:
         candidates = [_LOCAL]
-    elif dvm_on:
-        candidates = nostr_dvm.peers() + [_LOCAL]
     else:
-        candidates = parse_music_server_urls(cfg["server_urls"]) + [_LOCAL]
+        candidates = list(prov) + parse_music_server_urls(cfg["server_urls"]) + [_LOCAL]
     candidates = await _rotated(candidates)
     # Busy-aware: if THIS node's GPU is occupied, defer local to the end so the song goes to an idle
     # remote node instead of queueing behind the in-progress task here.
@@ -153,11 +151,11 @@ async def generate_music_for_user(
         try:
             if cand == _LOCAL:
                 audio_bytes, ext = await _generate_local(db, cfg, prompt, lyrics, duration, steps, timeout, fmt)
-            elif dvm_on:
-                logger.info(f"[music] dispatching to worker {cand[:12]} over Nostr")
+            elif cand in prov:
+                logger.info(f"[music] offloading to provider {cand[:12]} over Nostr")
                 r = await nostr_dvm.run_remote("music", {
                     "prompt": prompt, "lyrics": lyrics, "duration": duration, "steps": steps,
-                }, worker_pubkey=cand, timeout=timeout)
+                }, worker_pubkey=cand, relay=prov[cand], timeout=timeout)
                 if not r or not r.get("audio"):
                     raise MusicError("worker returned no audio")
                 import base64 as _b64
