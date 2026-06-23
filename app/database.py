@@ -342,7 +342,6 @@ When asked to write or modify code or files:
             "chat_server_urls": "",  # Comma-separated URLs (empty = use local backend)
             # Nostr-native distributed LB (NIP-90 DVM) — opt-in; cluster = relay WoT seeds.
             "nostr_dvm_enabled": "false",
-            "nostr_dvm_relay": "",         # shared relay ws:// for jobs (blank = local relay)
             "nostr_dvm_blossom_url": "",   # shared Blossom base URL for media (blank = blossom_public_url)
             # Native LLM settings (the local LLM backend is always native llama.cpp now). The
             # model-path FIRST-RUN default can be seeded from the environment (the Docker image

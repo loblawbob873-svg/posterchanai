@@ -94,14 +94,6 @@
                 <strong>Restart to apply.</strong></small>
         </div>
         <div class="form-group">
-            <label for="nostr_dvm_relay">Job relay (ws:// or wss://)</label>
-            <input type="text" id="nostr_dvm_relay" name="nostr_dvm_relay" placeholder="(blank = local relay)">
-            <small><strong>Leave blank for a local cluster</strong> — each node talks only to its own
-                local relay, and jobs/results propagate between nodes via the relay's <strong>WoT
-                upstream sync</strong> (<code>nofederate</code> keeps that traffic off the public network).
-                Only set a <strong>common relay</strong> URL for nodes that can't sync relays directly.</small>
-        </div>
-        <div class="form-group">
             <label for="nostr_dvm_blossom_url">Media (Blossom) URL</label>
             <input type="text" id="nostr_dvm_blossom_url" name="nostr_dvm_blossom_url" placeholder="https://media.poster.place">
             <small>image/music/video results are too big for a Nostr event (256KB cap), so the worker

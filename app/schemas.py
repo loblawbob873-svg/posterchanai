@@ -198,7 +198,6 @@ class SettingsResponse(BaseModel):
     # (configured in Admin → Relay); jobs are dispatched to those nodes over Nostr (encrypted job →
     # peer → encrypted result) instead of the IP/HTTP LB above.
     nostr_dvm_enabled: bool = False
-    nostr_dvm_relay: str = ""          # shared relay ws:// for jobs (blank = this node's local relay)
     nostr_dvm_blossom_url: str = ""    # shared Blossom base URL for media transfer (blank = blossom_public_url)
     # Native LLM health check (ping the loaded model; reload it on repeated failure / high VRAM)
     llm_health_check_enabled: str = "false"

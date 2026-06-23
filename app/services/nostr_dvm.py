@@ -113,10 +113,11 @@ def is_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
 
 
 def relay_url(settings: Optional[dict] = None) -> str:
+    """Jobs/results always ride THIS node's local relay. Cross-node delivery is the relay graph's
+    job: when DVM is on, each node's firehose streams the cluster job/result kinds addressed to it
+    from its WoT upstream(s) (the paired nodes), so a publish to the local relay reaches the peer's
+    local relay via the existing pairing — no separate shared job relay to configure or keep in sync."""
     s = _settings(settings)
-    url = (s.get("nostr_dvm_relay", "") or "").strip()
-    if url:
-        return url
     port = s.get("nostr_relay_port", 3052) or 3052
     return f"ws://127.0.0.1:{port}/relay"
 
@@ -207,6 +208,45 @@ async def get_media(ref: dict, settings: Optional[dict] = None) -> Optional[byte
         return None
 
 
+# ---------------------------------------------------------------- payload pack/spill
+# A job's params and a worker's result normally ride INLINE as NIP-44 ciphertext in the event content.
+# But the relay caps a message at 256KB (max_message_size), and a full agentic/long-chat context —
+# accumulated messages + tool outputs + file bodies — easily exceeds that (an OpenAI-API/opencode turn
+# at our 65k ctx is ~250-400KB). So when the plaintext is large, SPILL it: AES-encrypt + upload to the
+# shared Blossom (exactly like media) and inline only the small encrypted ref. The receiver re-fetches
+# transparently. This makes the DVM size-agnostic for chat in BOTH directions, which is what lets
+# agentic traffic ride Nostr at all. Small payloads (image params, chat deltas, media refs) stay inline.
+_SPILL_OVER = 150 * 1024   # plaintext bytes; NIP-44 base64 (~1.4x) + the event envelope must clear 256KB
+
+
+async def _pack_content(peer_hex: str, obj: dict, settings: Optional[dict] = None) -> Optional[str]:
+    """NIP-44-encrypt a job/result payload for the event content; spill oversized payloads to Blossom
+    (encrypting only the small ref inline). Returns None if a needed spill upload fails."""
+    sk = node_seckey()
+    if not sk:
+        return None
+    raw = json.dumps(obj).encode()
+    if len(raw) > _SPILL_OVER:
+        ref = await put_media(raw, settings)
+        if ref is None:
+            return None
+        payload = json.dumps({"__spill__": ref})
+    else:
+        payload = raw.decode()
+    return nip44.encrypt_to(sk, bytes.fromhex(peer_hex), payload)
+
+
+async def _unpack_content(peer_hex: str, content: str, settings: Optional[dict] = None) -> dict:
+    """Inverse of _pack_content: NIP-44-decrypt, then re-hydrate a Blossom-spilled payload if present."""
+    obj = json.loads(nip44.decrypt_from(node_seckey(), bytes.fromhex(peer_hex), content))
+    if isinstance(obj, dict) and "__spill__" in obj:
+        raw = await get_media(obj["__spill__"], settings)
+        if raw is None:
+            raise ValueError("spill blob fetch/decrypt failed")
+        obj = json.loads(raw)
+    return obj
+
+
 # ---------------------------------------------------------------- coordinator
 _rr = {"i": 0}
 
@@ -240,8 +280,10 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     relay = relay_url(s)
     budget = float(timeout or _JOB_TIMEOUT.get(task, 300))
     try:
-        peer_bytes = bytes.fromhex(worker_pubkey)
-        enc = nip44.encrypt_to(sk, peer_bytes, json.dumps(params))
+        enc = await _pack_content(worker_pubkey, params, s)   # inline, or Blossom-spilled if oversized
+        if enc is None:
+            logger.warning("[dvm] %s job payload pack/upload failed — not dispatched", task)
+            return None
         # nofederate: a DVM job is cluster-internal — the relay must NEVER broadcast it to public
         # upstream relays (see nostr_relay.server._broadcastable). Keeps job traffic off the network.
         tags = [["p", worker_pubkey], ["t", task], ["nofederate"],
@@ -264,7 +306,7 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
         if not nostr_event.verify_event(res):
             logger.warning("[dvm] %s result failed signature verify", task)
             return None
-        out = json.loads(nip44.decrypt_from(sk, peer_bytes, res.get("content", "")))
+        out = await _unpack_content(worker_pubkey, res.get("content", ""), s)
         if out.get("error"):
             logger.warning("[dvm] worker %s error: %s", task, out["error"])
             return None
@@ -314,7 +356,12 @@ def _event_expired(ev: dict) -> bool:
 
 async def _publish_result(task: str, jid: str, author: str, result: dict) -> None:
     sk = node_seckey()
-    enc = nip44.encrypt_to(sk, bytes.fromhex(author), json.dumps(result))
+    enc = await _pack_content(author, result, None)   # inline, or Blossom-spilled if oversized
+    if enc is None:
+        # Spill upload failed for an oversized result. Send a tiny inline error instead of nothing, so
+        # the coordinator fails over fast rather than waiting out the whole job budget for a dead result.
+        logger.warning("[dvm] result pack/upload failed for %s job %s — sending error so coordinator fails over fast", task, jid[:12])
+        enc = nip44.encrypt_to(sk, bytes.fromhex(author), json.dumps({"error": "result too large or blossom upload failed"}))
     # Short NIP-40 expiration: the coordinator reads the result within seconds, so 6xxx results don't
     # linger / accumulate in the relay.
     res_ev = nostr_event.build_event(sk, _REQ_KIND[task] + 1000, enc,
@@ -431,13 +478,15 @@ async def _handle_job(task: str, author: str, jid: str, ev: dict) -> None:
     web/Telegram request) and publish the encrypted result. Always decrements the in-flight count."""
     global _inflight
     try:
-        params = json.loads(nip44.decrypt_from(node_seckey(), bytes.fromhex(author), ev.get("content", "")))
-        logger.info("[dvm] running %s job %s from %s (%d in flight)", task, jid[:12],
-                    nostr_service.npub_of(author)[:16], _inflight)
+        # Unpack INSIDE the result-bearing try: a failed spill fetch (or any decode error) must become
+        # a published error result, not a silent drop — else the coordinator waits out its full budget.
         try:
+            params = await _unpack_content(author, ev.get("content", ""), None)
+            logger.info("[dvm] running %s job %s from %s (%d in flight)", task, jid[:12],
+                        nostr_service.npub_of(author)[:16], _inflight)
             result = await _run_local(task, params)
         except Exception as e:
-            logger.warning("[dvm] local %s job %s failed: %s", task, jid[:12], e)
+            logger.warning("[dvm] %s job %s failed: %s", task, jid[:12], e)
             result = {"error": str(e)[:300]}
         await _publish_result(task, jid, author, result)
         logger.info("[dvm] returned %s result for job %s%s", task, jid[:12],

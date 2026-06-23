@@ -561,52 +561,100 @@ async def _handle_chat_completions(request: ChatCompletionRequest, db: Session, 
     max_tokens = min(request.max_tokens, predict_limit) if request.max_tokens is not None else predict_limit
 
     # Distributed-LB (DVM) over Nostr — when enabled it REPLACES the IP/HTTP LB below. Round-robin
-    # [local]+peers: a peer → dispatch a Nostr job (full response, no token streaming for now); local
-    # (or a failed/timed-out worker) → fall through to local inference. Skipped on LB hops.
+    # [local]+peers: a peer → dispatch a Nostr job; local (or a failed/timed-out worker) → fall
+    # through to local inference. Skipped on LB hops.
     #
-    # AGENTIC / LONG-RUNNING REQUESTS (request.tools — opencode et al.) are DELIBERATELY excluded:
-    # the DVM path is full-response (no token streaming yet), so a long tool generation (a big file
-    # write at the 16k tool cap can run 100s+) would emit nothing until done — blowing past opencode's
-    # ~125s client read-timeout — and a slow/dead worker would hold await_one for the whole chat budget
-    # before failing over, well past that timeout. Streaming is what keeps an agent alive (per-chunk
-    # timeout reset), and that's deferred. So tool requests stay on the STREAMING path below (IP LB if
-    # still configured, else local) and keep their proven behavior. (The worker CAN run tools — it's
-    # only our coordinator that won't route them here until streaming-DVM lands.)
+    # AGENTIC / LONG-RUNNING REQUESTS (request.tools — opencode et al.) ride this path too. The DVM is
+    # still full-response (no token streaming over Nostr), so for a STREAMING client we hold the socket
+    # open with SSE keepalive comments while the worker generates — resetting opencode's ~125s read
+    # timeout — then emit the finished completion as chunks; if the worker fails/times out we fall back
+    # to LOCAL streaming so the agent still gets real tokens. Oversized contexts (past the relay's 256KB
+    # cap) are spilled to Blossom by nostr_dvm transparently. The worker already runs tools (_run_local),
+    # so tool_calls come back exactly like the IP-LB/local path.
     from app.services import nostr_dvm as _dvm
-    if _dvm.is_enabled(settings) and not skip_load_balancer and not request.tools:
+    if _dvm.is_enabled(settings) and not skip_load_balancer:
         _peers = _dvm.peers(settings)
         _cand = _dvm._pick_peer(["__LOCAL__"] + _peers) if _peers else "__LOCAL__"
         if _cand != "__LOCAL__":
-            _r = await _dvm.run_remote("chat", {
+            _params = {
                 "messages": messages, "temperature": temperature, "top_p": top_p,
                 "max_tokens": max_tokens, "stop": getattr(request, "stop", None),
                 "model": request.model, "tools": request.tools, "tool_choice": request.tool_choice,
-            }, settings, worker_pubkey=_cand)
+            }
+
+            def _completion_to_chunks(_completion):
+                """Render a finished completion as the SSE chunk sequence an OpenAI client expects."""
+                import json as _json
+                for _ch in _completion.get("choices", []) or []:
+                    _m = _ch.get("message", {}) or {}
+                    if _m.get("content"):
+                        _m["content"] = strip_thinking_tags(_m["content"])
+                _c0 = (_completion.get("choices") or [{}])[0]
+                _msg = _c0.get("message", {}) or {}
+                _delta = {"role": "assistant", "content": _msg.get("content", "") or ""}
+                if _msg.get("tool_calls"):
+                    for _i, _tc in enumerate(_msg["tool_calls"]):
+                        _tc.setdefault("index", _i)   # streaming clients accumulate tool_calls by index
+                    _delta["tool_calls"] = _msg["tool_calls"]
+                _cid = _completion.get("id", "dvm")
+                return [
+                    "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]}) + "\n\n",
+                    "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": _c0.get("finish_reason", "stop")}]}) + "\n\n",
+                    "data: [DONE]\n\n",
+                ]
+
+            def _local_stream():
+                """Worker unavailable → generate locally with real per-token streaming (true failover)."""
+                from app.services.inference_factory import prepare_vram_for_llm
+                prepare_vram_for_llm(db)
+                _svc = get_inference_service(db)
+                _kw = {}
+                if request.temperature is not None: _kw["temperature"] = request.temperature
+                if request.top_p is not None: _kw["top_p"] = request.top_p
+                if request.max_tokens is not None: _kw["max_tokens"] = min(request.max_tokens, server_num_predict)
+                if request.stop is not None: _kw["stop"] = request.stop
+                if request.tools: _kw["tools"] = request.tools
+                if request.tool_choice is not None: _kw["tool_choice"] = request.tool_choice
+                _st = _svc.chat_completion_stream(messages=messages, model=request.model, **_kw)
+                return _st if request.tools else filter_thinking_stream(_st)
+
+            if request.stream:
+                async def _dvm_stream_live():
+                    import asyncio as _asyncio
+                    _job = _asyncio.create_task(
+                        _dvm.run_remote("chat", _params, settings, worker_pubkey=_cand))
+                    while True:
+                        _done, _ = await _asyncio.wait({_job}, timeout=15)
+                        if _done:
+                            break
+                        yield ": keepalive\n\n"   # SSE comment: resets the client read timeout, ignored by parsers
+                    try:
+                        _r = _job.result()
+                    except Exception as _e:   # run_remote can raise before its own try (keystore/settings) — never kill the stream
+                        logger.warning("[OPENAI API] DVM chat job crashed: %s", _e)
+                        _r = None
+                    if _r and _r.get("completion"):
+                        for _chunk in _completion_to_chunks(_r["completion"]):
+                            yield _chunk
+                    else:
+                        logger.info("[OPENAI API] DVM worker unavailable/failed → local streaming")
+                        async for _chunk in _local_stream():
+                            yield _chunk
+                return StreamingResponse(_dvm_stream_live(), media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+            _r = await _dvm.run_remote("chat", _params, settings, worker_pubkey=_cand)
             if _r and _r.get("completion"):
                 _completion = _r["completion"]
                 for _ch in _completion.get("choices", []) or []:
                     _m = _ch.get("message", {}) or {}
                     if _m.get("content"):
                         _m["content"] = strip_thinking_tags(_m["content"])
-                if request.stream:
-                    async def _dvm_stream():
-                        import json as _json
-                        _c0 = (_completion.get("choices") or [{}])[0]
-                        _msg = _c0.get("message", {}) or {}
-                        _delta = {"role": "assistant", "content": _msg.get("content", "") or ""}
-                        if _msg.get("tool_calls"):
-                            _delta["tool_calls"] = _msg["tool_calls"]
-                        _cid = _completion.get("id", "dvm")
-                        yield "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
-                            "choices": [{"index": 0, "delta": _delta, "finish_reason": None}]}) + "\n\n"
-                        yield "data: " + _json.dumps({"id": _cid, "object": "chat.completion.chunk",
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": _c0.get("finish_reason", "stop")}]}) + "\n\n"
-                        yield "data: [DONE]\n\n"
-                    return StreamingResponse(_dvm_stream(), media_type="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
                 return _completion
             logger.info("[OPENAI API] DVM worker unavailable/failed → local inference")
-        # __LOCAL__ chosen (or no peers) → fall through to local inference below.
+        # __LOCAL__ chosen (or no peers / worker failed) → fall through to local inference below.
 
     # Use load balancer if configured - picks server round-robin, uses local inference for "self" URLs
     # Skip if explicitly requested (to prevent loops when called from another posterchanai instance)
