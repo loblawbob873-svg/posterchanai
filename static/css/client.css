@@ -469,6 +469,10 @@ a.btn.full{display:block}
 .mp-controls .mp-big{width:46px;height:46px;border-radius:50%;border:2px solid var(--cyan,#0ff);background:rgba(0,240,255,.12);font-size:17px;display:inline-flex;align-items:center;justify-content:center}
 .mp-controls .mp-big:hover{background:var(--cyan,#0ff);color:#04121a}
 .mp-controls .mp-shuffle.on{color:var(--magenta,#f0f);filter:drop-shadow(0 0 7px var(--magenta,#f0f))}
+.mp-search-row{padding:2px 10px 4px}
+.mp .mp-search{width:100%;box-sizing:border-box;background:rgba(0,240,255,.06);border:1px solid rgba(0,240,255,.3);border-radius:14px;color:#eaf0ff;font-size:12px;padding:6px 12px;outline:none}
+.mp .mp-search:focus{border-color:var(--cyan,#0ff);box-shadow:0 0 10px rgba(0,240,255,.3)}
+.mp .mp-search::placeholder{color:rgba(234,240,255,.45)}
 .mp-list{max-height:172px;overflow-y:auto;border-top:1px solid rgba(0,240,255,.2);padding:6px}
 .mp-track{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:none;color:#cfe0f0;cursor:pointer;padding:7px 9px;border-radius:9px;font-size:12.5px}
 .mp-track:hover{background:rgba(0,240,255,.1)}.mp-track.on{background:rgba(0,240,255,.16);color:#fff}

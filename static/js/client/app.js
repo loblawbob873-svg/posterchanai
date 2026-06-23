@@ -3185,7 +3185,7 @@
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;
   const MusicPlayer = {
-    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _viz:{an:null,raf:0,failed:false},
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'', _viz:{an:null,raf:0,failed:false},
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
@@ -3235,14 +3235,14 @@
         d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play">${pl}</button><button class="mp-exp" title="Expand">▢</button>`;
       } else {
         d.className='mp'+(playing?' playing':'');
-        const list=this.queue.map(sha=>{ const mm=FilesIdx.meta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join('');
         d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close">✕</button></div>
           <canvas class="mp-viz"></canvas>
           <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
           <div class="mp-seek"><div class="mp-seek-fill"></div></div>
           <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
           <div class="mp-controls"><button class="mp-prev" title="Previous">⏮</button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next">⏭</button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle">🔀</button></div>
-          <div class="mp-list">${list||'<div class="muted small" style="padding:10px;text-align:center">No tracks in Music yet</div>'}</div>`;
+          <div class="mp-search-row"><input class="mp-search" type="search" placeholder="🔍 Search tracks…" value="${enc(this._search||'')}"></div>
+          <div class="mp-list">${this._listHtml()}</div>`;
       }
       this._wire(); this._tick(); _updateMusicListBtns();
       if(!this.min && _audioEl && !_audioEl.paused) this._startViz();
@@ -3253,9 +3253,21 @@
       b('.mp-close',()=>this.close()); b('.mp-prev',()=>this.prev()); b('.mp-next',()=>this.next());
       b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
       const seek=qq('.mp-seek'); if(seek) seek.onclick=e=>{ const r=seek.getBoundingClientRect(); this.seekTo((e.clientX-r.left)/r.width); };
-      d.querySelectorAll('.mp-track').forEach(t=> t.onclick=()=>this.play(t.dataset.sha));
+      const srch=qq('.mp-search');
+      if(srch){ srch.oninput=()=>{ this._search=srch.value; const lst=qq('.mp-list'); if(lst){ lst.innerHTML=this._listHtml(); this._wireList(); } };
+        srch.onkeydown=e=>{ if(e.key==='Enter'){ const s=this._shownShas(); if(s.length) this.play(s[0]); } }; }   // Enter = play first match
+      this._wireList();
       this._drag(this.min ? d : (qq('.mp-head')||d));   // minimized: the whole mini-bar is the drag handle
     },
+    // Search the WHOLE Music library by name (not just the current queue); empty search = the queue.
+    _libTracks(){ return musicTracks(null).map(t=>({sha:t.sha, name:(t.m&&t.m.name)||'track'})); },
+    _shownShas(){ const q=(this._search||'').trim().toLowerCase();
+      if(q) return this._libTracks().filter(t=>t.name.toLowerCase().includes(q)).map(t=>t.sha);
+      return this.queue; },
+    _listHtml(){ const playing=_audioEl && !_audioEl.paused; const shas=this._shownShas();
+      if(!shas.length) return `<div class="muted small" style="padding:10px;text-align:center">${this._search?'No matches':'No tracks in Music yet'}</div>`;
+      return shas.map(sha=>{ const mm=FilesIdx.meta(sha)||{}; return `<button class="mp-track${sha===this.cur?' on':''}" data-sha="${sha}"><span class="mp-tnum">${sha===this.cur&&playing?'▶':'♪'}</span><span>${enc(mm.name||'track')}</span></button>`; }).join(''); },
+    _wireList(){ const d=this.el; if(!d) return; d.querySelectorAll('.mp-list .mp-track').forEach(t=> t.onclick=()=>this.play(t.dataset.sha)); },
     _drag(handle){ if(!handle) return; const d=this.el; let sx,sy,ox,oy,on=false;
       const move=e=>{ if(!on) return; const p=e.touches?e.touches[0]:e; d.style.left=Math.max(0,Math.min(innerWidth-50,ox+p.clientX-sx))+'px'; d.style.top=Math.max(0,Math.min(innerHeight-40,oy+p.clientY-sy))+'px'; if(e.cancelable)e.preventDefault(); };
       const up=()=>{ on=false; removeEventListener('mousemove',move); removeEventListener('mouseup',up); removeEventListener('touchmove',move); removeEventListener('touchend',up); };
@@ -3725,6 +3737,15 @@
     _prof.loading=false;
   }
   function renderProfile(pk){ renderProfileView(pk); }
+  // Patch the already-painted profile header in place when a background kind-0 refresh changed it
+  // (live rename / new avatar), so we never have to block the first paint on that refetch.
+  function _patchProfileHeader(pk){
+    const feed=$('#feed'); if(!feed) return; const p=Store.profile(pk)||{};
+    const av=feed.querySelector('.pav'); if(av){ const s=p.picture||LOGO; if(av.getAttribute('src')!==s) av.src=s; }
+    const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
+    const h2=feed.querySelector('.prof .pbody h2'); if(h2 && h2.firstChild) h2.firstChild.textContent=(p.name||p.display_name||'anon');
+    const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
+  }
   async function renderProfileView(pk){
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
     _hidePill();
