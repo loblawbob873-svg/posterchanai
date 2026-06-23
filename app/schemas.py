@@ -295,6 +295,13 @@ class SettingsResponse(BaseModel):
     tor_control_port: str = "9053"
     tor_exit_nodes: str = "{us}"
     tor_data_dir: str = "/var/lib/posterchanai/tor"
+    # Second Tor daemon (different exit region) — the HTTP proxy load-balances across both circuits.
+    # Only runs when tor_enabled is also on. Own ports + data dir so the two daemons don't collide.
+    tor2_enabled: str = "true"
+    tor2_socks_port: str = "9062"
+    tor2_control_port: str = "9063"
+    tor2_exit_nodes: str = "{ca}"
+    tor2_data_dir: str = "/var/lib/posterchanai/tor2"
     # Built-in HTTP proxy settings
     proxy_enabled: str = "false"
     proxy_listen_host: str = "127.0.0.1"

@@ -288,6 +288,11 @@ AvoidDiskWrites 1
         }
 
 
+# All started Tor instances (1 normally, 2 when the second daemon is on for SOCKS load-balancing).
+# NOT a singleton — each instance needs its OWN ports + data dir, so we track them in a list.
+_services: list = []
+
+
 def start_tor_service(
     listen_host: str = "127.0.0.1",
     socks_port: int = 9052,
@@ -296,8 +301,9 @@ def start_tor_service(
     exit_nodes: str = "{us}",
     data_dir: str = "/var/lib/posterchanai/tor",
 ) -> Optional[TorService]:
-    """Start Tor service and return instance."""
-    service = TorService.get_instance(
+    """Start ONE Tor instance and return it. Call once per daemon — the second daemon uses its own
+    ports + data dir + exit region so the HTTP proxy can load-balance across two independent circuits."""
+    service = TorService(
         listen_host=listen_host,
         socks_port=socks_port,
         control_port=control_port,
@@ -306,11 +312,19 @@ def start_tor_service(
         data_dir=data_dir,
     )
     if service.start():
+        _services.append(service)
+        if TorService._instance is None:
+            TorService._instance = service   # first instance = the default (status/monitoring compat)
         return service
     return None
 
 
 def stop_tor_service():
-    """Stop Tor service if running."""
-    if TorService._instance:
-        TorService._instance.stop()
+    """Stop ALL started Tor instances."""
+    for svc in _services:
+        try:
+            svc.stop()
+        except Exception:
+            pass
+    _services.clear()
+    TorService._instance = None

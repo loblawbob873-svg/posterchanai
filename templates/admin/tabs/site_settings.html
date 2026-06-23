@@ -187,6 +187,35 @@ newsweek.com|Newsweek"></textarea>
     </fieldset>
 
     <fieldset>
+        <legend>Second Tor Daemon (load-balancing)</legend>
+        <div class="form-group">
+            <label for="tor2_enabled">
+                <input type="checkbox" id="tor2_enabled" name="tor2_enabled"> Run a second Tor daemon
+            </label>
+            <small>Runs a second <code>tor</code> instance with its own circuit/exit IP (only when Auto-start Tor above is on). The built-in HTTP proxy round-robins across both — exit-IP diversity that dodges per-IP rate limits and geo-blocks. Torrent traffic stays Tor-only (never falls back to direct).</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tor2_socks_port">SOCKS5 Port</label>
+                <input type="number" id="tor2_socks_port" name="tor2_socks_port" value="9062" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="tor2_control_port">Control Port</label>
+                <input type="number" id="tor2_control_port" name="tor2_control_port" value="9063" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="tor2_exit_nodes">Exit Nodes</label>
+            <input type="text" id="tor2_exit_nodes" name="tor2_exit_nodes" value="{ca}" placeholder="{ca},{gb}">
+            <small>Use a different region than the first daemon for diversity. Default: Canada (<code>{ca}</code>) — geographically close, so minimal latency cost.</small>
+        </div>
+        <div class="form-group">
+            <label for="tor2_data_dir">Tor Data Directory</label>
+            <input type="text" id="tor2_data_dir" name="tor2_data_dir" value="/var/lib/posterchanai/tor2">
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Built-in HTTP Proxy (HTTP→SOCKS5)</legend>
         <div class="form-group">
             <label for="proxy_enabled">

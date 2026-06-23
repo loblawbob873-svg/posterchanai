@@ -200,7 +200,7 @@ COPY . /app
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
 # (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
-             /var/lib/posterchanai/tor /var/lib/posterchanai/hf /app/data
+             /var/lib/posterchanai/tor /var/lib/posterchanai/tor2 /var/lib/posterchanai/hf /app/data
 VOLUME ["/var/lib/posterchanai", "/app/data"]
 
 # Runtime config (LATE so changing a default is a cheap rebuild). HF_HOME caches

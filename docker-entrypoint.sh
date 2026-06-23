@@ -8,7 +8,7 @@
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
-mkdir -p "$DATA_HOME"/{models,torrents,tor,hf,miopen,assets} /app/data
+mkdir -p "$DATA_HOME"/{models,torrents,tor,tor2,hf,miopen,assets} /app/data
 
 # --- Timezone, THEN clock sync, BEFORE the app/relay start ---------------------------------------
 # The Nostr relay's queries are time-windowed (backfill `since = now - 48h`, created_at sanity), so

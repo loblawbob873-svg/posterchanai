@@ -116,6 +116,16 @@ the bots) and **falls back to a direct connection if the proxy connect fails** �
 Tor proxy degrades gracefully instead of dropping federation. `Bypass Tor proxy` forces direct
 only (never attempt Tor). This only affects the relay, not the bots.
 
+**Two Tor daemons (load-balanced).** When the second Tor daemon is enabled (Admin → Site Settings →
+*Second Tor Daemon*, on by default whenever Tor is on), PosterChanAI runs **two** managed `tor`
+instances with different exit regions — `{us}` (SOCKS 9052) and `{ca}` (SOCKS 9062, geographically
+close so minimal latency cost). The built-in HTTP proxy **round-robins across both circuits**, giving
+two independent exit IPs that spread upstream load and dodge the per-IP rate limits (HTTP 429 storms)
+busy relays apply to a single Tor exit. Each daemon has its own ports + data dir (`…/tor`, `…/tor2`);
+they start only when Tor itself is enabled. The proxy is **Tor-only** — if every circuit is down it
+fails the connection rather than going direct, so proxied torrent traffic can never leak the real IP
+(the relay's own direct-fallback above is separate, and applies only to relay federation).
+
 ### Web of Trust on/off — full node vs processing node
 `Enforce Web of Trust` (Admin → Relay, default **on**) is the master switch for whether this node
 does relay/social work:

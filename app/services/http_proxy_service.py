@@ -33,11 +33,17 @@ class HttpToSocksProxy:
         listen_port: int = 8118,
         socks_host: str = "127.0.0.1",
         socks_port: int = 9052,
+        socks_ports: Optional[list] = None,
     ):
         self.listen_host = listen_host
         self.listen_port = listen_port
         self.socks_host = socks_host
         self.socks_port = socks_port
+        # SOCKS backends to load-balance across (one per local Tor daemon). Defaults to the single
+        # `socks_port`. Tor-ONLY: if every backend fails we raise (never fall back to a direct
+        # connection) so torrent traffic can't leak the real IP.
+        self.socks_targets = [(socks_host, p) for p in (socks_ports or [socks_port])] or [(socks_host, socks_port)]
+        self._rr = 0   # round-robin cursor across socks_targets
 
         self._server: Optional[asyncio.AbstractServer] = None
         self._semaphore: Optional[asyncio.Semaphore] = None
@@ -52,6 +58,7 @@ class HttpToSocksProxy:
         listen_port: int = 8118,
         socks_host: str = "127.0.0.1",
         socks_port: int = 9052,
+        socks_ports: Optional[list] = None,
     ) -> 'HttpToSocksProxy':
         """Get or create singleton instance."""
         with cls._lock:
@@ -61,6 +68,7 @@ class HttpToSocksProxy:
                     listen_port=listen_port,
                     socks_host=socks_host,
                     socks_port=socks_port,
+                    socks_ports=socks_ports,
                 )
             return cls._instance
 
@@ -286,14 +294,30 @@ class HttpToSocksProxy:
                 pass
 
     async def _socks_connect(self, host: str, port: int) -> tuple:
-        """Connect to host:port through the SOCKS5 proxy (Tor).
+        """Open a tunnel to host:port, load-balancing across the configured SOCKS backends (one per
+        local Tor daemon). Round-robins and, on a backend failure, tries the next. TOR-ONLY: if every
+        backend fails it RAISES — it never falls back to a direct connection, so torrent traffic can't
+        leak the real IP."""
+        targets = self.socks_targets
+        n = len(targets)
+        start = self._rr % n
+        self._rr = (self._rr + 1) % n
+        last_err = None
+        for k in range(n):
+            sh, sp = targets[(start + k) % n]
+            try:
+                return await self._socks_connect_one(sh, sp, host, port)
+            except Exception as e:
+                last_err = e
+                logger.debug(f"[PROXY] SOCKS backend {sh}:{sp} failed for {host}:{port}: {e}")
+        raise last_err or Exception("no SOCKS backend available")
 
-        Tor's SOCKS5 handles hostnames natively (addr_type=0x03), including
-        .onion — no local DNS resolution occurs.
-        """
-        logger.debug(f"[PROXY] SOCKS5 connect to {self.socks_host}:{self.socks_port} for {host}:{port}")
+    async def _socks_connect_one(self, socks_host: str, socks_port: int, host: str, port: int) -> tuple:
+        """Connect to host:port through ONE SOCKS5 proxy (Tor). Tor's SOCKS5 handles hostnames
+        natively (addr_type=0x03), including .onion — no local DNS resolution occurs."""
+        logger.debug(f"[PROXY] SOCKS5 connect to {socks_host}:{socks_port} for {host}:{port}")
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(self.socks_host, self.socks_port),
+            asyncio.open_connection(socks_host, socks_port),
             timeout=30,
         )
 
@@ -432,18 +456,21 @@ def start_http_proxy_process(
     listen_port: int = 8118,
     socks_host: str = "127.0.0.1",
     socks_port: int = 9052,
+    socks_ports: Optional[list] = None,
 ) -> subprocess.Popen:
-    """Spawn the proxy as a separate process. Idempotent (reuses a live child)."""
+    """Spawn the proxy as a separate process. Idempotent (reuses a live child). `socks_ports` (one
+    port per local Tor daemon) is the load-balance set; defaults to the single `socks_port`."""
     global _proxy_process
     if _proxy_process and _proxy_process.poll() is None:
         return _proxy_process
+    ports_csv = ",".join(str(p) for p in (socks_ports or [socks_port]))
     _proxy_process = subprocess.Popen([
         sys.executable, os.path.abspath(__file__),
         "--listen-host", str(listen_host), "--listen-port", str(listen_port),
-        "--socks-host", str(socks_host), "--socks-port", str(socks_port),
+        "--socks-host", str(socks_host), "--socks-ports", ports_csv,
     ])
     logger.info(f"HTTP proxy subprocess started (pid {_proxy_process.pid}) on "
-                f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:{socks_port}")
+                f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:[{ports_csv}]")
     return _proxy_process
 
 
@@ -467,11 +494,13 @@ def _run_standalone():
     parser.add_argument("--listen-port", type=int, default=8118)
     parser.add_argument("--socks-host", default="127.0.0.1")
     parser.add_argument("--socks-port", type=int, default=9052)
+    parser.add_argument("--socks-ports", default="", help="CSV of SOCKS ports to load-balance across (Tor daemons)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [http-proxy] %(message)s")
+    _ports = [int(p) for p in args.socks_ports.split(",") if p.strip()] or [args.socks_port]
     proxy = HttpToSocksProxy.get_instance(
         listen_host=args.listen_host, listen_port=args.listen_port,
-        socks_host=args.socks_host, socks_port=args.socks_port,
+        socks_host=args.socks_host, socks_ports=_ports,
     )
 
     async def _serve():

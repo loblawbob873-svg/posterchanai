@@ -485,6 +485,24 @@ async def startup():
                     logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
                 else:
                     logging.error("Failed to start built-in Tor")
+                # Second Tor daemon (different exit region) so the HTTP proxy can load-balance across two
+                # independent circuits / exit IPs — dodges per-IP rate limits + geo-blocks on busy
+                # upstreams. Own ports + data dir; DNS port derives from its control port (+2), like #1.
+                if _ss.get_bool("tor2_enabled"):
+                    t2_socks = _ss.get_int("tor2_socks_port", 9062)
+                    t2_control = _ss.get_int("tor2_control_port", 9063)
+                    t2_exits = _ss.get("tor2_exit_nodes", "{ca}")
+                    if start_tor_service(
+                        listen_host=listen_host,
+                        socks_port=t2_socks,
+                        control_port=t2_control,
+                        dns_port=t2_control + 2,
+                        exit_nodes=t2_exits,
+                        data_dir=_ss.get("tor2_data_dir", "/var/lib/posterchanai/tor2"),
+                    ):
+                        logging.info(f"Built-in Tor #2 started (SOCKS5 on {listen_host}:{t2_socks}, exits={t2_exits})")
+                    else:
+                        logging.error("Failed to start built-in Tor #2")
         except Exception as e:
             logging.error(f"Failed to start built-in Tor: {e}", exc_info=True)
 
@@ -498,13 +516,20 @@ async def startup():
                     # doesn't contend with the app's event loop (all bot/social uploads route through it).
                     from app.services.http_proxy_service import start_http_proxy_process
                     _pport = _ss.get_int("proxy_listen_port", 8118)
+                    # Load-balance across both local Tor daemons' SOCKS ports when the 2nd is on.
+                    # Tor-only (no direct fallback) — keeps torrent traffic from ever leaking the real IP.
+                    _socks_ports = [_ss.get_int("proxy_socks_port", 9052)]
+                    # Only LB onto the 2nd daemon's port when WE actually run it (it starts inside the
+                    # tor_enabled block above) — otherwise the proxy would round-robin onto a dead port.
+                    if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
+                        _socks_ports.append(_ss.get_int("tor2_socks_port", 9062))
                     start_http_proxy_process(
                         listen_host=_ss.get("proxy_listen_host", "127.0.0.1"),
                         listen_port=_pport,
                         socks_host=socks_host,
-                        socks_port=_ss.get_int("proxy_socks_port", 9052),
+                        socks_ports=_socks_ports,
                     )
-                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {_pport}")
+                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {_pport} → SOCKS {socks_host}:{_socks_ports}")
                 else:
                     logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
         except Exception as e:

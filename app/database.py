@@ -426,6 +426,13 @@ When asked to write or modify code or files:
             "tor_control_port": "9053",       # Tor control port
             "tor_exit_nodes": "{us}",         # Exit node country codes (e.g., {us},{ca},{gb})
             "tor_data_dir": "/var/lib/posterchanai/tor",  # Tor data directory
+            # Second Tor daemon (Canada exit) — the HTTP proxy load-balances across both circuits for
+            # exit-IP diversity (dodges per-IP rate limits / geo-blocks). Only runs when tor is on.
+            "tor2_enabled": os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true"),
+            "tor2_socks_port": "9062",
+            "tor2_control_port": "9063",
+            "tor2_exit_nodes": "{ca}",
+            "tor2_data_dir": "/var/lib/posterchanai/tor2",
         }
 
         # Settings live in the Nostr relay datastore (NO SQL Setting table). Populate the in-process
