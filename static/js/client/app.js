@@ -928,7 +928,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -953,6 +953,7 @@
     if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
     if (VIEW==='bookmarks') return renderBookmarks();
     if (VIEW==='articles') return renderArticles();
+    if (VIEW==='market') return renderMarket();
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
@@ -980,7 +981,7 @@
     const _rm = id => {
       Store.removeEvent(id); removed = true;
       document.querySelectorAll(`[data-id="${id}"],[data-open="${id}"]`).forEach(n=>{
-        const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.community-card,.channel-card') || n;
+        const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.mkt-card,.community-card,.channel-card') || n;
         card.remove();
       });
     };
@@ -1384,6 +1385,205 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  // ---------- Market / classified listings (NIP-99, kind 30402; drafts 30403) ----------
+  // Listings are parameterized-replaceable like articles: newest event per (pubkey, d-tag) wins,
+  // so an edit/sold update replaces the old card instead of duplicating it.
+  const MKT_CATS=['Electronics','Computers','Phones','Home','Furniture','Clothing','Vehicles','Bikes',
+                  'Collectibles','Art','Books','Games','Music','Tools','Garden','Sports','Services','Digital','Free','Other'];
+  const MKT_CURRENCIES=['USD','EUR','GBP','CAD','AUD','JPY','SATS','BTC'];
+  function mktPriceTag(e){ return e.tags.find(t=>t[0]==='price')||null; }
+  function mktStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'active').toLowerCase(); }
+  function mktImages(e){ return e.tags.filter(t=>t[0]==='image'&&t[1]).map(t=>t[1]); }
+  function mktCats(e){ return e.tags.filter(t=>t[0]==='t'&&t[1]).map(t=>t[1]); }
+  function fmtPrice(e){
+    const p=mktPriceTag(e); if(!p) return '';
+    const amt=p[1]||'', cur=(p[2]||'').toUpperCase(), freq=p[3]||'';
+    if(!amt) return '';
+    const n=Number(amt); const a=Number.isFinite(n)? n.toLocaleString() : amt;
+    let s = (cur==='SATS') ? `${a} sats` : (cur==='BTC') ? `₿${a}` :
+            (cur==='USD') ? `$${a}` : (cur==='EUR') ? `€${a}` : (cur==='GBP') ? `£${a}` : `${a} ${cur}`;
+    if(freq) s+=` / ${freq}`;
+    return s;
+  }
+  async function renderMarket(){
+    const feed=$('#feed');
+    feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="mkt-new">🏷 Sell something</button></div>
+      <div class="mkt-filter"><input class="input" id="mkt-q" placeholder="🔎 Search listings…"><div class="mkt-cats" id="mkt-cats"></div></div>
+      <div id="mkt-drafts"></div><div id="mkt-grid"><div class="spinner"></div></div>`;
+    $('#mkt-new').onclick=()=>renderListingEditor();
+    let evs=[], drafts=[];
+    try{ evs=await Relay.query([{ kinds:[30402], limit:120 }]); }catch(_){}
+    try{ drafts=await Relay.query([{ kinds:[30403], authors:[ME.pubkey], limit:50 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    drafts.forEach(e=>Store.saveEvent(e));
+    if(VIEW!=='market') return;
+    // my drafts (kind 30403) — resume or delete
+    const db=$('#mkt-drafts');
+    if(db){
+      const dd=_dedupAddr(drafts).sort((a,b)=>(b.created_at||0)-(a.created_at||0));
+      db.innerHTML = dd.length ? '<div class="search-section-title">📝 Draft listings</div>'+dd.map(d=>{
+        const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:#ff6b8b">✕</button></div>`;
+      }).join('') : '';
+      $$('.draft-art',db).forEach(c=>{
+        c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderListingEditor(e); };
+        c.querySelector('.da-del').onclick=async()=>{ if(!confirm('Delete this draft listing?'))return; try{ await publish(5,'draft deleted',[['a',`30403:${ME.pubkey}:${c.dataset.slug}`]]); }catch(_){} c.remove(); toast('draft deleted'); };
+      });
+    }
+    const all=_dedupAddr(evs);
+    // category chips (active first)
+    const present=new Set(); all.forEach(e=>mktCats(e).forEach(c=>present.add(c)));
+    const chips=$('#mkt-cats');
+    let _activeCat='', _q='';
+    const drawChips=()=>{ if(!chips) return; chips.innerHTML=[''].concat(MKT_CATS.filter(c=>present.has(c))).map(c=>`<button class="mkt-chip ${c===_activeCat?'on':''}" data-c="${enc(c)}">${c?enc(c):'All'}</button>`).join(''); $$('.mkt-chip',chips).forEach(b=> b.onclick=()=>{ _activeCat=b.dataset.c; drawChips(); paint(); }); };
+    const grid=$('#mkt-grid');
+    const paint=()=>{
+      if(!grid) return;
+      let list=all.slice();
+      if(_activeCat) list=list.filter(e=>mktCats(e).includes(_activeCat));
+      if(_q){ const ql=_q.toLowerCase(); list=list.filter(e=>_matchAddr(e,ql) || mktCats(e).some(c=>c.toLowerCase().includes(ql)) || ((e.tags.find(t=>t[0]==='location')||[])[1]||'').toLowerCase().includes(ql)); }
+      // active listings first, then sold; newest within each
+      list.sort((a,b)=> (mktStatus(a)==='sold')-(mktStatus(b)==='sold') || artTime(b)-artTime(a));
+      grid.innerHTML = list.length ? `<div class="mkt-grid">${list.map(marketCard).join('')}</div>` : '<div class="empty">No listings yet. Tap “Sell something” to post the first one.</div>';
+      decorateProfiles();
+      $$('.mkt-card',grid).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openListing(a); });
+    };
+    drawChips(); paint();
+    { const q=$('#mkt-q'); if(q) q.addEventListener('input', ()=>{ _q=q.value.trim(); paint(); }); }
+  }
+  function marketCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
+    const img=mktImages(e)[0]||'';
+    const price=fmtPrice(e);
+    const loc=(e.tags.find(t=>t[0]==='location')||[])[1]||'';
+    const sold=mktStatus(e)==='sold';
+    return `<article class="mkt-card ${sold?'sold':''}" data-id="${e.id}" data-pk="${e.pubkey}">
+      <div class="mkt-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentNode.classList.add('noimg');this.remove()">`:'<span class="mkt-noimg">🛍️</span>'}${sold?'<span class="mkt-sold-badge">SOLD</span>':''}</div>
+      <div class="mkt-info">
+        ${price?`<div class="mkt-price">${enc(price)}</div>`:''}
+        <h3 class="mkt-title">${enc(title)}</h3>
+        ${loc?`<div class="mkt-loc">📍 ${enc(loc)}</div>`:''}
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+      </div></article>`;
+  }
+  function openListing(e){
+    VIEW='listing'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Listing';
+    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
+    const imgs=mktImages(e); const price=fmtPrice(e);
+    const loc=(e.tags.find(t=>t[0]==='location')||[])[1]||'';
+    const cats=mktCats(e); const sold=mktStatus(e)==='sold';
+    const mine=e.pubkey===ME.pubkey;
+    feed.innerHTML=`<div class="listing-view">
+      <button class="btn btn-ghost small" id="li-back">← Market</button>
+      ${imgs.length?`<div class="li-gallery"><img class="li-main" id="li-main" src="${enc(imgs[0])}" onerror="this.style.display='none'">
+        ${imgs.length>1?`<div class="li-thumbs">${imgs.map((u,i)=>`<img class="li-th ${i===0?'on':''}" data-u="${enc(u)}" src="${enc(u)}" onerror="this.remove()">`).join('')}</div>`:''}</div>`:''}
+      <div class="li-head">
+        ${price?`<div class="li-price">${enc(price)}${sold?' <span class="mkt-sold-badge">SOLD</span>':''}</div>`:(sold?'<div class="li-price"><span class="mkt-sold-badge">SOLD</span></div>':'')}
+        <h1 class="li-title">${enc(title)}</h1>
+        ${loc?`<div class="mkt-loc">📍 ${enc(loc)}</div>`:''}
+        ${cats.length?`<div class="li-cats">${cats.map(c=>`<span class="mkt-chip on">${enc(c)}</span>`).join('')}</div>`:''}
+      </div>
+      <div class="li-by" data-prof="${e.pubkey}"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+      <div class="li-actions">
+        ${!mine?`<button class="btn btn-neon" id="li-msg">✉️ Contact seller</button>`:''}
+        ${!mine?`<button class="btn btn-ghost" id="li-zap">⚡ Pay / Zap</button>`:''}
+        ${mine?`<button class="btn btn-ghost" id="li-sold">${sold?'↩ Mark available':'✅ Mark sold'}</button>`:''}
+        ${mine?`<button class="btn btn-ghost" id="li-edit">✏ Edit</button>`:''}
+        ${mine?`<button class="btn btn-ghost" id="li-del" style="color:#ff6b8b">🗑 Delete</button>`:''}
+        <button class="btn btn-ghost" id="li-copy">🔗 Share</button>
+      </div>
+      <div class="markdown li-body">${mdToHtml(e.content)}</div>
+    </div>`;
+    $('#li-back').onclick=()=>switchView('market');
+    $$('.li-th',feed).forEach(th=> th.onclick=()=>{ const m=$('#li-main'); if(m){ m.src=th.dataset.u; m.style.display=''; } $$('.li-th',feed).forEach(x=>x.classList.toggle('on',x===th)); });
+    { const m=$('#li-main'); if(m) m.onclick=()=>openLightbox(m.currentSrc||m.src); }
+    { const b=$('#li-msg'); if(b) b.onclick=()=>{ if(!dmPeers.has(e.pubkey)) dmPeers.set(e.pubkey,[]); dmActive=e.pubkey; switchView('messages'); setTimeout(()=>{ const i=$('#dm-in'); if(i){ i.value=`Hi! Is "${title}" still available?`; i.focus(); } },350); }; }
+    { const b=$('#li-zap'); if(b) b.onclick=()=>doZap(e.id, e.pubkey); }
+    { const b=$('#li-sold'); if(b) b.onclick=()=>toggleListingSold(e); }
+    { const b=$('#li-edit'); if(b) b.onclick=()=>renderListingEditor(e); }
+    { const b=$('#li-del'); if(b) b.onclick=()=>deleteListing(e); }
+    $('#li-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30402 }); navigator.clipboard.writeText(_webLink(naddr)); toast('listing link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
+    decorateProfiles();
+  }
+  async function toggleListingSold(e){
+    const now=mktStatus(e)==='sold';
+    // republish the SAME addressable event with status flipped (keeps everything else intact)
+    const tags=e.tags.filter(t=>t[0]!=='status'); tags.push(['status', now?'active':'sold']);
+    try{ const r=await publish(30402, e.content, tags); if(r&&r.ok===false){ toast('relay: '+(r.msg||'rejected')); return; } toast(now?'marked available':'marked sold'); const ne=Store.get(r.ev.id)||r.ev; openListing(ne); }
+    catch(err){ toast('failed: '+(err.message||'')); }
+  }
+  async function deleteListing(e){
+    if(!confirm('Delete this listing? This asks every relay (NIP-09) to remove it.')) return;
+    const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const tags=[['e',e.id]]; if(slug) tags.push(['a',`30402:${e.pubkey}:${slug}`]);
+    try{ await publish(5,'deleted',tags); toast('deletion requested'); switchView('market'); }
+    catch(err){ toast('delete failed: '+(err.message||'')); }
+  }
+  function renderListingEditor(existing){
+    VIEW='listing'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit listing':'New listing';
+    const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
+    const pTag=existing?mktPriceTag(existing):null;
+    let images = existing?mktImages(existing):[];
+    let cats = existing?mktCats(existing):[];
+    let _slug = g('d') || null;
+    feed.innerHTML=`<div class="article-editor">
+      <button class="btn btn-ghost small" id="le-back">← Cancel</button>
+      <label class="fld">Title<input class="input" id="le-title" placeholder="What are you selling?" value="${enc(g('title'))}"></label>
+      <label class="fld">Summary<input class="input" id="le-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
+      <div class="le-pricerow">
+        <label class="fld">Price<input class="input" id="le-price" type="number" min="0" step="any" placeholder="0" value="${enc(pTag?(pTag[1]||''):'')}"></label>
+        <label class="fld">Currency<select class="input" id="le-cur">${MKT_CURRENCIES.map(c=>`<option ${((pTag&&(pTag[2]||'').toUpperCase())===c)?'selected':''}>${c}</option>`).join('')}</select></label>
+        <label class="fld">Per (optional)<input class="input" id="le-freq" placeholder="day / month…" value="${enc(pTag?(pTag[3]||''):'')}"></label>
+      </div>
+      <label class="fld">Location<input class="input" id="le-loc" placeholder="City / region (optional)" value="${enc(g('location'))}"></label>
+      <div class="fld">Category<div class="mkt-cats" id="le-cats">${MKT_CATS.map(c=>`<button type="button" class="mkt-chip ${cats.includes(c)?'on':''}" data-c="${enc(c)}">${enc(c)}</button>`).join('')}</div></div>
+      <div class="fld">Photos<div class="le-imgs" id="le-imgs"></div>
+        <div class="row" style="margin-top:6px"><button type="button" class="btn btn-ghost small" id="le-img-up">🖼 Add photos</button><input type="file" id="le-img-file" accept="image/*" multiple hidden><span class="spacer"></span></div></div>
+      <label class="fld">Description<textarea id="le-body" class="article-body" placeholder="Describe the item — condition, details… (markdown)">${enc(existing?existing.content:'')}</textarea></label>
+      <label class="fld"><input type="checkbox" id="le-sold" ${existing&&mktStatus(existing)==='sold'?'checked':''}> Mark as sold</label>
+      <div class="row"><span class="muted small" id="le-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="le-draft">💾 Save draft</button><button class="btn btn-neon" id="le-pub">Publish ▶</button></div>
+    </div>`;
+    $('#le-back').onclick=()=>switchView('market');
+    $$('#le-cats .mkt-chip').forEach(b=> b.onclick=()=>{ const c=b.dataset.c; if(cats.includes(c)) cats=cats.filter(x=>x!==c); else cats.push(c); b.classList.toggle('on'); });
+    const drawImgs=()=>{ const box=$('#le-imgs'); if(!box) return; box.innerHTML=images.map((u,i)=>`<div class="le-img"><img src="${enc(u)}" onerror="this.src='${LOGO}'"><button type="button" class="le-img-x" data-i="${i}">✕</button></div>`).join(''); $$('.le-img-x',box).forEach(x=> x.onclick=()=>{ images.splice(+x.dataset.i,1); drawImgs(); }); };
+    drawImgs();
+    $('#le-img-up').onclick=()=>$('#le-img-file').click();
+    $('#le-img-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#le-status').textContent=`uploading ${i+1}/${files.length}…`; try{ images.push(await uploadBlob(files[i])); drawImgs(); }catch(err){ $('#le-status').textContent='upload failed: '+err.message; ev.target.value=''; return; } } $('#le-status').textContent=''; ev.target.value=''; };
+    const _grab=()=>({ title:$('#le-title').value.trim(), summary:$('#le-sum').value.trim(), price:$('#le-price').value.trim(), cur:$('#le-cur').value, freq:$('#le-freq').value.trim(), loc:$('#le-loc').value.trim(), body:$('#le-body').value, sold:$('#le-sold').checked, images, cats });
+    $('#le-draft').onclick=async()=>{
+      const a=_grab(); if(!(a.title||a.body||a.images.length)){ toast('nothing to save yet'); return; }
+      if(!_slug) _slug=_slugFor(a.title);
+      $('#le-status').textContent='saving draft…';
+      try{ await publishListing(a, _slug, 30403); $('#le-status').textContent='✓ draft saved'; toast('draft saved (in Market)'); }
+      catch(err){ $('#le-status').textContent='draft save failed'; }
+    };
+    $('#le-pub').onclick=async()=>{
+      const a=_grab(); if(!a.title){ toast('add a title'); return; }
+      if(!_slug) _slug=_slugFor(a.title);
+      $('#le-status').textContent='publishing…';
+      try{
+        const r=await publishListing(a, _slug, 30402);
+        if(r&&r.ok===false){ toast('relay: '+(r.msg||'rejected')); $('#le-status').textContent=''; return; }
+        if(existing && existing.kind===30403){ try{ await publish(5,'draft published',[['a',`30403:${ME.pubkey}:${_slug}`]]); }catch(_){} }
+        toast('listing published'); switchView('market');
+      }catch(err){ toast('publish failed: '+(err.message||'')); $('#le-status').textContent=''; }
+    };
+  }
+  async function publishListing(a, slug, kind){
+    const tags=[['d',slug],['title',a.title||''],['published_at',String(Math.floor(Date.now()/1000))]];
+    if(a.summary) tags.push(['summary',a.summary]);
+    if(a.price) tags.push(['price', String(a.price), (a.cur||'USD'), ...(a.freq?[a.freq]:[])]);
+    if(a.loc) tags.push(['location',a.loc]);
+    tags.push(['status', a.sold?'sold':'active']);
+    (a.cats||[]).forEach(c=>tags.push(['t',c]));
+    (a.images||[]).forEach(u=>tags.push(['image',u]));
+    return await publish(kind, a.body||'', tags);
+  }
+
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
   function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
@@ -1762,7 +1962,7 @@
     const ev=evs.sort((a,b)=>b.created_at-a.created_at)[0];
     if(!ev){ toast('referenced post not found on the relay'); return; }
     Store.saveEvent(ev); needProfile(ev.pubkey);
-    if(kind===30023) openArticle(ev); else renderThread(ev.id);
+    if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev); else renderThread(ev.id);
   }
   function quoteHtml(ev){
     const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return '';
@@ -2263,21 +2463,26 @@
     }
     toast('opening the Effects studio…');
     _ai.replyTo={ id, pk }; _ai.fxImage=null; _ai.fxMedia={};
+    // Hand the image off to aiMount via _ai.pendingFx instead of polling for #ai-input: the old wait()
+    // loop fired as soon as the input existed, but aiMount's own conversation load was still in flight,
+    // so its box re-render wiped the freshly-attached image + guide (the "had to do it twice" bug).
+    _ai.pendingFx={ url };
     switchView('ai');
-    const start=async()=>{
-      try{
-        await aiNewConversation();
-        let blob=null;
-        try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
-        if(!blob){ try{ blob=await fetch(url).then(r=>r.blob()); }catch(_){} }
-        if(!blob){ toast('could not load the post image'); return; }
-        const ext=((url.split(/[?#]/)[0].split('.').pop())||'jpg').toLowerCase();
-        _ai.fxImage=new File([blob], 'effect-source.'+ext, { type:blob.type||'image/jpeg' });
-        await aiAddFiles([_ai.fxImage]);
-        showEffectGuide();
-      }catch(_){ toast('could not open the Effects studio'); }
-    };
-    let tries=0; (function wait(){ if($('#ai-input')) start(); else if(tries++<50) setTimeout(wait,80); })();
+  }
+  // Consumed by aiMount once the chat is fully mounted + conversations loaded — so the attach + guide
+  // land last and survive. Opens a fresh conversation for the effect, fetches the source image, attaches.
+  async function startEffectStudio(url){
+    try{
+      await aiNewConversation();
+      let blob=null;
+      try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
+      if(!blob){ try{ blob=await fetch(url).then(r=>r.blob()); }catch(_){} }
+      if(!blob){ toast('could not load the post image'); return; }
+      const ext=((url.split(/[?#]/)[0].split('.').pop())||'jpg').toLowerCase();
+      _ai.fxImage=new File([blob], 'effect-source.'+ext, { type:blob.type||'image/jpeg' });
+      await aiAddFiles([_ai.fxImage]);
+      showEffectGuide();
+    }catch(_){ toast('could not open the Effects studio'); }
   }
   // Telegram-style Effects studio: pick an effect → add motion → optional caption → send. The full
   // effect catalog comes from /client/effects so it never drifts from the bot. Cached after first load.
@@ -4148,7 +4353,7 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{} };
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   async function aiMount(feed){
@@ -4201,6 +4406,9 @@
       const im=e.target.closest('img'); if(im){ openLightbox(im.dataset.full||im.src); }
     });
     await aiLoadConversations();
+    // 🎬 Effect handoff: if we entered the AI view to apply an effect to a post's image, set it up now
+    // that the chat is fully mounted (fixes the race where the conv load wiped the attached image).
+    if(_ai.pendingFx){ const fx=_ai.pendingFx; _ai.pendingFx=null; await startEffectStudio(fx.url); }
   }
   async function aiLoadConversations(){
     let convs=[]; try{ convs=await fetch('/api/conversations').then(r=>r.json()); }catch(_){}
@@ -4213,7 +4421,8 @@
     try{
       const c=await fetch('/api/conversations',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:'New Chat'}) }).then(r=>r.json());
       const sel=$('#ai-conv'); if(sel){ const o=document.createElement('option'); o.value=c.id; o.textContent=c.title||'New Chat'; sel.prepend(o); sel.value=c.id; }
-      aiOpenConversation(c.id);
+      await aiOpenConversation(c.id);   // await so callers (e.g. the Effects studio) attach AFTER the conv render settles
+      return c.id;
     }catch(_){ toast('could not start a chat'); }
   }
   async function aiDeleteConversation(){

@@ -35,7 +35,7 @@ def _broadcastable(ev, cfg=None) -> bool:
     accounts/per-user config/bots). They're NIP-44 ciphertext to everyone but the operator, and a
     fresh node restores them from upstream with the operator nsec."""
     k = ev.get("kind")
-    if k == 30024:
+    if k in (30024, 30403):   # NIP-23 article drafts / NIP-99 listing drafts — stay local until published
         return False
     if k == 30078:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
