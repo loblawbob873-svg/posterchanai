@@ -305,6 +305,30 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "translation unavailable"}, status_code=503)
 
 
+@router.post("/narrate")
+async def client_narrate(request: Request, db: Session = Depends(get_db)):
+    """Read a post aloud via the node's built-in TTS — powers the timeline 'Read Aloud' action.
+    Same-origin helper (like /translate); returns 503 where TTS is unavailable. The client builds the
+    text (author name + content, with URLs/hashtags/attachments already stripped) and plays the
+    returned base64 MP3."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    text = (body.get("text") or "").strip()[:2000]   # posts are short; bound the TTS work
+    if not text:
+        return JSONResponse({"error": "no text"}, status_code=400)
+    try:
+        from app.services.tts_service import TTSService
+        audio = await TTSService(db).generate_speech(text, (body.get("voice") or None))
+        if not audio:
+            return JSONResponse({"error": "narration unavailable"}, status_code=503)
+        return JSONResponse({"audio": audio})
+    except Exception as e:
+        logger.warning(f"[client] narrate failed: {e}")
+        return JSONResponse({"error": "narration unavailable"}, status_code=503)
+
+
 @router.post("/summarize")
 async def client_summarize(request: Request, db: Session = Depends(get_db)):
     """Summarize a post/thread via the node's own LLM — powers the timeline 'Summary' action. The

@@ -2367,6 +2367,7 @@
     if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
+    if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine) items.push(['delete','🗑️ Delete','danger']);
@@ -2377,6 +2378,7 @@
       if(a==='rebroadcast') return rebroadcastPost(id);
       if(a==='translate') return translatePost(id);
       if(a==='summary') return summarizePost(id);
+      if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
       if(a==='pin') return togglePin(id);
       if(a==='delete') return doDelete(id, art);
@@ -2402,6 +2404,45 @@
         n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }
   }
+  // 🔊 Read Aloud — narrate the post via the node's built-in TTS: author name, then the content.
+  // URLs, hashtags and attachments are stripped (mediaParts removes media; regex drops links/tags).
+  let _narrateAudio=null;
+  async function narratePost(id, pk){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    pk = pk || ev.pubkey;
+    let body=(mediaParts(ev.content).text || ev.content || '');
+    body=body.replace(/https?:\/\/\S+/gi,' ').replace(/\b(?:nostr|wss?):\S+/gi,' ')
+             .replace(/#[\p{L}\p{N}_]+/gu,' ').replace(/\s+/g,' ').trim();
+    if(!body){ toast('nothing to read aloud'); return; }
+    const who=profOf(pk)||{}; const name=((who.display_name||who.name||'someone')+'').replace(/[#@_]/g,' ').replace(/\s+/g,' ').trim()||'someone';
+    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
+    toast('🔊 reading aloud…');
+    try{
+      const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ text:`${name}. ${body}`.slice(0,2000) })});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.audio){ toast(j.error||'narration unavailable'); return; }
+      _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio);
+      _narrateAudio.play().catch(()=>toast('tap 🔊 again to play'));
+    }catch(_){ toast('narration failed'); }
+  }
+  // Mobile long-press a post → Read Aloud (delegated; ignores presses on links/buttons/media/inputs).
+  (function(){
+    let t=null;
+    const start=e=>{
+      const note=e.target.closest && e.target.closest('.note[data-id]'); if(!note) return;
+      if(e.target.closest('a,button,img,video,input,textarea,[contenteditable]')) return;
+      const id=note.dataset.id; if(!id) return;
+      clearTimeout(t);
+      t=setTimeout(()=>{ t=null; try{ navigator.vibrate && navigator.vibrate(15); }catch(_){} narratePost(id); }, 550);
+    };
+    const cancel=()=>{ clearTimeout(t); t=null; };
+    document.addEventListener('touchstart', start, {passive:true});
+    document.addEventListener('touchend', cancel, {passive:true});
+    document.addEventListener('touchmove', cancel, {passive:true});
+    document.addEventListener('touchcancel', cancel, {passive:true});
+  })();
   // Summarize the post (and its surrounding thread) via the node's AI backend, shown in a modal.
   async function summarizePost(id){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
