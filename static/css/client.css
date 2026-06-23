@@ -1078,9 +1078,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .pk-pot{color:#ffd25a;font-weight:800;letter-spacing:.5px;margin-bottom:10px;font-size:15px;text-shadow:0 0 8px rgba(255,210,90,.4)}
 .pk-street{color:var(--cyan);font-weight:800;font-size:12px;letter-spacing:2px;margin-bottom:7px;opacity:.85}
 .pk-board{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}
-.pk-log{display:flex;flex-direction:column;gap:2px;align-items:center;margin-top:10px}
-.pk-logln{color:#bfe9e0;font-size:11.5px;line-height:1.5;opacity:.9;background:rgba(0,240,255,.06);border-radius:9px;padding:1px 9px;max-width:100%}
-.pk-logln:last-child{color:#eafff9;opacity:1;font-weight:600;background:rgba(0,240,255,.12)}
+.pk-log{display:flex;flex-direction:column;gap:3px;align-items:center;margin-top:12px}
+.pk-logln{color:#9fcfc8;font-size:11.5px;line-height:1.5;opacity:.7;background:rgba(0,240,255,.05);border-radius:9px;padding:1px 10px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the LATEST action stands out: bigger, dark-on-neon pill with a glowing pulse + a ▶ marker */
+.pk-logln:last-child{position:relative;color:#04141f;font-weight:800;font-size:14px;letter-spacing:.3px;opacity:1;background:linear-gradient(90deg,var(--neon,#0ff),#9df3ff);border:1px solid rgba(255,255,255,.35);border-radius:11px;padding:5px 14px 5px 26px;text-shadow:none;white-space:normal;overflow:visible;text-overflow:clip;text-align:center;animation:pklast 1.5s ease-in-out infinite}
+.pk-logln:last-child::before{content:"▶";position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:10px;color:#04141f}
+.pk-logln:only-child{margin-top:0}
+@keyframes pklast{0%,100%{box-shadow:0 0 10px rgba(0,240,255,.45)}50%{box-shadow:0 0 20px rgba(0,240,255,.8),0 0 30px rgba(255,0,230,.25)}}
+@media(prefers-reduced-motion:reduce){.pk-logln:last-child{animation:none;box-shadow:0 0 14px rgba(0,240,255,.55)}}
 .pk-mychips{margin:10px 0;padding:11px 14px;border-radius:13px;text-align:center;background:linear-gradient(180deg,#1a1030,#120622);border:2px solid rgba(255,210,90,.5);color:#ffe9a8;font-size:16px;font-weight:600;box-shadow:0 0 14px rgba(255,210,90,.18)}
 .pk-mychips b{color:#ffd25a;font-size:22px;font-weight:900;text-shadow:0 0 8px rgba(255,210,90,.5)}
 .pk-last{margin:8px 0 0;padding:9px 13px;border-radius:11px;text-align:center;background:#150826;border:1px solid rgba(120,110,150,.4);color:#b9a9d6;font-weight:700}

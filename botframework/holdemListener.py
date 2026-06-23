@@ -331,9 +331,14 @@ def _dm_to_act(state, gameid, pk):
     pot = sum(state["contrib"].values())
     call = max(0, state["to_call"] - state["street_bet"][pk])
     # Show what happened since this player's last turn (across streets) so they always know what the
-    # bot/others just did when it comes around to them — like seeing the action at a live table.
+    # bot/others just did when it comes around to them — like seeing the action at a live table. The
+    # LATEST action goes on its own emphasised line so it's easy to read at a glance.
     recap = _recap_since(state, pk)
-    recap_line = ("\n🔄 Since your turn: " + " · ".join(recap[-12:])) if recap else ""
+    if recap:
+        prior = " · ".join(recap[:-1][-10:])
+        recap_line = (("\n🔄 This round: " + prior) if prior else "") + "\n\n➡️  " + recap[-1]
+    else:
+        recap_line = ""
     body = (f"🃏 Your hole cards: {hole}\nBoard: {board}\nPot: {pot} · to call: {call} · "
             f"your stack: {state['stacks'][pk]}{recap_line}\n"
             + (url + "\n\n" if url else "")
