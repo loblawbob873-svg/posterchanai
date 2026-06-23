@@ -3097,7 +3097,7 @@
       b('.mp-shuffle',()=>{ this.shuffle=!this.shuffle; this._render(); });
       const seek=qq('.mp-seek'); if(seek) seek.onclick=e=>{ const r=seek.getBoundingClientRect(); this.seekTo((e.clientX-r.left)/r.width); };
       d.querySelectorAll('.mp-track').forEach(t=> t.onclick=()=>this.play(t.dataset.sha));
-      this._drag(qq('.mp-head')||qq('.mp-eq')||d);
+      this._drag(this.min ? d : (qq('.mp-head')||d));   // minimized: the whole mini-bar is the drag handle
     },
     _drag(handle){ if(!handle) return; const d=this.el; let sx,sy,ox,oy,on=false;
       const move=e=>{ if(!on) return; const p=e.touches?e.touches[0]:e; d.style.left=Math.max(0,Math.min(innerWidth-50,ox+p.clientX-sx))+'px'; d.style.top=Math.max(0,Math.min(innerHeight-40,oy+p.clientY-sy))+'px'; if(e.cancelable)e.preventDefault(); };
