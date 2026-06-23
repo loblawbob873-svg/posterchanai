@@ -400,12 +400,22 @@ def _start_solo(sender, own_pk):
     recent = [t for t in _invite_times.get(sender, []) if now - t < _INVITE_WINDOW]
     if _INVITE_MAX and len(recent) >= _INVITE_MAX:
         return
-    cur = _get_player_game(sender)                     # already in a live game? don't start another
+    cur = _get_player_game(sender)                     # already seated in a live table?
     if cur:
         ex = _load_game(cur)
         if ex and ex.get("status") == "betting" and sender in ex.get("seats", []) \
                 and sender not in ex.get("left", []):
-            return
+            # Don't refuse forever. The old behaviour silently returned, so a stale/abandoned table
+            # (e.g. a heads-up game where the other seat never acts, or a leave that got lost when its
+            # replaceable cmd doc was overwritten) wedged the player out of EVER starting a new game.
+            # Leave them from the old table first (folds them / closes it), then deal the fresh one.
+            try:
+                ex, _lev = _G.leave(ex, sender)
+                _save_game(cur, ex)
+                if "folded_win" in _lev or ex.get("status") == "done":
+                    _post_result(ex, cur, cur, showdown=False, announce=False)
+            except Exception as e:
+                print(f"[holdem] could not leave stale table {str(cur)[:12]}: {e}", flush=True)
     recent.append(now)
     _invite_times[sender] = recent
     gameid = os.urandom(32).hex()
