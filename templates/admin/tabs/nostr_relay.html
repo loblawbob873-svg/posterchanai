@@ -98,9 +98,8 @@
             <textarea id="nostr_dvm_allowed_npubs" name="nostr_dvm_allowed_npubs" rows="3" placeholder="npub1…&#10;npub1…"></textarea>
             <small><strong>ONLY</strong> these npubs may send compute jobs to this machine (one per line, npub or
                 hex). <strong>Blank = you share with no one.</strong> This is GPU-access trust, separate from the
-                social Web of Trust above — a follow does NOT grant GPU access. For a request to actually reach
-                this node, each allowed npub must also be able to publish to this relay, so add it to the
-                <strong>Seed npubs</strong> above too (until the relay auto-accepts allowlisted senders).
+                social Web of Trust above — a follow does NOT grant GPU access, and you do NOT need to add these
+                npubs to the seeds: the relay automatically accepts an allowlisted sender's compute-job events.
                 <strong>Restart to apply.</strong></small>
         </div>
         <div class="form-group">

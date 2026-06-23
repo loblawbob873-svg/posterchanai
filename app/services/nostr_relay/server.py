@@ -417,6 +417,11 @@ class RelayServer:
             if _wot and not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
                 self._send(conn, ["OK", eid, False, "blocked: zap not for a web-of-trust member"])
                 return
+        elif kind in self.cfg.get("dvm_req_kinds", ()) and ev.get("pubkey", "") in self.cfg.get("dvm_allowed", ()):
+            # DVM compute job from a SHARE-ALLOWLISTED sender: accepted even if not a WoT member —
+            # sharing your GPU is a deliberate per-npub grant, separate from the social web of trust.
+            # The DVM worker re-checks the same allowlist (is_trusted) before running anything.
+            pass
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return
