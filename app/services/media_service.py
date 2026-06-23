@@ -184,8 +184,12 @@ def compress_audio_opus(data: bytes, bitrate: str = "96k") -> bytes:
     try:
         with open(inp, "wb") as f:
             f.write(data)
+        # bitexact on the OUTPUT (fixes the random Ogg serial + drops the encoder version string) +
+        # strip metadata → DETERMINISTIC output: same audio → same bytes → same encrypted hash → Blossom
+        # dedups a re-uploaded library. (Must be an OUTPUT flag — the serial is set by the muxer.)
         subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", inp,
-                        "-vn", "-c:a", "libopus", "-b:a", bitrate, "-application", "audio", out],
+                        "-vn", "-c:a", "libopus", "-b:a", bitrate, "-application", "audio",
+                        "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact", out],
                        check=True, capture_output=True, timeout=600)
         with open(out, "rb") as f:
             return f.read()

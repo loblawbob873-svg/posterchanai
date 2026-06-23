@@ -3042,8 +3042,21 @@
     for(const en of entries){ await walk(en); }
     return out;
   }
+  // Persistent floating upload progress (appended to <html> so it survives view changes) + a stop button.
+  let _uploadCancel=false, _uploadBadgeT=0;
+  function _uploadBadge(text, done){
+    clearTimeout(_uploadBadgeT);   // a new update cancels a pending auto-remove (so it won't wipe a fresh upload)
+    let b=document.getElementById('upload-badge');
+    if(text===null){ if(b) b.remove(); return; }
+    if(!b){ b=document.createElement('div'); b.id='upload-badge'; document.documentElement.appendChild(b); }
+    b.className='upbadge'+(done?' done':'');
+    b.innerHTML=`<span class="upbadge-ic">${done?'✅':'⬆'}</span><span class="upbadge-txt">${enc(text)}</span><span class="upbadge-x" title="${done?'dismiss':'stop'}">✕</span>`;
+    const x=b.querySelector('.upbadge-x'); if(x) x.onclick=()=>{ if(done){ _uploadBadge(null); } else { _uploadCancel=true; const t=b.querySelector('.upbadge-txt'); if(t) t.textContent='stopping…'; } };
+    if(done) _uploadBadgeT=setTimeout(()=>_uploadBadge(null), 12000);
+  }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
+    _uploadCancel=false;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
     const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
     const q=$('#bl-queue');
@@ -3052,6 +3065,7 @@
     FilesIdx.beginBatch();   // collapse the index save (a 2000-file import must NOT re-save the index per file)
     let done=0, ok=0, skip=0, fail=0;
     for(let i=0;i<files.length;i++){
+      if(_uploadCancel) break;
       const stat=big?null:$('#up-stat-'+i);
       try{
         if(music){
@@ -3067,11 +3081,15 @@
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
       }catch(e){ fail++; if(_blossomDenied(e)) requestBlossomAccess(); if(stat){ stat.textContent='✗'; stat.className='up-stat err'; stat.title=e.message||'failed'; } }
-      if(big){ const s=$('#up-sum'); if(s) s.textContent=`Uploading… ${i+1} / ${files.length}  —  ✓ ${ok}  ⏭ ${skip}${fail?('  ✗ '+fail):''}`; }
+      const prog=`${i+1} / ${files.length} · ✓${ok}${skip?' ⏭'+skip:''}${fail?' ✗'+fail:''}`;
+      _uploadBadge('Uploading '+prog);   // persists across views
+      if(big){ const s=$('#up-sum'); if(s) s.textContent='Uploading… '+prog; }
     }
     await FilesIdx.endBatch();
-    if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=`Done — ✓ ${ok} added${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`; }
-    toast(`done — ${ok} added${skip?(', '+skip+' skipped'):''}${fail?(', '+fail+' failed'):''}`);
+    const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`;
+    _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
+    if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=summary; }
+    toast(summary);
     setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
   }
 

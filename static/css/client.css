@@ -424,6 +424,13 @@ a.btn.full{display:block}
 .up-name{color:#cfe9ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .up-stat{color:var(--muted);flex:none}.up-stat.ok{color:#5dffb0}.up-stat.err{color:#ff6b8b}
 .up-summary{padding:9px 12px;border-radius:9px;background:rgba(0,240,255,.1);color:var(--cyan,#0ff);font-weight:700;font-size:13px;text-align:center;letter-spacing:.3px}
+/* persistent floating upload badge (survives view changes; bottom-LEFT, clear of the player) */
+#upload-badge.upbadge{position:fixed;left:18px;bottom:88px;z-index:121;display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:24px;background:linear-gradient(160deg,#150a2c,#0a0418);border:1px solid var(--cyan,#0ff);box-shadow:0 0 22px rgba(0,240,255,.35);color:#eaf0ff;font-size:12.5px;font-weight:600;max-width:min(320px,90vw)}
+#upload-badge.upbadge.done{border-color:#5dffb0;box-shadow:0 0 18px rgba(93,255,176,.4)}
+#upload-badge .upbadge-ic{font-size:14px;color:var(--cyan,#0ff)}
+#upload-badge .upbadge-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#upload-badge .upbadge-x{cursor:pointer;color:#ff6b8b;font-weight:700;margin-left:2px}
+@media(max-width:820px){#upload-badge.upbadge{left:8px;bottom:76px}}
 .file-card[draggable]{cursor:grab}.file-card .movebtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px}.file-card .movebtn:hover{color:var(--cyan)}
 .folder-chip.delfolder{color:#ff6b8b;border-color:rgba(255,107,139,.5)}.folder-chip.delfolder:hover{background:rgba(255,107,139,.14);border-color:#ff6b8b}
 /* Music folder: encrypted track list (cyberpunk) */
