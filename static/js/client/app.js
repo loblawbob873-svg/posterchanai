@@ -547,24 +547,48 @@
       Session.save({ mode:'local', sk: r.sk }); startApp();
     } catch(e){ authErr('invalid nsec'); }
   }
-  let _gen = null;
+  let _gen = null, _captchaToken = null;
   async function genKey(){
     _gen = await Relay.worker.call('genKey', {});
     $('#signup-npub').textContent = _gen.npub; $('#signup-nsec').textContent = _gen.nsec;
     $('#signup-keys').classList.remove('hidden'); $('#btn-gen-key').classList.add('hidden'); $('#btn-signup-go').classList.remove('hidden');
+    _ensureCaptchaUI(); loadCaptcha();
+  }
+  // Captcha gating new-account WoT admission (anti-spam/DDoS). Injected above the "Create account" button.
+  function _ensureCaptchaUI(){
+    if($('#signup-captcha-box')) return; const go=$('#btn-signup-go'); if(!go||!go.parentNode) return;
+    const box=document.createElement('div'); box.id='signup-captcha-box'; box.className='captcha-box';
+    box.innerHTML=`<div class="captcha-lbl">🤖 Prove you're human</div>
+      <div class="captcha-row"><img id="signup-captcha-img" class="captcha-img" alt="captcha"><button type="button" id="signup-captcha-refresh" class="mini" title="New image">↻</button></div>
+      <input id="signup-captcha" class="input" placeholder="enter the code above" autocomplete="off" autocapitalize="characters" maxlength="6">`;
+    go.parentNode.insertBefore(box, go);
+    $('#signup-captcha-refresh').onclick=loadCaptcha;
+    $('#signup-captcha').onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); signupGo(); } };
+  }
+  async function loadCaptcha(){
+    const img=$('#signup-captcha-img'); if(img){ img.src=''; img.alt='loading…'; }
+    try{ const r=await fetch('/client/captcha').then(r=>r.json());
+      _captchaToken=r.token; if(img) img.src=r.image; const inp=$('#signup-captcha'); if(inp){ inp.value=''; inp.focus(); } }
+    catch(_){ if(img) img.alt='captcha failed to load'; }
   }
   async function signupGo(){
     if (!_gen) return;
+    const ans = (($('#signup-captcha')||{}).value||'').trim();
+    if (!ans){ $('#signup-status').textContent = 'enter the captcha code'; const i=$('#signup-captcha'); if(i) i.focus(); return; }
+    // WoT admission is gated by the captcha — do it FIRST. If the captcha fails, abort + reload it and
+    // create NO local session, so a bot can't spin up admitted accounts.
+    $('#signup-status').textContent = 'checking…';
+    let res; try {
+      res = await fetch('/client/signup-follow', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: _gen.pubkey, captcha_token: _captchaToken, captcha_answer: ans }) }).then(r=>r.json());
+    } catch(_){ res = { ok:false, error:'net' }; }
+    if (res && res.error==='captcha'){ $('#signup-status').textContent = '❌ captcha incorrect — try again'; loadCaptcha(); return; }
+    // captcha passed → set up the local session
     $('#signup-status').textContent = 'registering…';
     await Relay.worker.call('setKey', { sk: _gen.sk });
     signer = makeSigner('local', _gen.pubkey); ME = { mode:'local', pubkey: _gen.pubkey, npub: _gen.npub };
     Session.save({ mode:'local', sk: _gen.sk });
-    // ask the node's operator to follow us so the WoT relay accepts our posts
-    try {
-      const res = await fetch('/client/signup-follow', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: _gen.pubkey }) }).then(r=>r.json());
-      if (!res.ok) toast('note: ' + (res.error||'could not auto-follow'));
-    } catch(_){}
+    if (res && !res.ok) toast('note: ' + (res.message||res.error||'could not auto-follow'));
     // claim a NIP-05 name on this node's identity server (proves key ownership with a self-signed
     // event so names can't be squatted). The node assigns a free name@domain and returns it.
     const nm = $('#signup-name').value.trim();

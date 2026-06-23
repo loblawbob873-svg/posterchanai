@@ -686,8 +686,84 @@ async def lnurl_proxy(url: str):
         return JSONResponse({"status": "ERROR", "reason": "fetch_failed"}, status_code=502)
 
 
+# ----- captcha: distorted-text challenge gating new-account WoT admission (anti-spam/DDoS) -----
+_CAPTCHAS: dict = {}                       # token -> (CODE, expiry). Per-process (single worker on 3051).
+_CAPTCHA_TTL = 300.0
+_CAPTCHA_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no ambiguous 0/O/1/I/L
+
+
+def _captcha_new() -> tuple[str, str]:
+    import secrets
+    now = time.time()
+    for t in [k for k, (_, e) in list(_CAPTCHAS.items()) if e < now]:
+        _CAPTCHAS.pop(t, None)
+    if len(_CAPTCHAS) > 5000:              # hard memory cap
+        _CAPTCHAS.clear()
+    code = "".join(secrets.choice(_CAPTCHA_ALPHABET) for _ in range(5))
+    token = secrets.token_urlsafe(18)
+    _CAPTCHAS[token] = (code, now + _CAPTCHA_TTL)
+    return token, code
+
+
+def _captcha_image(code: str) -> bytes:
+    import io
+    import random
+    from PIL import Image, ImageDraw, ImageFont
+    W, H = 214, 74
+    img = Image.new("RGB", (W, H), (10, 6, 24))
+    d = ImageDraw.Draw(img)
+    font = None
+    for fp in ("/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf",
+               "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+               "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
+        try:
+            font = ImageFont.truetype(fp, 42)
+            break
+        except Exception:
+            pass
+    if font is None:
+        font = ImageFont.load_default()
+    for _ in range(6):                     # neon noise lines
+        d.line([(random.randint(0, W), random.randint(0, H)), (random.randint(0, W), random.randint(0, H))],
+               fill=(random.randint(0, 90), random.randint(90, 220), random.randint(140, 255)), width=1)
+    x = 16
+    for ch in code:                        # jittered, multi-coloured glyphs
+        d.text((x, random.randint(6, 22)), ch, font=font,
+               fill=(random.randint(140, 255), random.randint(120, 255), random.randint(180, 255)))
+        x += random.randint(33, 40)
+    for _ in range(220):                   # speckle
+        img.putpixel((random.randint(0, W - 1), random.randint(0, H - 1)),
+                     (random.randint(0, 120), random.randint(120, 255), random.randint(160, 255)))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _captcha_verify(token, answer) -> bool:
+    rec = _CAPTCHAS.pop(token, None) if token else None    # one-shot (consumed on check)
+    if not rec or not answer:
+        return False
+    code, exp = rec
+    return exp >= time.time() and str(answer).strip().upper() == code
+
+
+@router.get("/captcha")
+async def captcha():
+    """Issue a fresh distorted-text captcha (token + inline PNG). Must be solved at signup to admit a
+    new account to the WoT — anti-spam/DDoS on account creation."""
+    import base64 as _b64
+    token, code = _captcha_new()
+    try:
+        img = _captcha_image(code)
+    except Exception as e:
+        return JSONResponse({"error": f"captcha render failed: {e}"}, status_code=500)
+    return JSONResponse({"token": token, "image": "data:image/png;base64," + _b64.b64encode(img).decode()})
+
+
 class SignupFollow(BaseModel):
     pubkey: str   # new account's npub or 64-hex
+    captcha_token: str | None = None
+    captcha_answer: str | None = None
 
 
 async def _publish_to_relay(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
@@ -772,6 +848,8 @@ async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
     new_pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not new_pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _captcha_verify(data.captcha_token, data.captcha_answer):
+        return JSONResponse({"ok": False, "error": "captcha", "message": "captcha incorrect or expired"}, status_code=403)
     ok, msg = await follow_and_admit(db, new_pk)
     return JSONResponse({"ok": ok, "message": msg})
 
