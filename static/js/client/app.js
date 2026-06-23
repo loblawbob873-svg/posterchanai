@@ -3343,8 +3343,12 @@
   }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
-    _uploadCancel=false;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
+    // FAIL-CLOSED: never upload into a NAMED folder before the index has loaded. If the folder's
+    // encrypted flag isn't known yet, uploading would silently take the PLAINTEXT path and put a
+    // world-readable blob on Blossom (the leaked-file bug). Refuse until we know the folder's status.
+    if(!music && folder && !FilesIdx._pullDone){ toast('One sec — still loading your folders. Try that again in a moment.'); return; }
+    _uploadCancel=false;
     const encFolder=!music && FilesIdx.isEncFolder(folder);   // non-Music encrypted folder → encrypt every file
     const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
     const q=$('#bl-queue');

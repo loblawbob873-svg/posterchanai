@@ -404,8 +404,11 @@ async def _publish_result(task: str, jid: str, author: str, result: dict) -> Non
         enc = nip44.encrypt_to(sk, bytes.fromhex(author), json.dumps({"error": "result too large or blossom upload failed"}))
     # Short NIP-40 expiration: the coordinator reads the result within seconds, so 6xxx results don't
     # linger / accumulate in the relay.
+    # nofederate: like the request, a DVM RESULT is cluster-internal — the coordinator reads it off the
+    # local/paired relay. Without this the result (encrypted, but its existence + which peer served whom
+    # + task type) was broadcast to every public upstream relay. Keep all DVM traffic off the open net.
     res_ev = nostr_event.build_event(sk, _REQ_KIND[task] + 1000, enc,
-        [["e", jid], ["p", author], ["t", task], ["expiration", str(int(time.time()) + 3600)]])
+        [["e", jid], ["p", author], ["t", task], ["nofederate"], ["expiration", str(int(time.time()) + 3600)]])
     await nostr_relay.publish(relay_url(), res_ev, direct=True)
 
 
