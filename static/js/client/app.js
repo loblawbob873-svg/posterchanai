@@ -2971,7 +2971,7 @@
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder">🗑 Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
-      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple hidden><input type="file" id="bl-folder" webkitdirectory hidden>
+      ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder">📁 choose folder</button>
           <div class="muted small">→ ${_filesFolder?('📁 '+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':''}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
@@ -3043,12 +3043,20 @@
     return out;
   }
   // Persistent floating upload progress (appended to <html> so it survives view changes) + a stop button.
+  // Generic drag (mouse + touch) for a fixed-position widget; `noDrag` = selector to ignore (buttons etc.)
+  function _makeDraggable(el, handle, noDrag){
+    if(!el||!handle) return; let sx,sy,ox,oy,on=false;
+    const move=e=>{ if(!on) return; const p=e.touches?e.touches[0]:e; el.style.right='auto'; el.style.bottom='auto'; el.style.left=Math.max(0,Math.min(innerWidth-50,ox+p.clientX-sx))+'px'; el.style.top=Math.max(0,Math.min(innerHeight-40,oy+p.clientY-sy))+'px'; if(e.cancelable)e.preventDefault(); };
+    const up=()=>{ on=false; removeEventListener('mousemove',move); removeEventListener('mouseup',up); removeEventListener('touchmove',move); removeEventListener('touchend',up); };
+    const down=e=>{ if(e.target.closest('button'+(noDrag?(','+noDrag):''))) return; const p=e.touches?e.touches[0]:e; const r=el.getBoundingClientRect(); on=true; sx=p.clientX; sy=p.clientY; ox=r.left; oy=r.top; el.style.right='auto'; el.style.bottom='auto'; el.style.left=ox+'px'; el.style.top=oy+'px'; addEventListener('mousemove',move); addEventListener('mouseup',up); addEventListener('touchmove',move,{passive:false}); addEventListener('touchend',up); };
+    handle.onmousedown=down; handle.ontouchstart=down;
+  }
   let _uploadCancel=false, _uploadBadgeT=0;
   function _uploadBadge(text, done){
     clearTimeout(_uploadBadgeT);   // a new update cancels a pending auto-remove (so it won't wipe a fresh upload)
     let b=document.getElementById('upload-badge');
     if(text===null){ if(b) b.remove(); return; }
-    if(!b){ b=document.createElement('div'); b.id='upload-badge'; document.documentElement.appendChild(b); }
+    if(!b){ b=document.createElement('div'); b.id='upload-badge'; document.documentElement.appendChild(b); _makeDraggable(b, b, '.upbadge-x'); }
     b.className='upbadge'+(done?' done':'');
     b.innerHTML=`<span class="upbadge-ic">${done?'✅':'⬆'}</span><span class="upbadge-txt">${enc(text)}</span><span class="upbadge-x" title="${done?'dismiss':'stop'}">✕</span>`;
     const x=b.querySelector('.upbadge-x'); if(x) x.onclick=()=>{ if(done){ _uploadBadge(null); } else { _uploadCancel=true; const t=b.querySelector('.upbadge-txt'); if(t) t.textContent='stopping…'; } };
@@ -3177,7 +3185,7 @@
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;
   const MusicPlayer = {
-    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _viz:{an:null,raf:0,failed:false},
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _viz:{an:null,raf:0,failed:false},
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
@@ -3191,13 +3199,16 @@
       return d;
     },
     refreshQueue(){ this.queue=musicTracks(null).map(t=>t.sha); if(this.cur && !this.queue.includes(this.cur)) this.queue.unshift(this.cur); },
-    async play(sha){
+    async play(sha, opts){
       this.ensure();
       if(sha===this.cur && _audioEl.src){ this.toggle(); return; }   // tapping the playing track = pause/resume
       // keep a STABLE play order — only (re)build the queue when it's empty or doesn't contain this track,
       // NOT on every track, so auto-advance plays in order instead of jumping around ("shuffling everything").
       if(!this.queue.length || !this.queue.includes(sha)) this.refreshQueue();
       if(!this.queue.includes(sha)) this.queue.unshift(sha);
+      // remember the outgoing track so ⏮ returns to it (matters in shuffle — next() is random, so the
+      // queue-order-previous isn't what you just heard). `opts.back` = we're navigating backward, don't record.
+      if(this.cur && this.cur!==sha && !(opts&&opts.back)){ this._history.push(this.cur); if(this._history.length>200) this._history.shift(); }
       this.cur=sha; this._loading=true; this.el.classList.remove('hidden'); this._render();
       try{ const u=await trackUrl(sha); this._loading=false; _audioEl.src=u; await _audioEl.play(); }
       catch(e){ this._loading=false; toast('play failed: '+(e.message||e)); }
@@ -3205,9 +3216,11 @@
     },
     toggle(){ if(_audioEl){ if(_audioEl.paused) _audioEl.play(); else _audioEl.pause(); } },
     next(){ if(!this.queue.length) return; let i=this.queue.indexOf(this.cur);
-      i=this.shuffle ? Math.floor(Math.random()*this.queue.length) : (i+1)%this.queue.length; this.play(this.queue[i]); },
-    prev(){ if(_audioEl && _audioEl.currentTime>3){ _audioEl.currentTime=0; return; }
-      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length]); },
+      i=this.shuffle ? this._randIdx(i) : (i+1)%this.queue.length; this.play(this.queue[i]); },
+    _randIdx(cur){ if(this.queue.length<2) return 0; let r; do{ r=Math.floor(Math.random()*this.queue.length); }while(r===cur); return r; },   // don't replay the same track
+    prev(){ if(_audioEl && _audioEl.currentTime>3){ _audioEl.currentTime=0; return; }   // >3s in = restart current
+      if(this._history.length){ this.play(this._history.pop(), {back:true}); return; }   // back to the track actually played before
+      if(!this.queue.length) return; let i=this.queue.indexOf(this.cur); this.play(this.queue[(i-1+this.queue.length)%this.queue.length], {back:true}); },
     seekTo(f){ if(_audioEl && _audioEl.duration) _audioEl.currentTime=Math.max(0,Math.min(1,f))*_audioEl.duration; },
     setMin(m){ this.min=m; this._render(); },
     close(){ if(_audioEl) _audioEl.pause(); if(this.el) this.el.classList.add('hidden'); },

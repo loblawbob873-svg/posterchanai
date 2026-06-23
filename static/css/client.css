@@ -426,7 +426,7 @@ a.btn.full{display:block}
 .up-stat{color:var(--muted);flex:none}.up-stat.ok{color:#5dffb0}.up-stat.err{color:#ff6b8b}
 .up-summary{padding:9px 12px;border-radius:9px;background:rgba(0,240,255,.1);color:var(--cyan,#0ff);font-weight:700;font-size:13px;text-align:center;letter-spacing:.3px}
 /* persistent floating upload badge (survives view changes; bottom-LEFT, clear of the player) */
-#upload-badge.upbadge{position:fixed;left:18px;bottom:88px;z-index:121;display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:24px;background:linear-gradient(160deg,#150a2c,#0a0418);border:1px solid var(--cyan,#0ff);box-shadow:0 0 22px rgba(0,240,255,.35);color:#eaf0ff;font-size:12.5px;font-weight:600;max-width:min(320px,90vw)}
+#upload-badge.upbadge{position:fixed;left:18px;bottom:88px;z-index:121;display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:24px;background:linear-gradient(160deg,#150a2c,#0a0418);border:1px solid var(--cyan,#0ff);box-shadow:0 0 22px rgba(0,240,255,.35);color:#eaf0ff;font-size:12.5px;font-weight:600;max-width:min(320px,90vw);cursor:grab;-webkit-user-select:none;user-select:none}
 #upload-badge.upbadge.done{border-color:#5dffb0;box-shadow:0 0 18px rgba(93,255,176,.4)}
 #upload-badge .upbadge-ic{font-size:14px;color:var(--cyan,#0ff)}
 #upload-badge .upbadge-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
