@@ -150,6 +150,16 @@
     </aside>
 </div>
 
+<!-- Right-column collapse toggle (≥1180px only): a neon arrow bar on the panel's edge. Persisted. -->
+<button class="rb-toggle" id="rb-toggle" title="Hide panel" aria-label="Toggle right panel">▸</button>
+<script>
+(function(){ var b=document.getElementById('rb-toggle'); if(!b) return;
+  function apply(c){ document.body.classList.toggle('rb-collapsed', c); b.textContent=c?'◂':'▸'; b.title=c?'Show panel':'Hide panel'; }
+  apply(localStorage.getItem('rbCollapsed')==='1');
+  b.onclick=function(){ var c=!document.body.classList.contains('rb-collapsed'); try{ localStorage.setItem('rbCollapsed', c?'1':'0'); }catch(e){} apply(c); };
+})();
+</script>
+
 <!-- mobile bottom nav — kept to a tidy 5 + compose; everything else lives in the ☰ More sheet -->
 <nav class="mobilenav glass">
     <button class="nav-item active" data-view="home">🏠</button>

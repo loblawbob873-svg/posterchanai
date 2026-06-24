@@ -730,16 +730,19 @@
       return a;
     }catch(_){ return ''; }
   }
+  let _lastOnline=0;   // cached for the mobile More sheet (which is built synchronously)
   async function updateUserCount(onlineOnly){
-    const uc=$('#user-count'); if(!uc) return;
+    const uc=$('#user-count');
     let online=0, users=Number(CFG.users)||0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
+      if(online>0) _lastOnline=online;
       // WoT size refreshes ONLY on boot/login (it barely changes — daily rebuild). The 15s poll passes
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
       if(!onlineOnly && Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
     }catch(_){}
+    if(!uc) return;   // sidebar element absent (e.g. mobile DOM variants) — _lastOnline is still cached above
     const parts=[];
     if(users>0) parts.push(WOT_ICON+' '+users.toLocaleString()+' users');
     if(online>0) parts.push(LIVE_ICON+' '+online.toLocaleString()+' online');
@@ -2653,11 +2656,25 @@
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
-    // Games live in their OWN sub-sheet (one 🎮 Games row here) so the 6 of them don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['articles','📰','Articles'],['streams','📺','Streams'],['communities','☷','Communities'],['pics','📸','Pics'],['chat','✺','Chat'],['4chan','🍀','4chan'],['__games','🎮','Games'],['__music','🎵','Music'],['blossom','🌸','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
+    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
-    modal(`<h3>More</h3><div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__music'){ closeModal(); openMusic(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+    const _wot=Number(CFG.users)||0;   // WoT network size + live online count (same stats as the desktop sidebar)
+    const _stat=(_wot||_lastOnline)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}</div>`:'';
+    modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+    });
+  }
+  function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
+    const items=[['blossom','🌸','Blossom'],['__music','🎵','Music']];
+    modal(`<h3>📁 Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; closeModal(); if(v==='__music') openMusic(); else switchView(v); });
+    });
+  }
+  function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
+    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['pics','📸','Pics'],['chat','💬','Chat'],['4chan','🍀','4chan']];
+    modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
   }
   function gamesMenu(){
@@ -3761,7 +3778,7 @@
         if(!(e.pubkey in _followSeen)){ _followSeen[e.pubkey]=seenNotif.last; changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
     }catch(_){}
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984], limit:150 }], {
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
           const firstTime = !(ev.pubkey in _followSeen);
@@ -3788,7 +3805,10 @@
       : ev.kind===3?'🫂 followed you'
       : ev.kind===1984?'🚩 reported you'
       : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
-      : ev.kind===6?'reposted you' : isReply(ev)?'replied to you' : 'mentioned you';
+      : ev.kind===6?'reposted you'
+      : ev.kind===42?'💬 messaged you in chat'
+      : ev.kind===1111?'👥 replied to you in a community'
+      : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 ${who} ${what}`, p.picture);
     try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`, icon:p.picture||LOGO }); }catch(_){}
   }
@@ -3811,7 +3831,7 @@
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
   function _notifMatch(e){
     switch(_notifFilter){
-      case 'mentions': return e.kind===1;
+      case 'mentions': return e.kind===1 || e.kind===42 || e.kind===1111;   // incl. chat + community replies
       case 'reactions': return e.kind===7||e.kind===6;
       case 'zaps': return e.kind===9735;
       case 'follows': return e.kind===3;
@@ -3843,7 +3863,7 @@
         more.textContent='Loading older…'; more.disabled=true;
         const oldest=all[all.length-1].created_at;
         try{
-          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735], until: oldest-1, limit:100 }]);
+          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,42,1111], until: oldest-1, limit:100 }]);
           older.forEach(e=>{ if(e.pubkey!==ME.pubkey) Store.saveEvent(e); });
         }catch(_){}
       }
@@ -3885,6 +3905,8 @@
     else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc((e.content||'').slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
+    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+enc((e.content||'').slice(0,80));}
+    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+enc((e.content||'').slice(0,80));}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+enc((e.content||'').slice(0,80));}
     else {cls='mention';ic='@';txt='mentioned you: '+enc((e.content||'').slice(0,80));}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
