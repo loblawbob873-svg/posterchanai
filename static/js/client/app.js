@@ -3295,6 +3295,7 @@
   // (encrypted artifacts under your storage key, only readable here). The active tab is remembered
   // so re-rendering after an upload/delete stays put.
   let _filesTab = 'public';
+  let _filesAdminPk = null;   // when set, the Admin tab is drilled into this user's files
   function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; switchView('blossom'); }   // the file-manager Music folder
   function openMusic(){   // the Music nav button → shuffle-play your whole library right away
     FilesIdx.loadLocal();
@@ -3322,11 +3323,73 @@
     feed.innerHTML=`<div class="files-tabs">
         <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public">🌸 Public</button>
         <button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai">🤖 AI Chat</button>
+        ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin">🛡️ Admin</button>`:''}
       </div><div id="files-pane"></div>`;
-    $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesTab=b.dataset.ft; renderBlossom(); });
+    $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesAdminPk=null; _filesTab=b.dataset.ft; renderBlossom(); });
     const pane=$('#files-pane',feed);
+    if(_filesTab==='admin') return renderBlossomAdmin(pane);
     if(_filesTab==='ai') return renderAiFiles(pane);
     return renderPublicFiles(pane);
+  }
+  // Admin tab: per-user storage overview. Tap a row → review that user's files; tap avatar/name → profile.
+  async function renderBlossomAdmin(pane){
+    if(!IS_ADMIN){ pane.innerHTML='<div class="empty">Admins only.</div>'; return; }
+    if(_filesAdminPk) return renderBlossomAdminUser(pane, _filesAdminPk);
+    pane.innerHTML='<div class="spinner"></div>';
+    let users=[], total=0, err='';
+    try{
+      const auth=await sign(27235,'blossom-usage',[['p',ME.pubkey]]);   // content 'blossom-usage' binds the admin proof to THIS action (server checks it)
+      const r=await fetch('/client/admin-blossom-usage',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+      if(r&&r.ok){ users=r.users||[]; total=r.total||0; } else err=(r&&r.error)||'failed';
+    }catch(_){ err='request failed'; }
+    if(err){ pane.innerHTML='<div class="empty">'+enc(err)+'</div>'; return; }
+    if(!users.length){ pane.innerHTML='<div class="empty">No Blossom uploads on this server yet.</div>'; return; }
+    const miss=users.map(u=>u.pubkey).filter(pk=>!Store.haveProfile(pk)).slice(0,300);
+    if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
+    pane.innerHTML=`<div class="muted small" style="padding:8px 4px">📊 ${users.length} uploader(s) · ${_fmtBytes(total)} total — tap a row to review files, tap avatar/name for their profile</div>
+      <div class="people-list">${users.map((u,i)=>{ const p=Store.profile(u.pubkey)||{}; const nm=p.name||p.display_name||(u.npub.slice(0,12)+'…');
+        return `<div class="psearch badm-row" data-i="${i}" style="cursor:pointer">
+          <img src="${enc(p.picture||LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="cursor:pointer" onerror="this.src='${LOGO}'">
+          <div class="pinfo"><b class="badm-prof" data-pk="${u.pubkey}" style="cursor:pointer">${enc(nm)}</b><div class="muted small">${enc(u.npub.slice(0,18))}… · ${u.count} file(s)</div></div>
+          <span style="align-self:center;text-align:right"><b>${_fmtBytes(u.size)}</b><br><span class="muted small">review ›</span></span>
+        </div>`; }).join('')}</div>`;
+    $$('.badm-prof',pane).forEach(el=> el.onclick=(e)=>{ e.stopPropagation(); renderProfileView(el.dataset.pk); });
+    $$('.badm-row',pane).forEach(el=> el.onclick=()=>{ _filesAdminPk=users[+el.dataset.i].pubkey; renderBlossom(); });
+  }
+  // Admin drill-in: a moderation grid of ONE user's public blobs from THIS node's built-in Blossom server
+  // (CFG.blossom_url — the SAME store the usage overview is computed from, not the admin's own configured
+  // mediaServer()). Tiles load DOWNSCALED ?thumb=1 previews and link to the full blob in a new tab; reuses
+  // the existing purge for deletion.
+  async function renderBlossomAdminUser(pane, pk){
+    const server=(CFG.blossom_url||mediaServer()||'').replace(/\/$/,'');
+    const p=Store.profile(pk)||{}; const nm=p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,14)+'…');
+    pane.innerHTML=`<div class="row" style="align-items:center;gap:8px;padding:6px 4px">
+        <button class="btn btn-ghost small" id="badm-back">‹ Back</button>
+        <img src="${enc(p.picture||LOGO)}" class="badm-prof" data-pk="${pk}" style="width:28px;height:28px;border-radius:50%;cursor:pointer" onerror="this.src='${LOGO}'">
+        <b class="badm-prof" data-pk="${pk}" style="cursor:pointer">${enc(nm)}</b>
+        <span style="flex:1"></span>
+        <button class="btn small danger" id="badm-purge">🗑️ Purge all</button>
+      </div><div class="files-grid" id="badm-grid"><div class="spinner"></div></div>`;
+    $('#badm-back',pane).onclick=()=>{ _filesAdminPk=null; renderBlossom(); };
+    $$('.badm-prof',pane).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.pk));
+    // Purge reuses the existing flow; on Cancel it returns without deleting — re-render in place (keep
+    // _filesAdminPk) so a cancel doesn't bounce the admin out of the drill-in.
+    $('#badm-purge',pane).onclick=async()=>{ await doPurgeBlossom(pk); renderBlossom(); };
+    const g=$('#badm-grid',pane);
+    if(!server){ g.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
+    let list=null;
+    try{ const r=await fetch(server+'/list/'+pk); if(r.ok) list=await r.json(); }catch(_){}
+    if(!list){ g.innerHTML='<div class="empty">Couldn’t load this user’s files.</div>'; return; }
+    if(!list.length){ g.innerHTML='<div class="empty">No files.</div>'; return; }
+    g.innerHTML = list.map(b=>{
+      const full=server+'/'+b.sha256, thumb=full+'?thumb=1', t=(b.type||'').toLowerCase(), sz=_fmtBytes(b.size||0);
+      const isImg=t.startsWith('image/'), isVid=t.startsWith('video/');
+      let inner;
+      if(isImg||isVid) inner=`<img src="${enc(thumb)}" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`+(isVid?`<span style="position:absolute;top:4px;left:4px;font-size:14px;text-shadow:0 0 3px #000">▶</span>`:'');
+      else inner=`<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:24px">📄</div>`;
+      return `<a href="${enc(full)}" target="_blank" rel="noopener" title="${enc(t)} · ${sz}" style="position:relative;aspect-ratio:1;display:block;border-radius:8px;overflow:hidden;background:var(--panel,#16161c);border:1px solid var(--border,#333)">${inner}<span style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:1px 4px">${sz}</span></a>`;
+    }).join('');
   }
   // Folder index — the folder tree + each file's {name,folder,...}. One encrypted doc under the storage
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is

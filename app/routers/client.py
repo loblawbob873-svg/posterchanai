@@ -1062,6 +1062,30 @@ def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str) -> str | Non
     return ev["pubkey"] if u else None
 
 
+def _verify_admin_signer(db: Session, auth_b64: str, expect_content: str) -> str | None:
+    """Like `_verify_admin_auth` but for admin LIST endpoints that have no single target. With no target
+    p-tag to bind to, the proof is bound instead to a FIXED action string in the event content
+    (`expect_content`) — so a generic admin signature (a kind-1 note, a Blossom upload-auth, etc.) can't
+    be replayed here; only an event the admin signed specifically for THIS action counts. Valid sig +
+    300s anti-replay window + signer is an admin."""
+    try:
+        ev = json.loads(base64.b64decode(auth_b64))
+    except Exception:
+        return None
+    if not nostr_event.verify_event(ev):
+        return None
+    if abs(int(ev.get("created_at", 0)) - int(time.time())) > 300:
+        return None
+    if (ev.get("content") or "") != expect_content:   # bind the proof to this specific action
+        return None
+    try:
+        npub = nostr_service.npub_of(ev["pubkey"])
+    except Exception:
+        return None
+    u = db.query(User).filter(User.nostr_npub == npub, User.is_admin == True).first()  # noqa: E712
+    return ev["pubkey"] if u else None
+
+
 @router.post("/block")
 async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     """Admin-only: add/remove a pubkey on the relay's denylist and re-apply it live (gate + purge)."""
@@ -1188,6 +1212,36 @@ async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
     db.commit()
     logger.info("[client] admin purged %d blossom blob(s) for %s", deleted, target)
     return JSONResponse({"ok": True, "deleted": deleted})
+
+
+# ----- Blossom admin overview (storage-per-user + per-user file moderation, client Files → Admin tab) -----
+class AdminAuthReq(BaseModel):
+    auth: str            # base64 signed admin event (no target) — proves the caller is an admin
+
+
+@router.post("/admin-blossom-usage")
+async def admin_blossom_usage(data: AdminAuthReq, db: Session = Depends(get_db)):
+    """Admin-only: Blossom storage used per uploader (bytes + blob count), biggest first. Powers the
+    Files → Admin tab so admins can see who's using storage and drill into a user's files."""
+    if not _verify_admin_signer(db, data.auth, "blossom-usage"):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    from app.models import BlossomBlob
+    from sqlalchemy import func
+    rows = (db.query(BlossomBlob.pubkey, func.coalesce(func.sum(BlossomBlob.size), 0), func.count())
+            .group_by(BlossomBlob.pubkey).all())
+    users = []
+    for pk, total, cnt in rows:
+        try:
+            npub = nostr_service.npub_of(pk)
+        except Exception:
+            npub = pk
+        users.append({"pubkey": pk, "npub": npub, "size": int(total or 0), "count": int(cnt or 0)})
+    users.sort(key=lambda x: x["size"], reverse=True)
+    return JSONResponse({"ok": True, "users": users, "total": sum(u["size"] for u in users)})
+
+
+# Per-user file LISTING reuses the Blossom server's public /list/<pubkey> (BUD-02) on the client side —
+# no dedicated endpoint needed; deletion reuses the existing /blossom-purge.
 
 
 # ----- Relay sync (admin backfills a user's Nostr history from the client profile menu) -----
