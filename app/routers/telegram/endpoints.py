@@ -124,8 +124,16 @@ async def configure_webhook(
         result = await telegram_service.set_webhook(data.webhook_url)
         logger.info(f"set_webhook result: {result}")
     else:
-        result = await telegram_service.delete_webhook()
-    
+        # Empty webhook_url means "just save the token / reconfigure the Bot API server" — the admin
+        # token-save flow (admin.js) posts an empty url for that. It must NOT delete the LIVE webhook,
+        # which would silently stop the bot receiving anything until the admin re-runs "Set up webhook"
+        # (this is exactly how the bot went dead). Deleting now requires an explicit delete flag.
+        if getattr(data, "delete_webhook", False):
+            result = await telegram_service.delete_webhook()
+        else:
+            logger.info("set-webhook: empty url → token saved, webhook left unchanged")
+            result = {"ok": True, "result": "token saved; webhook unchanged"}
+
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to configure webhook"))
     
