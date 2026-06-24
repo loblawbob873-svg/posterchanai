@@ -418,6 +418,24 @@ a.btn.full{display:block}
    content is taller than the screen — place-items:center clipped the tall Amber/nostrconnect pane */
 .auth-gate{position:fixed;inset:0;display:flex;flex-direction:column;overflow-y:auto;padding:calc(18px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));z-index:50}
 .auth-card{width:min(420px,94vw);border-radius:20px;padding:28px;margin:auto}
+/* Banner ABOVE the login card — Nostr ostrich + headline, to pull new users in. Stacked above the
+   modal (not inside it). Theme-aware: surface = --panel2, text = --text (readable on every theme,
+   light or dark); the Nostr-purple ostrich + accent are a fixed brand colour that reads on all. */
+.auth-stack{width:min(420px,94vw);margin:auto;display:flex;flex-direction:column;gap:14px}
+.nostr-banner{display:flex;flex-direction:column;align-items:center;gap:12px;margin:0;
+  padding:20px 18px;border-radius:16px;background:var(--panel2);
+  border:1px solid rgba(157,78,221,.5);box-shadow:0 0 22px rgba(157,78,221,.20)}
+.nostr-banner .ostrich{width:108px;height:108px;flex:none;object-fit:cover;border-radius:50%;
+  border:2px solid rgba(157,78,221,.7);box-shadow:0 0 20px rgba(157,78,221,.55);
+  animation:ostrich-float 3.6s ease-in-out infinite}
+@keyframes ostrich-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+.nb-title{font-family:'Orbitron',sans-serif;font-weight:800;font-size:20px;line-height:1.18;
+  letter-spacing:1px;text-transform:uppercase;color:var(--text);text-align:center}
+.nb-title span{background:linear-gradient(90deg,#c77dff,#7b2cbf);-webkit-background-clip:text;
+  background-clip:text;color:transparent}
+@media(max-width:420px){.nostr-banner{padding:16px}.nostr-banner .ostrich{width:96px;height:96px}
+  .nb-title{font-size:18px}}
+@media(prefers-reduced-motion:reduce){.nostr-banner .ostrich{animation:none}}
 .logo-img{display:block;width:84px;height:84px;margin:0 auto 6px;border-radius:20px;
   border:1px solid var(--neon);box-shadow:var(--glow);object-fit:cover}
 .brand{display:flex;align-items:center;justify-content:center;gap:8px}
