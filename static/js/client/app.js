@@ -5440,7 +5440,7 @@
     try{
       const r=await fetch('/api/chat/send',{ method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({ conversation_id:id, content:payload.content||'', images:payload.images||[],
-          pdfs:payload.pdfs||[], documents:payload.documents||[], files:payload.files||[] }) });
+          pdfs:payload.pdfs||[], documents:payload.documents||[], videos:payload.videos||[], files:payload.files||[] }) });
       if(!r.ok) throw new Error('http '+r.status);
     }catch(e){ if(VIEW==='ai' && _ai.convId===id) aiAddMessage('assistant', enc('⚠️ Could not reach the server — try again.')); }
     _ai.awaiting=false;
@@ -5833,6 +5833,7 @@
     const imgs=att.filter(a=>a.kind==='image').map(a=>({base64:a.b64, filename:a.name}));   if(imgs.length) payload.images=imgs;
     const pdfs=att.filter(a=>a.kind==='pdf').map(a=>({base64:a.b64, filename:a.name}));       if(pdfs.length) payload.pdfs=pdfs;
     const docs=att.filter(a=>a.kind==='doc').map(a=>({base64:a.b64, filename:a.name, type:a.ext})); if(docs.length) payload.documents=docs;
+    const vids=att.filter(a=>a.kind==='video').map(a=>({base64:a.b64, filename:a.name}));      if(vids.length) payload.videos=vids;   // compress/clip/extractaudio operate on the video bytes
     const txts=att.filter(a=>a.kind==='text').map(a=>({content:a.text, filename:a.name}));     if(txts.length) payload.files=txts;
     _ai.awaiting=true;   // a reply is now pending — if the WS drops before it lands, aiRecover() polls it back
     aiWsSend(payload);   // sends now if open, else queues + (re)connects and flushes on open
