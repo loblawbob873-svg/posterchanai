@@ -8,7 +8,25 @@
     if(!PC){ return setTimeout(init, 50); }
     const { $, $$, enc, sendDm, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
-    let _timer = null, _seatPicks = [], _holeCache = {};
+    let _timer = null, _seatPicks = [], _holeCache = {}, _announced = {};
+
+    // Big, deliberate win/loss announcement that holds for a few seconds so the result of a hand is
+    // unmissable before the bot deals the next one (which otherwise resets the board almost instantly).
+    function showHandResult(g, lr){
+      const me = PC.ME.pubkey, won = (lr.winners && lr.winners[me]) || 0;
+      const prev = document.getElementById('pk-bigresult'); if(prev) prev.remove();
+      const el = document.createElement('div');
+      el.id = 'pk-bigresult'; el.className = 'pk-bigresult ' + (won>0?'win':'loss');
+      el.innerHTML = `<div class="pk-br-card">
+        <div class="pk-br-emoji">${won>0?'🏆':'🪦'}</div>
+        <div class="pk-br-title">${won>0?'YOU WON':'YOU LOST'}</div>
+        ${won>0?`<div class="pk-br-amt">+${won} chips</div>`:''}
+        <div class="pk-br-sum">${enc(lr.summary||'')}${lr.hand_no?` · hand #${lr.hand_no}`:''}</div>
+        <div class="pk-br-tap">tap to continue</div></div>`;
+      document.body.appendChild(el);
+      let done=false; const close=()=>{ if(done)return; done=true; el.classList.add('out'); setTimeout(()=>el.remove(),300); };
+      el.onclick=close; setTimeout(close, 5200);
+    }
 
     const RANKS='23456789TJQKA', SUITS=['♠','♥','♦','♣'];
     function cardHtml(c, big){
@@ -174,6 +192,11 @@
         </div>`;
       } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
       const lr = g.last_result;
+      // Pop the big win/loss overlay the moment a hand resolves. Seed on first sight (don't pop a stale
+      // result when you just opened the view) — only announce when the hand number ADVANCES afterward.
+      if(lr && lr.hand_no){ const gid=g._gid, seen=_announced[gid];
+        if(seen===undefined) _announced[gid]=lr.hand_no;
+        else if(lr.hand_no>seen){ _announced[gid]=lr.hand_no; showHandResult(g, lr); } }
       const lhn = (lr && lr.hand_no) ? ` #${lr.hand_no}` : '';   // show which hand it was, so consecutive results don't look frozen
       const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} — hand${lhn} done`:`Hand${lhn} done`}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
       // Action since MY last turn (across streets) — same recap the DM gives, so I always see what the

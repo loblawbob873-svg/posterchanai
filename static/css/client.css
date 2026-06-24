@@ -1493,6 +1493,21 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .pk-mychips b{color:#ffd25a;font-size:22px;font-weight:900;text-shadow:0 0 8px rgba(255,210,90,.5)}
 .pk-last{margin:8px 0 0;padding:9px 13px;border-radius:11px;text-align:center;background:#150826;border:1px solid rgba(120,110,150,.4);color:#b9a9d6;font-weight:700}
 .pk-last.win{background:linear-gradient(180deg,#10301f,#0b2417);border-color:rgba(93,255,176,.6);color:#5dffb0;box-shadow:0 0 14px rgba(93,255,176,.25)}
+/* Big win/loss announcement — a deliberate visual pause between hands so the result is unmissable */
+.pk-bigresult{position:fixed;inset:0;z-index:420;display:grid;place-items:center;padding:24px;background:rgba(4,2,12,.74);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);animation:fade .18s;cursor:pointer}
+.pk-bigresult.out{animation:fade .28s reverse}
+.pk-br-card{text-align:center;padding:30px 34px;border-radius:20px;background:linear-gradient(180deg,#1a1030,#120622);min-width:240px;max-width:min(90vw,420px);animation:pop .3s}
+.pk-bigresult.win .pk-br-card{border:2px solid rgba(93,255,176,.7);box-shadow:0 0 44px rgba(93,255,176,.4),inset 0 0 30px rgba(93,255,176,.08);animation:pop .3s,pkwinglow 1.4s ease-in-out infinite .3s}
+.pk-bigresult.loss .pk-br-card{border:2px solid rgba(255,60,120,.6);box-shadow:0 0 40px rgba(255,0,90,.3),inset 0 0 26px rgba(255,0,90,.06)}
+.pk-br-emoji{font-size:58px;line-height:1;margin-bottom:6px}
+.pk-br-title{font-size:30px;font-weight:900;letter-spacing:1px}
+.pk-bigresult.win .pk-br-title{color:#5dffb0;text-shadow:0 0 14px rgba(93,255,176,.6)}
+.pk-bigresult.loss .pk-br-title{color:#ff8aa8;text-shadow:0 0 14px rgba(255,0,90,.45)}
+.pk-br-amt{font-size:24px;font-weight:900;color:#ffd25a;text-shadow:0 0 10px rgba(255,210,90,.5);margin-top:4px}
+.pk-br-sum{margin-top:12px;color:var(--muted);font-size:13px;font-weight:600;line-height:1.4}
+.pk-br-tap{margin-top:16px;font-size:11px;color:var(--muted);opacity:.7;text-transform:uppercase;letter-spacing:1px}
+@keyframes pkwinglow{0%,100%{box-shadow:0 0 44px rgba(93,255,176,.4),inset 0 0 30px rgba(93,255,176,.08)}50%{box-shadow:0 0 64px rgba(93,255,176,.65),0 0 90px rgba(255,210,90,.2),inset 0 0 36px rgba(93,255,176,.12)}}
+@media(prefers-reduced-motion:reduce){.pk-bigresult.win .pk-br-card{animation:pop .3s}}
 .pk-seats{display:flex;flex-direction:column;gap:6px;margin:8px 0}
 .pk-seat{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 11px;border-radius:11px;background:#150826;border:2px solid rgba(255,60,210,.38)}
 .pk-seat.me{border-color:var(--cyan)}

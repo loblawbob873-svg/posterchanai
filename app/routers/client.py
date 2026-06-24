@@ -14,6 +14,7 @@ This router only:
 """
 import asyncio
 import base64
+import glob
 import json
 import logging
 import os
@@ -91,13 +92,15 @@ def _static_version() -> str:
     rewrites these assets' Cache-Control to a 31-day max-age, so without a versioned URL a browser
     keeps serving a stale client.css/app.js for weeks after a deploy. Appending `?v=<this>` makes
     each change a brand-new URL no cache can answer with old bytes. Computed per request from
-    mtimes, so it updates on every file change — even UI-only deploys that don't restart Python."""
-    rels = ["css/client.css", "js/client/store.js", "js/client/relay.js", "js/client/app.js",
-            "js/client/signer-worker.js"]
+    mtimes, so it updates on every file change — even UI-only deploys that don't restart Python.
+    Globs the WHOLE client JS dir (not a fixed list) so a game-file-only edit (e.g. holdem.js) also
+    bumps the token — otherwise that one file would stay stale behind the long edge cache."""
+    paths = glob.glob(os.path.join(_STATIC, "js", "client", "*.js"))
+    paths.append(os.path.join(_STATIC, "css", "client.css"))
     mt = 0.0
-    for r in rels:
+    for p in paths:
         try:
-            mt = max(mt, os.path.getmtime(os.path.join(_STATIC, *r.split("/"))))
+            mt = max(mt, os.path.getmtime(p))
         except OSError:
             pass
     return str(int(mt))
