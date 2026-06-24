@@ -642,6 +642,7 @@ def _ytdl_video_keyboard() -> dict:
         [
             {"text": "🗜 Compress", "callback_data": "media:compress"},
             {"text": "✂️ Clip", "callback_data": "media:clip"},
+            {"text": "🎵 Extract audio", "callback_data": "media:extractaudio"},
         ],
         [{"text": "🗜✂️ Clip + Compress", "callback_data": "media:clipcompress"}],
     ]}

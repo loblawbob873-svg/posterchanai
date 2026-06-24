@@ -5755,7 +5755,9 @@
   async function aiAddFiles(files){
     for(const f of files){
       const ext=(f.name.split('.').pop()||'').toLowerCase();
-      const kind = /^image\//.test(f.type)?'image' : (f.type==='application/pdf'||ext==='pdf')?'pdf'
+      const kind = /^image\//.test(f.type)?'image'
+                 : (/^video\//.test(f.type) || /^(mp4|webm|mov|m4v|mkv|avi)$/.test(ext))?'video'   // was missing → mp4 fell through to 'doc' (got flashcards/read-text)
+                 : (f.type==='application/pdf'||ext==='pdf')?'pdf'
                  : /^text\/|json|xml|csv|^$/.test(f.type)?'text' : 'doc';
       try{
         if(kind==='text'){ _ai.attach.push({kind, name:f.name, text:await f.text()}); }
