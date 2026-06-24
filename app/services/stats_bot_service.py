@@ -1,4 +1,4 @@
-"""Nostr Stats Bot — optional, posts a cyberpunk activity graph every 6 hours.
+"""Nostr Stats Bot — optional, posts a cyberpunk activity graph once per day.
 
 Reads the built-in relay's Postgres directly (read-only) for two metrics over the past 7 days,
 counting ONLY pubkeys whose latest kind-0 profile carries a non-empty `nip05`:
@@ -20,7 +20,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +351,7 @@ def _stats_bots() -> list:
 # --- scheduler -----------------------------------------------------------
 
 async def _tick():
-    """Every 6h: post for each enabled Nostr bot that has the stats feature on (gated by the bots
+    """Once per day: post for each enabled Nostr bot that has the stats feature on (gated by the bots
     master switch, like every other bot). A node with no stats bot is a cheap no-op."""
     from app.services import settings_store
     if not settings_store.get_bool("bots_manager_enabled", False):
@@ -365,16 +365,26 @@ async def _tick():
 
 
 def start_stats_bot_scheduler():
-    # Always register the 6h job — it self-gates on the bots master switch + which bots have the
-    # stats feature (read live each tick), so enabling it on a bot needs no restart of this scheduler.
+    # Register the DAILY job at a fixed UTC hour — it self-gates on the bots master switch + which
+    # bots have the stats feature (read live each tick), so enabling it on a bot needs no restart of
+    # this scheduler. A wall-clock CRON (not a 6h interval) means: exactly ONE post per day at a
+    # predictable time, and — unlike the old interval — a restart does NOT fire an immediate/extra
+    # post (cron computes the next H:00, it never fires on registration). UTC matches the chart's
+    # UTC-midnight buckets. `stats_bot_post_hour` (UTC 0–23) overrides the default; coalesce +
+    # misfire grace let a worker that was briefly down near the hour still post that day, just once.
     global stats_scheduler
     if stats_scheduler is not None:
         return
+    from app.services import settings_store
+    hour = settings_store.get_int("stats_bot_post_hour", 16)
+    if not (0 <= hour <= 23):
+        hour = 16
     stats_scheduler = AsyncIOScheduler()
-    stats_scheduler.add_job(_tick, IntervalTrigger(hours=6), id="stats_bot",
-                            name="Nostr Stats Bot", replace_existing=True)
+    stats_scheduler.add_job(_tick, CronTrigger(hour=hour, minute=0, timezone="UTC"),
+                            id="stats_bot", name="Nostr Stats Bot", replace_existing=True,
+                            coalesce=True, misfire_grace_time=3600)
     stats_scheduler.start()
-    logger.info("[stats-bot] scheduler started (every 6h)")
+    logger.info("[stats-bot] scheduler started (daily at %02d:00 UTC)", hour)
 
 
 def stop_stats_bot_scheduler():

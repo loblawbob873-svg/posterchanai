@@ -1909,13 +1909,30 @@
       <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back">←</button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
       ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
       <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
-      <div class="chatroom-compose"><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
+      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button><input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
     $('#ch-back').onclick=()=>switchView('chat');
     const send=()=>postToChannel(e);
     { const b=$('#ch-send'); if(b) b.onclick=send; }
     { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
       ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
+    // 📎 attach: upload to Blossom, append the URL to the message (inline media renders in kind-42).
+    { const ab=$('#ch-attach'), fi=$('#ch-file'), ta=$('#ch-input');
+      if(ab && fi && ta){
+        ab.onclick=()=>fi.click();
+        fi.onchange=async ev=>{
+          const files=[...ev.target.files]; ev.target.value=''; if(!files.length) return;
+          ab.disabled=true; const lbl=ab.textContent; ab.textContent='⏳';
+          for(let i=0;i<files.length;i++){
+            try{ const url=await uploadBlob(files[i]);
+              ta.value += (ta.value && !ta.value.endsWith('\n') ? '\n' : '') + url;
+              ta.dispatchEvent(new Event('input')); }
+            catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
+              else toast('upload failed: '+((err&&err.message)||err)); break; }
+          }
+          ab.disabled=false; ab.textContent=lbl; ta.focus();
+        };
+      } }
     let msgs=[]; try{ msgs=await Relay.query([{ kinds:[42], '#e':[e.id], limit:300 }]); }catch(_){}
     if(VIEW!=='channel' || _chatId!==e.id) return;
     msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
