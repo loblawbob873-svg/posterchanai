@@ -349,11 +349,13 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .city-far,.city-mid,.city-near{animation:none}
   .city-bg::before{animation:none;opacity:.6}
 }
-/* Freeze the city parallax by default. Its continuous transform makes every backdrop-filter glass
-   panel re-blur the MOVING background each frame — the dominant idle-GPU cost (laptops ran ~50%+).
-   Frozen, the neon scene is still there (the 185s drift is barely perceptible) and the blur result
-   caches → big, steady GPU drop. */
-.city-far,.city-mid,.city-near,.city-bg::before{ animation-play-state: paused !important; }
+/* Static city by default: a fully STATIC background image (rendered once from the existing gradients),
+   not an animated parallax. The continuous transform forced every backdrop-filter glass panel to
+   re-blur the MOVING background each frame — the dominant idle-GPU cost (laptops ran ~50%+). Going
+   static AND dropping will-change (which kept 3 separate GPU compositing layers alive) lets the scene
+   rasterize once and the blur cache → the GPU goes near-idle. The neon city looks the same. */
+.city-far,.city-mid,.city-near{ animation: none !important; will-change: auto !important; }
+.city-bg::before{ animation: none !important; }
 
 .glass{background:var(--panel);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);border:1px solid var(--line)}
 /* Perf/battery: pause ALL CSS animations when the tab/PWA is backgrounded (app.js toggles
