@@ -109,7 +109,22 @@ server {
         proxy_send_timeout 3600s;
     }
 
-    # ---- Everything else: web client, /client, /blossom, /static, admin ----
+    # ---- Static assets (optional but recommended) --------------------------
+    # The app serves /static fine, but PROXYING it means a brief "Loading failed for <script>" window
+    # while the app restarts on deploy. If nginx is on the same host as the app, serve the files
+    # straight off disk so the page keeps loading across restarts; fall back to the app for anything
+    # not on disk. The `?v=<mtime>` query busts caches on deploy, and `no-cache` makes a CDN in front
+    # (e.g. Cloudflare) REVALIDATE rather than pin a stale build — otherwise it can serve old JS for
+    # weeks. (Delete this block to just proxy /static to the app via `location /` like everything else.)
+    location ^~ /static/ {
+        root /opt/posterchanai;                         # -> /opt/posterchanai/static/...  (your checkout)
+        try_files $uri @app;
+        add_header Cache-Control "no-cache, must-revalidate" always;
+        access_log off;
+    }
+    location @app { proxy_pass http://posterchanai_app; }
+
+    # ---- Everything else: web client, /client, /blossom, admin -------------
     location / {
         proxy_pass http://posterchanai_app;
         proxy_set_header Upgrade    $http_upgrade;
@@ -118,3 +133,22 @@ server {
         proxy_send_timeout 3600s;
     }
 }
+
+# -----------------------------------------------------------------------------
+# Optional: survive an app restart with ZERO error page (advanced, behind a CDN)
+# -----------------------------------------------------------------------------
+# An app restart makes `/` 502 for a few seconds → a CDN in front shows its own error page. To serve
+# the last-good client shell instead, cache `location = /` with `proxy_cache_use_stale`:
+#
+#   # http{} context (next to the upstreams):
+#   proxy_cache_path /tmp/pcai-cache levels=1:2 keys_zone=pcai:10m max_size=200m inactive=1d;
+#
+#   # inside the HTTPS server{}, BEFORE `location / {`:
+#   location = / {
+#       proxy_pass http://posterchanai_app/client;
+#       proxy_buffering on; proxy_cache pcai; proxy_cache_valid 200 30s;   # short TTL keeps ?v= fresh
+#       proxy_cache_use_stale error timeout updating http_502 http_503 http_504;
+#   }
+#
+# Blossom blobs are immutable (sha256-addressed) → ideal to cache long in a tmpfs: same
+# proxy_cache_path pattern with `proxy_cache_valid 200 30d` on the /blossom (or media subdomain) block.
