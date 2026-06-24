@@ -36,6 +36,21 @@ DEFAULT_RELAYS = [
     "wss://nostr.corebreach.com/",
     "wss://social.amanah.eblessing.co/",
     "wss://relay.sovrgn.co.za/",
+    # 0xchat's default relays (general + DM-inbox) — added so NIP-17 gift-wrapped DMs interoperate
+    # with 0xchat/Amethyst/Coracle: the firehose can pull their users' content + kind-10050 DM-relay
+    # lists, and our users' notes/10050 broadcast back where those clients look. Note: relay.mostr.pub
+    # is a bridge our own bridges.py blocklists (firehose connects, bridged content still dropped), and
+    # auth.nostr1.com / inbox.nostr.wine are NIP-42 AUTH / paid inboxes (anon firehose REQs just error).
+    "wss://relay.0xchat.com/",
+    "wss://yabu.me/",
+    "wss://relay.siamstr.com/",
+    "wss://relay.damus.io/",
+    "wss://relay.nostr.band/",
+    "wss://nostr.wine/",
+    "wss://nostr.data.haus/",
+    "wss://relay.mostr.pub/",
+    "wss://auth.nostr1.com/",
+    "wss://inbox.nostr.wine/",
 ]
 
 

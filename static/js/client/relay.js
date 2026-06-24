@@ -169,6 +169,52 @@
         this._okWaiters.set(event.id, { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); this._okWaiters.delete(event.id); res(r); } } });
         this._send(['EVENT', event]);
       });
+    },
+    // One-shot publish to EXTERNAL relays NOT in the pool — e.g. a DM recipient's NIP-17 inbox relays
+    // (their kind-10050) so gift-wrapped DMs reach clients like 0xchat/Amethyst that don't read our
+    // relay. Opens a short-lived socket per URL, sends the EVENT, waits for its OK, then closes — no
+    // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
+    // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
+    // covered them) and is a no-op when there are none.
+    publishTo(urls, event, { timeout=5000, max=4 } = {}){
+      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => !this._conns.has(u)).slice(0, max);
+      if (!targets.length) return Promise.resolve(0);
+      return Promise.all(targets.map(u => new Promise(resolve => {
+        let ws, done = false, tm;
+        const fin = (ok) => { if (done) return; done = true; clearTimeout(tm);
+          if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
+          resolve(ok ? 1 : 0); };
+        try { ws = new WebSocket(u); } catch(_){ return fin(false); }
+        tm = setTimeout(()=>fin(false), timeout);
+        ws.onopen = () => { try{ ws.send(JSON.stringify(['EVENT', event])); }catch(_){ fin(false); } };
+        ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+          if (m[0] === 'OK' && m[1] === event.id) fin(!!m[2]); };
+        ws.onerror = () => fin(false);
+        ws.onclose = () => fin(false);
+      }))).then(rs => rs.reduce((a,b)=>a+b,0));
+    },
+    // One-shot READ from EXTERNAL relays NOT in the pool — e.g. discovery/indexer relays to find a
+    // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
+    // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
+    // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
+    queryFrom(urls, filters, { timeout=4000, max=4 } = {}){
+      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => !this._conns.has(u)).slice(0, max);
+      if (!targets.length) return Promise.resolve([]);
+      const subId = 'qf' + Math.random().toString(36).slice(2,9);
+      return Promise.all(targets.map(u => new Promise(resolve => {
+        let ws, done = false, tm; const got = [];
+        const fin = () => { if (done) return; done = true; clearTimeout(tm);
+          if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
+          resolve(got); };
+        try { ws = new WebSocket(u); } catch(_){ return fin(); }
+        tm = setTimeout(fin, timeout);
+        ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };
+        ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+          if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(m[2]);
+          else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin(); };
+        ws.onerror = () => fin();
+        ws.onclose = () => fin();
+      }))).then(rs => rs.flat());
     }
   };
 

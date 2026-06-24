@@ -241,7 +241,7 @@
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
       // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
       // ("No permission"). List every op/kind the client signs so the first connect grants them all.
-      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,27235,30078];
+      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,10050,27235,30078];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
         .concat(kinds.map(k=>'sign_event:'+k)).join(',');
       const origin=(location && location.origin) || '';
@@ -710,7 +710,7 @@
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
     Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications(); watchDeletions();
-      setTimeout(()=>ensureDMs(), 3000); setTimeout(loadRightbar, 1500);
+      setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500); setTimeout(loadRightbar, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     connectRelays();
     renderMe();
@@ -4211,14 +4211,76 @@
     _scheduleDmRefresh();
     return true;
   }
+  // ---------- NIP-17 DM relay list (kind 10050) — discovery + outbox delivery ----------
+  // The relays where WE receive gift-wrapped DMs: our own list when enabled, else the built-in relay.
+  // Other clients (0xchat/Amethyst/Coracle) read our kind-10050 to know where to deliver DMs to us.
+  function myInboxRelays(){
+    const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    return [...new Set((list.length ? list : [CFG.relay_url]).map(u=>normalizeRelay(u)).filter(Boolean))];
+  }
+  // Publish our kind-10050 DM-inbox list. Idempotent + change-only (compares to the current event),
+  // runs once per session from Relay.onReady — no polling, no spin. The relay broadcasts kind-10050
+  // upstream, so other clients can discover where to gift-wrap-DM us.
+  async function ensureDmInboxList(){
+    try{
+      const want = myInboxRelays(); if(!want.length) return;
+      const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10050], limit:1 }]);
+      const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
+      const have = cur ? [...new Set(cur.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean))] : [];
+      if(cur && have.length===want.length && want.every(u=>have.includes(u))) return;   // unchanged → don't republish
+      await publish(10050, '', want.map(u=>['relay', u]));
+    }catch(_){}
+  }
+  // Discovery/indexer relays queried to find an EXTERNAL (non-WoT) peer's DM-inbox list — these
+  // specialise in profiles/relay-lists (kind 0/10002/10050), so they're low-volume to hit, plus
+  // 0xchat's own relay where its users publish theirs.
+  const DISCOVERY_RELAYS = ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://relay.nostr.band/', 'wss://relay.0xchat.com/'];
+  // A peer's DM-inbox relays (their kind-10050), lazily fetched + cached (1h TTL); falls back to their
+  // NIP-65 read relays (kind 10002). Tries our pool first (has it for WoT members), then external
+  // discovery relays for strangers (our WoT-only relay never stored those). Looked up ONLY when
+  // sending to a not-yet-cached peer — never per message or per render — so it adds no steady-state CPU.
+  const _inboxCache = new Map();   // pubkey -> { relays:[...], ts }
+  const _INBOX_TTL = 3600*1000;
+  function _pick10050(evs, pk){ const ev=evs.filter(e=>e&&e.kind===10050&&e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0];
+    return ev?ev.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean):[]; }
+  function _pick10002(evs, pk){ const ev=evs.filter(e=>e&&e.kind===10002&&e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0];
+    return ev?ev.tags.filter(t=>t[0]==='r'&&t[1]&&(t.length<3||t[2]==='read')).map(t=>normalizeRelay(t[1])).filter(Boolean):[]; }
+  async function dmInboxRelays(pk){
+    const c=_inboxCache.get(pk); const now=Date.now();
+    if(c && (now-c.ts)<_INBOX_TTL) return c.relays;
+    let relays=[];
+    try{
+      const evs=await Relay.query([{ authors:[pk], kinds:[10050,10002], limit:2 }]);
+      relays=_pick10050(evs, pk); if(!relays.length) relays=_pick10002(evs, pk);
+      if(!relays.length){
+        // Stranger (not in our WoT) → ask external discovery relays. They're untrusted, so VERIFY
+        // signatures before trusting a relay list — a forged one would misroute the (encrypted) wrap.
+        let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }]);
+        if(ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
+          const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; } }
+        relays=_pick10050(ext, pk); if(!relays.length) relays=_pick10002(ext, pk);
+      }
+    }catch(_){}
+    relays=[...new Set(relays)];
+    _inboxCache.set(pk, { relays, ts:now });
+    return relays;
+  }
   // Send a DM: NIP-17 gift wraps for local-key users, legacy NIP-04 for NIP-07 (no exposed secret).
   async function sendDm(pk, text){
     if(signer && signer.nip17wrap){
       const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
       Store.saveEvent(toSelf); await ingestWrap(toSelf, false);   // show our own message right away
       const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
-      if(r1 && r1.ok===false) toast('relay: '+(r1.msg||'message rejected'));
-      if(VIEW==='messages') renderMessages();
+      if(VIEW==='messages') renderMessages();   // our message already shows (ingestWrap above) — don't block on delivery
+      // NIP-17 outbox delivery (backgrounded): push the wrap to the RECIPIENT's own DM-inbox relays
+      // (kind 10050) so clients that don't read our relay (0xchat/Amethyst) receive it. publishTo skips
+      // relays already in our pool + is bounded, so it's a no-op when the peer reads our relay. We only
+      // warn when NOTHING accepted it — our relay rejects wraps to a non-WoT recipient (expected for an
+      // external user), which is fine once their own inbox relay has taken it.
+      dmInboxRelays(pk).then(inbox=>{
+        if(!inbox.length){ if(r1 && r1.ok===false) toast('message not delivered — recipient has no DM inbox relays'); return; }
+        Relay.publishTo(inbox, toPeer).then(n=>{ if(r1 && r1.ok===false && !n) toast('message not delivered — no inbox relay accepted it'); });
+      }).catch(()=>{});
     } else {
       const ct=await signer.nip04enc(pk, text); await publish(4, ct, [['p',pk]]);
     }
