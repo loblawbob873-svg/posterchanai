@@ -72,6 +72,12 @@ def bot_decide(state, bot_pk):
     r = secrets.randbelow(100)
     raise_to = state["to_call"] + max(state.get("min_raise", bb), pot // 2)
     if to_call > 0:                               # facing a bet
+        # Preflop getting a cheap price (heads-up SB completing / BB defending for <= 1bb): the pot odds
+        # are far too good to fold — complete/defend with ANY two cards (just raise the monsters). This
+        # stops the bot open-folding its small blind almost every hand, which turned solo games into a
+        # dull "you win 15, your move" loop instead of actually playing flops.
+        if not board and to_call <= bb:
+            return ("raise", raise_to) if (cat >= TRIPS and r < 60) else ("call", None)
         if cat >= TRIPS:
             return ("raise", raise_to) if (stack > to_call + 2 * bb and r < 65) else ("call", None)
         if cat >= PAIR:

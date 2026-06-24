@@ -264,7 +264,7 @@ class SettingsResponse(BaseModel):
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
     node_exec_enabled: str = "false"
     node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)
-    node_exec_users: str = ""  # comma-separated usernames allowed (admins always allowed)
+    node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)
     node_exec_agent_max_steps: str = "8"  # max LLM iterations in agentic mode
     node_exec_agent_model: str = "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"  # agentic-tuned model for `node agent` (falls back to default if absent)
     node_exec_agent_step_timeout: str = "600"  # max seconds per command in `node agent` (0 = use job timeout); bounds long/hung commands so the loop can't deadlock

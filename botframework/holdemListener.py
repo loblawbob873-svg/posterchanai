@@ -645,7 +645,7 @@ def _post_result(state, gameid, parent_id, showdown, announce=True):
     # carry the just-finished result into the next hand's doc so the web UI can show "you won X"
     # (the previous hand's done-doc is overwritten immediately by this re-deal — same d-tag).
     nxt["last_result"] = {"summary": summary, "winners": {p: a for p, a in winners.items()},
-                          "showdown": bool(showdown)}
+                          "showdown": bool(showdown), "hand_no": state.get("hand_no", 1)}
     _save_game(gameid, nxt)
     for pk in nxt["seats"]:
         if pk != nxt.get("bot"):

@@ -438,6 +438,64 @@ async def compose_from_url(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "summary unavailable"}, status_code=503)
 
 
+@router.post("/hashtags")
+async def suggest_hashtags(request: Request, db: Session = Depends(get_db)):
+    """Suggest commonly-used Nostr hashtags for a draft post via the node's LLM — powers the composer's
+    AI → Hashtags menu item. Returns a single space-separated string of #tags for the client to append
+    after a blank line. Follows Nostr convention: #asknostr for questions, #memestr for image posts.
+    Same-origin helper; degrades to convention-only tags where there's no LLM (e.g. a Nostr-only node)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    text = (body.get("text") or "").strip()
+    has_image = bool(body.get("has_image"))
+    if not text and not has_image:
+        return JSONResponse({"error": "nothing to tag"}, status_code=400)
+    low = text.lower()
+    is_question = text.endswith("?") or bool(re.match(
+        r"^(who|what|when|where|why|how|is|are|can|should|does|do|could|would|will|any|anyone)\b", low))
+    tags: list[str] = []
+
+    def _add(t: str):
+        t = t.strip().lower()
+        if not t.startswith("#"):
+            t = "#" + t
+        if re.fullmatch(r"#\w{2,30}", t) and t not in tags:
+            tags.append(t)
+
+    if text:
+        try:
+            from app.services.inference_factory import get_inference_service
+            svc = get_inference_service(db)
+            res = await svc.chat_completion(
+                [{"role": "system", "content": (
+                    "You suggest hashtags for a Nostr social post. Output 3 to 6 SHORT, commonly-used "
+                    "hashtags that genuinely fit the content, space-separated, each starting with '#', "
+                    "lowercase, no explanation and no punctuation other than '#'. Prefer popular Nostr "
+                    "tags when relevant (e.g. #nostr #bitcoin #plebchain #grownostr #art #photography "
+                    "#foodstr #coffeechain #zap). Output ONLY the hashtags on one line.")},
+                 {"role": "user", "content": text[:2000]}],
+                max_tokens=60, temperature=0.4)
+            out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+            for t in re.findall(r"#\w+", out):
+                _add(t)
+        except Exception as e:
+            logger.warning(f"[client] hashtags LLM failed (convention-only): {e}")
+
+    # Nostr convention additions (deduped): questions → #asknostr (first), images → #memestr.
+    if is_question:
+        if "#asknostr" in tags:
+            tags.remove("#asknostr")
+        tags.insert(0, "#asknostr")
+    if has_image:
+        _add("#memestr")
+    if not tags:
+        _add("#nostr")
+    tags = tags[:8]
+    return JSONResponse({"hashtags": " ".join(tags)})
+
+
 @router.get("/effects")
 async def client_effects():
     """The image/video effects available to the Nostr client's Effects studio (names + descriptions,

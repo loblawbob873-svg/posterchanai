@@ -115,6 +115,87 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
     return out or None
 
 
+# Commands whose handlers consume the RAW uploaded file bytes (not extracted text). Shared by the
+# chat WebSocket handler and the HTTP `/chat/send` fallback so both gate attachment-building the same.
+MEDIA_ATTACHMENT_COMMANDS = ("compress", "removebackground", "clip", "convert", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")
+
+
+async def normalize_command_result(db, user, conversation_id, result, storage_service):
+    """Turn a CommandService result into (save_content, generated_image_path, live_result).
+
+    The SINGLE source of truth for persisting a command's output, shared by the chat WebSocket handler
+    and the HTTP `/chat/send` fallback so the two can't drift. `live_result` is what to push live (the
+    'files' case is rewritten to text — raw bytes aren't JSON-serializable); `save_content` /
+    `generated_image_path` are what's written to the Message row.
+      - 'files'           → save each blob, append inline image/video/audio markdown or a download link
+      - 'generated_image' → save the PNG (records last_image_prompts), return its path
+      - 'flashcards'      → append the [[FC]]…[[/FC]] base64-JSON marker the client decodes on reload
+      - anything else     → just its text content
+    """
+    from urllib.parse import quote as _q
+    generated_image_path = None
+    if result.get("type") == "files":
+        _links = []
+        for _f in result.get("files", []):
+            _fbytes = _f.get("data")
+            _fname = _f.get("filename", "file")
+            _fct = (_f.get("content_type") or "").lower()
+            if not _fbytes:
+                continue
+            try:
+                if chat_store.enabled(db):
+                    _ext = (Path(_fname).suffix.lstrip(".") or "bin")
+                    _rel = await artifact_store.save_bytes(db, user, conversation_id, _fbytes, _ext)
+                else:
+                    _rel = storage_service.save_file_bytes(user.username, conversation_id, _fbytes, _fname)
+                # Encode the filename too — spaces/parens (e.g. "image (2).png") otherwise leave a raw ")"
+                # that truncates the markdown link. Embed media INLINE so it shows/plays like geni; other
+                # files (pdf/txt/…) keep the download link.
+                _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(_rel).name)}"
+                if _fct.startswith("image/"):
+                    _links.append(f"![{_fname}]({_url})")
+                elif _fct.startswith("video/"):
+                    _links.append(f"!video[{_fname}]({_url})")
+                elif _fct.startswith("audio/"):
+                    _links.append(f"!audio[{_fname}]({_url})")
+                else:
+                    _links.append(f"[⬇️ {_fname}]({_url})")
+            except Exception as _save_err:
+                logger.error(f"[CHAT] Failed to save output file {_fname}: {_save_err}")
+                _links.append(f"❌ {_fname}: save failed")
+        _content = result.get("content", "")
+        if _links:
+            _content += "\n\n" + "\n".join(_links)
+        result = {"type": "text", "content": _content}
+
+    if result.get("type") == "generated_image" and result.get("prompt"):
+        manager.last_image_prompts[user.id] = result["prompt"]
+        if result.get("image"):
+            try:
+                if chat_store.enabled(db):
+                    import base64 as _b64g
+                    generated_image_path = await artifact_store.save_bytes(
+                        db, user, conversation_id, _b64g.b64decode(result["image"]), "png")
+                else:
+                    generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
+            except Exception as save_err:
+                logger.warning(f"Failed to save generated image to storage (non-fatal): {save_err}")
+                generated_image_path = None
+
+    save_content = result.get("content", "")
+    if result.get("type") == "flashcards" and result.get("cards"):
+        try:
+            import base64 as _b64fc
+            _fc_blob = _b64fc.b64encode(json.dumps(
+                {"title": result.get("title"), "cards": result.get("cards")},
+                ensure_ascii=False).encode("utf-8")).decode("ascii")
+            save_content = (result.get("content", "") or "") + f"\n\n[[FC]]{_fc_blob}[[/FC]]"
+        except Exception as _fc_err:
+            logger.warning(f"[CHAT] flashcards persist marker failed (non-fatal): {_fc_err}")
+
+    return save_content, generated_image_path, result
+
+
 # REST Endpoints
 
 @router.get("/conversations", response_model=List[ConversationResponse])
@@ -448,6 +529,156 @@ async def execute_command_endpoint(
         return {"type": "text", "content": "Invalid command"}
     result = await command_service.execute_command(command, arg)
     return result
+
+
+class ChatSendRequest(BaseModel):
+    """Payload for the non-streaming HTTP fallback (mirrors the WS `message` frame)."""
+    conversation_id: int
+    content: str = ""
+    images: list = []
+    image_data: Optional[str] = None
+    image_path: Optional[str] = None
+    pdfs: list = []
+    pdf_data: Optional[str] = None
+    documents: list = []
+    document_data: Optional[str] = None
+    files: list = []
+    videos: list = []
+
+
+@router.post("/chat/send")
+async def chat_send(
+    req: ChatSendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """HTTP fallback for the chat WebSocket.
+
+    Some networks/proxies (e.g. Cloudflare over HTTP/3) drop the WS upgrade, so the browser can never
+    open `/api/ws/chat/{id}` and the user's message is silently never sent. This endpoint runs the SAME
+    message handling NON-streamingly over plain HTTP and PERSISTS both messages exactly like the WS, so
+    the client can render the reply (and a reload still shows it). Used by the client only when the
+    socket fails to open. Covers commands/effects (incl. uploads) and basic LLM chat; advanced
+    streaming niceties (intent tools, live token stream) stay WS-only.
+    """
+    user = current_user
+    if not (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)):
+        raise HTTPException(status_code=403, detail="AI access not enabled")
+    conversation_id = req.conversation_id
+    conversation = db.query(Conversation).options(joinedload(Conversation.messages)).filter(
+        Conversation.id == conversation_id, Conversation.user_id == user.id
+    ).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    chat_service = ChatService(db, user=user)
+    command_service = CommandService(db, user=user)
+    storage_service = StorageService(db)
+
+    content = (req.content or "").strip()
+    images, image_data = req.images, req.image_data
+    if images and not image_data:
+        image_data = images[0].get("base64") if images else None
+    documents, document_data = req.documents, req.document_data
+    if documents and not document_data:
+        document_data = documents[0].get("base64") if documents else None
+    files, file_content = req.files, None
+    if files:
+        file_content = files[0].get("content") if files else None
+
+    # --- persist the user message (save an uploaded image like the WS does) ---
+    user_image_path = None
+    if image_data:
+        try:
+            if chat_store.enabled(db):
+                import base64 as _b64u2
+                user_image_path = await artifact_store.save_bytes(
+                    db, user, conversation_id, _b64u2.b64decode(image_data), "png")
+            else:
+                user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
+        except Exception as _e:
+            logger.warning(f"[chat/send] user image save failed (non-fatal): {_e}")
+            user_image_path = None
+    try:
+        db.add(Message(conversation_id=conversation_id, role="user", content=content, image_path=user_image_path))
+        db.commit()
+        first_msg = len(conversation.messages) <= 1
+        if first_msg:
+            conversation.title = content[:50] + ("..." if len(content) > 50 else "")
+        conversation.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception as _umsg_err:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"could not save message: {_umsg_err}")
+    if first_msg and chat_store.enabled(db):
+        try:
+            await chat_store.mirror_conversation(db, user, conversation)
+        except Exception as e:
+            logger.warning(f"[chat/send] conversation mirror failed: {e}")
+
+    command, arg = command_service.parse_command(content)
+    save_content, generated_image_path = "", None
+
+    if command:
+        media_attachments = None
+        if command in MEDIA_ATTACHMENT_COMMANDS:
+            media_attachments = build_media_attachments(
+                images, image_data, req.pdfs, req.pdf_data, documents, document_data, req.videos)
+        try:
+            result = await command_service.execute_command(
+                command, arg, manager.last_image_prompts.get(user.id), attachments=media_attachments)
+        except Exception as cmd_err:
+            logger.error(f"[chat/send] command failed: {cmd_err}", exc_info=True)
+            db.rollback()
+            result = {"type": "text", "content": f"Error: {cmd_err}"}
+
+        # Persist the result via the SAME helper the WS path uses (files/generated_image/flashcards/text).
+        save_content, generated_image_path, result = await normalize_command_result(
+            db, user, conversation_id, result, storage_service)
+    else:
+        # Plain LLM chat (non-streaming). NOTE: intentionally a MINIMAL subset of the WS LLM path — it
+        # omits the WS's URL-fetch / intent-detection / context-dependence heuristics on purpose (the
+        # fallback's job is "the message still gets answered", not to reproduce every tuning knob).
+        result = {"type": "text"}
+        try:
+            system_prompt = chat_service.system_prompt.replace("{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d"))
+            messages = [{"role": "system", "content": system_prompt}]
+            last_role = "system"
+            for msg in sorted(conversation.messages, key=lambda m: m.id)[-21:-1]:
+                if msg.role == last_role:
+                    continue
+                messages.append({"role": msg.role, "content": (msg.content or "")[:500]})
+                last_role = msg.role
+            if last_role != "user":
+                messages.append({"role": "user", "content": content})
+            save_content = await chat_service.chat(messages)
+        except Exception as llm_err:
+            logger.error(f"[chat/send] LLM failed: {llm_err}", exc_info=True)
+            save_content = f"Error: {llm_err}"
+
+    # --- persist the assistant message (retry once for a dropped idle DB conn, like the WS) ---
+    saved = None
+    for _attempt in (1, 2):
+        try:
+            saved = Message(conversation_id=conversation_id, role="assistant",
+                            content=save_content, image_path=generated_image_path)
+            db.add(saved)
+            db.commit()
+            break
+        except Exception as save_err:
+            logger.error(f"[chat/send] assistant save failed (attempt {_attempt}): {save_err}")
+            saved = None
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    img_url = None
+    if generated_image_path:
+        from urllib.parse import quote as _q
+        img_url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(generated_image_path).name)}"
+    return {"ok": saved is not None, "message": {
+        "id": getattr(saved, "id", None), "role": "assistant",
+        "content": save_content, "image_path": img_url, "type": result.get("type", "text")}}
 
 
 @router.get("/conversations/{conversation_id}/messages")
@@ -1221,7 +1452,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # compress/clip/convert/translate operate on raw file bytes
                             # (translate OCRs an uploaded image/PDF and translates the text)
                             media_attachments = None
-                            if command in ("compress", "removebackground", "clip", "convert", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz"):
+                            if command in MEDIA_ATTACHMENT_COMMANDS:
                                 media_attachments = build_media_attachments(
                                     images, image_data, pdfs, pdf_data,
                                     documents, document_data, videos
@@ -1310,76 +1541,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         # compress/convert produce binary files — save them to storage
                         # and replace the raw bytes with markdown download links so the
                         # result is JSON-serializable for the websocket.
-                        if result.get("type") == "files":
-                            from urllib.parse import quote as _q
-                            _links = []
-                            for _f in result.get("files", []):
-                                _fbytes = _f.get("data")
-                                _fname = _f.get("filename", "file")
-                                _fct = (_f.get("content_type") or "").lower()
-                                if not _fbytes:
-                                    continue
-                                try:
-                                    if chat_store.enabled(db):
-                                        _ext = (Path(_fname).suffix.lstrip(".") or "bin")
-                                        _rel = await artifact_store.save_bytes(db, user, conversation_id, _fbytes, _ext)
-                                    else:
-                                        _rel = storage_service.save_file_bytes(
-                                            user.username, conversation_id, _fbytes, _fname
-                                        )
-                                    _saved_name = Path(_rel).name
-                                    # Encode the filename too — spaces/parens (e.g. "image (2).png")
-                                    # otherwise leave a raw ")" that truncates the markdown link.
-                                    _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(_saved_name)}"
-                                    # Embed media INLINE so it shows/plays in chat like geni; other
-                                    # files (pdf/txt/…) keep the download link.
-                                    if _fct.startswith("image/"):
-                                        _links.append(f"![{_fname}]({_url})")
-                                    elif _fct.startswith("video/"):
-                                        _links.append(f"!video[{_fname}]({_url})")
-                                    elif _fct.startswith("audio/"):
-                                        _links.append(f"!audio[{_fname}]({_url})")
-                                    else:
-                                        _links.append(f"[⬇️ {_fname}]({_url})")
-                                except Exception as _save_err:
-                                    logger.error(f"[CHAT] Failed to save output file {_fname}: {_save_err}")
-                                    _links.append(f"❌ {_fname}: save failed")
-                            _content = result.get("content", "")
-                            if _links:
-                                _content += "\n\n" + "\n".join(_links)
-                            result = {"type": "text", "content": _content}
-
-                        # Save generated image to disk (non-blocking - don't fail if storage save fails)
-                        generated_image_path = None
-                        if result.get("type") == "generated_image" and result.get("prompt"):
-                            manager.last_image_prompts[user.id] = result["prompt"]
-                            # Save generated image — encrypted in Blossom when the relay backend is on,
-                            # else to disk/storage as before.
-                            if result.get("image"):
-                                try:
-                                    if chat_store.enabled(db):
-                                        import base64 as _b64g
-                                        generated_image_path = await artifact_store.save_bytes(
-                                            db, user, conversation_id, _b64g.b64decode(result["image"]), "png")
-                                    else:
-                                        generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
-                                except Exception as save_err:
-                                    logger.warning(f"Failed to save generated image to storage (non-fatal): {save_err}")
-                                    generated_image_path = None
-
-                        # Flashcards: persist the deck inline so it re-renders after a reload (the live
-                        # WS still sends `result` with the cards array). The client decodes the
-                        # [[FC]]…[[/FC]] base64-JSON marker in aiFormat and rebuilds the interactive quiz.
-                        _save_content = result.get("content", "")
-                        if result.get("type") == "flashcards" and result.get("cards"):
-                            try:
-                                import base64 as _b64fc, json as _jsonfc
-                                _fc_blob = _b64fc.b64encode(_jsonfc.dumps(
-                                    {"title": result.get("title"), "cards": result.get("cards")},
-                                    ensure_ascii=False).encode("utf-8")).decode("ascii")
-                                _save_content = (result.get("content", "") or "") + f"\n\n[[FC]]{_fc_blob}[[/FC]]"
-                            except Exception as _fc_err:
-                                logger.warning(f"[CHAT] flashcards persist marker failed (non-fatal): {_fc_err}")
+                        # Normalize + persist the command output via the SHARED helper (also used by the
+                        # HTTP /chat/send fallback so the two can't drift). It rewrites a 'files' result to
+                        # inline-markdown text for the live push, saves a generated image, and appends the
+                        # flashcards [[FC]] marker — returning what to persist and what to send live.
+                        _save_content, generated_image_path, result = await normalize_command_result(
+                            db, user, conversation_id, result, storage_service)
 
                         # Save assistant response with image path.
                         # A long command (e.g. flashcards: fetch + LLM building 20+ cards) can idle the

@@ -237,6 +237,20 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
         logger.info("Building agentic system health report...")
         message_text = await build_health_report(db, admin, notify=notify)
 
+        # build_health_report's per-node agent diagnostics can run for minutes, idling THIS transaction
+        # past Postgres' idle_in_transaction_session_timeout (60s). The connection is then dead and the
+        # very next query (the "Logs" conversation lookup) throws "server closed the connection
+        # unexpectedly". Do the SAVE on a guaranteed-fresh session so the write can't hit a dead conn.
+        try:
+            db.close()
+        except Exception:
+            pass
+        db = SessionLocal()
+        admin = db.query(User).filter(User.id == 1).first()
+        if not admin:
+            logger.warning("Admin user not found after report build")
+            return message_text if return_text else None
+
         # Store in the admin's Logs conversation
         logs_chat = get_or_create_logs_chat(db, admin.id)
         db.add(Message(conversation_id=logs_chat.id, role="assistant", content=message_text))
@@ -274,10 +288,18 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
 
     except Exception as e:
         logger.error(f"Error in health report: {e}")
-        db.rollback()
+        # The error may itself be a dead connection (idle-timeout during the long build) — a rollback
+        # on it would raise again and mask the real error, so guard it.
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return f"⚠️ Error generating health report: {e}" if return_text else None
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 async def check_and_run_logs():

@@ -2848,7 +2848,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" disabled title="Paste a link to summarize it into a post">🤖 AI</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">📝 Summarize link</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
@@ -2894,21 +2894,48 @@
       }
       // 🤖 AI → summarize a pasted link into a detailed post (web pages + YouTube videos). Stays
       // disabled until the draft contains a URL.
-      { const aiBtn=$('#cmp-ai',root);
+      // 🤖 AI is a small menu: "Summarize link" (the original action) + "Hashtags" (suggest + append).
+      { const aiBtn=$('#cmp-ai',root), aiMenu=$('#cmp-ai-menu',root), sumBtn=$('#cmp-ai-link',root), tagBtn=$('#cmp-ai-tags',root);
         const firstUrl=()=>{ const m=(ta.value||'').match(/https?:\/\/[^\s]+/i); return m?m[0]:null; };
-        const syncAi=()=>{ if(aiBtn) aiBtn.disabled=!firstUrl(); };
-        ta.addEventListener('input', syncAi); syncAi();
-        if(aiBtn) aiBtn.onclick=async()=>{
-          const url=firstUrl(); if(!url){ toast('paste a link first'); return; }
-          const label=aiBtn.textContent; aiBtn.disabled=true; aiBtn.textContent='🤖 …';
+        const hasImage=()=>/(?:!\[|https?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b|\/blossom\/|media\.)/i.test(ta.value||'');
+        const closeMenu=()=>{ if(aiMenu) aiMenu.hidden=true; };
+        let lastTags='';   // the EXACT hashtag block we last appended — only strip THIS on re-run, never the user's own tags
+        if(aiMenu) aiMenu.addEventListener('click', e=>e.stopPropagation());
+        root.addEventListener('click', closeMenu);   // click-away closes the menu (root dies with the modal — no leak)
+        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); if(aiMenu) aiMenu.hidden=!aiMenu.hidden; };
+        // Summarize a pasted link into a post (enabled always; checks for a link on click so a URL
+        // pasted after the menu opened still works — no stale disabled state).
+        if(sumBtn) sumBtn.onclick=async()=>{ closeMenu();
+          const url=firstUrl(); if(!url){ toast('paste a link into the post first'); return; }
+          const lbl=sumBtn.textContent; sumBtn.disabled=true; sumBtn.textContent='📝 …';
           $('#cmp-status',root).textContent='summarizing link…';
           try{
             const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({url})}).then(r=>r.json());
-            if(r&&r.text){ ta.value=r.text; $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input')); }
+            if(r&&r.text){ ta.value=r.text; lastTags=''; $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input')); }
             else $('#cmp-status',root).textContent='couldn\'t summarize: '+((r&&r.error)||'no content');
           }catch(_){ $('#cmp-status',root).textContent='summarize failed'; }
-          aiBtn.textContent=label; syncAi();
+          sumBtn.textContent=lbl; sumBtn.disabled=false;
+        };
+        // Suggest commonly-used Nostr hashtags from the content + append them after a blank line
+        if(tagBtn) tagBtn.onclick=async()=>{ closeMenu();
+          const body=(ta.value||'').trim(); if(!body && !hasImage()){ toast('write something first'); return; }
+          const lbl=tagBtn.textContent; tagBtn.textContent='# …';
+          $('#cmp-status',root).textContent='finding hashtags…';
+          try{
+            const r=await fetch('/client/hashtags',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({text:body, has_image:hasImage()})}).then(r=>r.json());
+            if(r&&r.hashtags){
+              // Re-run: strip ONLY the exact block WE appended last time (if it's still at the end), so a
+              // user's own hand-typed trailing #tags are preserved — never blanket-strip trailing hashtags.
+              let base=body;
+              if(lastTags && base.endsWith(lastTags)) base=base.slice(0, base.length-lastTags.length).replace(/\s+$/,'');
+              ta.value = base + (base?'\n\n':'') + r.hashtags;
+              lastTags=r.hashtags;
+              $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input'));
+            } else $('#cmp-status',root).textContent='no hashtags: '+((r&&r.error)||'try again');
+          }catch(_){ $('#cmp-status',root).textContent='hashtags failed'; }
+          tagBtn.textContent=lbl;
         };
       }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
@@ -4820,17 +4847,41 @@
   }
   function aiConnect(id){
     try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } }catch(_){}
+    clearTimeout(_ai.wsWatch);
     const proto = location.protocol==='https:'?'wss':'ws';
     const tok=_cookie('access_token');
+    let opened=false;
     const ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
     _ai.ws=ws;
-    ws.onopen=()=>{ const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
+    ws.onopen=()=>{ opened=true; _ai.wsBroken=false; clearTimeout(_ai.wsWatch); const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
     ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
     // No keepalive on this WS: a slow effect/image/video generation can outlast an idle/proxy timeout
     // and the socket closes mid-flight. The server still finishes + PERSISTS the reply, so its live push
     // was lost and the answer only appeared after a manual refresh ("sometimes I never get an update").
     // If a reply was pending, pull it in (below). Idle drops need nothing — aiWsSend reconnects on send.
     ws.onclose=()=>{ if(_ai.ws===ws && _ai.awaiting && VIEW==='ai' && _ai.convId===id) aiRecover(id); };
+    // If the socket can't even OPEN — e.g. a CDN/proxy that drops the WS upgrade (Cloudflare over
+    // HTTP/3 does this) — a queued message would sit forever and never send. After a grace period,
+    // fall back to plain HTTP (POST /api/chat/send) so the command still runs + persists. Every later
+    // send then goes straight over HTTP too, until a socket actually opens again (self-heals).
+    _ai.wsWatch = setTimeout(()=>{ if(!opened){ _ai.wsBroken=true; aiHttpFlush(id); } }, 6000);
+  }
+  // WS upgrade failed → run any queued payloads over plain HTTP (the endpoint persists exactly like the
+  // WS), then re-render the conversation so the reply shows. Used transparently when the socket won't open.
+  async function aiHttpFlush(id){
+    const q=_ai.pending||[]; _ai.pending=[];
+    for(const p of q){ await aiHttpSend(p, id); }
+  }
+  async function aiHttpSend(payload, id){
+    id = id || _ai.convId; if(!id) return;
+    try{
+      const r=await fetch('/api/chat/send',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ conversation_id:id, content:payload.content||'', images:payload.images||[],
+          pdfs:payload.pdfs||[], documents:payload.documents||[], files:payload.files||[] }) });
+      if(!r.ok) throw new Error('http '+r.status);
+    }catch(e){ if(VIEW==='ai' && _ai.convId===id) aiAddMessage('assistant', enc('⚠️ Could not reach the server — try again.')); }
+    _ai.awaiting=false;
+    if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id);   // re-render the persisted reply (also retries the WS)
   }
   // The chat WS dropped while a reply was pending. Poll the persisted conversation (HTTP, no socket
   // needed) until the new assistant message lands — covers slow effects that finish after the drop —
@@ -4849,6 +4900,7 @@
   // Send (or queue) a payload on the chat WS — never fail just because it's mid-connect; queue it
   // and the onopen handler flushes. Reconnects if the socket is closed.
   function aiWsSend(payload){
+    if(_ai.wsBroken){ aiHttpSend(payload); return; }   // socket can't open here → straight to HTTP
     if(_ai.ws && _ai.ws.readyState===1){ try{ _ai.ws.send(JSON.stringify(payload)); return; }catch(_){} }
     (_ai.pending=_ai.pending||[]).push(payload);
     if(!_ai.ws || _ai.ws.readyState>1) aiConnect(_ai.convId);   // CLOSING/CLOSED → reconnect; CONNECTING → just wait
@@ -6059,7 +6111,7 @@
     return h || '<div class="rb-txt"><i>media</i></div>';
   }
   function hotRowHtml(id, count){
-    const ev=Store.get(id); if(!ev||ev.kind!==1) return ''; const pr=profOf(ev.pubkey);
+    const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) return ''; const pr=profOf(ev.pubkey);   // respect mutes + word filter
     const txt=rbSnippet(ev.content);
     return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div>${rbBody(ev)}</div>`;
   }

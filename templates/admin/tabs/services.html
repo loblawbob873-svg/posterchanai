@@ -38,9 +38,9 @@
             <small>One per line: <code>name|user@host</code>. Use <code>local</code> (or leave host empty) to run on this host. Remote hosts are reached over SSH — they need nothing installed, just your SSH public key in their <code>authorized_keys</code> (key-based auth).</small>
         </div>
         <div class="form-group">
-            <label for="node_exec_users">Allowed Users</label>
-            <input type="text" id="node_exec_users" name="node_exec_users" placeholder="alice,bob">
-            <small>Comma-separated usernames allowed to use this feature. Admins always have access.</small>
+            <label for="node_exec_users">Allowed Users (npubs)</label>
+            <textarea id="node_exec_users" name="node_exec_users" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
+            <small>Nostr <code>npub</code>s allowed to use this feature — one per line or comma-separated (hex pubkeys / <code>nprofile</code>s also accepted). The first user to sign up (the admin) is always allowed, so their own key is the default.</small>
         </div>
         <div class="form-row">
             <div class="form-group">

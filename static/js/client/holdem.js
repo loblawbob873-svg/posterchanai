@@ -174,7 +174,8 @@
         </div>`;
       } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
       const lr = g.last_result;
-      const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} last hand!`:'Last hand'}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
+      const lhn = (lr && lr.hand_no) ? ` #${lr.hand_no}` : '';   // show which hand it was, so consecutive results don't look frozen
+      const lastBanner = (lr && lr.summary) ? `<div class="pk-last${(lr.winners&&lr.winners[me])?' win':''}">${(lr.winners&&lr.winners[me])?`🏆 You won ${lr.winners[me]} — hand${lhn} done`:`Hand${lhn} done`}<span class="muted small"> · ${enc(lr.summary)}</span></div>` : '';
       // Action since MY last turn (across streets) — same recap the DM gives, so I always see what the
       // bot/others did when it comes around to me (not just the current street, which is often empty).
       const _SL={preflop:'PRE-FLOP',flop:'FLOP',turn:'TURN',river:'RIVER'};

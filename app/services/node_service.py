@@ -5,7 +5,7 @@ LLM drive commands toward a natural-language goal.
 Config lives in admin Settings:
   node_exec_enabled            "true"/"false"
   node_exec_nodes              one per line: name|user@host  (host 'local'/empty = this host)
-  node_exec_users              comma-separated usernames allowed (admins always allowed)
+  node_exec_users              comma/newline-separated npubs allowed (first user/admin always allowed)
   node_exec_agent_max_steps    max LLM iterations in agentic mode
   node_exec_job_timeout        per-job timeout in seconds (0 = no timeout)
 
@@ -102,13 +102,25 @@ def is_local_target(target: str) -> bool:
 
 
 def user_allowed(db: Session, user: Optional["User"]) -> bool:
-    """Feature must be enabled AND the user must be an admin or in the allowlist."""
+    """Feature must be enabled AND the user must be the first user/admin or an allowlisted npub.
+
+    The allowlist (`node_exec_users`) holds Nostr npubs (or hex pubkeys / nprofiles), one per line or
+    comma-separated. The first signup (id==1) and any admin are always allowed — so the first user's
+    own key is the de-facto default without seeding a value. Identities are compared by canonical
+    pubkey hex via the shared `nostr_service.to_pubkey_hex` (same parser as auth/blossom/client)."""
     if user is None or not is_enabled(db):
         return False
     if getattr(user, "is_admin", False) or user.id == 1:
         return True
-    allowed = {u.strip().lower() for u in _get(db, "node_exec_users", "").split(",") if u.strip()}
-    return (user.username or "").lower() in allowed
+    from app.services.nostr import nostr_service
+    me = nostr_service.to_pubkey_hex(getattr(user, "nostr_npub", None) or "")
+    if not me:
+        return False
+    me = me.lower()
+    raw = _get(db, "node_exec_users", "").replace("\n", ",")
+    allowed = {h.lower() for h in
+               (nostr_service.to_pubkey_hex(x.strip()) for x in raw.split(",") if x.strip()) if h}
+    return me in allowed
 
 
 def tail(text: str, limit: int) -> str:
