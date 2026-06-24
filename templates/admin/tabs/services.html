@@ -25,37 +25,6 @@
     </fieldset>
 
     <fieldset>
-        <legend>Nostr Stats Bot</legend>
-        <div class="form-group">
-            <label for="stats_bot_enabled">
-                <input type="checkbox" id="stats_bot_enabled" name="stats_bot_enabled"> Enable Nostr Stats Bot
-            </label>
-            <small>📊 Every 6 hours, builds a <strong>cyberpunk graph</strong> of daily posts + daily active users (NIP-05 users only) over the past week, and either previews it to your Telegram or posts it publicly.</small>
-        </div>
-        <div class="form-group">
-            <label for="stats_bot_mode">Delivery mode</label>
-            <select id="stats_bot_mode" name="stats_bot_mode">
-                <option value="preview">Preview → admin Telegram (private)</option>
-                <option value="post">Post → public Nostr note</option>
-            </select>
-            <small>Preview sends only to your Telegram. Post publishes a kind-1 note from the account below.</small>
-        </div>
-        <div class="form-group">
-            <label for="stats_bot_nsec">Stats account nsec <small>(required for "Post" mode)</small></label>
-            <input type="password" id="stats_bot_nsec" name="stats_bot_nsec" placeholder="nsec1… — the account that publishes the stats note" autocomplete="off">
-            <small>The chart image uploads to a public Blossom server signed by this key. Leave blank to use Preview mode only.</small>
-        </div>
-        <div class="form-group" style="margin-top: 10px;">
-            <button type="button" id="stats-preview-btn" class="btn">📲 Preview now (Telegram)</button>
-            <button type="button" id="stats-post-btn" class="btn btn-secondary">🚀 Run now (configured mode)</button>
-            <span id="stats-run-status" style="margin-left:10px;"></span>
-        </div>
-        <div class="form-group">
-            <small><strong>Note:</strong> Restart the service after enabling. "Preview now" works immediately without a restart.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
         <legend>Agentic Node Management</legend>
         <div class="form-group">
             <small>Run OS commands and <strong>agentic tasks</strong> (LLM-driven, multi-step goals) on SSH-reachable nodes or <code>local</code> — from chat, Telegram, or the health report.</small>
