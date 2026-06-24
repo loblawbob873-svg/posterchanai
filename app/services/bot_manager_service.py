@@ -463,7 +463,11 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
 def _cmd_for(bot_dict: dict) -> list:
     if bot_dict.get("bot_type") == "image":
         return [sys.executable, str(MAIN_PY), "--image"]
-    modes = bot_dict.get("modes") or ["--misskey"]
+    # Default to the bot's OWN platform when no feature modes are set — a Nostr bot (e.g. a
+    # stats-only NostrStats) must run as --nostr (so it goes live + publishes its kind-0
+    # name/nip05/avatar), not as --misskey (which fails with no Misskey creds → never green,
+    # profile never published). Falls back to misskey only if platform is somehow unset.
+    modes = bot_dict.get("modes") or ["--" + (bot_dict.get("platform") or "misskey")]
     return [sys.executable, str(MAIN_PY)] + list(modes)
 
 
