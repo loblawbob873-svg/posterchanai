@@ -43,8 +43,8 @@ ACCOUNT_FIELDS = (
 # fresh node restores them. Excludes secrets that bootstrap encryption (nostr_nsec), transient link
 # tokens (telegram_key*), and per-node runtime cursors (*_notif_since) which must stay local.
 CONFIG_FIELDS = (
-    "notification_email", "avatar",
-    "news_schedule_enabled", "news_schedule_time", "news_sources",
+    "notification_email", "avatar", "theme",
+    "news_sources",
     "telegram_enabled", "telegram_chat_id", "telegram_notifications",
     "misskey_enabled", "misskey_instance_url", "misskey_api_token",
     "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token",

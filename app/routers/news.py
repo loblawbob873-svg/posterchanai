@@ -304,19 +304,6 @@ async def get_sources(
     return {"sources": sources}
 
 
-@router.post("/generate-daily")
-async def generate_daily_news_now(
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Generate today's daily news summary now (on demand).
-    Creates a "Daily News - [date]" conversation with AI summaries from configured sources.
-    Returns the conversation id so the client can open it. If today's summary already
-    exists, returns that conversation id.
-    """
-    return {"conversation_id": None, "error": "Daily news generation is currently unavailable (scheduler module was removed)."}
-
-
 @router.get("/headlines/{source_url:path}")
 async def get_headlines(
     source_url: str,

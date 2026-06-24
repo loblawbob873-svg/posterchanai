@@ -15,10 +15,9 @@ class User(Base):
     email_verified = Column(Boolean, default=False)
     notification_email = Column(String(255), nullable=True)
     avatar = Column(String(255), nullable=True)  # Path to avatar image
+    theme = Column(String(40), default="professional")  # client UI theme slug (mirrored to Nostr per-user)
 
-    # Scheduled news settings
-    news_schedule_enabled = Column(Boolean, default=False)
-    news_schedule_time = Column(String(5), default="12:00")  # HH:MM format, default noon
+    # News sources for the on-demand `news` command (the scheduled daily-digest feature was removed).
     news_sources = Column(Text, default="")  # Custom news sources, one per line: url|name
 
 

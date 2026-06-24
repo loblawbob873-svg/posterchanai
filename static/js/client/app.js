@@ -20,6 +20,27 @@
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
   const LIVE_ICON = '<svg class="live-ico" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
+  // ---- UI themes (slugs match static/css/client.css :root[data-theme] + schemas.CLIENT_THEMES) ----
+  // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
+  const THEMES = [['cyberpunk','Cyberpunk'],['cherryblossom','Cherry Blossom'],
+                  ['professional','Professional'],['win98','Windows 98'],['winxp','Windows XP'],
+                  ['animegirl','Anime Girl 🌸'],['sovietgothic','Soviet Gothic ☭']];
+  const THEME_SLUGS = new Set(THEMES.map(t=>t[0]));
+  // persist defaults true (a SAVED choice). Pass persist=false for a live preview that must NOT stick:
+  // preview only repaints; it reverts to the cached/saved theme on reload because pc_theme is untouched.
+  function applyTheme(slug, persist){
+    slug = THEME_SLUGS.has(slug) ? slug : 'professional';   // professional is the default
+    if(slug==='cyberpunk') document.documentElement.removeAttribute('data-theme');   // cyberpunk = bare :root
+    else document.documentElement.setAttribute('data-theme', slug);
+    if(persist!==false){ try{ localStorage.setItem('pc_theme', slug); }catch(_){} }   // no-flash re-apply next load
+  }
+  // Sync the account/Nostr theme on login — it's authoritative and follows you across devices. The
+  // cached pc_theme already painted pre-load, so this only corrects an out-of-date device. Best-effort
+  // (no forced sign). Safe to always apply: pc_theme only ever holds SAVED themes (preview never
+  // persists), so on the saving device server==local; on another device this pulls the latest choice.
+  async function loadThemeFromServer(){
+    try{ const r=await fetch('/api/auth/settings'); if(r.ok){ const s=await r.json(); if(s&&s.theme) applyTheme(s.theme); } }catch(_){}
+  }
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
   let _deferredInstall = null;
   window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); _deferredInstall=e; const b=$('#btn-install'); if(b) b.classList.remove('hidden'); });
@@ -623,6 +644,7 @@
   // ---------- app start ----------
   function startApp(){
     updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
+    loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
     // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends
@@ -5097,10 +5119,6 @@
   let _setRelays = [];
   function renderSettings(){
     const feed=$('#feed');
-    const relaysOn = !!ClientSettings.get('relaysEnabled');
-    const blossomOn = !!ClientSettings.get('blossomEnabled');
-    _setRelays = userRelays();
-    if(!_setRelays.length) _setRelays = [''];
     feed.innerHTML = `<div class="settings">
       <section class="set-card">
         <div class="set-head"><div><div class="set-title">Account</div>
@@ -5128,86 +5146,9 @@
         </div>
       </section>
       <div id="user-settings"></div>
-      <section class="set-card">
-        <div class="set-head">
-          <div><div class="set-title">Relays</div>
-            <div class="muted small">By default this app uses the built-in relay. Turn this on to connect to your own relays instead — events from them are signature-verified.</div></div>
-          <label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label>
-        </div>
-        <div class="set-body ${relaysOn?'':'disabled'}" id="set-relays-body">
-          <div id="set-relay-list"></div>
-          <div class="set-actions">
-            <button class="btn btn-ghost small" id="set-relay-add">＋ Add relay</button>
-            <button class="btn btn-ghost small" id="set-relay-ext">⇣ Import from extension</button>
-          </div>
-          <div class="set-actions">
-            <input class="input" id="set-nip05" placeholder="you@domain.com" value="${enc(ME&&niceImport()||'')}">
-            <button class="btn btn-ghost small" id="set-relay-nip05">⇣ Import from NIP-05</button>
-          </div>
-          <div class="muted small">Default built-in relay: <code>${enc(CFG.relay_url||'none')}</code></div>
-        </div>
-      </section>
-
-      <section class="set-card">
-        <div class="set-head">
-          <div><div class="set-title">Media server (Blossom)</div>
-            <div class="muted small">Where your uploaded images &amp; files are stored. Turn this on to use your own Blossom server instead of the built-in one.</div></div>
-          <label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label>
-        </div>
-        <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
-          <input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}">
-          <div class="muted small">Must be an <code>https://</code> server that allows cross-origin (CORS) uploads. Default built-in: <code>${enc(CFG.blossom_url||'none')}</code></div>
-        </div>
-      </section>
-
-      <section class="set-card">
-        <div class="set-head"><div>
-          <div class="set-title">Lightning wallet (one-tap zaps)</div>
-          <div class="muted small">Got the <b>Alby</b> (or any WebLN) browser extension? Zaps already use it — just tap ⚡. Otherwise connect a wallet with a <b>Nostr Wallet Connect</b> string (NIP-47) — handy on mobile or with Alby Hub / Coinos / Primal. Stored only in this browser.</div>
-        </div></div>
-        <div class="set-body">
-          <div class="set-actions"><button class="btn btn-cyan small" id="set-webln">⚡ Connect Alby / WebLN extension</button></div>
-          <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://… (for wallets without an extension)" value="${enc(ClientSettings.get('nwc',''))}">
-          <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
-            <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
-          <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
-        </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div>
-          <div class="set-title">Muted words</div>
-          <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
-        </div></div>
-        <div class="set-body">
-          <textarea class="input" id="set-muted-words" rows="3" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
-          <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
-          <div class="muted small" id="set-words-status"></div>
-        </div>
-      </section>
-
-      <button class="btn btn-neon" id="set-save">Save &amp; reload</button>
-      <div class="muted small set-foot">Changing relays or media server reconnects the app, so it reloads on save.</div>
     </div>`;
 
-    drawRelayRows();
-    const syncRelays=()=>{ _setRelays = $$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
-
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
-    { const we=$('#set-webln'); if(we) we.onclick=async()=>{ const st=$('#set-nwc-status');
-        if(!window.webln){ if(st) st.textContent='No WebLN extension found — install Alby, or paste an NWC string below.'; return; }
-        try{ await window.webln.enable(); if(st) st.textContent='✓ Extension connected — tap ⚡ on any post to zap'; toast('⚡ wallet extension connected'); }
-        catch(e){ if(st) st.textContent='Extension declined: '+((e&&e.message)||e); } }; }
-    { const nb=$('#set-nwc-save'); if(nb) nb.onclick=()=>{ const st=$('#set-nwc-status'); const u=($('#set-nwc').value||'').trim();
-        if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
-        ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
-    { const nc=$('#set-nwc-clear'); if(nc) nc.onclick=()=>{ ClientSettings.set('nwc',''); const i=$('#set-nwc'); if(i) i.value=''; const st=$('#set-nwc-status'); if(st) st.textContent='Disconnected'; toast('wallet disconnected'); }; }
-    { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
-        const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
-        wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
-        try{ await saveMutedWords(words); if(st) st.textContent='Saved — '+MUTED_WORDS.size+' muted word(s). New posts are filtered immediately.'; }
-        catch(e){ if(st) st.textContent='Save failed: '+((e&&e.message)||e); }
-        finally{ wb.disabled=false; }
-      }; }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!confirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
@@ -5240,27 +5181,7 @@
           if(st) st.textContent = r.ok ? '✓ Sync started — your posts will appear shortly.' : ('failed: '+(r.error||''));
         }catch(_){ if(st) st.textContent='sync failed'; }
       }; }
-    $('#set-relays-on').onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked);
-    $('#set-blossom-on').onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked);
-    $('#set-relay-add').onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); };
-    $('#set-relay-ext').onclick=async()=>{ syncRelays(); await importExtensionRelays(); };
-    $('#set-relay-nip05').onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); };
-    $('#set-save').onclick=async ()=>{
-      syncRelays();
-      const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
-      const media=$('#set-media').value.trim();
-      ClientSettings.set('relaysEnabled', $('#set-relays-on').checked);
-      ClientSettings.set('relays', urls);
-      ClientSettings.set('blossomEnabled', $('#set-blossom-on').checked);
-      ClientSettings.set('mediaServer', media);
-      // Store in Nostr so they sync across devices: NIP-65 relay list (10002) + BUD-03 Blossom
-      // server list (10063). Published to the current relay (the built-in one is always connected).
-      try{ if(urls.length) await publish(10002, '', urls.map(u=>['r',u])); }catch(_){}
-      try{ if(media) await publish(10063, '', [['server', media]]); }catch(_){}
-      toast('settings saved — reloading'); setTimeout(()=>location.reload(), 600);
-    };
-    loadNostrPrefs();       // populate relays/media from Nostr (10002/10063) if not set locally
-    renderUserSettings();   // per-user account settings (mail/telegram/social/finance/news) load async
+    renderUserSettings();   // tabbed User Settings — incl. the moved Relays / Media / Zaps / Muted tabs
   }
   // Retrieve relay list (NIP-65 10002) + Blossom servers (BUD-03 10063) from Nostr. Only fills the
   // UI when this device hasn't set them locally — so a fresh device inherits your synced choices.
@@ -5283,6 +5204,7 @@
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link, Matrix login,
   // Pleroma OAuth, Misskey MiAuth, Nostr key) to their existing endpoints.
   let _usMail=[];
+  let _nostrPrefsLoaded=false;   // load relay/media prefs from Nostr ONCE per session, not on every re-render
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
     // /api/auth/settings needs the nostr-login session cookie. Establish it FIRST — otherwise the
@@ -5299,16 +5221,26 @@
       const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; return;
     }
     _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
-    const tabs=[['profile','Profile'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
+    // The select must reflect the theme CURRENTLY applied on this device (local choice wins over the
+    // server value), and we must NOT re-apply on open (that would revert an unsaved live preview).
+    let _curTheme; try{ _curTheme=localStorage.getItem('pc_theme'); }catch(_){}
+    _curTheme=_curTheme||s.theme||'professional';
+    if(!THEME_SLUGS.has(_curTheme)) _curTheme='professional';   // stale/removed slug → don't desync the dropdown
+    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
+    const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
+    // init the relay rows ONCE — renderUserSettings re-runs on connect/disconnect actions in other
+    // tabs; re-seeding from saved values each time would wipe in-progress relay edits.
+    if(!_nostrPrefsLoaded){ _setRelays=userRelays(); if(!_setRelays.length) _setRelays=['']; }
     host.innerHTML=`<section class="set-card us">
       <div class="set-head"><div class="set-title">User Settings</div></div>
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="set-body">
         <div class="us-pane active" data-pane="profile">
+          <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
+            <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
+          </label>
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Daily news digest<label class="switch"><input type="checkbox" id="us-news-on" ${s.news_schedule_enabled?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld">Digest time<input class="input" id="us-news-time" type="time" value="${enc(s.news_schedule_time||'12:00')}"></label>
-          <label class="fld">News sources <span class="muted small">(one per line: url|name)</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
+          <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
         <div class="us-pane" data-pane="mail">
           <div class="muted small">IMAP/SMTP accounts for the <code>mail</code> command. First account is the default sender.</div>
@@ -5364,6 +5296,46 @@
           <div class="set-actions"><input class="input" id="us-key-name" placeholder="Key name (optional)"><button class="btn btn-ghost small" id="us-key-new">Generate new key</button></div>
           <div id="us-key-list"></div>
         </div>
+        <div class="us-pane" data-pane="relays">
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own relays<label class="switch"><input type="checkbox" id="set-relays-on" ${relaysOn?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">By default this app uses the built-in relay. Turn this on to connect to your own relays instead — events from them are signature-verified.</div>
+          <div class="set-body ${relaysOn?'':'disabled'}" id="set-relays-body">
+            <div id="set-relay-list"></div>
+            <div class="set-actions">
+              <button class="btn btn-ghost small" id="set-relay-add">＋ Add relay</button>
+              <button class="btn btn-ghost small" id="set-relay-ext">⇣ Import from extension</button>
+            </div>
+            <div class="set-actions">
+              <input class="input" id="set-nip05" placeholder="you@domain.com" value="${enc(ME&&niceImport()||'')}">
+              <button class="btn btn-ghost small" id="set-relay-nip05">⇣ Import from NIP-05</button>
+            </div>
+            <div class="muted small">Default built-in relay: <code>${enc(CFG.relay_url||'none')}</code></div>
+          </div>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-relays-save">Save &amp; reload</button></div>
+        </div>
+        <div class="us-pane" data-pane="media">
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own Blossom server<label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Where your uploaded images &amp; files are stored. Turn this on to use your own Blossom server instead of the built-in one.</div>
+          <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
+            <input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}">
+            <div class="muted small">Must be an <code>https://</code> server that allows cross-origin (CORS) uploads. Default built-in: <code>${enc(CFG.blossom_url||'none')}</code></div>
+          </div>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-media-save">Save &amp; reload</button></div>
+        </div>
+        <div class="us-pane" data-pane="zaps">
+          <div class="muted small">Got the <b>Alby</b> (or any WebLN) browser extension? Zaps already use it — just tap ⚡. Otherwise connect a wallet with a <b>Nostr Wallet Connect</b> string (NIP-47) — handy on mobile or with Alby Hub / Coinos / Primal. Stored only in this browser.</div>
+          <div class="set-actions"><button class="btn btn-cyan small" id="set-webln">⚡ Connect Alby / WebLN extension</button></div>
+          <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://… (for wallets without an extension)" value="${enc(ClientSettings.get('nwc',''))}">
+          <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
+            <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
+          <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
+        </div>
+        <div class="us-pane" data-pane="muted">
+          <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
+          <textarea class="input" id="set-muted-words" rows="4" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
+          <div class="muted small" id="set-words-status"></div>
+        </div>
       </div>
       <button class="btn btn-neon" id="us-save">Save settings</button>
       <div class="muted small set-foot" id="us-save-status"></div>
@@ -5375,6 +5347,48 @@
       if(b.dataset.tab==='keys') usLoadKeys();
     });
     usRenderMail();
+
+    // ---- moved into tabs: Relays / Media / Zaps / Muted (client-side, own save semantics) ----
+    drawRelayRows();
+    const syncRelays=()=>{ _setRelays=$$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
+    { const t=$('#set-relays-on'); if(t) t.onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked); }
+    { const t=$('#set-blossom-on'); if(t) t.onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked); }
+    { const b=$('#set-relay-add'); if(b) b.onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); }; }
+    { const b=$('#set-relay-ext'); if(b) b.onclick=async()=>{ syncRelays(); await importExtensionRelays(); }; }
+    { const b=$('#set-relay-nip05'); if(b) b.onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); }; }
+    { const b=$('#set-relays-save'); if(b) b.onclick=async()=>{
+        syncRelays();
+        const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
+        ClientSettings.set('relaysEnabled', $('#set-relays-on').checked);
+        ClientSettings.set('relays', urls);
+        try{ if(urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
+        toast('relays saved — reloading'); setTimeout(()=>location.reload(),600);
+      }; }
+    { const b=$('#set-media-save'); if(b) b.onclick=async()=>{
+        const media=$('#set-media').value.trim();
+        ClientSettings.set('blossomEnabled', $('#set-blossom-on').checked);
+        ClientSettings.set('mediaServer', media);
+        try{ if(media) await publish(10063,'',[['server',media]]); }catch(_){}
+        toast('media server saved — reloading'); setTimeout(()=>location.reload(),600);
+      }; }
+    { const we=$('#set-webln'); if(we) we.onclick=async()=>{ const st=$('#set-nwc-status');
+        if(!window.webln){ if(st) st.textContent='No WebLN extension found — install Alby, or paste an NWC string below.'; return; }
+        try{ await window.webln.enable(); if(st) st.textContent='✓ Extension connected — tap ⚡ on any post to zap'; toast('⚡ wallet extension connected'); }
+        catch(e){ if(st) st.textContent='Extension declined: '+((e&&e.message)||e); } }; }
+    { const nb=$('#set-nwc-save'); if(nb) nb.onclick=()=>{ const st=$('#set-nwc-status'); const u=($('#set-nwc').value||'').trim();
+        if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
+        ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
+    { const nc=$('#set-nwc-clear'); if(nc) nc.onclick=()=>{ ClientSettings.set('nwc',''); const i=$('#set-nwc'); if(i) i.value=''; const st=$('#set-nwc-status'); if(st) st.textContent='Disconnected'; toast('wallet disconnected'); }; }
+    { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
+        const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
+        wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
+        try{ await saveMutedWords(words); if(st) st.textContent='Saved — '+MUTED_WORDS.size+' muted word(s). New posts are filtered immediately.'; }
+        catch(e){ if(st) st.textContent='Save failed: '+((e&&e.message)||e); }
+        finally{ wb.disabled=false; }
+      }; }
+    // Fill relays/media from Nostr (10002/10063) ONCE — renderUserSettings re-runs on many settings
+    // sub-actions, and re-querying would clobber in-progress relay edits each time.
+    if(!_nostrPrefsLoaded){ _nostrPrefsLoaded=true; loadNostrPrefs(); }
     usLoadKeys();   // populate API Keys immediately (not only on tab click)
     $('#us-mail-add').onclick=()=>{ _usMail.push({email:'',imap_server:'',imap_port:993,smtp_server:'',smtp_port:587,password:''}); usRenderMail(); };
     // Telegram link key
@@ -5416,19 +5430,45 @@
       if(d && d.key){ alert('Your new key (shown once):\n\n'+d.key); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
-      const body={ notification_email:$('#us-email').value.trim(), news_schedule_enabled:$('#us-news-on').checked,
-        news_schedule_time:$('#us-news-time').value||'12:00', news_sources:$('#us-news-src').value,
+      const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
         matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
         matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
+        theme:($('#us-theme')&&$('#us-theme').value)||'professional',
         mail_accounts:usCollectMail() };
       const fin=$('#us-fin').value.trim(); if(fin) body.finance_api_key=fin;
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
+      // Persist the client-side tabs too, so the single Save button saves EVERYTHING (not just the
+      // server account settings — the "relay/media edits silently dropped" bug). Reload only when the
+      // relay/media config actually changed (those reconnect the app).
+      let needReload=false;
+      if($('#set-relays-on')){
+        syncRelays();
+        const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
+        const on=$('#set-relays-on').checked;
+        if(on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays())) needReload=true;
+        ClientSettings.set('relaysEnabled', on); ClientSettings.set('relays', urls);
+        // only publish the NIP-65 list when the user actually enabled their own relays — don't mutate
+        // their relay list (which follows them to other clients) just because URLs are prefilled.
+        try{ if(on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
+      }
+      if($('#set-media')){
+        const media=$('#set-media').value.trim(), on=$('#set-blossom-on').checked;
+        if(on!==!!ClientSettings.get('blossomEnabled') || media!==ClientSettings.get('mediaServer','')) needReload=true;
+        ClientSettings.set('blossomEnabled', on); ClientSettings.set('mediaServer', media);
+        try{ if(on && media) await publish(10063,'',[['server',media]]); }catch(_){}
+      }
+      if($('#set-nwc')){ const u=($('#set-nwc').value||'').trim(); if(!u || Nwc.parse(u)) ClientSettings.set('nwc', u); }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(st) st.textContent=r.ok?'✓ Saved':('save failed ('+r.status+')'); if(r.ok) toast('settings saved');
+        if(r.ok){ applyTheme(body.theme); toast('settings saved');
+          if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
+          if(needReload) setTimeout(()=>location.reload(),600);
+        } else if(st) st.textContent='save failed ('+r.status+')';
       }catch(_){ if(st) st.textContent='save failed'; }
     };
+    // Live theme preview: apply on change without waiting for Save (revert is a page reload / re-save).
+    { const ts=$('#us-theme'); if(ts) ts.onchange=()=>applyTheme(ts.value, false); }   // PREVIEW only (no persist); Save writes it
   }
   function usRenderMail(){
     const wrap=$('#us-mail-list'); if(!wrap) return;

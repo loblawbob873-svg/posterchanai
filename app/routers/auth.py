@@ -544,9 +544,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
-        # Scheduled news settings
-        news_schedule_enabled=current_user.news_schedule_enabled or False,
-        news_schedule_time=current_user.news_schedule_time or "12:00",
+        theme=(getattr(current_user, "theme", None) or "professional"),
         news_sources=current_user.news_sources or "",
         # Mail settings
         mail_accounts=mail_accounts,
@@ -601,22 +599,16 @@ def update_user_settings(
             )
         current_user.notification_email = notification_email if notification_email else None
 
-    # Update scheduled news settings
-    if settings.news_schedule_enabled is not None:
-        current_user.news_schedule_enabled = settings.news_schedule_enabled
-    if settings.news_schedule_time is not None:
-        # Validate time format (HH:MM)
-        import re
-        time_str = settings.news_schedule_time.strip()
-        if time_str and re.match(r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
-            current_user.news_schedule_time = time_str
-        elif time_str:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid time format. Use HH:MM (e.g., 12:00)"
-            )
+    # News sources for the on-demand `news` command (the scheduled daily-digest feature was removed).
     if settings.news_sources is not None:
         current_user.news_sources = settings.news_sources
+
+    # Client UI theme (mirrored to Nostr via users_store CONFIG_FIELDS). Validate against the
+    # allowlist so an unknown slug can't be persisted; blank/unknown falls back to the default.
+    if settings.theme is not None:
+        from app.schemas import CLIENT_THEMES
+        t = settings.theme.strip()
+        current_user.theme = t if t in CLIENT_THEMES else "professional"
 
 
     # Update Calendar & Contacts settings (stored in UserSetting table)

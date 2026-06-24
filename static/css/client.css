@@ -9,7 +9,232 @@
   --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
   --glow:0 0 12px rgba(0,255,255,.5); --glow-cy:0 0 12px rgba(0,255,255,.45);
   --r:14px;
+  --amb1:rgba(0,255,255,.06); --amb2:rgba(255,0,255,.045);  /* body ambient glow (themeable) */
 }
+
+/* ============================ THEMES ============================
+   Cyberpunk (above, the flagship default) is :root. Each theme overrides the same custom
+   properties; the client sets <html data-theme="…"> from the user's saved choice (mirrored to
+   Nostr). Slugs MUST match schemas.CLIENT_THEMES + the client Settings <select>. */
+
+/* Cherry Blossom — soft sakura light theme */
+:root[data-theme="cherryblossom"]{
+  --bg:#fff5f8; --bg2:#ffe9f0; --panel:rgba(255,255,255,.74); --panel2:rgba(255,231,240,.9);
+  --neon:#ff6fa5; --neon2:#c77dff; --cyan:#ff8fb0; --green:#3fae7e; --amber:#e08a2e;
+  --text:#4a2b38; --muted:#7a5260; --line:rgba(255,111,165,.30);
+  --glow:0 0 10px rgba(255,111,165,.35); --glow-cy:0 0 10px rgba(255,143,176,.3);
+  --r:16px; --amb1:rgba(255,143,176,.16); --amb2:rgba(199,125,255,.10);
+}
+
+/* Professional Modern — clean neutral business light theme (no neon glow) */
+:root[data-theme="professional"]{
+  --bg:#f5f7fa; --bg2:#eaeef3; --panel:rgba(255,255,255,.92); --panel2:#ffffff;
+  --neon:#2563eb; --neon2:#4f46e5; --cyan:#0891b2; --green:#16a34a; --amber:#d97706;
+  --text:#1f2937; --muted:#6b7280; --line:rgba(15,23,42,.12);
+  --glow:0 1px 3px rgba(15,23,42,.12); --glow-cy:0 1px 3px rgba(15,23,42,.12);
+  /* soft blue/indigo corner washes so the login + app don't read as flat white */
+  --r:10px; --amb1:rgba(37,99,235,.07); --amb2:rgba(99,102,241,.06);
+}
+
+/* Windows 98 — silver chrome, navy accents, square corners. NB: --bg is the silver "window" colour
+   (not the teal desktop) so the feed's black text stays readable — the feed sits directly on --bg. */
+:root[data-theme="win98"]{
+  --bg:#c0c0c0; --bg2:#b8b8b0; --panel:#c0c0c0; --panel2:#d4d0c8;
+  --neon:#000080; --neon2:#1084d0; --cyan:#000080; --green:#008000; --amber:#808000;
+  --text:#000000; --muted:#404040; --line:#808080;
+  --glow:none; --glow-cy:none; --r:0; --amb1:transparent; --amb2:transparent;
+}
+
+/* Windows XP — Luna blue accents on a light "window" surface (the feed sits on --bg, so --bg must be
+   light enough for the dark navy text; the saturated XP blue lives in the accents + ambient glow). */
+:root[data-theme="winxp"]{
+  --bg:#eaf1fb; --bg2:#d6e4f7; --panel:rgba(255,255,255,.93); --panel2:#ece9d8;
+  --neon:#0a5bc4; --neon2:#2f8f2f; --cyan:#1c7fd6; --green:#2f8f2f; --amber:#f0a000;
+  --text:#0a1a3a; --muted:#5a6a8a; --line:rgba(10,91,196,.30);
+  --glow:0 0 8px rgba(10,91,196,.22); --glow-cy:0 0 8px rgba(10,91,196,.22);
+  --r:8px; --amb1:rgba(255,255,255,.10); --amb2:rgba(10,91,196,.06);
+}
+/* Anime Girl — kawaii pastel: lavender + bubblegum pink + mint, extra-round corners, soft glow */
+:root[data-theme="animegirl"]{
+  --bg:#fbf0ff; --bg2:#f3e3ff; --panel:rgba(255,255,255,.78); --panel2:rgba(247,227,255,.9);
+  --neon:#ff7ec8; --neon2:#9d7bff; --cyan:#3fb6c8; --green:#3fbf9c; --amber:#f0a43a;
+  --text:#5a3a6e; --muted:#a888bd; --line:rgba(157,123,255,.30);
+  --glow:0 0 10px rgba(255,126,200,.40); --glow-cy:0 0 10px rgba(157,123,255,.30);
+  --r:18px; --amb1:rgba(255,126,200,.16); --amb2:rgba(157,123,255,.12);
+}
+
+/* Soviet Gothic — oppressive dark with communist red + tarnished gold, parchment text, sharp edges */
+:root[data-theme="sovietgothic"]{
+  --bg:#17110f; --bg2:#211713; --panel:rgba(34,24,20,.82); --panel2:rgba(46,32,27,.92);
+  --neon:#b81e22; --neon2:#7a0d10; --cyan:#c79a3a; --green:#6b7f3a; --amber:#c79a3a;
+  --text:#e7d8be; --muted:#a08b6f; --line:rgba(184,30,34,.34);
+  --glow:0 0 10px rgba(184,30,34,.40); --glow-cy:0 0 9px rgba(199,154,58,.30);
+  --r:3px; --amb1:rgba(184,30,34,.10); --amb2:rgba(199,154,58,.05);
+}
+
+/* The cyberpunk-only decor (city skyline "buildings", CRT scanlines, neon grid) belongs to the
+   flagship theme only — it looks wrong over the light/retro palettes. Cyberpunk is the bare :root
+   (no data-theme attr), so any themed page hides all three. */
+:root[data-theme] .city-bg,
+:root[data-theme] .scanlines,
+:root[data-theme] .grid-bg{ display:none !important; }
+
+/* ===== Readability layer for the non-cyberpunk themes (ADDITIVE — cyberpunk is the bare :root and
+   is never matched here, so it stays pixel-perfect). The base CSS hardcodes cyberpunk colors
+   (near-white/neon-cyan text like .note .txt #eceefb, deep-violet fills like rgba(8,5,18,…), and
+   neon text-shadows) that bypass the theme vars and go unreadable on the light/retro palettes. Route
+   the recurring ones back to the theme's --text/--panel and flatten the glow. ===== */
+:root[data-theme] *{ text-shadow:none !important; }   /* neon glow → flat (a halo kills text on light bg) */
+
+/* text that was hardcoded light/near-white → theme text colour */
+:root[data-theme] .note .txt,
+:root[data-theme] .note .name,
+:root[data-theme] .usercount,
+:root[data-theme] .rb-item b,
+:root[data-theme] .rb-item .rb-txt,
+:root[data-theme] .nav-item.active,
+:root[data-theme] .me .mn{ color:var(--text); }
+
+/* neon drop-shadow filters on glyphs/badges → none */
+:root[data-theme] .usercount .wot-ico,
+:root[data-theme] .usercount .live-ico,
+:root[data-theme] .note .pin-badge,
+:root[data-theme] .nav-item:hover .ic,
+:root[data-theme] .nav-item.active .ic{ filter:none; }
+
+/* deep-violet hardcoded fills → theme panels (otherwise dark patches hide themed-dark text) */
+:root[data-theme] .input,
+:root[data-theme] textarea{ background:var(--panel2); color:var(--text); }
+:root[data-theme] .note .av{ background:var(--panel2); }
+:root[data-theme] .note .txt img,
+:root[data-theme] .note .txt video,
+:root[data-theme] .note .media img,
+:root[data-theme] .note .media video{ background:var(--panel2); }
+
+/* nav / rightbar active+hover states were neon gradients on near-black → theme panel + line */
+:root[data-theme] .nav-item.active{ background:var(--panel2); box-shadow:inset 0 0 0 1px var(--line); }
+:root[data-theme] .nav-item:hover{ background:var(--panel); color:var(--text); }
+:root[data-theme] .rb-item:hover{ background:var(--panel2); box-shadow:none; }
+:root[data-theme] .note:hover{ background:var(--panel); }
+
+/* more hardcoded light-on-X text → theme text: form labels, fc-post body, the AI/permission gate
+   heading (the "permissions modal" is a modal() with an .ai-gate h2 that was hardcoded #fff). */
+:root[data-theme] .fld,
+:root[data-theme] .fc-post-body,
+:root[data-theme] .ai-gate h2,
+:root[data-theme] .me .mk,
+:root[data-theme] .conn{ color:var(--text); }
+:root[data-theme] .conn{ color:var(--muted); }
+/* active settings tab: dark #04020c label on the accent fill is unreadable when --neon is dark
+   (win98 navy) → force white, which reads on every theme's accent. */
+:root[data-theme] .us-tab.active{ color:#fff; }
+/* .btn-cyan hardcodes a dark text (#04222a) over a cyan that goes DARK on some themes (win98 navy →
+   New-post label unreadable). Repaint accent buttons as white-on-accent so the label always reads. */
+:root[data-theme] .btn-cyan{ background:linear-gradient(135deg,var(--neon),var(--neon2)); color:#fff; }
+/* deep-violet hardcoded fills inside cards/modals → theme panel */
+:root[data-theme] .keybox,
+:root[data-theme] .ended-badge,
+:root[data-theme] .planned-badge{ background:var(--panel2); }
+/* embedded/quoted nostr note referenced inside a post: its bg was hardcoded rgba(8,5,18,.4) (deep
+   violet) → a muddy "brown" patch with low-contrast text on the light themes. Route to a theme panel. */
+:root[data-theme] .quoted{ background:var(--panel2); }
+/* The Settings cards (incl. User Settings) ALSO hardcoded rgba(8,5,18,.4) as their background, so the
+   dark-theme text sat on a dark card → unreadable on every light theme. Route to a theme panel; route
+   the toggle-switch track + the .fld input fills too so the whole settings surface themes cleanly. */
+:root[data-theme] .set-card{ background:var(--panel); }
+:root[data-theme] .switch .slider{ background:var(--panel2); }
+/* URL / Twitter(X) link-preview cards + the generic note-preview also hardcoded the deep-violet bg
+   (the "ugly color" on an embedded tweet) → theme panel. */
+:root[data-theme] .link-card,
+:root[data-theme] .note-preview{ background:var(--panel2); }
+/* AI splash command names: the inline links were var(--cyan), too light on the light themes' light
+   surface → route to the darker --neon accent; and the chip hover's dark #04020c label → white. */
+:root[data-theme] .ai-welcome .ai-cmd{ color:var(--neon); border-bottom-color:var(--neon); }
+:root[data-theme] .ai-cmd:hover{ color:#fff; }
+
+/* Sidebar identity cluster (name under the avatar → connection status → user/online counts, right
+   above Logout): force the theme's text colour so it's high-contrast on every theme. (Winxp's later
+   !important rules override this back to white-on-its-blue-rail.) */
+/* THE sidebar/navbar hardcodes a near-opaque dark background (rgba(11,11,18,.95)), so on a light
+   theme the whole left rail stayed dark and its text (nav items + the avatar→logout cluster) was
+   dark-on-dark / unreadable. Theme the rail itself; then all its text reads. (Winxp's own blue
+   .sidebar rule + cyberpunk's bare :root are unaffected.) */
+:root[data-theme] .sidebar{ background:var(--panel) !important; }
+:root[data-theme] .me .mn,
+:root[data-theme] .usercount,
+:root[data-theme] .conn{ color:var(--text) !important; }
+
+/* "From Follows" / trending right column: give the cards a themed panel (were transparent over a
+   deep-violet hover) and route the hardcoded neon body/heading text to theme colours (also above). */
+:root[data-theme] .rb-item{ background:var(--panel); }
+:root[data-theme] .rb-item b{ color:var(--text); }                 /* author name (was hardcoded #fff) */
+:root[data-theme] .rb-item .rb-txt{ color:var(--text); }           /* snippet (was hardcoded #7dfcff) */
+:root[data-theme] .rb-fire{ color:var(--amber); }
+:root[data-theme] .rb-av{ background:var(--panel2); }              /* avatar fallback (was #1a1230) */
+:root[data-theme] .rb-section h3{ color:var(--text); }
+:root[data-theme] .rb-github{ color:var(--text); }
+
+/* search box + any input placeholder readable on every theme */
+:root[data-theme] .input::placeholder,
+:root[data-theme] textarea::placeholder{ color:var(--muted); }
+/* ========================== END THEMES ========================== */
+
+/* ===== Per-OS flourishes — placed AFTER the readability layer so they win by source order. Make the
+   retro OS themes actually read like the OS (not just a recoloured cyberpunk). ===== */
+/* Windows XP "Luna": Tahoma, glossy blue 3D buttons, a blue title-bar topbar, white/beige controls. */
+:root[data-theme="winxp"] body,
+:root[data-theme="winxp"] .input,
+:root[data-theme="winxp"] textarea,
+:root[data-theme="winxp"] button,
+:root[data-theme="winxp"] .btn{ font-family:Tahoma,'Segoe UI',Verdana,sans-serif !important; }
+:root[data-theme="winxp"] .btn-neon,
+:root[data-theme="winxp"] .btn-cyan,
+:root[data-theme="winxp"] .pill,
+:root[data-theme="winxp"] #btn-logout{
+  background:linear-gradient(180deg,#7db4f0 0%,#3a82da 46%,#1f63c4 54%,#3f86dc 100%) !important;
+  color:#fff !important; border:1px solid #15539f !important; border-radius:7px !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55) !important; text-shadow:0 1px 1px rgba(0,0,0,.4) !important;
+}
+:root[data-theme="winxp"] .btn-neon:hover,
+:root[data-theme="winxp"] .btn-cyan:hover,
+:root[data-theme="winxp"] #btn-logout:hover{ filter:brightness(1.07); }
+:root[data-theme="winxp"] .btn-ghost,
+:root[data-theme="winxp"] .mini{ background:linear-gradient(180deg,#fff,#ece9d8) !important; color:#143c7a !important; border:1px solid #7f9db9 !important; border-radius:4px !important; }
+:root[data-theme="winxp"] .topbar{ background:linear-gradient(180deg,#3f8df2,#1357c4) !important; border-bottom:1px solid #0a3d96 !important; color:#fff !important; }
+/* the search box + reload button live IN the topbar — keep their dark text on their light surfaces
+   (a blanket .topbar *{color:#fff} turned the search text and the ↻ icon white-on-white). */
+:root[data-theme="winxp"] .topbar .input,
+:root[data-theme="winxp"] .topbar input,
+:root[data-theme="winxp"] .topbar textarea{ color:#143c7a !important; background:#fff !important; }
+:root[data-theme="winxp"] .topbar input::placeholder{ color:#5a6a8a !important; }
+:root[data-theme="winxp"] #btn-refresh,
+:root[data-theme="winxp"] .topbar .mini{ background:linear-gradient(180deg,#fff,#ece9d8) !important; color:#143c7a !important; border:1px solid #7f9db9 !important; border-radius:4px !important; }
+:root[data-theme="winxp"] .nav-item.active,
+:root[data-theme="winxp"] .us-tab.active{ background:linear-gradient(180deg,#6aa6ec,#2a72d4) !important; color:#fff !important; box-shadow:none !important; border-radius:5px !important; }
+:root[data-theme="winxp"] .input,
+:root[data-theme="winxp"] textarea{ background:#fff !important; border:1px solid #7f9db9 !important; border-radius:3px !important; }
+/* XP Luna left panel: blue side rail with white text (the avatar name + user/online counts were
+   dark-on-light and hard to read; white-on-blue is both readable and authentically XP). */
+:root[data-theme="winxp"] .sidebar{ background:linear-gradient(180deg,#5390e0,#2c66c8) !important; border-right:1px solid #1a4fa0 !important; }
+:root[data-theme="winxp"] .sidebar .nav-item,
+:root[data-theme="winxp"] .me .mn,
+:root[data-theme="winxp"] .me .mk,
+:root[data-theme="winxp"] .conn,
+:root[data-theme="winxp"] .usercount,
+:root[data-theme="winxp"] .usercount .wot-ico,
+:root[data-theme="winxp"] .usercount .live-ico,
+:root[data-theme="winxp"] .conn .uc-dot{ color:#fff !important; }
+:root[data-theme="winxp"] .sidebar .nav-item:hover{ background:rgba(255,255,255,.18) !important; }
+
+/* Professional + Windows 98: the cluster between the avatar and the Logout button (name, connection
+   status, user/online counts). The var(--text) route was reported still unreadable on these two light
+   themes, so pin a strong near-black with max specificity — incl. child spans/icons — to be sure. */
+:root[data-theme="professional"] .me .mn, :root[data-theme="professional"] .me .mk,
+:root[data-theme="professional"] .conn, :root[data-theme="professional"] .conn span,
+:root[data-theme="professional"] .usercount, :root[data-theme="professional"] .usercount *,
+:root[data-theme="win98"] .me .mn, :root[data-theme="win98"] .me .mk,
+:root[data-theme="win98"] .conn, :root[data-theme="win98"] .conn span,
+:root[data-theme="win98"] .usercount, :root[data-theme="win98"] .usercount *{ color:#16161c !important; }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{
@@ -18,8 +243,8 @@ body{
   font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;
   font-weight:400;
   background:
-    radial-gradient(ellipse 900px 600px at 50% -8%,rgba(0,255,255,.06) 0%,transparent 55%),
-    radial-gradient(ellipse 800px 600px at 100% 100%,rgba(255,0,255,.045) 0%,transparent 55%),
+    radial-gradient(ellipse 900px 600px at 50% -8%,var(--amb1) 0%,transparent 55%),
+    radial-gradient(ellipse 800px 600px at 100% 100%,var(--amb2) 0%,transparent 55%),
     var(--bg);
   color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent;
 }

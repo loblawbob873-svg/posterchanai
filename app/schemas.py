@@ -567,12 +567,15 @@ class APIKeyListItem(BaseModel):
 
 
 # User Settings schemas (for custom AI service)
+# Client UI themes the user can pick (Cyberpunk is the flagship default). Slugs match the
+# `:root[data-theme="…"]` blocks in static/css/client.css and the <select> in the client Settings.
+CLIENT_THEMES = ("cyberpunk", "cherryblossom", "professional", "win98", "winxp", "animegirl", "sovietgothic")
+
+
 class UserSettingsUpdate(BaseModel):
     notification_email: Optional[str] = None
-    # Scheduled news settings
-    news_schedule_enabled: Optional[bool] = None
-    news_schedule_time: Optional[str] = None  # HH:MM format
-    news_sources: Optional[str] = None  # Custom sources, one per line: url|name
+    theme: Optional[str] = None  # one of CLIENT_THEMES; ignored if unknown
+    news_sources: Optional[str] = None  # Custom sources for the `news` command, one per line: url|name
     # Mail settings
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Telegram settings — linking/unlinking managed via /api/telegram/*, not here
@@ -608,10 +611,8 @@ class UserSettingsUpdate(BaseModel):
 class UserSettingsResponse(BaseModel):
     notification_email: Optional[str] = None
     avatar: Optional[str] = None
-    # Scheduled news settings
-    news_schedule_enabled: bool = False
-    news_schedule_time: str = "12:00"
-    news_sources: str = ""  # Custom sources, one per line: url|name
+    theme: str = "professional"
+    news_sources: str = ""  # Custom sources for the `news` command, one per line: url|name
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
     # Telegram settings

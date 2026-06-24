@@ -434,16 +434,23 @@ _BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
 
 async def restore_from_upstream(db) -> int:
     """Disaster recovery: pull the operator's encrypted pcai: CONFIG docs (settings/accounts/per-user
-    config/bots) from the UPSTREAM relays and re-store them in the LOCAL relay, so a fresh node whose
-    Postgres was wiped gets its config back (the docs are NIP-44 ciphertext to everyone but us — the
-    operator nsec must be supplied out-of-band on the fresh node). Admin-triggered, idempotent (the
-    relay dedups by event id; kind-30078 is replaceable so only the newest per d-tag wins). Returns
-    the number of docs restored. Caller should re-hydrate afterwards."""
+    config/bots) from the UPSTREAM relays and re-store them in the LOCAL relay, so a node whose
+    settings were wiped (or a fresh node whose Postgres is empty) gets its config back (the docs are
+    NIP-44 ciphertext to everyone but us — the operator nsec must be supplied out-of-band). Returns
+    the number of docs restored. Caller should re-hydrate afterwards.
+
+    CRITICAL (the bug that made restore a silent no-op): kind-30078 is parameterized-replaceable, so
+    the relay keeps only the NEWEST created_at per d-tag and REJECTS an incoming older one. A wipe
+    re-seeds defaults with a FRESH timestamp, so the upstream backup docs (older) would be rejected —
+    publishing them verbatim restores nothing. So we RE-STAMP: re-sign each doc with the operator key
+    and created_at=now (keeping its ciphertext content + tags), making it strictly newer than the
+    wiped default so the relay adopts it. We restore the NEWEST upstream version per d-tag only."""
     op_sk = _OP_SK or _operator_seckey(db)
     if not op_sk:
         logger.warning("[settings-store] restore: no operator key")
         return 0
     from app.services.nostr import nostr_service, relay as _relay
+    from app.services.nostr.event import build_event
     try:
         pk = nostr_service.derive_pubkey(op_sk)
         op_hex = pk if isinstance(pk, str) else pk.hex()
@@ -456,18 +463,35 @@ async def restore_from_upstream(db) -> int:
     except Exception as e:
         logger.warning("[settings-store] restore: upstream query failed: %s", e)
         return 0
-    local_url = f"ws://127.0.0.1:{_port()}"
-    restored = 0
+    # Keep only CONFIG docs, newest upstream version per d-tag (a relay may return stale duplicates).
+    newest: dict = {}
     for ev in evs or []:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
         if not d.startswith(_BACKUP_NS):
             continue   # only the small CONFIG set — never bulk chat/upload docs
+        if d not in newest or ev.get("created_at", 0) > newest[d].get("created_at", 0):
+            newest[d] = ev
+    if not newest:
+        logger.warning("[settings-store] restore: no CONFIG docs found on %d upstream relay(s)", len(upstream))
+        return 0
+    # One timestamp for the whole batch so the restore is a single coherent generation. +1s guards the
+    # edge where a wipe re-seeded defaults in this very second (the relay replaces on created_at <=).
+    import time as _time
+    stamp = int(_time.time()) + 1
+    local_url = f"ws://127.0.0.1:{_port()}"
+    restored = 0
+    for d, ev in newest.items():
         try:
-            if await _relay.publish([local_url], ev, direct=True):
+            # Re-sign with the operator key + a fresh created_at so it beats the wiped default. The
+            # content is the operator's own NIP-44 ciphertext — re-signing keeps it decryptable by us.
+            restamped = build_event(op_sk, int(ev.get("kind", store.APP_KIND)),
+                                    ev.get("content", ""), tags=ev.get("tags", []), created_at=stamp)
+            if await _relay.publish([local_url], restamped, direct=True):
                 restored += 1
-        except Exception:
+        except Exception as e:
+            logger.warning("[settings-store] restore: re-store %s failed: %s", d, e)
             continue
-    logger.info("[settings-store] restored %d datastore doc(s) from %d upstream relay(s) (DR)",
+    logger.info("[settings-store] restored %d datastore doc(s) (re-stamped) from %d upstream relay(s) (DR)",
                 restored, len(upstream))
     return restored
 
@@ -494,20 +518,60 @@ async def write_through(db, changes: dict) -> int:
     return wrote
 
 
+def _relay_setting_keys_from_db(db):
+    """Race-free: the operator's existing `pcai:setting:` keys read DIRECTLY from the relay's Postgres
+    `events` table (same source as hydrate_from_db). Returns (keys:set, authoritative:bool).
+
+    Why not _mig.settings_all(): that queries the relay over the WebSocket, which under startup load
+    can return a PARTIAL result — and seed_relay_defaults treating a falsely-"missing" key as absent is
+    how real settings got overwritten by defaults (the 2026-06-23 wipe: "seeded 119 default setting(s)"
+    while the events table actually held 288). A direct SQL read can't be raced by relay sync/load.
+    authoritative=False means the read could not be trusted → the caller MUST NOT seed."""
+    op_sk = _OP_SK or _operator_seckey(db)
+    if not op_sk:
+        return set(), False
+    try:
+        from app.services.nostr import nostr_service
+        from sqlalchemy import text as _text
+        import binascii
+        pk = nostr_service.derive_pubkey(op_sk)
+        op_hex = pk if isinstance(pk, str) else binascii.hexlify(pk).decode()
+        rows = db.execute(_text(
+            "SELECT DISTINCT t.value AS d FROM events e JOIN event_tags t ON t.event_id = e.id "
+            "WHERE e.kind = 30078 AND e.pubkey = :pk AND t.tag = 'd' AND t.value LIKE 'pcai:setting:%'"
+        ), {"pk": op_hex}).fetchall()
+        pfx = store.NS_SETTING
+        return {r[0][len(pfx):] for r in rows if r[0].startswith(pfx)}, True
+    except Exception as e:
+        try:
+            db.rollback()   # leave no aborted txn for the caller's next query
+        except Exception:
+            pass
+        # The relay hasn't created its event tables yet → GENUINE fresh node: empty + trustworthy,
+        # so first-boot seeding is correct. Any other error is NOT trustworthy → refuse to seed.
+        if "does not exist" in str(e) or "UndefinedTable" in type(e).__name__:
+            return set(), True
+        logger.warning("[settings-store] seed: direct key read failed: %s", e)
+        return set(), False
+
+
 async def seed_relay_defaults(db, defaults: dict) -> int:
     """First-boot seeding (relay ← defaults). Push every default whose key the relay does NOT yet
     hold UP to the relay, so it carries the out-of-box config from first start. Run AFTER hydrate()
     so keys the relay already has are skipped (never overwritten). Writes nothing on an established
-    node. `defaults` is the canonical default_settings dict (NOT a table)."""
+    node. `defaults` is the canonical default_settings dict (NOT a table).
+
+    FAIL-SAFE: determines what the relay already holds via a RACE-FREE direct Postgres read, and if
+    that read is not authoritative it seeds NOTHING — overwriting the durable Nostr store with defaults
+    because a transient read came back short is exactly the data-loss this whole design must prevent."""
     op_sk = _OP_SK or _operator_seckey(db)
     if not op_sk:
         return 0
-    try:
-        relay = await _mig.settings_all(_port(), op_sk)
-    except Exception as e:
-        logger.warning("[settings-store] seed: failed to read relay: %s", e)
+    have, authoritative = _relay_setting_keys_from_db(db)
+    if not authoritative:
+        logger.warning("[settings-store] seed: relay state not authoritatively readable — skipping seed "
+                       "to protect the durable store (defaults still apply in-memory this boot)")
         return 0
-    have = set((relay or {}).keys())
     missing = {k: ("" if v is None else str(v)) for k, v in (defaults or {}).items()
                if k not in have and not _is_local_only(k)}
     if not missing:
@@ -517,7 +581,8 @@ async def seed_relay_defaults(db, defaults: dict) -> int:
         _set_local(k, v)
     wrote = await write_through(db, missing)
     if wrote:
-        logger.info("[settings-store] seeded %d default setting(s) to the relay (first boot)", wrote)
+        first = "first boot" if not have else "new keys on upgrade"
+        logger.info("[settings-store] seeded %d default setting(s) to the relay (%s)", wrote, first)
     return wrote
 
 
