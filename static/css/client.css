@@ -604,6 +604,13 @@ a.btn.full{display:block}
 .chat-by .name{font-weight:700;color:var(--cyan);cursor:pointer}
 .chat-txt{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45;font-size:15.5px}
 .chat-msg.mine .chat-by .name{color:var(--neon2)}
+.chat-reacts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
+.chat-react{display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:2px 8px;font-size:13px;line-height:1.5;cursor:pointer}
+.chat-react:hover{border-color:var(--neon)}
+.chat-react.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
+.chat-react .n{opacity:.8;font-weight:700}
+.chat-react-add{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:transparent;border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:13px;opacity:.55}
+.chat-react-add:hover{opacity:1;border-color:var(--neon);color:var(--neon)}
 .chatroom-compose{flex:0 0 auto;display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
 .chatroom-compose textarea{flex:1;resize:none;max-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 13px;font-family:inherit;font-size:15.5px;line-height:1.4}
 .chatroom-compose textarea:focus{border-color:var(--neon);outline:none}

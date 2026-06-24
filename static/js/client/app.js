@@ -989,6 +989,7 @@
     const feed = $('#feed');
     if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
+    if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
     if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
     feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
@@ -1861,6 +1862,9 @@
   // with a root `e`-tag to that id. Instance-local — only WoT members' channels/messages reach our
   // relay. Live messages kept in _chatMsgs (Store.feed() is kind-1/6 only, so we hold our own set).
   let _chatSub=null, _chatId=null, _chatMsgs=new Map();
+  // Reactions (kind-7) to chat messages, shared by NIP-28 channels + NIP-29 groups:
+  // targetMsgId → Map(emoji → Set(reactor-pubkey)). '+'/'' normalise to ❤️, '-' to 👎.
+  let _chatReacts=new Map(), _chatReactPoll=null;
   function _chanMeta(e){ let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){} return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' }; }
   async function renderChatrooms(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
@@ -1900,8 +1904,9 @@
     catch(e){ toast('create failed: '+((e&&e.message)||e)); }
   }
   async function openChannel(e){
-    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map();
+    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map();
     if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
+    if(_chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }
     $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
     const m=_chanMeta(e); $('#view-title').textContent=m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
@@ -1912,6 +1917,7 @@
       <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button><input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
     $('#ch-back').onclick=()=>switchView('chat');
+    { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatReactClick); }   // delegated react taps
     const send=()=>postToChannel(e);
     { const b=$('#ch-send'); if(b) b.onclick=send; }
     { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
@@ -1937,6 +1943,7 @@
     if(VIEW!=='channel' || _chatId!==e.id) return;
     msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
     _drawChannel(true);
+    _pollChannelReacts();   // fetch + keep reactions for the on-screen messages live
     _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey); if(VIEW==='channel' && _chatId===e.id) _drawChannel(); } } });
   }
   function _drawChannel(force){
@@ -1949,10 +1956,61 @@
   }
   function chatMsg(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey); const mine=ME && e.pubkey===ME.pubkey;
+    const pills=chatReactPills(e.id);
+    // Reacting needs to publish to OUR relay pool (writable) — fine for NIP-28 channels; NIP-29
+    // groups are read-only browse for now, so only show the ＋ on channels.
+    const addBtn = VIEW==='channel' ? `<button class="chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">＋</button>` : '';
     return `<div class="chat-msg${mine?' mine':''}" data-pk="${e.pubkey}">
       <img class="chat-av" data-prof="${e.pubkey}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
       <div class="chat-body"><div class="chat-by"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(e.created_at)}</span></div>
-      <div class="chat-txt">${linkify(e.content||'')}</div></div></div>`;
+      <div class="chat-txt">${linkify(e.content||'')}</div>
+      ${pills||addBtn?`<div class="chat-reacts">${pills}${addBtn}</div>`:''}</div></div>`;
+  }
+  // Record a kind-7 reaction into _chatReacts keyed by its target (last e-tag, per NIP-25).
+  // Returns true if it was new (so the caller can redraw).
+  function _recordReact(ev){
+    if(!ev || ev.kind!==7) return false;
+    let tid=null; for(const t of ev.tags){ if(t[0]==='e' && t[1]) tid=t[1]; }   // last e-tag = reacted event
+    if(!tid) return false;
+    let emoji=ev.content||''; if(emoji==='+'||emoji===''){ emoji='❤️'; } else if(emoji==='-'){ emoji='👎'; }
+    let m=_chatReacts.get(tid); if(!m){ m=new Map(); _chatReacts.set(tid,m); }
+    let s=m.get(emoji); if(!s){ s=new Set(); m.set(emoji,s); }
+    if(s.has(ev.pubkey)) return false; s.add(ev.pubkey); return true;
+  }
+  function chatReactPills(id){
+    const m=_chatReacts.get(id); if(!m) return '';
+    const mine=ME&&ME.pubkey;
+    return [...m.entries()].filter(([,s])=>s.size).sort((a,b)=>b[1].size-a[1].size).map(([emoji,s])=>{
+      const on=mine && s.has(mine);
+      return `<button class="chat-react${on?' on':''}" data-react="${enc(id)}" data-emoji="${enc(emoji)}" title="react ${enc(emoji)}">${enc(emoji)} <span class="n">${s.size}</span></button>`;
+    }).join('');
+  }
+  // Delegated click on a chat-message list: tap an existing pill to add that emoji; tap ＋ to pick one.
+  function _onChatReactClick(ev){
+    const pill=ev.target.closest('.chat-react');
+    if(pill){ _doChatReact(pill.dataset.react, pill.dataset.emoji); return; }
+    const add=ev.target.closest('.chat-react-add');
+    if(add){ openEmojiPopover(add, (emoji, close)=>{ close(); _doChatReact(add.dataset.reactAdd, emoji); }); }
+  }
+  function _doChatReact(id, emoji){
+    if(!ME){ toast('log in to react'); return; }
+    if(VIEW!=='channel'){ toast('reacting in NIP-29 groups — coming soon'); return; }   // groups are read-only
+    const cur=_chatReacts.get(id); if(cur){ const s=cur.get(emoji); if(s && s.has(ME.pubkey)){ toast('already reacted '+emoji); return; } }
+    const msg=_chatMsgs.get(id), pk=msg?msg.pubkey:null;
+    publish(7, emoji, eTags(id,pk)).then(({ ev })=>{ if(ev && _recordReact(ev)) _drawChannel(); toast('reacted '+emoji); })
+      .catch(e=>toast('react failed: '+((e&&e.message)||e)));
+  }
+  // Channel reaction poll: channels keep a live kind-42 sub, but message-targeted kind-7 reactions
+  // can't be caught by the channel-root #e filter, so poll them for the on-screen ids (auto-stops on
+  // leave via switchView clearing _chatReactPoll).
+  function _pollChannelReacts(){
+    if(VIEW!=='channel') return;
+    const id=_chatId, ids=[..._chatMsgs.keys()];
+    if(!ids.length){ _chatReactPoll=setTimeout(_pollChannelReacts, 10000); return; }
+    Relay.query([{ kinds:[7], '#e':ids, limit:500 }]).then(rs=>{
+      if(VIEW!=='channel' || _chatId!==id) return;
+      let changed=false; rs.forEach(r=>{ if(_recordReact(r)) changed=true; }); if(changed) _drawChannel();
+    }).catch(()=>{}).finally(()=>{ if(VIEW==='channel' && _chatId===id) _chatReactPoll=setTimeout(_pollChannelReacts, 10000); });
   }
   async function postToChannel(chan){
     const ta=$('#ch-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
@@ -2008,7 +2066,7 @@
       </div></article>`;
   }
   async function openGroup(g){
-    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set();
+    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set(); _chatReacts=new Map();
     if(_groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }
     $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
     $('#view-title').textContent=g.m.name;
@@ -2020,17 +2078,26 @@
       <div class="chatroom-compose readonly"><span class="muted small">👀 Read-only — joining &amp; posting (NIP-29) coming soon</span></div>
     </div>`;
     $('#grp-back').onclick=()=>switchView('chat');
+    { const mb=$('#grp-msgs'); if(mb) mb.addEventListener('click', _onChatReactClick); }   // tap a pill (read-only toast)
     _pollGroup(true);
   }
   async function _pollGroup(first){
     const relay=_groupRelay, id=_groupId; if(!relay||!id) return;
-    let evs=[]; try{ evs=await Relay.queryFrom([relay], [{ kinds:[9], '#h':[id], limit:200 }]); }catch(_){}
+    // NIP-29 tags ALL group content with h=group-id, including kind-7 reactions, so one #h filter per
+    // kind fetches both messages and reactions from the group's relay.
+    let evs=[], rxs=[];
+    try{ [evs, rxs]=await Promise.all([
+      Relay.queryFrom([relay], [{ kinds:[9], '#h':[id], limit:200 }]),
+      Relay.queryFrom([relay], [{ kinds:[7], '#h':[id], limit:200 }]).catch(()=>[]),
+    ]); }catch(_){}
     if(VIEW!=='group' || _groupId!==id) return;
-    // External relay is untrusted → verify signatures of UNSEEN messages only (bounded cost per poll).
-    const fresh=evs.filter(e=>e && e.id && !_groupSeen.has(e.id));
+    // External relay is untrusted → verify signatures of UNSEEN events (messages + reactions) only.
+    const fresh=[...(evs||[]), ...(rxs||[])].filter(e=>e && e.id && !_groupSeen.has(e.id));
     if(fresh.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:fresh});
       const ok=new Set(v.filter(r=>r.valid).map(r=>r.id));
-      for(const e of fresh){ _groupSeen.add(e.id); if(ok.has(e.id)){ _groupMsgs.set(e.id,e); needProfile(e.pubkey); } } }catch(_){} }
+      for(const e of fresh){ _groupSeen.add(e.id); if(!ok.has(e.id)) continue;
+        if(e.kind===9){ _groupMsgs.set(e.id,e); needProfile(e.pubkey); }
+        else if(e.kind===7){ _recordReact(e); } } }catch(_){} }
     if(VIEW!=='group' || _groupId!==id) return;
     _drawGroup(first);
     _groupPoll=setTimeout(()=>{ if(VIEW==='group' && _groupId===id) _pollGroup(false); }, 6000);
