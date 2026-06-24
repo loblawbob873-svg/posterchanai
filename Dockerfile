@@ -93,7 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg tesseract-ocr \
         libgl1 libglib2.0-0 libjpeg-turbo8 zlib1g \
         fonts-dejavu fonts-liberation fonts-noto-color-emoji fontconfig \
-        python3-libtorrent tor \
+        python3-libtorrent tor tor-geoipdb \
     && rm -rf /var/lib/apt/lists/*
 
 # --- headless Chrome for the screenshot command (optional, on by default) -----
