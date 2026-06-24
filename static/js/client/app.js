@@ -35,10 +35,12 @@
     if(persist!==false){ try{ localStorage.setItem('pc_theme', slug); }catch(_){} }   // no-flash re-apply next load
   }
   // Sync the account/Nostr theme on login — it's authoritative and follows you across devices. The
-  // cached pc_theme already painted pre-load, so this only corrects an out-of-date device. Best-effort
-  // (no forced sign). Safe to always apply: pc_theme only ever holds SAVED themes (preview never
-  // persists), so on the saving device server==local; on another device this pulls the latest choice.
+  // cached pc_theme already painted pre-load, so this only corrects an out-of-date device. Safe to
+  // always apply (pc_theme only ever holds SAVED themes; preview never persists). MUST establish the
+  // session first: /api/auth/settings needs the nostr-login cookie, else it 401s and the saved theme
+  // never applies — the "logged in but the default theme loaded despite my saved one" bug.
   async function loadThemeFromServer(){
+    try{ await ensureAiSession(); }catch(_){}
     try{ const r=await fetch('/api/auth/settings'); if(r.ok){ const s=await r.json(); if(s&&s.theme) applyTheme(s.theme); } }catch(_){}
   }
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
