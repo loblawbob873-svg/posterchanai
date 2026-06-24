@@ -2685,12 +2685,12 @@
     const eff=(cat.effects||[]).map(chip).join('');
     const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
     const stk=(cat.chars||[]).map(n=>`<button class="fx-char" data-char="${enc(n)}">🧷 ${enc(n)}</button>`).join('');
-    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. <b>1)</b> pick an effect → <b>2)</b> motion → <b>3)</b> optional sticker / caption, then ▶ Send. When the result appears, tap <b>↩ Send the Reply</b>.'+
-      (enh?'<div class="muted small" style="margin:10px 0 4px">✨ Enhance</div><div class="fx-grid">'+enh+'</div>':'')+
-      '<div class="muted small" style="margin:10px 0 4px">🎭 Effects — tap one ('+((cat.effects||[]).length)+')</div><div class="fx-grid">'+eff+'</div>'+
-      '<div class="muted small" style="margin:10px 0 4px">🌀 Motion — pick one (trippy/glow/alive stack)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
-      (stk?'<div class="muted small" style="margin:10px 0 4px">🧷 Sticker (optional)</div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+stk+'</div>':'')+
-      '<div class="muted small" style="margin:10px 0 4px">💬 Caption (optional)</div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
+    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. Pick <b>one base effect</b>, then optionally <b>add</b> a motion, sticker and caption — they <b>stack together</b>. Hit ▶ Send; when the result appears, tap <b>↩ Send the Reply</b>.'+
+      (enh?'<div class="muted small" style="margin:10px 0 4px">✨ Enhance <span style="opacity:.7">(base — pick one)</span></div><div class="fx-grid">'+enh+'</div>':'')+
+      '<div class="muted small" style="margin:10px 0 4px">🎭 Effects <span style="opacity:.7">(base — pick one, '+((cat.effects||[]).length)+')</span></div><div class="fx-grid">'+eff+'</div>'+
+      '<div class="muted small" style="margin:10px 0 4px">🌀 Motion <span style="opacity:.7">(optional add-on — trippy/glow/alive stack; zoom/shake/pulse one at a time)</span></div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
+      (stk?'<div class="muted small" style="margin:10px 0 4px">🧷 Sticker <span style="opacity:.7">(optional add-on)</span></div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+stk+'</div>':'')+
+      '<div class="muted small" style="margin:10px 0 4px">💬 Caption <span style="opacity:.7">(optional add-on)</span></div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
