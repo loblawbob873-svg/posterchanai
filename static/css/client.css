@@ -164,6 +164,11 @@
    unreadable on light themes; route to a theme panel. The user-bubble keeps the accent gradient. */
 :root[data-theme] .ai-msg.assistant .ai-bubble,
 :root[data-theme] .ai-bubble pre{ background:var(--panel2); }
+/* AI splash command examples (.ai-eg) hardcoded a deep-violet bg + var(--cyan) command names →
+   dark-on-light / low-contrast on the light themes. Theme the button + route the name to --neon. */
+:root[data-theme] .ai-eg{ background:var(--panel2); }
+:root[data-theme] .ai-eg:hover{ background:var(--panel); }
+:root[data-theme] .ai-eg b{ color:var(--neon); }
 :root[data-theme] .ai-gate .btn-cyan,
 :root[data-theme] .ai-welcome .btn-cyan{ background:linear-gradient(135deg,var(--neon),var(--neon2)); color:#fff; }
 
