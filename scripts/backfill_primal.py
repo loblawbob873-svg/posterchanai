@@ -36,7 +36,12 @@ from app.services.nostr.event import verify_event
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("backfill-primal")
 
-PRIMAL = "wss://relay.primal.net"
+# By default the backfill pulls from the NODE'S OWN configured upstream relays (Admin → Relay) —
+# never a hardcoded relay, so it can't pull from a relay the operator deliberately removed. _relay
+# .query fans out to all of them and unions+dedupes. NOTE: relay.primal.net's NIP-01 relay only
+# serves ~the last week (its deep archive is behind a separate caching protocol), so for the older
+# days the longer-retention relays in your upstream set (eden.nostr.land, nostr.wine, nos.lol, …)
+# are what fill the window. Pass --relays to override (e.g. to skip dead/slow ones for speed).
 # Page a busy author batch backwards in time so one REQ's server-side limit can't silently cap the
 # window — stop when a page returns nothing new or we cross `since`.
 _MAX_PAGES = 8
@@ -67,13 +72,17 @@ async def _fetch_batch(upstream, authors, kinds, since, direct, pace):
     return list(out.values())
 
 
-async def main(days: int, kinds: list, dry_run: bool):
+async def main(days: int, kinds: list, dry_run: bool, relays: list):
     cfg = _read_config()
     dsn = cfg["pg_dsn"]
     direct = cfg.get("direct", False)
     batch = cfg.get("author_batch", 200)
     pace = cfg.get("request_pace_sec", 1.0)
     since = int(time.time()) - days * 86400
+    relays = relays or cfg.get("upstream") or []   # default: the node's own configured upstream set
+    if not relays:
+        log.error("no source relays (empty --relays and no configured upstream)")
+        return 1
 
     store = RelayStore(dsn, retention_days=cfg.get("retention_days", 30))
     store.open(asyncio.get_event_loop())
@@ -85,12 +94,12 @@ async def main(days: int, kinds: list, dry_run: bool):
         store.close()
         return 1
 
-    log.info("Backfilling %d WoT members from Primal, last %dd, kinds=%s%s",
-             len(members), days, kinds, " [DRY-RUN]" if dry_run else "")
+    log.info("Backfilling %d WoT members from %s, last %dd, kinds=%s%s",
+             len(members), ",".join(relays), days, kinds, " [DRY-RUN]" if dry_run else "")
     stored = scanned = 0
     for i in range(0, len(members), batch):
         chunk = members[i:i + batch]
-        evs = await _fetch_batch([PRIMAL], chunk, kinds, since, direct, pace)
+        evs = await _fetch_batch(relays, chunk, kinds, since, direct, pace)
         scanned += len(evs)
         # Gate + verify + dedup, exactly like the live ingest path.
         ids = [e["id"] for e in evs if isinstance(e.get("id"), str) and len(e["id"]) == 64]
@@ -120,6 +129,9 @@ if __name__ == "__main__":
     ap.add_argument("--kinds", default="1",
                     help="comma kinds to pull (default 1; stats bot counts kind-1). e.g. 1,6,7,1111")
     ap.add_argument("--dry-run", action="store_true", help="fetch + count, don't store")
+    ap.add_argument("--relays", default="",
+                    help="comma-separated source relays (default: the node's configured upstream set)")
     a = ap.parse_args()
     kinds = [int(k) for k in a.kinds.replace(" ", "").split(",") if k.strip().lstrip("-").isdigit()]
-    sys.exit(asyncio.run(main(a.days, kinds, a.dry_run)))
+    relays = [r.strip() for r in a.relays.split(",") if r.strip()]
+    sys.exit(asyncio.run(main(a.days, kinds, a.dry_run, relays)))
