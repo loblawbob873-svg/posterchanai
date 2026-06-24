@@ -527,7 +527,11 @@ def _reconcile_text(text_bots, base_env):
     Only bots with listener modes get a persistent process — a pure auto-poster (auto-post
     enabled, no reply/feature modes) has nothing to listen for and is driven entirely by
     _reconcile_scheduled, so spawning a listener would just crash-loop on a default mode."""
-    wanted = {d["name"]: d for d in text_bots if d.get("modes")}
+    # Bots with listener modes get a persistent process. ALSO include Nostr Stats bots: the stats
+    # feature is a config flag (not a mode), but the bot still needs a live process to publish its
+    # kind-0 profile + go green — _cmd_for defaults it to --nostr. (The app posts its stats on a 6h
+    # timer; the live --nostr process is just its identity/presence.)
+    wanted = {d["name"]: d for d in text_bots if d.get("modes") or d.get("stats_enabled")}
     now = time.time()
 
     # stop bots no longer wanted

@@ -350,7 +350,17 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .city-bg::before{animation:none;opacity:.6}
 }
 
-.glass{background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line)}
+.glass{background:var(--panel);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);border:1px solid var(--line)}
+/* Perf/battery: pause ALL CSS animations when the tab/PWA is backgrounded (app.js toggles
+   body.anim-off on visibilitychange) so the GPU idles when you're not looking — big win for laptop
+   heat AND mobile battery, with zero change to the visible/foreground look. */
+body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation-play-state: paused !important; }
+/* Mobile: drop the GPU-heavy continuous parallax + backdrop-blur (battery drain on phones, and the
+   city parallax is a desktop flourish barely visible on a small screen). */
+@media(max-width:820px){
+  .city-far,.city-mid,.city-near,.city-bg::before{ animation: none !important; }
+  .glass{ backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
 .neon-border{box-shadow:0 0 0 1px rgba(0,255,255,.35),0 0 30px rgba(0,255,255,.2) inset}
 
 /* ===== buttons / inputs ===== */

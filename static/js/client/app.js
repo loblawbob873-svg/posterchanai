@@ -694,6 +694,10 @@
     { const mt=$('#tl-media'); if(mt) mt.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);
         mt.classList.toggle('active', _tlMedia); if(VIEW==='home'||VIEW==='global') _drawTimeline(false); }; }
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
+    // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
+    // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
+    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden); });
+    if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
       rb.addEventListener('click', e=>{ const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open); });   // hot + follows rows open their thread
