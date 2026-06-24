@@ -3123,6 +3123,7 @@
             const tags=[['polltype', multi?'multiplechoice':'singlechoice']];
             labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l]));
             mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+            imetaTagsFor(text).forEach(t=>tags.push(t));
             closeModal(); try{ await publish(1068, text, tags); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); }
             catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
           } }
@@ -3130,6 +3131,7 @@
         if(community){
           let tags=communityPostTags(community);
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+          imetaTagsFor(text).forEach(t=>tags.push(t));
           closeModal(); try{ await publish(1111, text, tags); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
           catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
@@ -3137,6 +3139,7 @@
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
         if(quote){ tags.push(['q',quote]); const o=Store.get(quote); if(o)tags.push(['p',o.pubkey]); }
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+        imetaTagsFor(text).forEach(t=>tags.push(t));
         closeModal(); await publish(1, text, tags); if(draftId) Drafts.remove(draftId);
         toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
@@ -3250,6 +3253,25 @@
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
   function extFor(file){ const n=(file.name||'').match(/\.([a-z0-9]{2,5})$/i); if(n) return n[1].toLowerCase(); return _MIME_EXT[file.type]||''; }
+  // NIP-92 source metadata for media we've uploaded this session, keyed by the exact URL we append to
+  // a note. Lets imetaTagsFor() emit `imeta` tags so other clients render our art inline at the right
+  // aspect ratio (dim), verify it (x = sha256) and know its type (m). Session-scoped, never persisted.
+  const _MEDIA_META = new Map();
+  // Pixel dimensions of an image/video file as "WxH" (decoded locally, no network). '' if unknown.
+  async function _mediaDim(file){
+    const t=file.type||'';
+    try{
+      if(/^image\//.test(t) && self.createImageBitmap){
+        const bm=await createImageBitmap(file); const d=(bm.width&&bm.height)?(bm.width+'x'+bm.height):''; if(bm.close) bm.close(); return d;
+      }
+      if(/^video\//.test(t)){
+        return await new Promise(res=>{ const v=document.createElement('video'); v.preload='metadata'; const u=URL.createObjectURL(file);
+          v.onloadedmetadata=()=>{ res(v.videoWidth&&v.videoHeight?(v.videoWidth+'x'+v.videoHeight):''); URL.revokeObjectURL(u); };
+          v.onerror=()=>{ res(''); URL.revokeObjectURL(u); }; v.src=u; });
+      }
+    }catch(_){}
+    return '';
+  }
   async function uploadBlob(file, opts){
     const server=mediaServer(); if(!server) throw new Error('no media server set');
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
@@ -3269,7 +3291,23 @@
     const d=await res.json();
     // Our Blossom URLs are extensionless (/<sha256>); append the file extension so clients (incl.
     // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
-    const ext=extFor(file); return (d.url||server+'/'+hash) + (ext?('.'+ext):'');
+    const ext=extFor(file); const url=(d.url||server+'/'+hash) + (ext?('.'+ext):'');
+    // Record NIP-92 source metadata so a note carrying this URL gets an `imeta` tag (see imetaTagsFor).
+    try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ _MEDIA_META.set(url, { m:t, x:hash, dim:await _mediaDim(file) }); } }catch(_){}
+    return url;
+  }
+  // NIP-92: one `imeta` tag per uploaded media URL that appears in the note content, so other clients
+  // render our images/video inline (right aspect ratio via dim) and can verify them (x = sha256).
+  function imetaTagsFor(content){
+    const out=[], seen=new Set();
+    for(let u of ((content||'').match(/https?:\/\/\S+/g)||[])){
+      u=u.replace(/[)\].,>'"]+$/,'');               // drop trailing punctuation (e.g. markdown `![](url)`)
+      if(seen.has(u)) continue; seen.add(u);
+      const m=_MEDIA_META.get(u); if(!m) continue;
+      const parts=['url '+u]; if(m.m) parts.push('m '+m.m); if(m.dim) parts.push('dim '+m.dim); if(m.x) parts.push('x '+m.x);
+      out.push(['imeta', ...parts]);
+    }
+    return out;
   }
   // ---- Blossom access (request-to-upload) ----
   // Pre-flight whether THIS user may upload (BUD-06 HEAD /upload → 200 allowed / 403 denied), so the
