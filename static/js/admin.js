@@ -991,27 +991,3 @@ setTimeout(() => {
     updateImageBackendUI();
     refreshImageQueue();
 }, 500);
-
-// --- Nostr Stats Bot: manual run buttons (Preview now / Run now) ---
-(function(){
-    function wireStats(){
-        const prev = document.getElementById('stats-preview-btn');
-        const post = document.getElementById('stats-post-btn');
-        const status = document.getElementById('stats-run-status');
-        const run = async (preview) => {
-            if(status) status.textContent = '⏳ running…';
-            try {
-                const r = await csrfFetch('/api/admin/run-stats?preview=' + (preview ? 'true' : 'false'), { method: 'POST' });
-                const d = await r.json().catch(() => ({}));
-                if(status) status.textContent = r.ok ? ('✅ ' + (d.message || 'done')) : ('❌ ' + (d.detail || 'failed'));
-            } catch(e){ if(status) status.textContent = '❌ ' + ((e && e.message) || e); }
-        };
-        if(prev) prev.addEventListener('click', () => run(true));
-        if(post) post.addEventListener('click', () => {
-            if(!confirm('Run the stats bot in its CONFIGURED mode now? In "Post" mode this publishes a PUBLIC Nostr note.')) return;
-            run(false);
-        });
-    }
-    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireStats);
-    else wireStats();
-})();

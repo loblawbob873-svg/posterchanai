@@ -169,7 +169,9 @@ function onBotFormChange() {
         if (!on && c.checked) c.checked = false;
     };
     ['block', 'welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
-    ['dvm', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'].forEach(f => showFeat(f, isNostr));
+    ['dvm', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
+    // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
+    show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
 
     // Per-feature sections appear only when their feature is enabled.
     show('bot_grp_nitter', !isImage && ck('bot_ft_nitter'));
@@ -238,6 +240,7 @@ function openBotModal(id) {
     _setChk('bot_ft_reply', modes.includes('--' + plat));               // reply on the bot's own platform
     _setChk('bot_ft_matrix', plat !== 'matrix' && modes.includes('--matrix'));  // matrix as a secondary connection
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
+    _setChk('bot_ft_stats', cfg.stats_enabled);   // stats is a CONFIG flag (not a main.py mode — argparse rejects unknown)
 
     // Anything no field covers (exotic keys) -> the rarely-shown escape hatch.
     const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS, 'nitter_feeds']);
@@ -442,6 +445,8 @@ async function saveBot() {
     const config = {};
     BOT_KNOWN_KEYS.forEach(k => { const v = _val('bot_f_' + k); if (v) config[k] = v; });
     BOT_KNOWN_CHECKS.forEach(k => { if (_g('bot_f_' + k) && _g('bot_f_' + k).checked) config[k] = true; });
+    // Nostr Stats feature → a CONFIG flag (not a main.py mode; the app posts it on the bot's behalf).
+    if (_g('bot_ft_stats') && _g('bot_ft_stats').checked) config.stats_enabled = true;
     // nitter_feeds: textarea (one per line: "rss [room]") -> [{rss, room?}, ...] (room preserved)
     const feedLines = _val('bot_f_nitter_feeds').split('\n').map(s => s.trim()).filter(Boolean);
     if (feedLines.length) config.nitter_feeds = feedLines.map(line => {
@@ -508,3 +513,32 @@ document.querySelector('[data-tab="bots"]')?.addEventListener('click', () => {
     _startBotPolling();
 });
 if (_botTabActive()) { loadBots(); _startBotPolling(); }
+
+// --- Nostr Stats feature: Preview (display only) / Post now (Nostr-only, from this bot's nsec) ---
+async function statsPreview() {
+    const st = _g('bot_stats_status'), img = _g('bot_stats_img');
+    if (st) st.textContent = '⏳ building chart…';
+    try {
+        const r = await csrfFetch('/api/admin/stats-preview', { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.image) {
+            if (img) { img.src = d.image; img.style.display = ''; }
+            if (st) st.textContent = '✓ preview only — not posted';
+        } else if (st) st.textContent = '❌ ' + (d.detail || 'failed');
+    } catch (e) { if (st) st.textContent = '❌ ' + ((e && e.message) || e); }
+}
+
+async function statsRunNow() {
+    const st = _g('bot_stats_status');
+    const nsec = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
+    if (!nsec) { if (st) st.textContent = "❌ set this bot's Nostr secret key first"; return; }
+    if (!confirm('Post the stats graph to Nostr now, from this bot?')) return;
+    if (st) st.textContent = '⏳ posting…';
+    try {
+        const r = await csrfFetch('/api/admin/stats-run', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nsec })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (st) st.textContent = r.ok ? ('✅ ' + (d.message || 'posted')) : ('❌ ' + (d.detail || 'failed'));
+    } catch (e) { if (st) st.textContent = '❌ ' + ((e && e.message) || e); }
+}

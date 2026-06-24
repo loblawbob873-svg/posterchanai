@@ -22,43 +22,6 @@
         </div>
     </div>
 
-    <!-- Built-in Nostr Stats Bot (app/services/stats_bot_service.py). NOT a botframework bot row —
-         it's a scheduler. Its inputs are saved by the main "Save Settings" button (named inputs,
-         generic admin.js handler) → stored in Nostr (NIP-44-encrypted for the nsec). -->
-    <div class="admin-section">
-        <div class="bots-header"><h3>📊 Nostr Stats Bot</h3></div>
-        <p class="bots-hint">Every 6 hours, builds a <b>cyberpunk graph</b> of daily posts + daily active
-            users (NIP-05 users only — past week &amp; month) and either previews it to your Telegram or
-            posts it publicly. Saved by the main <b>Save Settings</b> button below.</p>
-        <div class="form-group">
-            <label for="stats_bot_enabled">
-                <input type="checkbox" id="stats_bot_enabled" name="stats_bot_enabled"> <b>Enable Nostr Stats Bot</b>
-            </label>
-        </div>
-        <div class="form-group">
-            <label for="stats_bot_mode">Delivery mode</label>
-            <select id="stats_bot_mode" name="stats_bot_mode">
-                <option value="preview">Preview → admin Telegram (private)</option>
-                <option value="post">Post → public Nostr note</option>
-            </select>
-            <p class="bots-hint">Preview goes only to your Telegram. Post publishes a kind-1 note from the
-                account below to the <b>local relay</b> (which federates it upstream).</p>
-        </div>
-        <div class="form-group">
-            <label for="stats_bot_nsec">Stats account nsec <span class="bots-dim">(required for "Post" mode)</span></label>
-            <input type="password" id="stats_bot_nsec" name="stats_bot_nsec" placeholder="nsec1…" autocomplete="off">
-            <p class="bots-hint">The chart uploads to a public Blossom server signed by this key. Blank =
-                Preview mode only. Stored NIP-44-encrypted.</p>
-        </div>
-        <div class="form-group">
-            <button type="button" id="stats-preview-btn" class="btn-primary">📲 Preview now (Telegram)</button>
-            <button type="button" id="stats-post-btn" class="btn-secondary">🚀 Run now (configured mode)</button>
-            <span id="stats-run-status" style="margin-left:10px;"></span>
-        </div>
-        <p class="bots-hint"><b>Note:</b> enabling it starts the 6h schedule on the next restart;
-            <b>Preview now</b> works immediately without a restart.</p>
-    </div>
-
     <!-- Global settings shared by every bot. These ARE saved by the main "Save Settings"
          button (named inputs picked up by the generic settings handler in admin.js). -->
     <details class="admin-section bots-advanced">
@@ -284,14 +247,27 @@
                     <label><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
                     <label><input type="checkbox" id="bot_ft_hashtag" onchange="onBotFormChange()"> Hashtag bot</label>
                     <label><input type="checkbox" id="bot_ft_unfollow" onchange="onBotFormChange()"> Unfollow bot</label>
-                    <label title="Fulfil Nostr NIP-90 job requests (kind 5xxx) from the network using this node's AI: text generation, summarization, and image generation (kind 5100 → image uploaded to Blossom)"><input type="checkbox" id="bot_ft_dvm" onchange="onBotFormChange()"> Data Vending Machine (NIP-90 — text + image)</label>
-                    <label title="#chesstr — referee chess games between two Nostr users: someone posts 'chess @opponent' tagging the bot, players reply with moves (e.g. '1 d4'), the bot posts a cyberpunk board after each move and announces checkmate. Games never expire."><input type="checkbox" id="bot_ft_chess" onchange="onBotFormChange()"> Chess referee (#chesstr)</label>
-                    <label title="#tictactoe — referee Tic-Tac-Toe: 'tictactoe @opponent' (or play the bot); players reply with a cell number 1-9; cyberpunk board after each move; calls win/draw."><input type="checkbox" id="bot_ft_ttt" onchange="onBotFormChange()"> Tic-Tac-Toe referee (#tictactoe)</label>
-                    <label title="#hangman — the bot picks a secret word (stored encrypted); the guesser replies with letters; cyberpunk gallows board. Start with 'hangman' (you guess) or 'hangman @opponent'."><input type="checkbox" id="bot_ft_hangman" onchange="onBotFormChange()"> Hangman referee (#hangman)</label>
-                    <label title="#connect4 — referee Connect Four: 'connect4 @opponent' (or play the bot); drop a disc by replying with a column 1-7; cyberpunk board; calls 4-in-a-row."><input type="checkbox" id="bot_ft_connect4" onchange="onBotFormChange()"> Connect Four referee (#connect4)</label>
-                    <label title="#blackjack — deal Blackjack (21) vs the bot dealer. Player posts 'blackjack' (or 'start') tagging the bot; the bot DMs the hand; reply 'hit' or 'stand'. Dealer stands on 17. Single-player (you vs the house) — no AI search, perf-trivial."><input type="checkbox" id="bot_ft_blackjack" onchange="onBotFormChange()"> Blackjack dealer (#blackjack)</label>
-                    <label title="#holdem — deal multiplayer Texas Hold'em. Players post 'holdem @friend …' tagging the bot; the bot DMs hole cards (NIP-44 encrypted), runs the betting (blinds, flop/turn/river, side pots) and posts each result. Act via DM or the Hold'em tab: check/call/raise/fold/allin/leave. Persistent table; no AI search — perf-trivial."><input type="checkbox" id="bot_ft_holdem" onchange="onBotFormChange()"> Texas Hold'em dealer (#holdem)</label>
+                    <label title="Fulfil Nostr NIP-90 job requests (kind 5xxx) from the network using this node's AI: text generation, summarization, and image generation (kind 5100 → image uploaded to Blossom)"><input type="checkbox" id="bot_ft_dvm" onchange="onBotFormChange()"> Data Vending Machine</label>
+                    <label title="#chesstr — referee chess games between two Nostr users: someone posts 'chess @opponent' tagging the bot, players reply with moves (e.g. '1 d4'), the bot posts a cyberpunk board after each move and announces checkmate. Games never expire."><input type="checkbox" id="bot_ft_chess" onchange="onBotFormChange()"> Chess</label>
+                    <label title="#tictactoe — referee Tic-Tac-Toe: 'tictactoe @opponent' (or play the bot); players reply with a cell number 1-9; cyberpunk board after each move; calls win/draw."><input type="checkbox" id="bot_ft_ttt" onchange="onBotFormChange()"> Tic-Tac-Toe</label>
+                    <label title="#hangman — the bot picks a secret word (stored encrypted); the guesser replies with letters; cyberpunk gallows board. Start with 'hangman' (you guess) or 'hangman @opponent'."><input type="checkbox" id="bot_ft_hangman" onchange="onBotFormChange()"> Hangman</label>
+                    <label title="#connect4 — referee Connect Four: 'connect4 @opponent' (or play the bot); drop a disc by replying with a column 1-7; cyberpunk board; calls 4-in-a-row."><input type="checkbox" id="bot_ft_connect4" onchange="onBotFormChange()"> Connect Four</label>
+                    <label title="#blackjack — deal Blackjack (21) vs the bot dealer. Player posts 'blackjack' (or 'start') tagging the bot; the bot DMs the hand; reply 'hit' or 'stand'. Dealer stands on 17. Single-player (you vs the house) — no AI search, perf-trivial."><input type="checkbox" id="bot_ft_blackjack" onchange="onBotFormChange()"> Blackjack</label>
+                    <label title="#holdem — deal multiplayer Texas Hold'em. Players post 'holdem @friend …' tagging the bot; the bot DMs hole cards (NIP-44 encrypted), runs the betting (blinds, flop/turn/river, side pots) and posts each result. Act via DM or the Hold'em tab: check/call/raise/fold/allin/leave. Persistent table; no AI search — perf-trivial."><input type="checkbox" id="bot_ft_holdem" onchange="onBotFormChange()"> Texas Hold'em</label>
+                    <label title="Every 6 hours, this bot posts a cyberpunk graph of daily posts + daily active users (NIP-05 users only, past week + month) as a kind-1 note from its own identity. Counts only NIP-05 users from this relay's view; tagged #nostr #grownostr #nostrstats."><input type="checkbox" id="bot_ft_stats" onchange="onBotFormChange()"> Nostr Stats</label>
                 </div>
+            </div>
+
+            <!-- Nostr Stats: preview the chart (no posting) or post it now, from THIS bot's account.
+                 Nostr-only; shown when the Stats feature is ticked (see onBotFormChange). -->
+            <div class="form-group" id="bot_grp_stats" style="display:none">
+                <label>Nostr Stats <span class="bots-dim">(builds from this relay's data; posts every 6h while enabled)</span></label>
+                <div>
+                    <button type="button" class="btn-primary" onclick="statsPreview()">👁 Preview chart</button>
+                    <button type="button" class="btn-secondary" onclick="statsRunNow()">🚀 Post now</button>
+                    <span id="bot_stats_status" class="bots-hint" style="margin-left:8px"></span>
+                </div>
+                <img id="bot_stats_img" alt="stats preview" style="display:none;max-width:100%;margin-top:8px;border-radius:8px">
             </div>
 
             <div class="form-group">

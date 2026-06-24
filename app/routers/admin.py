@@ -1321,26 +1321,46 @@ async def run_logs_scheduler(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/run-stats")
-async def run_stats_bot_now(
-    preview: bool = True,
+@router.post("/stats-preview")
+async def stats_preview(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
-    """Manually run the Nostr Stats Bot. preview=true → Telegram preview to the admin;
-    preview=false → deliver per stats_bot_mode (force, bypassing the enabled gate)."""
-    from app.services.stats_bot_service import run_stats_bot
+    """Build the Nostr Stats chart and return it (base64 PNG + summary) for display — NO posting,
+    NO Telegram. Used by the 'Preview' button on the Nostr Stats bot feature."""
+    from app.services.stats_bot_service import build_stats
+    import base64
     try:
-        summary = await run_stats_bot(preview_only=preview, force=not preview)
-        if summary is None:
-            raise HTTPException(status_code=400,
-                                detail="Stats build returned nothing (relay DB empty/unreachable, or disabled).")
+        summary, png = await build_stats()
         return {"ok": True, "summary": summary,
-                "message": "Preview sent to your Telegram" if preview else "Delivered per configured mode"}
-    except HTTPException:
-        raise
+                "image": "data:image/png;base64," + base64.b64encode(png).decode()}
     except Exception as e:
-        logger.error(f"Error running stats bot: {e}")
+        logger.error(f"Stats preview failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class StatsRunBody(BaseModel):
+    nsec: str = ""
+
+
+@router.post("/stats-run")
+async def stats_run(
+    body: StatsRunBody,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Post the Nostr Stats chart to Nostr NOW, from the given bot account (its nsec) — to the local
+    relay (which federates it). Nostr-only."""
+    from app.services.stats_bot_service import post_stats
+    if not (body.nsec or "").strip():
+        raise HTTPException(status_code=400, detail="This bot has no Nostr secret key (nsec) to post with.")
+    try:
+        summary = await post_stats(body.nsec.strip())
+        return {"ok": True, "summary": summary, "message": "Posted to Nostr"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid nsec: {e}")
+    except Exception as e:
+        logger.error(f"Stats run failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

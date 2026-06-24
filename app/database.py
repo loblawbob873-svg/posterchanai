@@ -170,12 +170,6 @@ def init_db():
         # the field blank to fall back in code) so a fresh node SHOWS the list in Admin → Relay.
         from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS
         default_settings = {
-            # Nostr Stats Bot (app/services/stats_bot_service.py) — seeded so they're present in the
-            # relay from first boot and survive restarts (schemas.py SettingsResponse + here = the
-            # canonical persist/restore pattern). The secret (stats_bot_nsec) is NOT seeded (empty
-            # default; it's set by the admin and stored NIP-44-encrypted when saved).
-            "stats_bot_enabled": "false",
-            "stats_bot_mode": "preview",
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code

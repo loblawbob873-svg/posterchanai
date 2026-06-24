@@ -298,93 +298,77 @@ def _summary_text(stats: dict) -> str:
     )
 
 
-async def _preview_telegram(summary: str, png: bytes) -> None:
-    """Send the chart to the admin's Telegram (no public post)."""
+async def build_stats():
+    """Collect + render (blocking parts off-thread). Returns (summary_text, png_bytes). Used by the
+    Nostr-only Preview (display the chart, no posting) and by post_stats."""
+    stats = await asyncio.to_thread(_collect_stats, _DAYS)
+    png = await asyncio.to_thread(_render_chart, stats, f"Nostr activity · {_instance_name()}")
+    return _summary_text(stats), png
+
+
+async def post_stats(nsec: str):
+    """Build the chart and POST it as a kind-1 note from the given bot account to the LOCAL relay
+    only (its outbox federates upstream). Returns the summary; raises ValueError on a bad nsec. The
+    note keeps the #nostr #grownostr #nostrstats tags + the 'how it's counted' line (see _summary_text)."""
+    from app.services.nostr import nostr_service
+    seckey = nostr_service.decode_seckey(nsec)        # raises on a malformed key
+    summary, png = await build_stats()
+    await nostr_service.post_note(seckey, ["ws://127.0.0.1:3052"], summary,
+                                  media_list=[(png, "image/png")],
+                                  media_cfg={"service": "blossom", "endpoint": ""})
+    logger.info("[stats-bot] posted stats note")
+    return summary
+
+
+def _stats_bots() -> list:
+    """Enabled Nostr bots on THIS host whose config has stats_enabled. Returns [(name, nsec), …].
+    The stats feature is a CONFIG flag (not a main.py mode — argparse would reject an unknown flag),
+    so the botframework subprocess never sees it; the app posts on the bot's behalf with its nsec."""
+    import socket
     from app.database import SessionLocal
-    from app.models import User
-    from app.services import settings_store
-    from app.services.telegram_service import telegram_service
+    from app.models import Bot
+    host = socket.gethostname().split(".")[0]
+    out = []
     db = SessionLocal()
     try:
-        admin = db.query(User).filter(User.id == 1).first()
-        if not admin or not admin.telegram_enabled or not admin.telegram_chat_id:
-            logger.info("[stats-bot] preview requested but admin has no Telegram linked")
-            return
-        token = settings_store.get("telegram_bot_token", "")
-        if token:
-            telegram_service.set_token(token)
-        await telegram_service.send_photo(admin.telegram_chat_id, base64.b64encode(png).decode(),
-                                          caption=summary, parse_mode="")
+        for b in db.query(Bot).filter(Bot.enabled == True, Bot.platform == "nostr").all():  # noqa: E712
+            if b.host and b.host.split(".")[0] != host:     # empty host = runs on any node
+                continue
+            try:
+                cfg = json.loads(b.config or "{}") or {}
+            except Exception:
+                cfg = {}
+            if cfg.get("stats_enabled") and cfg.get("nostr_nsec"):
+                out.append((b.name, cfg["nostr_nsec"]))
     finally:
         try:
             db.close()
         except Exception:
             pass
-
-
-async def _post_to_nostr(summary: str, png: bytes) -> None:
-    """Publish the chart as a kind-1 note from the stats account to the local relay + the network."""
-    from app.services import settings_store
-    from app.services.nostr import nostr_service
-    nsec = settings_store.get("stats_bot_nsec", "")
-    if not nsec:
-        logger.warning("[stats-bot] mode=post but stats_bot_nsec is unset — skipping public post")
-        return
-    seckey = nostr_service.decode_seckey(nsec)
-    # Bots publish to the LOCAL relay ONLY — it stores the note and its outbox federates it to the
-    # upstream relays. (Posting directly to the public relays too would be redundant + slower.)
-    relays = ["ws://127.0.0.1:3052"]
-    media_cfg = {"service": settings_store.get("stats_bot_media_service", "") or "blossom",
-                 "endpoint": settings_store.get("stats_bot_media_endpoint", "") or ""}
-    await nostr_service.post_note(seckey, relays, summary,
-                                  media_list=[(png, "image/png")], media_cfg=media_cfg)
-    logger.info("[stats-bot] posted weekly stats note")
-
-
-async def run_stats_bot(preview_only: bool = False, force: bool = False):
-    """Build the chart and deliver it (preview to Telegram, or public post — per stats_bot_mode).
-
-    The 6h cron and the enabled-check call this plainly. The admin "Preview now" button passes
-    preview_only=True (always a Telegram preview, never a public post). `force` bypasses the enabled
-    gate (manual runs). Returns the summary text, or None if it didn't run.
-    """
-    from app.services import settings_store
-    if not force and not preview_only and not settings_store.get_bool("stats_bot_enabled", False):
-        return None
-    try:
-        stats = await asyncio.to_thread(_collect_stats, _DAYS)
-        png = await asyncio.to_thread(_render_chart, stats, f"Nostr activity · {_instance_name()}")
-    except Exception as e:
-        logger.warning("[stats-bot] failed to build stats: %s", e)
-        return None
-    summary = _summary_text(stats)
-    mode = (settings_store.get("stats_bot_mode", "preview") or "preview").strip().lower()
-    try:
-        if preview_only or mode != "post":
-            await _preview_telegram(summary, png)
-        else:
-            await _post_to_nostr(summary, png)
-    except Exception as e:
-        logger.warning("[stats-bot] delivery failed: %s", e)
-    return summary
+    return out
 
 
 # --- scheduler -----------------------------------------------------------
 
 async def _tick():
+    """Every 6h: post for each enabled Nostr bot that has the stats feature on (gated by the bots
+    master switch, like every other bot). A node with no stats bot is a cheap no-op."""
     from app.services import settings_store
-    if not settings_store.get_bool("stats_bot_enabled", False):
+    if not settings_store.get_bool("bots_manager_enabled", False):
         return
-    await run_stats_bot()
+    for name, nsec in _stats_bots():
+        try:
+            await post_stats(nsec)
+            logger.info("[stats-bot] posted for bot %s", name)
+        except Exception as e:
+            logger.warning("[stats-bot] post failed for bot %s: %s", name, e)
 
 
 def start_stats_bot_scheduler():
+    # Always register the 6h job — it self-gates on the bots master switch + which bots have the
+    # stats feature (read live each tick), so enabling it on a bot needs no restart of this scheduler.
     global stats_scheduler
     if stats_scheduler is not None:
-        return
-    from app.services import settings_store
-    if not settings_store.get_bool("stats_bot_enabled", False):
-        logger.info("[stats-bot] disabled")
         return
     stats_scheduler = AsyncIOScheduler()
     stats_scheduler.add_job(_tick, IntervalTrigger(hours=6), id="stats_bot",
