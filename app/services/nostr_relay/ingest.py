@@ -218,8 +218,9 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     DMs ADDRESSED to them (NIP-17 gift wraps + legacy kind-4). Writes straight to the store
     (origin='wot'), so it does NOT go through the WS write path and is NOT re-broadcast."""
     # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
-    # NIP-53 live events (30311, for the Streams view).
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 10002, 30023, 30311]
+    # NIP-53 live events (30311, Streams), NIP-35 torrents (2003/2004), NIP-34 repos (30617) — so a
+    # follow / WoT refresh pulls a torrent-poster's FULL back-catalog, not just recent firehose hits.
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 30023, 30311, 30617]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
