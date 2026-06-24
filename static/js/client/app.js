@@ -2848,7 +2848,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">📝 Summarize link</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ Post with AI</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
@@ -2907,7 +2907,7 @@
         // pasted after the menu opened still works — no stale disabled state).
         if(sumBtn) sumBtn.onclick=async()=>{ closeMenu();
           const url=firstUrl(); if(!url){ toast('paste a link into the post first'); return; }
-          const lbl=sumBtn.textContent; sumBtn.disabled=true; sumBtn.textContent='📝 …';
+          const lbl=sumBtn.textContent; sumBtn.disabled=true; sumBtn.textContent='✨ …';
           $('#cmp-status',root).textContent='summarizing link…';
           try{
             const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
