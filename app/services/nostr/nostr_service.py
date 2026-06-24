@@ -36,21 +36,16 @@ DEFAULT_RELAYS = [
     "wss://nostr.corebreach.com/",
     "wss://social.amanah.eblessing.co/",
     "wss://relay.sovrgn.co.za/",
-    # 0xchat's default relays (general + DM-inbox) — added so NIP-17 gift-wrapped DMs interoperate
-    # with 0xchat/Amethyst/Coracle: the firehose can pull their users' content + kind-10050 DM-relay
-    # lists, and our users' notes/10050 broadcast back where those clients look. Note: relay.mostr.pub
-    # is a bridge our own bridges.py blocklists (firehose connects, bridged content still dropped), and
-    # auth.nostr1.com / inbox.nostr.wine are NIP-42 AUTH / paid inboxes (anon firehose REQs just error).
+    # 0xchat interop (NIP-17 DMs) — relay.0xchat.com is where 0xchat users + their kind-10050 live.
+    # We deliberately do NOT add the highest-volume firehoses (relay.damus.io, relay.nostr.band) or the
+    # AUTH/paid/bridge relays (auth.nostr1.com, inbox.nostr.wine, nostr.wine[429], relay.mostr.pub):
+    # they flooded the relay's startup with so much traffic/errors that it timed out bots' profile
+    # publish + sync on every restart (the "bot never goes green / nip05 not set" cascade). A couple of
+    # moderate extras are fine.
     "wss://relay.0xchat.com/",
     "wss://yabu.me/",
     "wss://relay.siamstr.com/",
-    "wss://relay.damus.io/",
-    "wss://relay.nostr.band/",
-    "wss://nostr.wine/",
     "wss://nostr.data.haus/",
-    "wss://relay.mostr.pub/",
-    "wss://auth.nostr1.com/",
-    "wss://inbox.nostr.wine/",
 ]
 
 
