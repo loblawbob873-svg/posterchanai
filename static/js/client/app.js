@@ -954,7 +954,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
     renderView(true);
   }
   function renderView(reset){
@@ -984,6 +984,8 @@
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
     if (VIEW==='chat') return renderChatrooms();
+    if (VIEW==='torrents') return renderTorrents();
+    if (VIEW==='repos') return renderRepos();
     if (VIEW==='4chan') return render4chan();
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
@@ -1610,6 +1612,67 @@
     return await publish(kind, a.body||'', tags);
   }
 
+  // ---------- torrents (NIP-35, kind 2003) ----------
+  async function renderTorrents(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[2003], limit:80 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='torrents') return;
+    const tors=evs.sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML = tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>';
+    decorateProfiles();
+    $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
+    $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet link:', b.dataset.magnet); } });
+  }
+  function _fmtBytes(n){ n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+' '+u[i]; }
+  function _magnet(e){
+    const ih=((e.tags.find(t=>t[0]==='x')||[])[1]||'').trim();
+    if(!/^([0-9a-f]{40}|[0-9a-f]{64})$/i.test(ih)) return '';   // valid btih v1(40)/v2(64) hex only
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'';
+    const trs=e.tags.filter(t=>t[0]==='tracker'&&t[1]).map(t=>'&tr='+encodeURIComponent(t[1])).join('');
+    return `magnet:?xt=urn:btih:${ih}${title?'&dn='+encodeURIComponent(title):''}${trs}`;
+  }
+  function torrentCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled torrent)';
+    const files=e.tags.filter(t=>t[0]==='file');
+    const total=files.reduce((s,t)=>s+(Number(t[2])||0),0);
+    const cats=e.tags.filter(t=>t[0]==='t'&&t[1]).slice(0,6).map(t=>`<span class="tor-tag">${enc(t[1])}</span>`).join('');
+    const mag=_magnet(e);
+    return `<article class="tor-card note"><div class="body">
+      <div class="tor-title">🧲 ${enc(title)}</div>
+      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${total?`<span class="muted small">· ${_fmtBytes(total)} · ${files.length} file${files.length===1?'':'s'}</span>`:''}</div>
+      ${e.content?`<div class="tor-desc">${enc(e.content.slice(0,400))}</div>`:''}
+      ${cats?`<div class="tor-tags">${cats}</div>`:''}
+      <div class="row tor-actions">${mag?`<a class="btn btn-cyan small" href="${enc(mag)}">🧲 Open magnet</a><button class="btn btn-ghost small tor-copy" data-magnet="${enc(mag)}">⧉ Copy</button>`:'<span class="muted small">no infohash</span>'}</div>
+    </div></article>`;
+  }
+  // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
+  async function renderRepos(){
+    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:80 }]); }catch(_){}
+    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    if(VIEW!=='repos') return;
+    const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
+    feed.innerHTML = repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617).</div>';
+    decorateProfiles();
+    $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
+    $$('.repo-clone',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+  }
+  function repoCard(e){
+    const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const name=(e.tags.find(t=>t[0]==='name')||[])[1]||(e.tags.find(t=>t[0]==='d')||[])[1]||'(unnamed repo)';
+    const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
+    const clone=(e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean);
+    const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
+    const wurl=_mdUrl(web[0]||'');   // scheme-allowlist (http/https only) — a relay-supplied javascript: href must never become clickable
+    return `<article class="repo-card note"><div class="body">
+      <div class="tor-title">🌱 ${enc(name)}</div>
+      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      ${desc?`<div class="tor-desc">${enc(desc.slice(0,400))}</div>`:''}
+      <div class="row tor-actions">${wurl?`<a class="btn btn-cyan small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open</a>`:''}${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Copy clone URL</button>`:''}</div>
+    </div></article>`;
+  }
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
   function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
@@ -2694,7 +2757,7 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['pics','📸','Pics'],['chat','💬','Chat'],['4chan','🍀','4chan']];
+    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['pics','📸','Pics'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });

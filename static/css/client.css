@@ -963,6 +963,13 @@ a.btn.full{display:block}
 .art-sum{color:var(--muted);font-size:16.5px;line-height:1.5;margin-bottom:9px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .art-by{display:flex;align-items:center;gap:7px;font-size:14.5px;color:var(--muted)}
 .art-av{width:22px;height:22px;border-radius:50%;object-fit:cover;border:1px solid var(--line)}
+/* Discover: torrents (NIP-35) + git repos (NIP-34) cards — themed via vars */
+.tor-card,.repo-card{cursor:default}
+.tor-title{font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;word-break:break-word}
+.tor-desc{margin:8px 0;line-height:1.5;color:var(--text);white-space:pre-wrap;word-wrap:break-word;font-size:15px}
+.tor-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.tor-tag{font-size:12px;padding:2px 9px;border-radius:11px;border:1px solid var(--line);color:var(--muted);background:var(--panel2)}
+.tor-actions{gap:8px;margin-top:10px;flex-wrap:wrap}
 .art-by .name{cursor:pointer;color:var(--text)}.art-by .name:hover{color:var(--neon)}
 .article-view{padding:20px 22px 60px;max-width:760px;margin:0 auto;animation:fade .25s}
 .av-banner{width:100%;max-height:340px;object-fit:cover;border-radius:16px;border:1px solid var(--line);margin:16px 0;box-shadow:0 0 30px rgba(255,0,255,.18)}

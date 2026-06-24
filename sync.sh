@@ -4,6 +4,13 @@ git commit -a -m fix || true
 # mirror from here — that's a separate, explicit `git push github master:main` step.
 git push origin master
 
+# Update router.lan (192.168.0.1) nginx's static checkout. It serves /static from LOCAL files
+# (root /srv/posterchanai → a git clone), decoupling asset loading from server1 so the restart below
+# can't break the page with "Loading failed for <script>". Pull on EVERY webui change or it serves
+# stale JS/CSS. (See memory: project_client_nginx_cache.)
+ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master" \
+    || echo "[sync] WARN: router.lan static git pull failed"
+
 # Wait for any active GPU inference to finish before restarting.
 # Uses flock -n to test the same lock file the service uses.
 _wait_gpu_free() {
