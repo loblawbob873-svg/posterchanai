@@ -690,6 +690,9 @@
     $('#btn-refresh').onclick = ()=>renderView(true);
     bindSearch();
     bindFeedActions();
+    // Media-grid toggle: flip Home/Global between the normal post list and an images-only picture grid.
+    { const mt=$('#tl-media'); if(mt) mt.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);
+        mt.classList.toggle('active', _tlMedia); if(VIEW==='home'||VIEW==='global') _drawTimeline(false); }; }
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
@@ -973,6 +976,8 @@
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
+    { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
     renderView(true);
   }
   function renderView(reset){
@@ -1056,6 +1061,7 @@
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
+  let _tlMedia = !!ClientSettings.get('tlMedia', false);   // Home/Global "media grid" toggle (image posts only)
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
@@ -1082,6 +1088,7 @@
     _liveT=null; const evs=_liveBuf.splice(0);
     if((VIEW!=='home'&&VIEW!=='global') || !evs.length) return;
     const feed=$('#feed'); if(!feed) return;
+    if(_tlMedia) return;   // media grid doesn't live-prepend (would break the grid) — new images show on redraw/re-entry
     // While the user is reading below the top, DON'T mutate the timeline under them (prepending +
     // hydrating link cards shifts content and is what made it "keep refreshing"). Stash the new
     // posts and surface them with a "↑ N new posts" pill; flush when they scroll back up / tap it.
@@ -1134,10 +1141,23 @@
     const top=preserveScroll?feed.scrollTop:0;
     const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
     const notes = Store.feed(e=>(!fn||fn(e))&&!isMutedView(e)).filter(e=>!isReply(e)).slice(0,200);
-    feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
     if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
+    if(_tlMedia){
+      // Media grid: the SAME feed (your follows / the nostrverse), image posts only, as a picture
+      // grid — reuses Pics' _firstImage + .pics-grid/.pic-card styling. Scroll-back grows it (events
+      // accumulate in Store); like the old Pics view it doesn't live-prepend (see flushLive).
+      const pics=[]; const seen=new Set();
+      for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
+      feed.innerHTML = pics.length
+        ? `<div class="pics-grid">${pics.map(x=>`<div class="pic-card" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()"></div>`).join('')}</div>`
+        : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+      $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
+      if(preserveScroll) feed.scrollTop=top;
+      return;
+    }
+    feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
   }
   // ---------- infinite scroll-back ----------
@@ -1176,12 +1196,14 @@
       if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
       // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
       // repost's own id — otherwise a repost of an already-shown note appends a duplicate card.
+      if(_tlMedia) continue;   // media grid redraws from Store below — skip building list nodes
       const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // already on screen
       const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
     }
     invalidateCounts();
-    if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); }
+    if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
+    else if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
@@ -2810,7 +2832,7 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['pics','📸','Pics'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
+    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });

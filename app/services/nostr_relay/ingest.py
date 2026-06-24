@@ -220,7 +220,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     # profile, notes, contacts, reposts, reactions, comments, relay list, long-form articles,
     # NIP-53 live events (30311, Streams), NIP-35 torrents (2003/2004), NIP-34 repos (30617) — so a
     # follow / WoT refresh pulls a torrent-poster's FULL back-catalog, not just recent firehose hits.
-    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 30023, 30311, 30617]
+    kinds = kinds or [0, 1, 3, 6, 7, 1111, 2003, 2004, 10002, 10050, 30023, 30311, 30617]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,
@@ -286,7 +286,7 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
 
 
 # Lookup-relay metadata kinds: profile (NIP-01), contact list (NIP-02), relay list (NIP-65).
-_LOOKUP_KINDS = [0, 3, 10002]
+_LOOKUP_KINDS = [0, 3, 10002, 10050]
 
 
 async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
