@@ -198,7 +198,17 @@ def main():
 
     # Nostr listener (can run alongside --blockbot, etc.)
     if args.nostr:
+        import os as _os
+        # Presence-only: a stats / identity bot runs a live --nostr process for its kind-0 profile +
+        # green status, but the operator did NOT enable the reply listener (Admin → Bots "reply"
+        # unchecked → empty modes → the manager sets NOSTR_PRESENCE_ONLY). It must NOT reply to
+        # mentions. The profile publish above already ran; here we just keep the process alive.
+        _nostr_presence_only = (_os.getenv("NOSTR_PRESENCE_ONLY", "") or "").strip().lower() in ("1", "true", "yes", "on")
         def run_nostr():
+            if _nostr_presence_only:
+                print("Nostr presence-only mode (profile published; NOT replying to mentions).", flush=True)
+                while True:
+                    time.sleep(3600)
             from nostrListener import process_mentions, process_random_replies
             print("Starting Nostr listener...")
             while True:
@@ -212,7 +222,6 @@ def main():
                     print(f"[ERROR] nostr process_random_replies failed: {e}", flush=True)
                 # Poll cadence: relays push fast, so a short gap keeps replies snappy
                 # (each poll is one short-lived REQ per relay). Overridable via NOSTR_POLL_SECONDS.
-                import os as _os
                 time.sleep(int(_os.getenv("NOSTR_POLL_SECONDS", "8")))
         if threads or has_daemon:
             t = threading.Thread(target=run_nostr, daemon=True)

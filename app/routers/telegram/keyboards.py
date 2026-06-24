@@ -519,6 +519,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         rows.append([
             {"text": "🗜 Compress video", "callback_data": "media:compress"},
             {"text": "✂️ Clip video", "callback_data": "media:clip"},
+            {"text": "🎵 Extract audio", "callback_data": "media:extractaudio"},
         ])
     if has_image:
         # Grouped by purpose so it reads as sections instead of one long column:
@@ -526,6 +527,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         rows.append([
             {"text": "🗜 Compress", "callback_data": "media:compress"},
             {"text": "✂️ Remove BG", "callback_data": "media:removebackground"},
+            {"text": "⭕ Circle crop", "callback_data": "media:circlecrop"},
             {"text": "📄 To PDF", "callback_data": "media:topdf"},
         ])
         rows.append([

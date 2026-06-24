@@ -764,6 +764,9 @@ a.btn.full{display:block}
 .cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px;justify-content:space-between}
 .cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cmp-right{margin-left:auto}
+/* Draft + Post on their own centered row beneath the tool buttons */
+.cmp-actions{display:flex;justify-content:center;gap:10px;margin-top:10px}
+.cmp-actions .btn{min-width:120px;justify-content:center}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}

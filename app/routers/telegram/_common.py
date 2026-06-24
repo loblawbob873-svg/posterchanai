@@ -44,7 +44,7 @@ _HELP_SECTIONS = {
         "• 🔄 Refresh — update the totals"
     ),
     "files": (
-        "📎 *Files — compress, convert, meme, dildo, poo, cum, blood, fire & bulletholes*\n\n"
+        "📎 *Files — compress, convert, extractaudio, circlecrop, meme, dildo, poo, cum, blood, fire & bulletholes*\n\n"
         "Just upload a file (no caption needed) and tap a button:\n\n"
         "*Images:*\n"
         "• 🗜 Compress — shrink the image\n"
@@ -103,7 +103,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables` or `feliz` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables` or `feliz` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (

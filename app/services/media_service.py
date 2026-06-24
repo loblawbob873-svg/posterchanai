@@ -496,6 +496,107 @@ def clip_attachment(
 
 
 # ---------------------------------------------------------------------------
+# Extract audio from a video  +  circle-crop an image  (upload-action commands)
+# ---------------------------------------------------------------------------
+
+def extract_audio(data: bytes, source_filename: str = "video", fmt: str = "mp3") -> bytes:
+    """Pull the audio track out of a video into an MP3 (libmp3lame, VBR ~q2). Raises on failure
+    (e.g. the video has no audio stream — callers report it per-file)."""
+    ff = resolve_ffmpeg()
+    suffix = Path(source_filename).suffix or ".video"
+    fd, inp = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    out = inp + "." + fmt
+    try:
+        with open(inp, "wb") as f:
+            f.write(data)
+        if not _probe_has_audio(inp):
+            raise ValueError("no audio track in this video")
+        subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", inp,
+                        "-vn", "-c:a", "libmp3lame", "-q:a", "2", out],
+                       check=True, capture_output=True, timeout=600)
+        with open(out, "rb") as f:
+            return f.read()
+    finally:
+        for p in (inp, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def extract_audio_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Extract the audio of each attached video to MP3. Mirrors compress_attachments."""
+    videos = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_video(fn, ct)]
+    if not videos:
+        return [], "No video to extract audio from — attach a video file first."
+    outputs: List[OutputFile] = []
+    notes: List[str] = []
+    for filename, data, content_type in videos:
+        stem = Path(filename).stem or "audio"
+        try:
+            audio = extract_audio(data, filename, "mp3")
+            outputs.append({"filename": f"{stem}.mp3", "data": audio, "content_type": "audio/mpeg"})
+            notes.append(f"🎵 {filename} → {_human_size(len(audio))}")
+        except Exception as e:
+            logger.error(f"extract_audio failed for {filename}: {e}", exc_info=True)
+            notes.append(f"❌ {filename}: {e}")
+    summary = "## 🎵 Extract audio\n\n" + "\n".join(notes) if notes else "No audio extracted."
+    return outputs, summary
+
+
+def circle_crop(data: bytes, max_dimension: int = IMAGE_MAX_DIMENSION) -> bytes:
+    """Center-crop an image to a square and mask it to a circle → a transparent-corner PNG.
+    The mask is supersampled (×4) then downscaled for smooth, anti-aliased edges."""
+    from PIL import Image, ImageOps, ImageDraw
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img).convert("RGBA")
+        if max(img.size) > max_dimension:
+            img.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
+        side = min(img.size)
+        left = (img.width - side) // 2
+        top = (img.height - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+
+        big = side * 4
+        mask = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, big - 1, big - 1), fill=255)
+        mask = mask.resize((side, side), Image.LANCZOS)
+
+        out_img = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        out_img.paste(img, (0, 0), mask)
+        out = io.BytesIO()
+        out_img.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+
+
+def circle_crop_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[List[OutputFile], str]:
+    """Circle-crop each attached image to a transparent PNG. Mirrors compress_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image to circle-crop — attach an image first."
+    outputs: List[OutputFile] = []
+    notes: List[str] = []
+    for filename, data, content_type in images:
+        stem = Path(filename).stem or "image"
+        try:
+            cropped = circle_crop(data)
+            outputs.append({"filename": f"{stem}_circle.png", "data": cropped, "content_type": "image/png"})
+            notes.append(f"⭕ {filename} → {_human_size(len(cropped))}")
+        except Exception as e:
+            logger.error(f"circle_crop failed for {filename}: {e}", exc_info=True)
+            notes.append(f"❌ {filename}: {e}")
+    summary = "## ⭕ Circle crop\n\n" + "\n".join(notes) if notes else "No images cropped."
+    return outputs, summary
+
+
+# ---------------------------------------------------------------------------
 # Still image + audio → MP4 (the "narrate"-style image-over-a-song video)
 # ---------------------------------------------------------------------------
 

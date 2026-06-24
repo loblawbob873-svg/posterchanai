@@ -477,6 +477,28 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _extractaudio_command(self, attachments: Optional[list]) -> dict:
+        """Extract the audio track of attached video(s) to MP3."""
+        if not attachments:
+            return {"type": "text", "content": "Attach a video, then send `extractaudio` to pull its audio as MP3."}
+        import asyncio
+        from app.services.media_service import extract_audio_attachments
+        outputs, summary = await asyncio.to_thread(extract_audio_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _circlecrop_command(self, attachments: Optional[list]) -> dict:
+        """Circle-crop attached image(s) into transparent PNG(s)."""
+        if not attachments:
+            return {"type": "text", "content": "Attach an image, then send `circlecrop` to crop it into a circle."}
+        import asyncio
+        from app.services.media_service import circle_crop_attachments
+        outputs, summary = await asyncio.to_thread(circle_crop_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _ocr_command(self, attachments: Optional[list]) -> dict:
         """Read the text out of attached image(s)/PDF(s) via OCR — no translation. Mirrors the
         Telegram `media:ocr` flow so the web 🔤 Read text button has a command to run."""

@@ -3227,8 +3227,9 @@
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ AI Enhancer</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
-      <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
+      </div>
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
+      <div class="cmp-actions"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -5801,9 +5802,9 @@
   // Commands match the upload allowlist in chat.py (note: it's `ocr`, not "readtext").
   function _aiAttachActions(){
     const k=new Set(_ai.attach.map(a=>a.kind));
-    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['🔤 Read text','run','ocr'],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme ']];
+    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme ']];
     if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr']];
-    if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🔄 Convert','fill','convert ']];
+    if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio'],['🔄 Convert','fill','convert ']];
     return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
   }
   function _aiMediaAction(mode, cmd){

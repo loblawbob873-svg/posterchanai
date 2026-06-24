@@ -35,6 +35,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
+        "extractaudio": "Extract the audio from an attached video as MP3",
+        "circlecrop": "Circle-crop an attached image (transparent PNG)",
         "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
         "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
@@ -453,6 +455,10 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._clip_command(arg, attachments)
         elif command == "convert":
             return await self._convert_command(arg, attachments)
+        elif command == "extractaudio":
+            return await self._extractaudio_command(attachments)
+        elif command == "circlecrop":
+            return await self._circlecrop_command(attachments)
         elif command == "flashcards":
             return await self._flashcards_command(arg, attachments)
         elif command == "ocr":

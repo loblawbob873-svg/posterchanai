@@ -378,6 +378,12 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_random_reply", "NOSTR_RANDOM_REPLY")
             setif("nostr_random_reply_quiet", "NOSTR_RANDOM_REPLY_QUIET")
             setif("nostr_random_reply_per_hour", "NOSTR_RANDOM_REPLY_PER_HOUR")
+            # Reply listener is opt-in: Admin → Bots "reply" maps to `--nostr` in `modes` (admin-bots.js).
+            # When it's UNCHECKED, modes is empty and _cmd_for still defaults to `--nostr` so a stats /
+            # identity bot goes live + publishes kind-0 — but it must NOT reply to mentions. Flag that
+            # defaulted process as presence-only. (Explicit `--nostr` in modes ⇒ user wants replies.)
+            if not bot_dict.get("modes"):
+                env["NOSTR_PRESENCE_ONLY"] = "1"
         elif platform == "matrix":
             setif("matrix_server", "MATRIX_SERVER")
             setif("matrix_user_id", "MATRIX_USER_ID")

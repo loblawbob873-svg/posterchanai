@@ -124,6 +124,20 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                 _imgs = [a for a in _atts if is_image(a[0], a[2])]
                 await telegram_service.send_message(chat_id, "✂️ Removing background…")
                 await _send_files_result(await cb_command_service.execute_command("removebackground", "", attachments=_imgs), offer_share=False)
+            elif _action == "extractaudio":
+                _vids = [a for a in _atts if is_video(a[0], a[2])]
+                if not _vids:
+                    await telegram_service.send_message(chat_id, "No video to extract audio from.")
+                else:
+                    await telegram_service.send_message(chat_id, "🎵 Extracting audio…")
+                    await _send_files_result(await cb_command_service.execute_command("extractaudio", "", attachments=_vids), offer_share=False)
+            elif _action == "circlecrop":
+                _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                if not _imgs:
+                    await telegram_service.send_message(chat_id, "No image to circle-crop.")
+                else:
+                    await telegram_service.send_message(chat_id, "⭕ Circle-cropping…")
+                    await _send_files_result(await cb_command_service.execute_command("circlecrop", "", attachments=_imgs), offer_share=False)
             elif _action == "topdf":
                 _imgs = [a for a in _atts if is_image(a[0], a[2])]
                 await _send_files_result(await cb_command_service.execute_command("convert", "pdf", attachments=_imgs), offer_share=False)
