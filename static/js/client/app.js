@@ -1656,7 +1656,7 @@
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     feed.innerHTML = `<div class="art-top"><button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button></div>`
       + (repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
-    $('#repo-new').onclick=publishRepo;
+    $('#repo-new').onclick=()=>publishRepo();
     decorateProfiles();
     $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
     $$('.repo-clone',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
@@ -1664,7 +1664,7 @@
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
   function publishRepo(existing){
-    const tag=(e,k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
+    const tag=(e,k)=>(existing&&Array.isArray(existing.tags))?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
     modal(`<h3>🌱 Announce a git repo</h3>
       <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>
       <label class="fld">Repo id <span class="muted small">(short slug, e.g. posterchanai)</span><input class="input" id="rp-d" value="${enc(tag(existing,'d'))}" placeholder="my-app"></label>
