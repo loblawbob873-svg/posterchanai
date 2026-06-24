@@ -985,7 +985,8 @@
     const feed = $('#feed');
     if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
-    feed.classList.toggle('feed-chat', VIEW==='channel');   // never true here (channel is opened directly) → clears on leave
+    if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
+    feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
@@ -1872,10 +1873,12 @@
     feed.innerHTML=`<div class="chat-list">
       <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new">＋ New channel</button></div>
       ${shown.length?`<div class="stream-grid">${shown.map(channelCard).join('')}</div>`
-        :'<div class="empty">No active channels yet. Tap ＋ New channel to start one — channels appear here once they have messages on this instance.</div>'}</div>`;
+        :'<div class="empty">No active channels yet. Tap ＋ New channel to start one — channels appear here once they have messages on this instance.</div>'}
+      <div id="nip29-groups"></div></div>`;
     decorateProfiles();
     { const b=$('#ch-new'); if(b) b.onclick=createChannel; }
     $$('.channel-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openChannel(x); });
+    loadNip29Groups();   // async-append the NIP-29 (0xchat) groups section — read-only browse
   }
   function channelCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey); const m=_chanMeta(e);
@@ -1936,6 +1939,88 @@
     try{ const { ev }=await publish(42, text, [['e', chan.id, '', 'root']]); if(ev && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
     catch(e){ toast('send failed: '+((e&&e.message)||e)); }
     finally{ ta.disabled=false; ta.focus(); }
+  }
+  // ---------- NIP-29 relay-based groups (0xchat &c.) — READ-ONLY browse (Phase 1) ----------
+  // Unlike our NIP-28 channels, NIP-29 groups live on DEDICATED external relays (not our pool):
+  // kind-39000 = group metadata (relay-authored, addressable by d=group-id), kind-9 = chat messages
+  // tagged h=group-id. We read them via the bounded ephemeral queryFrom (one-shot sockets, closed
+  // after EOSE) and POLL every ~6s while a group is open — no persistent connection, CPU-bounded,
+  // auto-stops on leave (switchView clears _groupPoll). Read-only for now: join/post (NIP-42 auth +
+  // kind 9021/9) is a later phase.
+  // (relay.groups.nip29.com dropped — broken TLS cert / hostname mismatch, browser WSS rejects it.)
+  const NIP29_RELAYS = ['wss://groups.0xchat.com/', 'wss://relay.highlighter.com/'];
+  const _NIP29_MAX = 60;   // 0xchat's relay ignores `limit` and dumps ALL (~1000+) groups → cap the render
+  let _groupId=null, _groupRelay=null, _groupMsgs=new Map(), _groupPoll=null, _groupSeen=new Set();
+  function _nip29Meta(e){ const tag=k=>(e.tags.find(t=>t[0]===k)||[])[1]||'';
+    return { id:tag('d'), name:tag('name')||'(unnamed group)', about:tag('about'), picture:tag('picture') }; }
+  async function loadNip29Groups(){
+    if(!$('#nip29-groups')) return;
+    // Query each group relay SEPARATELY so we know which relay each group lives on (queryFrom flattens
+    // across relays and the group id is only unique per relay). Failures per relay are ignored.
+    let groups=[];
+    try{
+      const lists=await Promise.all(NIP29_RELAYS.map(r=>
+        Relay.queryFrom([r], [{ kinds:[39000], limit:100 }]).then(evs=>evs.map(e=>({e, relay:r}))).catch(()=>[])));
+      const seen=new Set();
+      for(const {e, relay} of lists.flat()){
+        const m=_nip29Meta(e); if(!m.id) continue; const key=relay+"'"+m.id; if(seen.has(key)) continue; seen.add(key);
+        groups.push({ relay, m, key });
+      }
+    }catch(_){}
+    const box=$('#nip29-groups'); if(!box || VIEW!=='chat') return;
+    const total=groups.length;
+    // pictured groups first (more "real"/curated), then by name; cap the render (relay dumps 1000+).
+    groups.sort((a,b)=> (b.m.picture?1:0)-(a.m.picture?1:0) || a.m.name.localeCompare(b.m.name));
+    const shownG=groups.slice(0, _NIP29_MAX);
+    box.innerHTML = total
+      ? `<div class="search-section-title" style="margin-top:18px">Groups · NIP-29 <span class="muted small">(0xchat &amp; others — read-only${total>_NIP29_MAX?` · showing ${_NIP29_MAX} of ${total}`:''})</span></div>
+         <div class="stream-grid">${shownG.map(nip29Card).join('')}</div>`
+      : '';   // none found (or the relays require login) → no section
+    $$('.nip29-card',box).forEach(c=>{ const g=groups.find(x=>x.key===c.dataset.key); if(g) c.onclick=()=>openGroup(g); });
+  }
+  function nip29Card(g){ const m=g.m;
+    return `<article class="stream-card nip29-card" data-key="${enc(g.key)}">
+      <div class="stream-thumb">${m.picture?`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">👥</span>'}</div>
+      <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
+        ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
+        <div class="muted small">🛰 ${enc(g.relay.replace(/^wss:\/\//,'').replace(/\/$/,''))}</div>
+      </div></article>`;
+  }
+  async function openGroup(g){
+    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set();
+    if(_groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }
+    $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
+    $('#view-title').textContent=g.m.name;
+    const feed=$('#feed'); feed.classList.add('feed-chat');
+    feed.innerHTML=`<div class="chatroom">
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back">←</button><span class="chatroom-title">👥 ${enc(g.m.name)}</span></div>
+      ${g.m.about?`<div class="chatroom-about">${linkify(g.m.about)}</div>`:''}
+      <div id="grp-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
+      <div class="chatroom-compose readonly"><span class="muted small">👀 Read-only — joining &amp; posting (NIP-29) coming soon</span></div>
+    </div>`;
+    $('#grp-back').onclick=()=>switchView('chat');
+    _pollGroup(true);
+  }
+  async function _pollGroup(first){
+    const relay=_groupRelay, id=_groupId; if(!relay||!id) return;
+    let evs=[]; try{ evs=await Relay.queryFrom([relay], [{ kinds:[9], '#h':[id], limit:200 }]); }catch(_){}
+    if(VIEW!=='group' || _groupId!==id) return;
+    // External relay is untrusted → verify signatures of UNSEEN messages only (bounded cost per poll).
+    const fresh=evs.filter(e=>e && e.id && !_groupSeen.has(e.id));
+    if(fresh.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:fresh});
+      const ok=new Set(v.filter(r=>r.valid).map(r=>r.id));
+      for(const e of fresh){ _groupSeen.add(e.id); if(ok.has(e.id)){ _groupMsgs.set(e.id,e); needProfile(e.pubkey); } } }catch(_){} }
+    if(VIEW!=='group' || _groupId!==id) return;
+    _drawGroup(first);
+    _groupPoll=setTimeout(()=>{ if(VIEW==='group' && _groupId===id) _pollGroup(false); }, 6000);
+  }
+  function _drawGroup(force){
+    const box=$('#grp-msgs'); if(!box || !_groupId) return;
+    const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
+    const msgs=[..._groupMsgs.values()].filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);
+    box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages, or this group requires login to read.</div>';
+    decorateProfiles();
+    if(atBottom) box.scrollTop=box.scrollHeight;
   }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,

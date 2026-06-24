@@ -350,8 +350,10 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
             setif("pleroma_admin_token", "PLEROMA_ADMIN_TOKEN")
         elif platform == "nostr":
-            # Nostr identity is a secret key (nsec/hex); relays + the external media host come
-            # from the bot's config. Blank relays → app defaults.
+            # Nostr identity is a secret key (nsec/hex). Relays are NOT per-bot: every Nostr bot
+            # publishes to the LOCAL relay ONLY (NOSTR_RELAYS was set to ws://127.0.0.1:3052 above),
+            # whose outbox federates the posts upstream — so there's no per-bot relay override here.
+            # The external media host comes from config (_set_internal_blossom).
             setif("nostr_nsec", "NOSTR_NSEC")
             # Anti-loop: the hex pubkeys of ALL our nostr bots, so this listener never replies to
             # another of our bots. Robust by pubkey (the handle-based BOT_BLACKLIST can't, since a

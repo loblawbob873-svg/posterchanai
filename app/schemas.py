@@ -237,6 +237,14 @@ class SettingsResponse(BaseModel):
     logs_scheduler_enabled: str = "false"
     logs_schedule: str = "1,12,18"
     logs_nodes: str = ""  # comma-separated node names to include (empty = all configured nodes + local)
+    # Nostr Stats Bot (app/services/stats_bot_service.py): optional, posts a cyberpunk activity graph
+    # (daily posts + DAU by NIP-05 users, past week) every 6h. mode: "preview" → admin Telegram,
+    # "post" → public kind-1 note from stats_bot_nsec. Media defaults to the public Blossom server.
+    stats_bot_enabled: str = "false"
+    stats_bot_mode: str = "preview"          # "preview" (Telegram to admin) | "post" (public Nostr note)
+    stats_bot_nsec: str = ""                  # account that publishes the note in "post" mode
+    stats_bot_media_service: str = ""         # "" → blossom; or "nip96"
+    stats_bot_media_endpoint: str = ""        # "" → default public host (blossom.primal.net)
     # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds

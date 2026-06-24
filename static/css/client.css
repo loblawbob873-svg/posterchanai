@@ -551,6 +551,7 @@ a.btn.full{display:block}
 .chatroom-compose textarea{flex:1;resize:none;max-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 13px;font-family:inherit;font-size:15.5px;line-height:1.4}
 .chatroom-compose textarea:focus{border-color:var(--neon);outline:none}
 .chatroom-compose .btn{flex:0 0 auto;min-height:42px}
+.chatroom-compose.readonly{justify-content:center;align-items:center;text-align:center;min-height:44px}
 .channel-card .stream-play{font-size:30px}
 @media(max-width:820px){
   /* the fixed .mobilenav overlays the bottom ~62px; reserve it so the compose bar isn't hidden */

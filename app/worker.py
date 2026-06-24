@@ -32,6 +32,7 @@ _SCHEDULERS = [
     ("nitter-feeds", "app.services.nitter_feeds_service", "start_nitter_feeds_scheduler"),
     ("fedi-timeline", "app.services.fedi_timeline_service", "start_fedi_timeline_scheduler"),
     ("matrix-notifications", "app.services.matrix_notifications_service", "start_matrix_notifications_scheduler"),
+    ("stats-bot", "app.services.stats_bot_service", "start_stats_bot_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

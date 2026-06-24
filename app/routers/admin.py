@@ -1321,6 +1321,29 @@ async def run_logs_scheduler(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/run-stats")
+async def run_stats_bot_now(
+    preview: bool = True,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user)
+):
+    """Manually run the Nostr Stats Bot. preview=true → Telegram preview to the admin;
+    preview=false → deliver per stats_bot_mode (force, bypassing the enabled gate)."""
+    from app.services.stats_bot_service import run_stats_bot
+    try:
+        summary = await run_stats_bot(preview_only=preview, force=not preview)
+        if summary is None:
+            raise HTTPException(status_code=400,
+                                detail="Stats build returned nothing (relay DB empty/unreachable, or disabled).")
+        return {"ok": True, "summary": summary,
+                "message": "Preview sent to your Telegram" if preview else "Delivered per configured mode"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running stats bot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/proxy-test")
 async def test_proxy_chain(
     db: Session = Depends(get_db),

@@ -157,6 +157,20 @@ function onBotFormChange() {
     show('bot_ft_matrix_label', !isMatrix && !isImage);   // the checkbox itself
     show('bot_grp_features', !isImage);
 
+    // Per-PLATFORM feature applicability — hide (and uncheck, so it's never saved) any feature the
+    // selected platform can't run. Fediverse-only features need the Pleroma/Misskey DB or admin
+    // token (block / welcome / report / unfollow → don't apply to Nostr or Matrix); Nostr-only are
+    // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse/Matrix). Cross-platform
+    // ones (reply / Nitter / hashtag) always show.
+    const isFedi = platform === 'pleroma' || platform === 'misskey';
+    const showFeat = (f, on) => {
+        const c = _g('bot_ft_' + f); if (!c) return;
+        const lbl = c.closest('label'); if (lbl) lbl.style.display = on ? '' : 'none';
+        if (!on && c.checked) c.checked = false;
+    };
+    ['block', 'welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
+    ['dvm', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem'].forEach(f => showFeat(f, isNostr));
+
     // Per-feature sections appear only when their feature is enabled.
     show('bot_grp_nitter', !isImage && ck('bot_ft_nitter'));
     // block / welcome / report / unfollow all need the Pleroma DB.
