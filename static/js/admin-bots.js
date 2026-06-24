@@ -67,10 +67,14 @@ function renderBots(rows) {
     list.innerHTML = rows.map(b => {
         const st = b._status || {};
         const running = !!st.running;
+        const scheduled = !!st.scheduled;          // image/auto-post bots: online = scheduled to post
         const offHost = st.on_this_host === false;
-        const dot = running ? 'bot-dot-on' : (b.enabled ? 'bot-dot-pending' : 'bot-dot-off');
+        // Online (green) = a live listener process OR a scheduled poster waiting for its next run.
+        const dot = (running || scheduled) ? 'bot-dot-on' : (b.enabled ? 'bot-dot-pending' : 'bot-dot-off');
+        const _nextTime = st.next_run ? new Date(st.next_run * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
         const statusText = offHost ? `other host${st.host ? ' (' + esc(st.host) + ')' : ''}`
             : running ? `running${st.pid ? ' · pid ' + st.pid : ''}`
+            : scheduled ? `scheduled${_nextTime ? ' · next ' + _nextTime : ''}`
             : b.enabled ? 'starting…' : 'off';
         return `
         <div class="bot-card">

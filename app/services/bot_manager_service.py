@@ -1055,9 +1055,13 @@ def get_status():
         for b in rows:
             running = False
             pid = None
+            scheduled = False           # image / auto-post bots: "online" = registered with a next run
+            next_run = None
             if b.bot_type == "image":
                 sched = _post_sched.get(b.name)
                 proc = sched.get("process") if sched else None
+                if sched and sched.get("next_run"):
+                    scheduled, next_run = True, sched["next_run"]
             else:
                 proc = _procs.get(b.name)
             if proc and proc.poll() is None:
@@ -1068,6 +1072,7 @@ def get_status():
                 "bot_type": b.bot_type, "platform": b.platform,
                 "host": b.host or "", "modes": b.modes or "",
                 "running": running, "pid": pid, "on_this_host": on_this_host,
+                "scheduled": scheduled, "next_run": next_run,
                 "restarts": _restart_counts.get(b.name, {}).get("count", 0),
             })
         return out
