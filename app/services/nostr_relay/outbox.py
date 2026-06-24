@@ -61,9 +61,12 @@ class Outbox:
                                self._dropped)
 
     async def _worker(self) -> None:
-        targets = _relay.normalize_relays(self.upstream)
         while True:
             ev = await self._q.get()
+            # Re-read self.upstream each event so a live upstream change (reload-upstream retargets
+            # outbox.upstream in place) takes effect without restarting the worker — otherwise the
+            # miss-set / retry path would keep hitting the OLD relay set.
+            targets = _relay.normalize_relays(self.upstream)
             try:
                 accepted = await _relay.publish_to(self.upstream, ev, direct=self.direct)
                 logger.info("[nostr-relay] outbox: %s → %d/%d relays (queue=%d)",

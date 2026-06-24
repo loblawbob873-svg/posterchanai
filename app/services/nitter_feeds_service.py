@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from email.utils import parsedate_to_datetime
 from urllib.parse import unquote
 
@@ -70,6 +71,25 @@ def _build_telegram(db: Session):
 
 
 # --- Nitter RSS parsing (ported from posterchan/nitterListener.py) ----------
+
+_STATUS_ID_RE = re.compile(r"/status/(\d+)")
+
+
+def _stable_guid(raw: str) -> str:
+    """Collapse a feed item's guid/link to an instance- and format-independent dedup key: the
+    numeric tweet status id. nitter instances variously emit <guid> as a bare id, as a full
+    permalink URL, or omit it (we then fall back to <link>, a URL) — so the SAME tweet can arrive
+    as '123' on one poll and 'https://nitter.net/u/status/123#m' on the next, especially when the
+    instance/Tor exit flaps. Comparing raw guids then misses, re-sending the tweet every poll (the
+    'non-stop duplicates' bug). Normalising both stored and incoming guids to the status id fixes
+    it and self-heals legacy mixed-format state. Falls back to the stripped raw string for any
+    non-status guid so nothing is lost."""
+    s = (raw or "").strip()
+    if s.isdigit():
+        return s
+    m = _STATUS_ID_RE.search(s)
+    return m.group(1) if m else s
+
 
 def _handle_from_rss(rss_url: str) -> str:
     parts = [p for p in (rss_url or "").split("/") if p]
@@ -202,7 +222,9 @@ def _parse_feed(content: bytes):
         title = (item.findtext("title") or "").strip()
         text, media_url = _parse_description(item.findtext("description") or "")
         items.append({
-            "guid": guid,
+            # Normalise to the stable status id so a guid-format/instance flip between polls can't
+            # make an already-seen tweet look new (the duplicate-flood bug). See _stable_guid.
+            "guid": _stable_guid(guid),
             "title": title,
             "link": (item.findtext("link") or "").strip(),
             "text": text or title,
@@ -293,22 +315,32 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> N
             changed = True
             continue
 
-        known = set(seen[rss])
+        # Normalise the stored cursor too, so legacy entries saved in the old full-URL form still
+        # match incoming (now status-id) guids — otherwise the first poll after this fix would
+        # re-send everything once.
+        prev_seen = [_stable_guid(g) for g in seen[rss]]
+        known = set(prev_seen)
         new_items = [it for it in items if it["guid"] not in known]
         # Oldest-first so chat order is chronological; cap to avoid flooding.
+        unrendered = set()
         for it in reversed(new_items[:_MAX_NEW_PER_FEED]):
             png = await _render_card(client, it, handle, channel_name, avatar_url)
             if not png:
+                # Transient render failure (avatar/media fetch, browser hiccup): DON'T mark it seen,
+                # so it's retried next poll instead of being silently dropped forever.
+                unrendered.add(it["guid"])
                 continue
             try:
                 await tg.send_photo(chat_id, base64.b64encode(png).decode(),
                                     caption=_caption(handle, it), parse_mode="")
             except Exception as e:
                 logger.warning(f"[nitter] telegram send failed for user {user.id}: {e}")
-        # Record all current guids as seen (whether or not each sent), newest-first, capped.
-        cur_guids = [it["guid"] for it in items]
+        # Record current guids as seen (whether or not each sent — a send failure is NOT retried to
+        # avoid duplicate posts), EXCEPT items that failed to render so those retry. Newest-first,
+        # capped.
+        cur_guids = [it["guid"] for it in items if it["guid"] not in unrendered]
         cur_set = set(cur_guids)
-        seen[rss] = (cur_guids + [g for g in seen[rss] if g not in cur_set])[:_MAX_SEEN]
+        seen[rss] = (cur_guids + [g for g in prev_seen if g not in cur_set])[:_MAX_SEEN]
         changed = True
 
     if changed:

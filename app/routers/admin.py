@@ -504,6 +504,18 @@ def update_settings(
                 cache_settings_changed = True
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
+        # Relay TASK-TOPOLOGY keys force a full subprocess restart (see the restart block below).
+        # Computed up front so the LIVE-reload blocks (upstream / store-config) can SKIP themselves
+        # when a restart is already going to happen in the same save — otherwise a combined save
+        # (e.g. upstream + send_only) would do the live reconnect AND then throw it away with a
+        # restart, reintroducing the ~90s /client outage the live path exists to avoid.
+        _relay_topology_keys = (
+            "nostr_relay_send_only", "nostr_relay_wot_enabled", "nostr_relay_firehose_enabled",
+            "nostr_relay_mirror_feeds", "nostr_relay_disable_proxy",
+            "nostr_relay_bind", "nostr_relay_port",
+        )
+        _relay_will_restart = any(k in changed_keys for k in _relay_topology_keys)
+
         # If the relay blocklist/filters were edited in the UI, push them to the running relay
         # immediately (otherwise the change wouldn't apply until restart / daily refresh).
         if any(k in data.settings for k in ("nostr_relay_blocked_pubkeys", "nostr_relay_blocked_words", "nostr_relay_blocked_langs", "nostr_relay_blocked_relays", "nostr_relay_block_bridged")):
@@ -519,6 +531,57 @@ def update_settings(
                 trigger_nip05_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay NIP-05 reload after settings save failed: {e}")
+        # Upstream relay set / firehose breadth / ingest kinds changed → reconnect the relay's
+        # firehose + outbox LIVE instead of restarting the subprocess. The relay is the app's
+        # datastore, so a restart drops every /client connection and blocks settings writes for ~90s;
+        # the firehose can just reconnect to the new config in place (like the block/NIP-05 reloads
+        # above). Flush the new values to the datastore SYNCHRONOUSLY first — the relay re-reads its
+        # config from Postgres on reload, and the normal write-through is async, so without this it
+        # could read STALE values and ignore the change.
+        _relay_reload_keys = ("nostr_relay_upstream_relays", "nostr_relay_firehose_max_relays",
+                              "nostr_relay_ingest_kinds")
+        if not _relay_will_restart and any(k in changed_keys for k in _relay_reload_keys):
+            flushed = False
+            try:
+                import asyncio as _asyncio
+                flush = {k: settings_store.get(k, "") for k in changed_keys if k in _relay_reload_keys}
+                # Gate on the actual count written, not just "no exception": write_through swallows
+                # per-key failures and returns 0 (e.g. no operator key), so a flush that persisted
+                # NOTHING must not fire the reload — else the relay re-reads STALE config and
+                # reconnects to the OLD set (the exact bug the synchronous flush prevents).
+                flushed = bool(flush) and _asyncio.run(settings_store.write_through(None, flush)) > 0
+            except Exception as e:
+                logger.warning(f"[Admin] pre-reload relay flush failed: {e}")
+            # Only fire the reload if the durable flush actually persisted. A failed flush leaves the
+            # running relay on its current config; the next successful save reapplies.
+            if flushed:
+                try:
+                    from app.services.nostr_relay.thread import trigger_upstream_reload
+                    trigger_upstream_reload()
+                    logger.info("[Admin] relay firehose reconnect requested (upstream/ingest changed, no restart)")
+                except Exception as e:
+                    logger.warning(f"[Admin] relay upstream reload after settings save failed: {e}")
+        # Prune retention / count cap changed → apply to the running relay's store LIVE. store
+        # .retention_days / .max_events are read by the nightly prune but were only set at relay
+        # startup, so editing them in the UI did nothing until a restart (symptom: "I set prune to 0
+        # but old notes still get deleted"). Flush durably first (relay re-reads from Postgres), then
+        # push the live update — same pattern as the upstream reload above, no restart.
+        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events")
+        if not _relay_will_restart and any(k in changed_keys for k in _relay_store_keys):
+            flushed = False
+            try:
+                import asyncio as _asyncio
+                flush = {k: settings_store.get(k, "") for k in changed_keys if k in _relay_store_keys}
+                flushed = bool(flush) and _asyncio.run(settings_store.write_through(None, flush)) > 0
+            except Exception as e:
+                logger.warning(f"[Admin] pre-reload relay store-config flush failed: {e}")
+            if flushed:
+                try:
+                    from app.services.nostr_relay.thread import trigger_store_config_reload
+                    trigger_store_config_reload()
+                    logger.info("[Admin] relay store config reload requested (retention/max_events, no restart)")
+                except Exception as e:
+                    logger.warning(f"[Admin] relay store-config reload after settings save failed: {e}")
         # Blossom mirror list / public URL / enable changed → re-advertise the operator's kind-10063
         # server list so clients pick up the new failover targets (off-thread; needs the relay + loop).
         if any(k in changed_keys for k in ("blossom_mirror_servers", "blossom_public_url", "blossom_enabled")):
@@ -541,13 +604,11 @@ def update_settings(
         # — they decide which background tasks run (send-only vs firehose/sync, mirror-feeds sweep)
         # or where/how it connects. Toggling them in the UI must RESTART the relay, else the already-
         # running firehose ignores the change (symptom: "I clicked send-only but it's still pulling
-        # posts"). Restart in the background so the admin save returns promptly.
-        _relay_topology_keys = (
-            "nostr_relay_send_only", "nostr_relay_wot_enabled", "nostr_relay_firehose_enabled",
-            "nostr_relay_mirror_feeds", "nostr_relay_upstream_relays", "nostr_relay_disable_proxy",
-            "nostr_relay_firehose_max_relays", "nostr_relay_bind", "nostr_relay_port",
-        )
-        if any(k in changed_keys for k in _relay_topology_keys):
+        # posts"). Restart in the background so the admin save returns promptly. (_relay_topology_keys
+        # / _relay_will_restart are computed above so the live-reload blocks can defer to the restart.)
+        # NOTE: nostr_relay_upstream_relays / firehose_max_relays / ingest_kinds / retention_days /
+        # max_events are NOT here — they apply live (see the reload blocks above), no restart needed.
+        if _relay_will_restart:
             # Flush the changed settings to the relay datastore SYNCHRONOUSLY first. The restarted
             # relay re-reads its config from the datastore (postgres), and the normal write is async
             # — without this, the relay could read STALE config on restart and ignore the change

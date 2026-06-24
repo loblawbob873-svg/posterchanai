@@ -593,6 +593,60 @@ async def _main(cfg: dict) -> None:
         _write_status()
         logger.info("[nostr-relay] nightly block-purge removed %d stored event(s)", removed)
 
+    # The live firehose runs as a REPLACEABLE task group so an upstream-relay change (Admin → Relay)
+    # can reconnect it in place via the `reload-upstream` control msg — no subprocess restart, so
+    # /client connections and settings writes are never dropped (changing upstream used to force a
+    # full relay restart = ~90s outage). The group uses its OWN stop event so a reload cancels just
+    # the firehose; full shutdown sets it too (see the finally below).
+    _firehose = {"tasks": [], "stop": None}
+
+    def _spawn_firehose(stagger_span=None):
+        """(Re)build the firehose task group from the CURRENT cfg (upstream / firehose_max_relays /
+        ingest_kinds / operator / dvm). No-op unless WoT is on, not send-only, and the firehose is
+        enabled. Any prior group must be stopped first (see _restart_firehose). `stagger_span` (None
+        = the firehose default) lets a live reload reconnect faster than a cold boot."""
+        if not (cfg["wot_enabled"] and not cfg["send_only"] and cfg.get("firehose_enabled", True)):
+            _firehose["tasks"], _firehose["stop"] = [], None
+            return
+        from .firehose import run_firehose, _STAGGER_SPAN
+        span = _STAGGER_SPAN if stagger_span is None else stagger_span
+        fstop = asyncio.Event()
+        mr = cfg.get("firehose_max_relays", 0)
+        grp = [asyncio.create_task(
+            run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event, fstop,
+                         cfg["direct"], max_relays=mr, stagger_span=span))]
+        # Targeted DM inbox: kind-4 (NIP-04) + 1059 (NIP-17 gift wrap) addressed to our operators.
+        # These kinds aren't in ingest_kinds, so the global firehose never pulled incoming DMs —
+        # only the user's own outgoing (published here) showed. Filtered by #p=operators.
+        _ops = list(cfg.get("operator") or [])
+        if _ops:
+            grp.append(asyncio.create_task(
+                run_firehose(cfg["upstream"], [4, 1059], _firehose_event, fstop, cfg["direct"],
+                             max_relays=mr, extra={"#p": _ops}, stagger_span=span)))
+            # Distributed-LB (DVM): stream cluster job (5xxx) + result (6xxx) events addressed to
+            # THIS node (#p=operator) from the upstream cluster relay, so a worker can use only its
+            # LOCAL relay and still receive jobs/results via the WoT upstream sync.
+            if cfg.get("dvm_enabled"):
+                grp.append(asyncio.create_task(
+                    run_firehose(cfg["upstream"], [5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202],
+                                 _firehose_event, fstop, cfg["direct"], max_relays=mr,
+                                 extra={"#p": _ops}, stagger_span=span)))
+        _firehose["tasks"], _firehose["stop"] = grp, fstop
+
+    async def _restart_firehose():
+        """Stop the running firehose group, WAIT for its connections to tear down, then spawn a fresh
+        one. Awaiting the cancelled tasks before respawning avoids a window where the old and new
+        streams both subscribe to the same relays and double the backfill burst. Uses a short stagger
+        so the live reload reconnects promptly (a reconnect, not a cold boot)."""
+        old_stop, old_tasks = _firehose.get("stop"), list(_firehose.get("tasks") or [])
+        if old_stop is not None:
+            old_stop.set()           # ask run_firehose + _run_one loops to exit cleanly
+        for t in old_tasks:
+            t.cancel()
+        if old_tasks:
+            await asyncio.gather(*old_tasks, return_exceptions=True)
+        _spawn_firehose(stagger_span=2.0)
+
     # prune is the only LOCAL maintenance task — always runs. Everything else below is cross-node /
     # trust-graph work, gated on wot_enabled: with WoT OFF (a processing node) the relay is a pure
     # local store — no WoT rebuild, metadata backfill, sync sweep, or firehose. (NIP-05 serving is
@@ -625,33 +679,9 @@ async def _main(cfg: dict) -> None:
             if cfg.get("mirror_feeds", False):
                 tasks.append(asyncio.create_task(_sync_loop(store, gate, server, cfg, _relay.stop_event)))
             # Live FIREHOSE — ON by default: real-time subscription keeping WoT-author events fresh.
-            if cfg.get("firehose_enabled", True):
-                from .firehose import run_firehose
-                tasks.append(asyncio.create_task(
-                    run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event,
-                                 _relay.stop_event, cfg["direct"],
-                                 max_relays=cfg.get("firehose_max_relays", 0))))
-                # Targeted DM inbox: kind-4 (NIP-04) + 1059 (NIP-17 gift wrap) addressed to our
-                # operators. These kinds aren't in ingest_kinds, so the global firehose never pulled
-                # incoming DMs — only the user's own outgoing (published here) showed. Filtered by
-                # #p=operators so it streams just our users' DMs, not the whole network's.
-                _ops = list(cfg.get("operator") or [])
-                if _ops:
-                    tasks.append(asyncio.create_task(
-                        run_firehose(cfg["upstream"], [4, 1059], _firehose_event,
-                                     _relay.stop_event, cfg["direct"],
-                                     max_relays=cfg.get("firehose_max_relays", 0),
-                                     extra={"#p": _ops})))
-                    # Distributed-LB (DVM): stream cluster job (5xxx) + result (6xxx) events addressed
-                    # to THIS node (#p=operator) from the upstream cluster relay. Lets a worker use only
-                    # its LOCAL relay — the WoT upstream sync delivers the cluster's jobs/results here.
-                    if cfg.get("dvm_enabled"):
-                        tasks.append(asyncio.create_task(
-                            run_firehose(cfg["upstream"],
-                                         [5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202],
-                                         _firehose_event, _relay.stop_event, cfg["direct"],
-                                         max_relays=cfg.get("firehose_max_relays", 0),
-                                         extra={"#p": _ops})))
+            # Spawned as a replaceable group (see _spawn_firehose) so upstream edits reconnect it
+            # live via the reload-upstream control msg, no restart.
+            _spawn_firehose()
 
     # Cross-process admin IPC: this relay runs in its own subprocess, so the app can't read its
     # gate/store directly. Publish status to a file the app polls, and execute admin commands the
@@ -762,6 +792,47 @@ async def _main(cfg: dict) -> None:
                                         len(cfg["nip05"].get("names") or {}))
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-nip05 failed: %s", e)
+                    elif cmd.get("cmd") == "reload-upstream":
+                        # Admin changed the upstream relay set (or firehose_max_relays). Reconnect the
+                        # live firehose to the new relays IN PLACE — no subprocess restart, so /client
+                        # connections + settings writes are never dropped (this used to force a full
+                        # relay restart ≈ 90s outage). Re-read cfg, retarget the outbox (send path,
+                        # reads cfg["upstream"] live), then respawn the firehose group (receive path).
+                        try:
+                            fresh = _read_config()
+                            # Refresh exactly the keys the firehose group reads on respawn. `direct`
+                            # is NOT here: it's driven by nostr_relay_disable_proxy, a restart-key, so
+                            # it can't change on this live path — re-reading it would imply otherwise.
+                            cfg["upstream"] = fresh["upstream"]
+                            cfg["firehose_max_relays"] = fresh["firehose_max_relays"]
+                            cfg["ingest_kinds"] = fresh["ingest_kinds"]
+                            cfg["operator"] = fresh["operator"]
+                            cfg["dvm_enabled"] = fresh["dvm_enabled"]
+                            # Respawn the receive path FIRST; only retarget the send path once it
+                            # succeeds, so a respawn failure doesn't leave the outbox publishing to
+                            # the new set while the firehose ingests nothing.
+                            await _restart_firehose()
+                            outbox.upstream = cfg["upstream"]   # next publish targets the new set
+                            logger.info("[nostr-relay] control: firehose reconnected to %d upstream "
+                                        "relay(s) live (no restart)", len(cfg["upstream"]))
+                        except Exception as e:
+                            logger.warning("[nostr-relay] reload-upstream failed: %s", e)
+                    elif cmd.get("cmd") == "reload-store-config":
+                        # Admin changed retention_days / max_events. The nightly prune reads
+                        # store.retention_days / store.max_events, which were only set at relay
+                        # startup — update them live so the prune respects the admin setting without a
+                        # restart (symptom: "I set prune to 0 but old notes still get deleted").
+                        try:
+                            fresh = _read_config()
+                            store.retention_days = fresh["retention_days"]
+                            store.max_events = fresh["max_events"]
+                            cfg["retention_days"] = fresh["retention_days"]
+                            cfg["max_events"] = fresh["max_events"]
+                            logger.info("[nostr-relay] control: store config reloaded "
+                                        "(retention_days=%s, max_events=%s)",
+                                        store.retention_days, store.max_events)
+                        except Exception as e:
+                            logger.warning("[nostr-relay] reload-store-config failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
                         logger.info("[nostr-relay] control: backfill %s", cmd["pubkey"][:12])
                         from . import ingest as _ingest
@@ -781,6 +852,10 @@ async def _main(cfg: dict) -> None:
         await _relay.stop_event.wait()
     finally:
         for t in tasks:
+            t.cancel()
+        if _firehose.get("stop") is not None:     # firehose group lives outside `tasks` now
+            _firehose["stop"].set()
+        for t in (_firehose.get("tasks") or []):
             t.cancel()
         outbox.stop()
         ws.close()
@@ -1189,3 +1264,15 @@ def trigger_block_purge() -> dict:
 def trigger_nip05_reload() -> dict:
     """Re-read the NIP-05 identities (Admin → Relay) into the running relay without a restart."""
     return _drop_control({"cmd": "reload-nip05"})
+
+
+def trigger_upstream_reload() -> dict:
+    """Reconnect the live firehose + outbox to a new upstream relay set (Admin → Relay) WITHOUT
+    restarting the relay subprocess — so /client connections and settings writes aren't dropped."""
+    return _drop_control({"cmd": "reload-upstream"})
+
+
+def trigger_store_config_reload() -> dict:
+    """Apply changed retention_days / max_events to the running relay's store live (Admin → Relay) so
+    the nightly prune respects the admin setting without a restart."""
+    return _drop_control({"cmd": "reload-store-config"})

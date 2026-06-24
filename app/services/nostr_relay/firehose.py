@@ -14,6 +14,7 @@ firehose disconnect; the firehose handles freshness.
 import json
 import time
 import uuid
+import random
 import asyncio
 import logging
 
@@ -23,11 +24,25 @@ from app.services.nostr.relay import _connect, _CONNECT_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
+# Spread N upstreams' initial connects over this many seconds so their `since`-window replays don't
+# all land at once and starve the local /client WS handshake (the cold-start CPU-peg). A live
+# reload passes a shorter span (see thread._spawn_firehose) since only a reconnect, not a full boot.
+_STAGGER_SPAN = 6.0
+
 
 async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, direct: bool,
-                   extra: dict = None) -> None:
+                   extra: dict = None, start_delay: float = 0.0) -> None:
     """Maintain one persistent firehose subscription to `relay_url`, reconnecting forever. `extra`
-    adds filter fields (e.g. {'#p': [operator pubkeys]} for the targeted DM inbox)."""
+    adds filter fields (e.g. {'#p': [operator pubkeys]} for the targeted DM inbox). `start_delay`
+    staggers this stream's FIRST connect so N relays don't all replay their `since` window at the
+    same instant — that synchronized burst pegs CPU and starves the local WS server's handshake at
+    (re)start (symptom: '/client can't connect' for ~a minute after a relay restart)."""
+    if start_delay:
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=start_delay)
+            return   # stopped during the stagger delay — never connected
+        except asyncio.TimeoutError:
+            pass
     backoff = 2
     while not stop.is_set():
         try:
@@ -65,12 +80,20 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
             logger.debug("[nostr-relay] firehose %s dropped: %s", relay_url, e)
         if stop.is_set():
             break
-        await asyncio.sleep(backoff)
+        # Jittered backoff: a network/proxy blip drops every upstream at once, and without jitter
+        # they'd all reconnect in lockstep and replay their look-back windows together — re-pegging
+        # CPU and starving local /client handshakes (the same symptom the startup stagger targets,
+        # but on every mass reconnect). The jitter desynchronises the reconnect storm.
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=backoff + random.uniform(0, backoff))
+            break   # stop signalled while backing off
+        except asyncio.TimeoutError:
+            pass
         backoff = min(backoff * 2, 60)  # exponential backoff on repeated failures
 
 
 async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool,
-                       max_relays: int = 0, extra: dict = None) -> None:
+                       max_relays: int = 0, extra: dict = None, stagger_span: float = _STAGGER_SPAN) -> None:
     """Run a persistent firehose subscription against the upstream relays until `stop`.
 
     `max_relays` caps how many relays to subscribe to (0 = ALL). The firehose is now the sole
@@ -81,7 +104,12 @@ async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, dir
     deduped, so the extra cost is just parsing each stream. Lower max_relays to trade
     completeness for idle CPU if a node is constrained."""
     relays = list(upstream)[:max_relays] if max_relays and max_relays > 0 else list(upstream)
-    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct, extra)) for u in relays]
+    # Stagger each upstream's first connect so the initial `since`-window replays don't all land at
+    # once — keeps the event loop responsive to local /client handshakes during (re)start instead of
+    # CPU-pegged on backfill. Spread the fleet over `stagger_span` seconds total.
+    step = (stagger_span / len(relays)) if relays else 0.0
+    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct, extra, start_delay=i * step))
+             for i, u in enumerate(relays)]
     logger.info("[nostr-relay] firehose started on %d/%d upstream relays%s",
                 len(tasks), len(upstream), " (DM inbox)" if extra else "")
     try:
@@ -89,3 +117,8 @@ async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, dir
     finally:
         for t in tasks:
             t.cancel()
+        # Await the cancelled children so their websockets are actually torn down before this
+        # coroutine returns — a live reload gathers on run_firehose, so without this the old
+        # connections could linger and double-subscribe alongside the freshly-spawned group.
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
