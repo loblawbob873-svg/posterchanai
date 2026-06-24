@@ -72,6 +72,15 @@
   --r:3px; --amb1:rgba(184,30,34,.10); --amb2:rgba(199,154,58,.05);
 }
 
+/* Dark — generic neutral dark mode: clean grays + a calm blue accent, no neon */
+:root[data-theme="dark"]{
+  --bg:#17181c; --bg2:#202229; --panel:rgba(38,40,46,.82); --panel2:#2a2c33;
+  --neon:#4493f8; --neon2:#7c5cff; --cyan:#3fb6c8; --green:#3fb950; --amber:#d29922;
+  --text:#e6e7ea; --muted:#9aa0aa; --line:rgba(255,255,255,.13);
+  --glow:0 1px 3px rgba(0,0,0,.5); --glow-cy:0 1px 3px rgba(0,0,0,.5);
+  --r:12px; --amb1:transparent; --amb2:transparent;
+}
+
 /* The cyberpunk-only decor (city skyline "buildings", CRT scanlines, neon grid) belongs to the
    flagship theme only — it looks wrong over the light/retro palettes. Cyberpunk is the bare :root
    (no data-theme attr), so any themed page hides all three. */
@@ -151,6 +160,12 @@
    surface → route to the darker --neon accent; and the chip hover's dark #04020c label → white. */
 :root[data-theme] .ai-welcome .ai-cmd{ color:var(--neon); border-bottom-color:var(--neon); }
 :root[data-theme] .ai-cmd:hover{ color:#fff; }
+/* AI chat: the assistant reply bubble + code blocks hardcoded the deep-violet fill → dark-on-light
+   unreadable on light themes; route to a theme panel. The user-bubble keeps the accent gradient. */
+:root[data-theme] .ai-msg.assistant .ai-bubble,
+:root[data-theme] .ai-bubble pre{ background:var(--panel2); }
+:root[data-theme] .ai-gate .btn-cyan,
+:root[data-theme] .ai-welcome .btn-cyan{ background:linear-gradient(135deg,var(--neon),var(--neon2)); color:#fff; }
 
 /* Sidebar identity cluster (name under the avatar → connection status → user/online counts, right
    above Logout): force the theme's text colour so it's high-contrast on every theme. (Winxp's later
@@ -671,7 +686,9 @@ a.btn.full{display:block}
 .prof-tab.active{color:var(--neon);border-bottom-color:var(--neon)}
 /* drafts */
 .draft-card{flex-direction:column;gap:10px}
-.draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:16.5px;line-height:1.5}
+/* clamp the draft preview so a long post / embedded image doesn't fill the page (tap Edit for full) */
+.draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:16.5px;line-height:1.5;max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 74%,transparent);mask-image:linear-gradient(180deg,#000 74%,transparent)}
+.draft-body img,.draft-body video{max-height:130px;max-width:100%;width:auto;border-radius:8px;object-fit:cover}
 .draft-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap}
 .gif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:55vh;overflow:auto;margin-top:10px}
 .gif-item{width:100%;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}

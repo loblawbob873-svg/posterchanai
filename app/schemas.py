@@ -569,7 +569,7 @@ class APIKeyListItem(BaseModel):
 # User Settings schemas (for custom AI service)
 # Client UI themes the user can pick (Cyberpunk is the flagship default). Slugs match the
 # `:root[data-theme="…"]` blocks in static/css/client.css and the <select> in the client Settings.
-CLIENT_THEMES = ("cyberpunk", "cherryblossom", "professional", "win98", "winxp", "animegirl", "sovietgothic")
+CLIENT_THEMES = ("cyberpunk", "cherryblossom", "professional", "win98", "winxp", "animegirl", "sovietgothic", "dark")
 
 
 class UserSettingsUpdate(BaseModel):

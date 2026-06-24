@@ -24,7 +24,7 @@
   // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
   const THEMES = [['cyberpunk','Cyberpunk'],['cherryblossom','Cherry Blossom'],
                   ['professional','Professional'],['win98','Windows 98'],['winxp','Windows XP'],
-                  ['animegirl','Anime Girl 🌸'],['sovietgothic','Soviet Gothic ☭']];
+                  ['animegirl','Anime Girl 🌸'],['sovietgothic','Soviet Gothic ☭'],['dark','Dark 🌙']];
   const THEME_SLUGS = new Set(THEMES.map(t=>t[0]));
   // persist defaults true (a SAVED choice). Pass persist=false for a live preview that must NOT stick:
   // preview only repaints; it reverts to the cached/saved theme on reload because pc_theme is untouched.
@@ -1654,10 +1654,45 @@
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
-    feed.innerHTML = repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617).</div>';
+    feed.innerHTML = `<div class="art-top"><button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button></div>`
+      + (repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
+    $('#repo-new').onclick=publishRepo;
     decorateProfiles();
     $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
     $$('.repo-clone',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+  }
+  // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
+  // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
+  function publishRepo(existing){
+    const tag=(e,k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
+    modal(`<h3>🌱 Announce a git repo</h3>
+      <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>
+      <label class="fld">Repo id <span class="muted small">(short slug, e.g. posterchanai)</span><input class="input" id="rp-d" value="${enc(tag(existing,'d'))}" placeholder="my-app"></label>
+      <label class="fld">Name<input class="input" id="rp-name" value="${enc(tag(existing,'name'))}" placeholder="My App"></label>
+      <label class="fld">Description<textarea class="input" id="rp-desc" rows="2">${enc(tag(existing,'description'))}</textarea></label>
+      <label class="fld">Clone URL<input class="input" id="rp-clone" value="${enc(tag(existing,'clone'))}" placeholder="https://git.example.com/me/my-app.git"></label>
+      <label class="fld">Web URL<input class="input" id="rp-web" value="${enc(tag(existing,'web'))}" placeholder="https://git.example.com/me/my-app"></label>
+      <div class="set-actions"><button class="btn btn-neon small" id="rp-pub">Publish</button><button class="btn btn-ghost small" id="rp-cancel">Cancel</button></div>
+      <div class="muted small" id="rp-status"></div>`,
+      root=>{
+        $('#rp-cancel',root).onclick=closeModal;
+        $('#rp-pub',root).onclick=async()=>{
+          const v=id=>($('#'+id,root).value||'').trim();
+          const d=v('rp-d'); const st=$('#rp-status',root);
+          if(!d){ st.textContent='Repo id is required.'; return; }
+          const tags=[['d',d]];
+          if(v('rp-name')) tags.push(['name',v('rp-name')]);
+          if(v('rp-desc')) tags.push(['description',v('rp-desc')]);
+          if(v('rp-clone')) tags.push(['clone',v('rp-clone')]);
+          if(v('rp-web')) tags.push(['web',v('rp-web')]);
+          tags.push(['alt',`git repository: ${v('rp-name')||d}`]);
+          st.textContent='publishing…';
+          try{ const r=await publish(30617,'',tags);
+            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }
+            else { toast('repo announced'); closeModal(); switchView('repos'); }
+          }catch(e){ st.textContent='failed: '+((e&&e.message)||e); }
+        };
+      });
   }
   function repoCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey);

@@ -264,7 +264,9 @@ def _read_config() -> dict:
             # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
             # 30402 = NIP-99 classified listings (the Market/Store); 30017/30018 = NIP-15 marketplace
             # stalls/products — ingest + firehose them so the Discover → Market view sees WoT listings.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,30023,30311,34550,30402,30017,30018")
+            # 2003/2004 = NIP-35 torrents (+comments), 30617 = NIP-34 git repo announcements — the
+            # Discover → Torrents / Git Repos views, ingested+firehosed like the other Discover kinds.
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,2003,2004,30023,30311,34550,30402,30017,30018,30617")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
@@ -498,6 +500,11 @@ async def _main(cfg: dict) -> None:
             if not (gate.is_member(ev.get("pubkey", "")) or
                     any(len(t) >= 2 and t[0] == "p" and gate.is_operator(t[1]) for t in (ev.get("tags") or []))):
                 return
+        elif _kind in (2003, 2004, 30617):
+            # NIP-35 torrents (+comments) / NIP-34 repo announcements are PUBLIC, browsable Discover
+            # content — sync from ANY author (not WoT-gated), since typically no one in the WoT posts
+            # them. Still signature-verified below; not in _PRUNABLE_KINDS, so the purge leaves them.
+            pass
         elif not gate.is_member(ev.get("pubkey", "")):
             return
         eid = ev.get("id")
