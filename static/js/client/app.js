@@ -842,19 +842,35 @@
   async function _editPList(kind, pk, add){
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[kind], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
-    let tags = cur ? cur.tags.map(t=>[...t]) : [];
-    // Safety: if the relay didn't return our existing list (race / not-yet-synced), rebuild from
-    // in-memory state instead of publishing a near-empty replaceable event that WIPES follows/mutes
-    // (this is how muted words + DM mutes got lost). Never overwrite the whole list from nothing.
-    if(!cur){
-      if(kind===3) tags = [...FOLLOWS].map(p=>['p',p]);
-      else if(kind===10000) tags = [...MUTED].map(p=>['p',p]).concat([...MUTED_WORDS].map(w=>['word',w]));
-    }
-    const has = tags.some(t=>t[0]==='p'&&t[1]===pk);
-    if (add && !has) tags.push(['p',pk]);
-    else if (!add && has) tags = tags.filter(t=>!(t[0]==='p'&&t[1]===pk));
-    else return;
+    // Source of truth = UNION of the relay's current list and our in-memory set. A bare relay read is
+    // unreliable: it can be empty (not-yet-synced) OR STALE — returning a version from before the last
+    // follow finished indexing. Trusting it alone is how follows "kept getting forgotten" (each new
+    // follow republished from a stale base and dropped the previous one). The union can never silently
+    // lose a follow/mute we already know about. Non-p tags (kind-3 relay hints, kind-10000 muted words)
+    // are preserved from cur, or rebuilt from memory when the relay returned nothing.
+    const inmem = kind===3 ? FOLLOWS : kind===10000 ? MUTED : new Set();
+    const fromRelay = cur ? cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]) : [];
+    const pset = new Set([...inmem, ...fromRelay]);
+    if (add) pset.add(pk); else pset.delete(pk);
+    const nonP = cur ? cur.tags.filter(t=>t[0]!=='p')
+                     : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]) : []);
+    // Don't publish a self-follow p-tag (ME is kept in FOLLOWS only for the home-feed filter).
+    const tags = nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p]));
     await publish(kind, cur?cur.content:'', tags);
+  }
+  // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
+  // the relay's current list + in-memory FOLLOWS (same anti-wipe rule as _editPList). Returns the count
+  // actually added so callers can toast/refresh.
+  async function followMany(pks){
+    const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]);
+    const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
+    const pset = new Set([...FOLLOWS, ...(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[])]);
+    let added=0;
+    for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; } }
+    if(!added) return 0;
+    const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
+    await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
+    return added;
   }
   async function toggleFollow(pk){
     const have=FOLLOWS.has(pk); await _editPList(3, pk, !have);
@@ -4693,7 +4709,7 @@
     });
   }
   async function peopleModal(title, pks){
-    modal(`<h3>${enc(title)} (${pks.length})</h3><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
+    modal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3 style="margin:0">${enc(title)} (${pks.length})</h3><button id="follow-all-back" class="btn btn-cyan small" style="display:none">Follow all back</button></div><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
       const miss=pks.filter(p=>!Store.haveProfile(p)).slice(0,300);
       if(miss.length){ try{ const evs=await Relay.query([{authors:miss,kinds:[0],limit:miss.length}]); evs.forEach(e=>Store.saveProfile(e)); }catch(_){} }
       await ensureMyFollowers();   // so we can flag mutuals ("Follows you") in any people list
@@ -4710,6 +4726,18 @@
       $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
         try{ await toggleFollow(b.dataset.fb); b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
         catch(_){ b.disabled=false; b.textContent='Follow back'; } });
+      // "Follow all back": one-tap follow of everyone in this list I don't already follow (one publish).
+      const followable=pks.filter(p=>p!==ME.pubkey && !FOLLOWS.has(p));
+      const fab=$('#follow-all-back',root);
+      if(fab && followable.length){
+        fab.style.display=''; fab.textContent=`Follow all back (${followable.length})`;
+        fab.onclick=async()=>{ fab.disabled=true; const orig=fab.textContent; fab.textContent='…';
+          try{ const n=await followMany(followable);
+            $$('.pfollow',list).forEach(b=>{ b.disabled=true; b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); });
+            fab.style.display='none'; toast(`followed ${n} back`);
+            if(VIEW==='home') renderView(true);
+          }catch(_){ fab.disabled=false; fab.textContent=orig; } };
+      }
     });
   }
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
