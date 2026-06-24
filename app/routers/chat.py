@@ -1035,11 +1035,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                 pass
             return
 
-        # Check for and deliver any pending results from previous sessions
+        # Check for and deliver any pending results from previous sessions. Tag them `pending` so a
+        # client that reloads the conversation from the DB on connect (the web client always does)
+        # can skip the replay instead of rendering the same reply twice — the result was persisted
+        # before it was ever queued, so the DB reload already shows it.
         pending = manager.get_pending_results(user.id, conversation_id)
         for pending_data in pending:
             try:
-                await websocket.send_json(pending_data)
+                await websocket.send_json({**pending_data, "pending": True})
             except Exception:
                 pass
 
@@ -1583,7 +1586,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         
                         await manager.send_json(user.id, {
                             "type": "response",
-                            "data": result
+                            "data": result,
+                            # This reply was written to the DB above (when assistant_msg committed), so a
+                            # web client that reloads the conversation on reconnect already has it —
+                            # mark it so a queued REPLAY is skipped instead of double-rendered.
+                            "persisted": assistant_msg is not None,
                         }, conn_id, conversation_id)
                         # Signal end of response so TUI stops waiting
                         await manager.send_json(user.id, {"type": "stream_end"}, conn_id)

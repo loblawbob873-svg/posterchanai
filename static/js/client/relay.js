@@ -193,6 +193,55 @@
         ws.onclose = () => fin(false);
       }))).then(rs => rs.reduce((a,b)=>a+b,0));
     },
+    // One-shot AUTHENTICATED publish to a single EXTERNAL relay (e.g. a NIP-29 group relay like
+    // groups.0xchat.com that requires NIP-42 AUTH to write). Opens a short-lived socket, sends the
+    // EVENT optimistically, and if the relay issues an ["AUTH", challenge] it calls signAuth(challenge)
+    // (which must resolve to a signed kind-22242 event) and replays the EVENT once authed. Resolves
+    // { ok, msg } like publish(). signAuth runs in the app (it owns the active signer — extension /
+    // NIP-46 / local key), so relay.js stays signer-agnostic.
+    publishAuthed(url, event, signAuth, { timeout = 9000 } = {}){
+      return new Promise(resolve => {
+        let ws, done = false, tm, rtm, pgm, authSent = false, authedEventId = null, authResent = false, lastReject = '';
+        const fin = (r) => { if (done) return; done = true; clearTimeout(tm); clearTimeout(rtm); clearTimeout(pgm);
+          if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
+          resolve(r); };
+        const sendEvent = () => { try{ ws.send(JSON.stringify(['EVENT', event])); }catch(_){ fin({ ok:false, msg:'send failed' }); } };
+        const resendAfterAuth = () => { if (authResent) return; authResent = true; clearTimeout(rtm); sendEvent(); };
+        try { ws = new WebSocket(url); } catch(_){ return fin({ ok:false, msg:'connect failed' }); }
+        // On timeout, report the relay's last rejection reason if it gave one (e.g. "blocked: not a
+        // member") rather than a generic "timeout" — far more actionable for the user.
+        tm = setTimeout(()=>fin({ ok:false, msg: lastReject || 'timeout' }), timeout);
+        ws.onopen = () => sendEvent();   // optimistic — relay may accept without auth, else it'll challenge
+        ws.onmessage = async (e) => {
+          let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+          if (m[0] === 'AUTH' && m[1] && !authSent){            // NIP-42 challenge → sign & answer
+            authSent = true; clearTimeout(pgm);                 // a challenge arrived → don't give up early on the pre-auth reject
+
+            let a; try{ a = await signAuth(m[1]); }catch(_){ return fin({ ok:false, msg:'auth sign failed' }); }
+            if (!a || !a.id){ return fin({ ok:false, msg:'auth declined' }); }   // signer resolved empty (declined) instead of throwing
+            authedEventId = a.id;
+            try{ ws.send(JSON.stringify(['AUTH', a])); }catch(_){ return fin({ ok:false, msg:'auth send failed' }); }
+            // Resend the EVENT once the relay ACCEPTS our AUTH (strict relays); also fall back after a
+            // short delay for relays that authenticate silently (accept AUTH without OK-ing the 22242).
+            rtm = setTimeout(resendAfterAuth, 1200);
+            return;
+          }
+          if (m[0] === 'OK'){
+            if (m[1] === event.id){ if (m[2]) return fin({ ok:true, msg:m[3]||'' });
+              lastReject = m[3] || 'rejected';
+              // pre-auth reject → the relay MAY still send an AUTH challenge; wait briefly, but if none
+              // comes (relay rejected for a non-auth reason like non-membership), fail fast with the reason
+              // instead of stalling the full timeout.
+              if (!authSent){ if (!pgm) pgm = setTimeout(()=>fin({ ok:false, msg: lastReject }), 1500); return; }
+              return fin({ ok:false, msg: lastReject }); }       // rejected even after auth → real failure
+            if (m[1] === authedEventId){ if (m[2]) return resendAfterAuth();   // auth accepted → send the real event now
+              return fin({ ok:false, msg:'auth rejected: '+(m[3]||'') }); }
+          }
+        };
+        ws.onerror = () => fin({ ok:false, msg: lastReject || 'socket error' });
+        ws.onclose = () => fin({ ok:false, msg: lastReject || 'closed' });
+      });
+    },
     // One-shot READ from EXTERNAL relays NOT in the pool — e.g. discovery/indexer relays to find a
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events

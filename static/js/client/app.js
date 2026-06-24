@@ -1862,9 +1862,14 @@
   // with a root `e`-tag to that id. Instance-local — only WoT members' channels/messages reach our
   // relay. Live messages kept in _chatMsgs (Store.feed() is kind-1/6 only, so we hold our own set).
   let _chatSub=null, _chatId=null, _chatMsgs=new Map();
-  // Reactions (kind-7) to chat messages, shared by NIP-28 channels + NIP-29 groups:
-  // targetMsgId → Map(emoji → Set(reactor-pubkey)). '+'/'' normalise to ❤️, '-' to 👎.
-  let _chatReacts=new Map(), _chatReactPoll=null;
+  // Engagement on chat messages, shared by NIP-28 channels + NIP-29 groups:
+  //  _chatReacts:  targetMsgId → Map(emoji → Set(reactor-pubkey))  ('+'/'' → ❤️, '-' → 👎)
+  //  _chatZaps:    targetMsgId → { sats, n }   (kind-9735 zap receipts)
+  //  _chatDeleted: targetMsgId → Set(deleter-pubkey)  (kind-5; honoured only when deleter == author)
+  //  _chatAuxSeen: processed kind-5/9735 ids, so re-polls don't double-count zaps
+  //  _chatReplyTo: id of the message the compose box is replying to (null = top-level)
+  let _chatReacts=new Map(), _chatZaps=new Map(), _chatDeleted=new Map(), _chatAuxSeen=new Set();
+  let _chatReactPoll=null, _chatReplyTo=null;
   function _chanMeta(e){ let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){} return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' }; }
   async function renderChatrooms(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
@@ -1903,8 +1908,8 @@
     try{ const { ev }=await publish(40, JSON.stringify({ name, about }), []); toast('channel created'); if(ev){ Store.saveEvent(ev); openChannel(ev); } }
     catch(e){ toast('create failed: '+((e&&e.message)||e)); }
   }
-  async function openChannel(e){
-    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map();
+  async function openChannel(e, focusId){
+    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
     if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
     if(_chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }
     $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
@@ -1914,10 +1919,11 @@
       <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back">←</button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
       ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
       <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
+      <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
       <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button><input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
     $('#ch-back').onclick=()=>switchView('chat');
-    { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatReactClick); }   // delegated react taps
+    { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
     const send=()=>postToChannel(e);
     { const b=$('#ch-send'); if(b) b.onclick=send; }
     { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
@@ -1943,40 +1949,89 @@
     if(VIEW!=='channel' || _chatId!==e.id) return;
     msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
     _drawChannel(true);
-    _pollChannelReacts();   // fetch + keep reactions for the on-screen messages live
+    if(focusId) _scrollChatTo(focusId);   // deep-link from a notification → highlight that message
+    _pollChannelMeta();   // fetch + keep reactions/zaps/deletions for the on-screen messages live
     _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey); if(VIEW==='channel' && _chatId===e.id) _drawChannel(); } } });
   }
   function _drawChannel(force){
     const box=$('#ch-msgs'); if(!box || !_chatId) return;
     const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
-    const msgs=[..._chatMsgs.values()].filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);
+    const msgs=[..._chatMsgs.values()].filter(x=>!isMutedView(x) && !_isChatDeleted(x)).sort((a,b)=>a.created_at-b.created_at);
     box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages yet — say hi 👋</div>';
     decorateProfiles();
     if(atBottom) box.scrollTop=box.scrollHeight;
   }
   function chatMsg(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey); const mine=ME && e.pubkey===ME.pubkey;
-    const pills=chatReactPills(e.id);
-    // Reacting needs to publish to OUR relay pool (writable) — fine for NIP-28 channels; NIP-29
-    // groups are read-only browse for now, so only show the ＋ on channels.
-    const addBtn = VIEW==='channel' ? `<button class="chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">＋</button>` : '';
-    return `<div class="chat-msg${mine?' mine':''}" data-pk="${e.pubkey}">
+    const pills=chatReactPills(e.id), zap=chatZapPill(e.id);
+    // Both NIP-28 channels (publish to our pool) and NIP-29 groups (authed publish to the group relay)
+    // are writable now, so show the reply/react affordances in both.
+    const canWrite = VIEW==='channel' || VIEW==='group';
+    const acts = canWrite
+      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply">↩</button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">＋</button>`
+      : '';
+    // reply context: when this message replies to one already loaded, show a tappable quote line.
+    let rq=''; const par=_chatReplyParent(e);
+    if(par){ const pm=_chatMsgs.get(par)||_groupMsgs.get(par); if(pm){ const pp=profOf(pm.pubkey);
+      rq=`<button class="chat-replyq" data-scroll="${enc(par)}">↳ ${enc(pp.name||pp.display_name||'anon')}: ${enc((pm.content||'').replace(/\s+/g,' ').slice(0,60))}</button>`; } }
+    return `<div class="chat-msg${mine?' mine':''}" data-pk="${e.pubkey}" data-mid="${enc(e.id)}">
       <img class="chat-av" data-prof="${e.pubkey}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
       <div class="chat-body"><div class="chat-by"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(e.created_at)}</span></div>
+      ${rq}
       <div class="chat-txt">${linkify(e.content||'')}</div>
-      ${pills||addBtn?`<div class="chat-reacts">${pills}${addBtn}</div>`:''}</div></div>`;
+      ${pills||zap||acts?`<div class="chat-reacts">${pills}${zap}${acts}</div>`:''}</div></div>`;
+  }
+  // The id this message replies to (for in-room threading). NIP-28: a non-root e-tag; NIP-29: the
+  // root is the group (h-tag) so any e-tag is the parent; an explicit "reply" marker always wins.
+  function _chatReplyParent(e){
+    const es=e.tags.filter(t=>t[0]==='e'&&t[1]); if(!es.length) return null;
+    const reply=es.find(t=>t[3]==='reply'); if(reply) return reply[1];
+    // NIP-28: the root e-tag is the channel, so an unmarked NON-root e-tag is the reply parent.
+    // NIP-29: the root is the group (h-tag), so a bare e-tag may be a quote/mention — require the
+    // explicit "reply" marker (handled above) rather than guessing, to avoid false reply-quotes.
+    if(e.kind===42){ const nonRoot=es.find(t=>t[1]!==_chatId && t[3]!=='root'); return nonRoot?nonRoot[1]:null; }
+    return null;
+  }
+  function _lastE(ev){ let id=null; for(const t of ev.tags){ if(t[0]==='e' && t[1]) id=t[1]; } return id; }
+  function _cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/["\\]/g,'\\$&'); }
+  function _flashChatMsg(el){ if(!el) return; el.scrollIntoView({block:'center',behavior:'smooth'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1300); }
+  // Scroll a chat message into view and flash it. Retries briefly since the list may still be drawing
+  // (e.g. right after openChannel kicks off its message fetch).
+  function _scrollChatTo(mid){
+    let tries=0;
+    const tick=()=>{ const box=$('#ch-msgs')||$('#grp-msgs'); const el=box&&box.querySelector(`.chat-msg[data-mid="${_cssEsc(mid)}"]`);
+      if(el){ _flashChatMsg(el); return; }
+      if(++tries<12) setTimeout(tick, 250);
+      else toast('linked message isn’t in the recent history');   // older than the fetch window → not loaded
+    };
+    setTimeout(tick, 120);
   }
   // Record a kind-7 reaction into _chatReacts keyed by its target (last e-tag, per NIP-25).
   // Returns true if it was new (so the caller can redraw).
   function _recordReact(ev){
     if(!ev || ev.kind!==7) return false;
-    let tid=null; for(const t of ev.tags){ if(t[0]==='e' && t[1]) tid=t[1]; }   // last e-tag = reacted event
-    if(!tid) return false;
+    const tid=_lastE(ev); if(!tid) return false;
     let emoji=ev.content||''; if(emoji==='+'||emoji===''){ emoji='❤️'; } else if(emoji==='-'){ emoji='👎'; }
     let m=_chatReacts.get(tid); if(!m){ m=new Map(); _chatReacts.set(tid,m); }
     let s=m.get(emoji); if(!s){ s=new Set(); m.set(emoji,s); }
     if(s.has(ev.pubkey)) return false; s.add(ev.pubkey); return true;
   }
+  // Fold a kind 7 (reaction), 9735 (zap receipt) or 5 (deletion) into the chat engagement maps.
+  // Zaps/deletions are deduped by event id (_chatAuxSeen) so re-polls don't double-count sats.
+  function _recordChatAux(ev){
+    if(!ev) return false;
+    if(ev.kind===7) return _recordReact(ev);
+    if(_chatAuxSeen.has(ev.id)) return false;
+    if(ev.kind===9735){ const tid=_lastE(ev); if(!tid) return false; const sats=zapAmount(ev); if(!sats) return false;   // unparseable → leave unseen so a fuller re-fetch can still count it
+      _chatAuxSeen.add(ev.id); const z=_chatZaps.get(tid)||{sats:0,n:0}; z.sats+=sats; z.n++; _chatZaps.set(tid,z); return true; }
+    if(ev.kind===5){ _chatAuxSeen.add(ev.id); let ch=false; for(const t of ev.tags){ if(t[0]==='e' && t[1]){
+      let s=_chatDeleted.get(t[1]); if(!s){ s=new Set(); _chatDeleted.set(t[1],s); } if(!s.has(ev.pubkey)){ s.add(ev.pubkey); ch=true; } } } return ch; }
+    return false;
+  }
+  // Hide a message only when its OWN author published the kind-5 deleting it (NIP-09) — for channels
+  // AND groups. (Honouring any group kind-5 would let any member hide anyone's message; real NIP-29
+  // moderation is a kind-9005, which we don't act on here.)
+  function _isChatDeleted(msg){ const s=_chatDeleted.get(msg.id); return !!(s && s.has(msg.pubkey)); }
   function chatReactPills(id){
     const m=_chatReacts.get(id); if(!m) return '';
     const mine=ME&&ME.pubkey;
@@ -1985,40 +2040,77 @@
       return `<button class="chat-react${on?' on':''}" data-react="${enc(id)}" data-emoji="${enc(emoji)}" title="react ${enc(emoji)}">${enc(emoji)} <span class="n">${s.size}</span></button>`;
     }).join('');
   }
-  // Delegated click on a chat-message list: tap an existing pill to add that emoji; tap ＋ to pick one.
-  function _onChatReactClick(ev){
-    const pill=ev.target.closest('.chat-react');
-    if(pill){ _doChatReact(pill.dataset.react, pill.dataset.emoji); return; }
-    const add=ev.target.closest('.chat-react-add');
-    if(add){ openEmojiPopover(add, (emoji, close)=>{ close(); _doChatReact(add.dataset.reactAdd, emoji); }); }
+  function chatZapPill(id){ const z=_chatZaps.get(id); return z&&z.sats?`<span class="chat-zap" title="${z.n} zap${z.n>1?'s':''}">⚡ ${fmtSats(z.sats)}</span>`:''; }
+  // Delegated click on a chat-message list: jump to a quoted parent, start a reply, or react.
+  function _onChatMsgClick(ev){
+    const sc=ev.target.closest('.chat-replyq');
+    if(sc){ const cont=ev.currentTarget, el=cont.querySelector(`.chat-msg[data-mid="${_cssEsc(sc.dataset.scroll)}"]`);
+      if(el) _flashChatMsg(el); else toast('that message isn’t loaded'); return; }
+    const rb=ev.target.closest('.chat-reply-btn'); if(rb){ _setChatReply(rb.dataset.reply); return; }
+    const pill=ev.target.closest('.chat-react'); if(pill){ _doChatReact(pill.dataset.react, pill.dataset.emoji); return; }
+    const add=ev.target.closest('.chat-react-add'); if(add){ openEmojiPopover(add, (emoji, close)=>{ close(); _doChatReact(add.dataset.reactAdd, emoji); }); }
   }
-  function _doChatReact(id, emoji){
+  async function _doChatReact(id, emoji){
     if(!ME){ toast('log in to react'); return; }
-    if(VIEW!=='channel'){ toast('reacting in NIP-29 groups — coming soon'); return; }   // groups are read-only
     const cur=_chatReacts.get(id); if(cur){ const s=cur.get(emoji); if(s && s.has(ME.pubkey)){ toast('already reacted '+emoji); return; } }
-    const msg=_chatMsgs.get(id), pk=msg?msg.pubkey:null;
-    publish(7, emoji, eTags(id,pk)).then(({ ev })=>{ if(ev && _recordReact(ev)) _drawChannel(); toast('reacted '+emoji); })
-      .catch(e=>toast('react failed: '+((e&&e.message)||e)));
+    const msg=_chatMsgs.get(id)||_groupMsgs.get(id), pk=msg?msg.pubkey:null;
+    try{
+      if(VIEW==='group'){ const ev=await _groupPublish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawGroup(); return; }
+      const { ev }=await publish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawChannel(); toast('reacted '+emoji);
+    }catch(e){ toast('react failed: '+((e&&e.message)||e)); }
   }
-  // Channel reaction poll: channels keep a live kind-42 sub, but message-targeted kind-7 reactions
+  // ---- in-room reply target (shared by channel + group compose) ----
+  function _setChatReply(id){ const msg=_chatMsgs.get(id)||_groupMsgs.get(id); if(!msg) return; _chatReplyTo=id; _renderReplyBar(); const ta=$('#ch-input')||$('#grp-input'); if(ta) ta.focus(); }
+  function _clearChatReply(){ _chatReplyTo=null; _renderReplyBar(); }
+  function _renderReplyBar(){
+    const bar=$('#chat-reply-bar'); if(!bar) return;
+    if(!_chatReplyTo){ bar.classList.add('hidden'); bar.innerHTML=''; return; }
+    const msg=_chatMsgs.get(_chatReplyTo)||_groupMsgs.get(_chatReplyTo), p=msg?profOf(msg.pubkey):{};
+    bar.classList.remove('hidden');
+    bar.innerHTML=`<span class="muted small">↩ replying to <b>${enc(msg?(p.name||p.display_name||'anon'):'…')}</b>: ${enc(msg?(msg.content||'').replace(/\s+/g,' ').slice(0,50):'')}</span><button class="chat-reply-x" id="chat-reply-x" title="cancel">✕</button>`;
+    const x=$('#chat-reply-x'); if(x) x.onclick=_clearChatReply;
+  }
+  // Channel engagement poll: channels keep a live kind-42 sub, but message-targeted kind 7/9735/5
   // can't be caught by the channel-root #e filter, so poll them for the on-screen ids (auto-stops on
   // leave via switchView clearing _chatReactPoll).
-  function _pollChannelReacts(){
+  function _pollChannelMeta(){
     if(VIEW!=='channel') return;
     const id=_chatId, ids=[..._chatMsgs.keys()];
-    if(!ids.length){ _chatReactPoll=setTimeout(_pollChannelReacts, 10000); return; }
-    Relay.query([{ kinds:[7], '#e':ids, limit:500 }]).then(rs=>{
+    if(!ids.length){ _chatReactPoll=setTimeout(_pollChannelMeta, 10000); return; }
+    Relay.query([{ kinds:[7,9735,5], '#e':ids, limit:800 }]).then(rs=>{
       if(VIEW!=='channel' || _chatId!==id) return;
-      let changed=false; rs.forEach(r=>{ if(_recordReact(r)) changed=true; }); if(changed) _drawChannel();
-    }).catch(()=>{}).finally(()=>{ if(VIEW==='channel' && _chatId===id) _chatReactPoll=setTimeout(_pollChannelReacts, 10000); });
+      let changed=false; rs.forEach(r=>{ if(_recordChatAux(r)) changed=true; }); if(changed) _drawChannel();
+    }).catch(()=>{}).finally(()=>{ if(VIEW==='channel' && _chatId===id) _chatReactPoll=setTimeout(_pollChannelMeta, 10000); });
   }
   async function postToChannel(chan){
     const ta=$('#ch-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
     ta.value=''; ta.style.height='auto'; ta.disabled=true;
-    try{ const { ev }=await publish(42, text, [['e', chan.id, '', 'root']]); if(ev && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
+    const tags=[['e', chan.id, '', 'root']];
+    if(_chatReplyTo && _chatReplyTo!==chan.id){ const par=_chatMsgs.get(_chatReplyTo); tags.push(['e', _chatReplyTo, '', 'reply']); if(par) tags.push(['p', par.pubkey]); }
+    try{ const { ev }=await publish(42, text, tags); if(ev && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
     catch(e){ toast('send failed: '+((e&&e.message)||e)); }
+    finally{ _clearChatReply(); ta.disabled=false; ta.focus(); }   // text was cleared optimistically → always drop the reply target so the next msg isn't mis-threaded
+  }
+  // ---- NIP-29 group writes (kind 9 message / 7 react / 9021 join) via NIP-42 authed publish ----
+  async function _groupPublish(kind, content, extraTags){
+    if(!ME){ toast('log in first'); return null; }
+    const relay=_groupRelay, gid=_groupId; if(!relay||!gid){ toast('no group open'); return null; }
+    try{   // catch signer rejections (extension/NIP-46 decline) too, so a write never fails silently
+      const ev=await sign(kind, content, [['h', gid], ...(extraTags||[])]);
+      const r=await Relay.publishAuthed(relay, ev, ch=>sign(22242, '', [['relay', relay], ['challenge', ch]]));
+      if(!r.ok){ toast('group: '+(r.msg||'rejected')); return null; }
+      return ev;
+    }catch(e){ toast('group post failed: '+((e&&e.message)||e)); return null; }
+  }
+  async function postToGroup(){
+    const ta=$('#grp-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
+    ta.disabled=true;
+    const tags=[]; if(_chatReplyTo){ const par=_groupMsgs.get(_chatReplyTo); tags.push(['e', _chatReplyTo, _groupRelay, 'reply']); if(par) tags.push(['p', par.pubkey]); }
+    try{ const ev=await _groupPublish(9, text, tags);
+      if(ev){ ta.value=''; ta.style.height='auto'; _groupSeen.add(ev.id); _groupMsgs.set(ev.id,ev); needProfile(ev.pubkey); _clearChatReply(); if(VIEW==='group') _drawGroup(true); } }
     finally{ ta.disabled=false; ta.focus(); }
   }
+  async function joinGroup(){ const ev=await _groupPublish(9021, 'join request', []); if(ev) toast('join request sent — may need admin approval'); }
   // ---------- NIP-29 relay-based groups (0xchat &c.) — READ-ONLY browse (Phase 1) ----------
   // Unlike our NIP-28 channels, NIP-29 groups live on DEDICATED external relays (not our pool):
   // kind-39000 = group metadata (relay-authored, addressable by d=group-id), kind-9 = chat messages
@@ -2066,38 +2158,47 @@
       </div></article>`;
   }
   async function openGroup(g){
-    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set(); _chatReacts=new Map();
+    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set();
+    _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
     if(_groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }
     $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
     $('#view-title').textContent=g.m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
+    // Writable now: posting/reacting/joining go out as NIP-42-authed events to the group's relay. The
+    // relay rejects non-members, so a "join" button sends a kind-9021 request first.
     feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back">←</button><span class="chatroom-title">👥 ${enc(g.m.name)}</span></div>
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back">←</button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join">＋ Join</button></div>
       ${g.m.about?`<div class="chatroom-about">${linkify(g.m.about)}</div>`:''}
       <div id="grp-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
-      <div class="chatroom-compose readonly"><span class="muted small">👀 Read-only — joining &amp; posting (NIP-29) coming soon</span></div>
+      <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
+      <div class="chatroom-compose"><textarea id="grp-input" rows="1" placeholder="Message… (members only)"></textarea><button class="btn btn-neon" id="grp-send">Send</button></div>
     </div>`;
     $('#grp-back').onclick=()=>switchView('chat');
-    { const mb=$('#grp-msgs'); if(mb) mb.addEventListener('click', _onChatReactClick); }   // tap a pill (read-only toast)
+    { const jb=$('#grp-join'); if(jb) jb.onclick=joinGroup; }
+    { const sb=$('#grp-send'); if(sb) sb.onclick=postToGroup; }
+    { const ta=$('#grp-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); postToGroup(); } };
+      ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
+    { const mb=$('#grp-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
     _pollGroup(true);
   }
   async function _pollGroup(first){
     const relay=_groupRelay, id=_groupId; if(!relay||!id) return;
-    // NIP-29 tags ALL group content with h=group-id, including kind-7 reactions, so one #h filter per
-    // kind fetches both messages and reactions from the group's relay.
-    let evs=[], rxs=[];
-    try{ [evs, rxs]=await Promise.all([
+    // NIP-29 tags ALL group content with h=group-id (messages, reactions, zaps, deletions), so one #h
+    // filter per kind fetches everything from the group's relay.
+    let evs=[], aux=[];
+    try{ [evs, aux]=await Promise.all([
       Relay.queryFrom([relay], [{ kinds:[9], '#h':[id], limit:200 }]),
-      Relay.queryFrom([relay], [{ kinds:[7], '#h':[id], limit:200 }]).catch(()=>[]),
+      Relay.queryFrom([relay], [{ kinds:[7,9735,5], '#h':[id], limit:300 }]).catch(()=>[]),
     ]); }catch(_){}
     if(VIEW!=='group' || _groupId!==id) return;
-    // External relay is untrusted → verify signatures of UNSEEN events (messages + reactions) only.
-    const fresh=[...(evs||[]), ...(rxs||[])].filter(e=>e && e.id && !_groupSeen.has(e.id));
+    // External relay is untrusted → verify signatures of UNSEEN events (messages + engagement) only.
+    const fresh=[...(evs||[]), ...(aux||[])].filter(e=>e && e.id && !_groupSeen.has(e.id));
     if(fresh.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:fresh});
       const ok=new Set(v.filter(r=>r.valid).map(r=>r.id));
-      for(const e of fresh){ _groupSeen.add(e.id); if(!ok.has(e.id)) continue;
-        if(e.kind===9){ _groupMsgs.set(e.id,e); needProfile(e.pubkey); }
-        else if(e.kind===7){ _recordReact(e); } } }catch(_){} }
+      for(const e of fresh){ if(!ok.has(e.id)){ _groupSeen.add(e.id); continue; }   // bad sig → never retry
+        if(e.kind===9){ _groupSeen.add(e.id); _groupMsgs.set(e.id,e); needProfile(e.pubkey); }
+        else if(_recordChatAux(e)) _groupSeen.add(e.id); }   // recorded → seen; an unparseable zap stays retryable next poll
+    }catch(_){} }
     if(VIEW!=='group' || _groupId!==id) return;
     _drawGroup(first);
     _groupPoll=setTimeout(()=>{ if(VIEW==='group' && _groupId===id) _pollGroup(false); }, 6000);
@@ -2105,7 +2206,7 @@
   function _drawGroup(force){
     const box=$('#grp-msgs'); if(!box || !_groupId) return;
     const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
-    const msgs=[..._groupMsgs.values()].filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);
+    const msgs=[..._groupMsgs.values()].filter(x=>!isMutedView(x) && !_isChatDeleted(x)).sort((a,b)=>a.created_at-b.created_at);
     box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages, or this group requires login to read.</div>';
     decorateProfiles();
     if(atBottom) box.scrollTop=box.scrollHeight;
@@ -2249,6 +2350,58 @@
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
   }
+  // NIP-32 self-labels marking a post NSFW (noteId → reason; '' = labeled, no specific reason).
+  const CW_LABELS = new Map();
+  // Posts the user just UNMARKED — suppresses re-blur from a label the relay hasn't dropped yet.
+  const CW_UNMARKED = new Set();
+  // A kind-1985 content-warning label → its reason ('' if none), or null if it isn't one.
+  function _cwLabelReason(ev){
+    if(!ev || ev.kind!==1985) return null;
+    const isCw = ev.tags.some(t=>t[0]==='L'&&t[1]==='content-warning') || ev.tags.some(t=>t[0]==='l'&&t[2]==='content-warning');
+    if(!isCw) return null;
+    let reason=String(ev.content||'').trim();
+    if(!reason){ const l=ev.tags.find(t=>t[0]==='l'&&t[2]==='content-warning'); if(l && l[1] && l[1]!=='nsfw') reason=l[1]; }
+    return reason;
+  }
+  // Inner HTML of the content-warning reveal overlay (shared by noteCard's template + _wrapNoteCw).
+  function _cwRevealInner(reason){ return `🔞 Sensitive content${reason?' — '+enc(reason):''}<span class="cw-show">Show</span>`; }
+  // Blur an already-rendered note in place (label discovered after render / just published). Wraps the
+  // body content between the header and the action row in the same cw-wrap structure noteCard emits.
+  function _wrapNoteCw(article, reason){
+    const body=article && article.querySelector(':scope > .body'); if(!body) return;
+    if(body.querySelector(':scope > .cw-wrap')) return;   // already blurred
+    const hd=body.querySelector(':scope > .hd'), acts=body.querySelector(':scope > .acts');
+    const inner=document.createElement('div'); inner.className='cw-inner';
+    const move=[]; let n=hd?hd.nextSibling:body.firstChild; while(n && n!==acts){ move.push(n); n=n.nextSibling; }
+    if(!move.length) return;
+    const wrap=document.createElement('div'); wrap.className='cw-wrap cw-on';
+    const rev=document.createElement('div'); rev.className='cw-reveal';
+    rev.innerHTML=_cwRevealInner(reason);
+    rev.onclick=e=>{ e.stopPropagation(); wrap.classList.remove('cw-on'); rev.remove(); };
+    move.forEach(x=>inner.appendChild(x)); wrap.appendChild(rev); wrap.appendChild(inner);
+    body.insertBefore(wrap, acts);
+  }
+  function _applyCwLabels(scope){ $$('.note[data-id]', scope||document).forEach(n=>{ if(CW_LABELS.has(n.dataset.id)) _wrapNoteCw(n, CW_LABELS.get(n.dataset.id)); }); }
+  // Mark one of YOUR OWN posts NSFW: publish a NIP-32 (kind-1985) content-warning label targeting it.
+  // Non-destructive — the original post + its engagement are untouched; this client honours the label.
+  async function markNsfw(id){
+    const ev=Store.get(id); if(!ev){ toast('post not loaded'); return; }
+    if(ev.pubkey!==ME.pubkey){ toast('you can only mark your own posts'); return; }
+    const reason=(prompt('Content warning reason (optional):')||'').trim();
+    try{
+      await publish(1985, reason, [['L','content-warning'], ['l', reason||'nsfw', 'content-warning'], ['e', id], ['p', ME.pubkey]]);
+      CW_UNMARKED.delete(id); CW_LABELS.set(id, reason); _applyCwLabels(); toast('🔞 marked sensitive');
+    }catch(e){ toast('failed: '+((e&&e.message)||e)); }
+  }
+  // Remove your NSFW label(s) from a post: delete the kind-1985 label events you authored for it.
+  async function unmarkNsfw(id){
+    try{
+      // _cwLabelReason returns '' (falsy) for a no-reason label — filter on !==null so those still delete.
+      const labels=(await Relay.query([{ kinds:[1985], authors:[ME.pubkey], '#e':[id], limit:50 }])).filter(l=>_cwLabelReason(l)!==null);
+      if(labels.length) await publish(5, 'remove content warning', labels.map(l=>['e', l.id]));
+      CW_UNMARKED.add(id); CW_LABELS.delete(id); toast('label removed'); renderView(true);   // CW_UNMARKED stops a not-yet-purged label re-blurring it next hydrate
+    }catch(e){ toast('failed: '+((e&&e.message)||e)); }
+  }
   function noteCard(ev, prefix=''){
    try{
     const p = profOf(ev.pubkey); needProfile(ev.pubkey);
@@ -2262,16 +2415,23 @@
     const counts = countsFor(ev.id);
     const liked = myReaction(ev.id);
     const mine = ev.pubkey===ME.pubkey;
+    // Content warning: blur the body + media behind a reveal button. Either a NIP-36 tag on the post
+    // itself, or a NIP-32 self-label (the author tagged their own post NSFW after the fact — CW_LABELS).
+    const cwTag = ev.tags.find(t=>t[0]==='content-warning');
+    const cw = !!cwTag || CW_LABELS.has(ev.id);
+    const cwReason = cwTag ? String(cwTag[1]||'').trim() : (CW_LABELS.get(ev.id)||'');
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
+        ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
         <div class="txt${longTxt?' clamp':''}">${linkify(bodyTxt)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
+        ${cw?`</div></div>`:''}
         <div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies||''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts||''}</span></button>
@@ -2706,6 +2866,11 @@
     if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
+    if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
+      // a compose-time NIP-36 tag is on the immutable event → can't be undone; only offer the toggle
+      // for label-based CW (or to add one). A tagged post simply shows no menu entry (already sensitive).
+      if(CW_LABELS.has(id)) items.push(['nsfw','🔞 Unmark sensitive']);
+      else if(!tagged) items.push(['nsfw','🔞 Mark sensitive / NSFW']); }
     if(mine) items.push(['delete','🗑️ Delete','danger']);
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
@@ -2717,6 +2882,7 @@
       if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
       if(a==='pin') return togglePin(id);
+      if(a==='nsfw') return CW_LABELS.has(id)?unmarkNsfw(id):markNsfw(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
     });
@@ -3029,7 +3195,7 @@
     }).join('') : '<div class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
     feed.querySelectorAll('.draft-card').forEach(card=>{
       const id=card.dataset.draft;
-      card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text}); };
+      card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text,cw:d.cw,cwReason:d.cwReason}); };
       card.querySelector('[data-act="del"]').onclick=()=>{ if(confirm('Delete this draft?')){ Drafts.remove(id); renderDrafts(); } };
       card.querySelector('[data-act="send"]').onclick=()=>sendDraft(id);
     });
@@ -3041,6 +3207,7 @@
     if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
     if(d.quote){ tags.push(['q',d.quote]); const o=Store.get(d.quote); if(o)tags.push(['p',o.pubkey]); }
     mentionTags(d.text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+    if(d.cw) tags.push(['content-warning', d.cwReason||'']);   // honour a draft's 🔞 flag on direct send too
     try{ await publish(1, d.text, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
     catch(e){ toast('post failed: '+e.message); }
   }
@@ -3051,7 +3218,7 @@
     const d=(c.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='34550:'+c.pubkey+':'+d; const r=CFG.relay_url||'';
     return [['A',addr,r],['K','34550'],['P',c.pubkey,r],['a',addr,r],['k','34550'],['p',c.pubkey,r]];
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null}={}){
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, cw=false, cwReason=''}={}){
     const title = community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
@@ -3059,8 +3226,9 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ AI Enhancer</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ AI Enhancer</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
+      <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -3074,7 +3242,7 @@
       // 💾 Draft button set `committed` so they don't double-save; an empty composer saves nothing.
       let committed=false;
       const _autoSaveDraft=()=>{ if(committed || !(ta.value||'').trim()) return; committed=true;
-        try{ Drafts.save({id:draftId, text:ta.value.trim(), reply, replyPk, quote}); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
+        try{ Drafts.save({id:draftId, text:ta.value.trim(), reply, replyPk, quote, ..._cwState()}); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
       const _closeCmp=()=>{ document.removeEventListener('keydown',_escSave); closeModal(); };
       const _escSave=e=>{ if(e.key==='Escape'){ e.preventDefault(); _autoSaveDraft(); _closeCmp(); } };
       document.addEventListener('keydown', _escSave);
@@ -3176,9 +3344,15 @@
       }
       $('#cmp-draft',root).onclick=()=>{
         const body=ta.value.trim(); if(!body){ toast('nothing to save'); return; }
-        committed=true; Drafts.save({id:draftId, text:body, reply, replyPk, quote}); _closeCmp(); toast('saved to drafts');
+        committed=true; Drafts.save({id:draftId, text:body, reply, replyPk, quote, ..._cwState()}); _closeCmp(); toast('saved to drafts');
         if(VIEW==='drafts') renderView(true);
       };
+      // 🔞 sensitive / NSFW (NIP-36): toggle a content-warning, optionally with a reason.
+      { const cb=$('#cmp-cw-btn',root); if(cb) cb.onclick=()=>{ cb.classList.toggle('on'); const r=$('#cmp-cw-row',root); if(r) r.classList.toggle('hidden', !cb.classList.contains('on')); const ri=$('#cmp-cw-reason',root); if(ri && cb.classList.contains('on')) ri.focus(); }; }
+      // restore the toggle when re-opening a draft that had it set (else a sensitive post posts unflagged)
+      if(cw){ const cb=$('#cmp-cw-btn',root); if(cb) cb.classList.add('on'); const r=$('#cmp-cw-row',root); if(r) r.classList.remove('hidden'); const ri=$('#cmp-cw-reason',root); if(ri) ri.value=cwReason||''; }
+      const _cwState=()=>{ const cb=$('#cmp-cw-btn',root); return cb && cb.classList.contains('on') ? { cw:true, cwReason:(($('#cmp-cw-reason',root)||{}).value||'').trim() } : { cw:false, cwReason:'' }; };
+      const _applyCw=(tags)=>{ const s=_cwState(); if(s.cw) tags.push(['content-warning', s.cwReason]); };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
@@ -3191,6 +3365,7 @@
             labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l]));
             mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
             imetaTagsFor(text).forEach(t=>tags.push(t));
+            _applyCw(tags);
             closeModal(); try{ await publish(1068, text, tags); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); }
             catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
           } }
@@ -3199,6 +3374,7 @@
           let tags=communityPostTags(community);
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
           imetaTagsFor(text).forEach(t=>tags.push(t));
+          _applyCw(tags);
           closeModal(); try{ await publish(1111, text, tags); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
           catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
@@ -3207,6 +3383,7 @@
         if(quote){ tags.push(['q',quote]); const o=Store.get(quote); if(o)tags.push(['p',o.pubkey]); }
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
         imetaTagsFor(text).forEach(t=>tags.push(t));
+        _applyCw(tags);
         closeModal(); await publish(1, text, tags); if(draftId) Drafts.remove(draftId);
         toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
@@ -4366,11 +4543,13 @@
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||LOGO;
-    // What to open on click: for a reply/mention (kind-1) open the notification event ITSELF, so the
-    // thread view centers their reply WITH your post above it (full context) — not just your post.
-    // For a reaction/repost/zap, open the post they acted on (the last referenced e-tag).
+    // What to open on click: for a reply/mention (kind-1) or a chat reply (kind-42) open the
+    // notification event ITSELF — for kind-1 the thread view centers their reply with your post above
+    // it; for kind-42 the chat redirect scrolls to THEIR message (its last e-tag is the parent, i.e.
+    // your message, which would be the wrong target). For a reaction/repost/zap, open the post they
+    // acted on (the last referenced e-tag).
     const ref=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
-    const tgt = e.kind===1 ? e.id : (ref||e.id);
+    const tgt = (e.kind===1 || e.kind===42) ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
@@ -5398,6 +5577,12 @@
   }
   function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
   function aiHandle(d){
+    // Stale re-delivery: the server replays a queued `response` whose live push was missed (socket
+    // dropped / user on another conversation). We reload the whole conversation from the DB on
+    // open/recover, so replaying a reply that was PERSISTED would render it TWICE (the reported
+    // double-geni-image). Skip only those (`persisted`). Non-persisted replays — e.g. interim agent
+    // progress chunks the server never saves — still render, since the DB reload won't have them.
+    if(d.pending && d.persisted){ if(d.type==='response') _ai.awaiting=false; return; }
     if(d.type==='stream'){
       const c=(d.data&&d.data.content)??d.content??''; if(typeof c!=='string') return;
       if(!_ai.streamEl){ _ai.streamBuf=''; _ai.streamEl=aiAddMessage('assistant',''); }
@@ -5656,7 +5841,9 @@
   }
   function aiRenderAttach(){
     const bar=$('#ai-attachbar'); if(!bar) return;
-    if(!_ai.attach.length){ aiUpdateLinkActions(); return; }
+    // clear stale chips first — else removing the LAST attachment leaves its chip in the DOM
+    // (aiUpdateLinkActions only wipes the bar when it had link-actions), so the ✕ looks dead.
+    if(!_ai.attach.length){ bar.innerHTML=''; delete bar.dataset.link; aiUpdateLinkActions(); return; }
     const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
     const acts=_aiAttachActions();
     const actions='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'+
@@ -6139,6 +6326,14 @@
     let ev=Store.get(id);
     if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
+    // A chat message (NIP-28 kind-42) has no normal thread — e.g. a reaction notification links here.
+    // Resolve its channel and open the room, then scroll to + flash the message.
+    if(ev.kind===42){
+      // NIP-28: the channel is the `root`-marked e-tag; with no markers the convention is the FIRST e-tag.
+      const root=(ev.tags.find(t=>t[0]==='e' && t[3]==='root') || ev.tags.find(t=>t[0]==='e') || [])[1];
+      let chan=root ? (Store.get(root)||await fetchEvent(root)) : null;
+      if(chan){ Store.saveEvent(chan); openChannel(chan, id); return; }
+    }
     // fetch the parent (for reply context) and the replies
     let parent=null;
     const es=ev.tags.filter(t=>t[0]==='e');
@@ -6292,8 +6487,14 @@
     _ixT=null;
     const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
-    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735], '#e':ids, limit:600 }]);
+    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735,1985], '#e':ids, limit:700 }]);
       let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
+      // NIP-32 self-labels: honour a content-warning only when the LABEL's author is the note's author
+      // (so others can't blur your posts). Populate CW_LABELS, then blur any matching on-screen notes.
+      for(const e of evs){ const r=_cwLabelReason(e); if(r===null) continue;
+        const tgt=(e.tags.find(t=>t[0]==='e')||[])[1]; if(!tgt || CW_LABELS.has(tgt) || CW_UNMARKED.has(tgt)) continue;
+        const note=Store.get(tgt); if(note && note.pubkey===e.pubkey) CW_LABELS.set(tgt, r); }
+      _applyCwLabels();
       if(any){ invalidateCounts(); }
     }catch(_){}
     decorateCounts();

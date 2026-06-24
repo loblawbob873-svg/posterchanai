@@ -594,7 +594,7 @@ a.btn.full{display:block}
 .chatroom{display:flex;flex-direction:column;min-height:0;height:100%}
 .chatroom-head{display:flex;align-items:center;gap:10px;padding:10px 12px 8px;flex:0 0 auto;border-bottom:1px solid var(--line)}
 .chatroom-head .btn{flex:0 0 auto;min-height:38px}
-.chatroom-title{font-weight:800;color:var(--neon);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chatroom-title{flex:1 1 auto;min-width:0;font-weight:800;color:var(--neon);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chatroom-about{flex:0 0 auto;padding:8px 12px;color:var(--text);opacity:.8;font-size:13.5px;border-bottom:1px solid var(--line)}
 .chatroom-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:14px 12px}
 .chat-msg{display:flex;gap:9px;align-items:flex-start}
@@ -609,8 +609,19 @@ a.btn.full{display:block}
 .chat-react:hover{border-color:var(--neon)}
 .chat-react.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
 .chat-react .n{opacity:.8;font-weight:700}
-.chat-react-add{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:transparent;border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:13px;opacity:.55}
-.chat-react-add:hover{opacity:1;border-color:var(--neon);color:var(--neon)}
+.chat-zap{display:inline-flex;align-items:center;gap:4px;color:var(--neon2);font-size:13px;font-weight:700}
+.chat-mini{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:transparent;border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:13px;opacity:.55}
+.chat-mini:hover{opacity:1;border-color:var(--neon);color:var(--neon)}
+/* reply context quote above a message + the live reply-target bar above the compose box */
+.chat-replyq{display:block;max-width:100%;margin:1px 0 3px;padding:2px 8px;border-left:2px solid var(--neon);background:var(--panel2);color:var(--muted);border-radius:0 8px 8px 0;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-replyq:hover{color:var(--text)}
+.chat-reply-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid var(--line);background:var(--panel2)}
+.chat-reply-bar.hidden{display:none}
+.chat-reply-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-reply-x{flex:0 0 auto;background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:15px}
+.chat-reply-x:hover{color:var(--neon)}
+.chat-msg.flash{animation:chatflash 1.3s ease-out}
+@keyframes chatflash{0%,30%{background:rgba(0,255,255,.14)}100%{background:transparent}}
 .chatroom-compose{flex:0 0 auto;display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
 .chatroom-compose textarea{flex:1;resize:none;max-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 13px;font-family:inherit;font-size:15.5px;line-height:1.4}
 .chatroom-compose textarea:focus{border-color:var(--neon);outline:none}
@@ -656,6 +667,21 @@ a.btn.full{display:block}
 .note .txt-more{display:inline-block;margin:2px 0 4px;padding:3px 13px;background:rgba(0,255,255,.07);border:1px solid var(--cyan);
   color:var(--cyan);border-radius:13px;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:600;letter-spacing:.3px}
 .note .txt-more:hover{background:rgba(0,255,255,.14);box-shadow:var(--glow-cy)}
+/* NIP-36 content warning: blur the body + media behind a reveal button until tapped */
+.cw-wrap{position:relative;margin:4px 0}
+.cw-inner{transition:filter .15s}
+.cw-wrap.cw-on .cw-inner{filter:blur(26px);pointer-events:none;user-select:none;min-height:64px;max-height:260px;overflow:hidden}
+.cw-reveal{display:none}
+/* the overlay sits over blurred content, so it uses a fixed dark scrim + light text — readable on
+   every theme (a theme --text would go dark-on-dark over the scrim on light themes) */
+.cw-wrap.cw-on>.cw-reveal{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  background:rgba(8,5,18,.55);border:1px dashed rgba(255,255,255,.3);border-radius:14px;color:#f4f4ff;font-weight:700;text-align:center;padding:12px;cursor:pointer}
+.cw-show{padding:5px 16px;border:1px solid #fff;border-radius:20px;color:#fff;font-size:13px;font-weight:700}
+.cw-wrap.cw-on>.cw-reveal:hover .cw-show{background:rgba(255,255,255,.16)}
+/* composer 🔞 toggle + reason row */
+#cmp-cw-btn.on{border-color:var(--neon2);color:var(--neon2);box-shadow:0 0 0 1px var(--neon2) inset}
+.cmp-cw-row{margin:6px 0 2px}
+.cmp-cw-row.hidden{display:none}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
 .note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
