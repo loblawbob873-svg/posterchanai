@@ -1608,6 +1608,13 @@ class ClaimNip05(BaseModel):
     auth: str            # base64 signed event BY this pubkey (proves key ownership → no squatting)
 
 
+class AdminNip05Req(BaseModel):
+    target: str          # npub/hex to grant/remove a NIP-05 name for
+    name: str = ""       # the local-part to grant (ignored when remove=True)
+    remove: bool = False
+    auth: str            # base64 signed admin event (p-tags target), same proof as /block
+
+
 def _verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
     """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window."""
     try:
@@ -1672,3 +1679,76 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
     except Exception as e:
         logger.warning("[client] nip05 reload after claim failed: %s", e)
     return JSONResponse({"ok": True, "name": name, "nip05": f"{name}@{domain}"})
+
+
+@router.get("/admin-nip05")
+async def admin_nip05_status(pubkey: str, request: Request, db: Session = Depends(get_db)):
+    """Current NIP-05 name granted to this pubkey on THIS node's identity server (if any). Lets the
+    admin Permissions panel show the checkbox state + prefill the name. Public read (it's in nostr.json)."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    from app.services.nostr_relay.thread import _parse_nip05
+    names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
+    cur = next((n for n, hx in names.items() if hx == h), None)
+    domain = _nip05_domain(request, db)
+    return JSONResponse({"ok": True, "name": cur, "nip05": (f"{cur}@{domain}" if cur else None)})
+
+
+@router.post("/admin-nip05")
+async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depends(get_db)):
+    """Admin-only: grant or remove a NIP-05 name for a target pubkey in this node's Relay Settings
+    (`nostr_relay_nip05_names`). Gated by the same signed-admin proof as /block. Grant replaces any
+    existing name for the target; collisions with a DIFFERENT account are rejected."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    from app.services.nostr_relay.thread import trigger_nip05_reload
+    raw = settings_store.get("nostr_relay_nip05_names", "") or ""
+    if not raw.strip():
+        # An empty read may be the partial-hydrate window (relay subprocess not loaded yet), NOT a
+        # genuinely empty list — re-read authoritatively before a write that would otherwise WIPE every
+        # other user's grant (the documented replaceable-list / partial-hydrate data-loss class).
+        try:
+            settings_store.hydrate_from_db(db)
+            raw = settings_store.get("nostr_relay_nip05_names", "") or ""
+        except Exception:
+            pass
+    # MINIMAL edit on the raw text: drop only the target's existing line(s), keep every other line
+    # VERBATIM (comments, blanks, hand-curated formatting), then append the new grant — so one admin
+    # action can't reformat or lose the rest of the list, and unchanged npubs aren't re-encoded.
+    kept, taken = [], set()
+    for line in raw.split("\n"):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            kept.append(line); continue
+        toks = s.replace("=", " ").replace(",", " ").split()
+        owner = nostr_service.to_pubkey_hex(toks[1].strip()) if len(toks) >= 2 else None
+        if owner == target:
+            continue   # drop the target's existing grant (a grant replaces it; a remove clears it)
+        kept.append(line)
+        if len(toks) >= 2:
+            taken.add(toks[0].strip().lower())
+    granted_name = None
+    if not data.remove:
+        base = _sanitize_nip05_name(data.name)
+        if not base:
+            return JSONResponse({"ok": False, "error": "invalid name"}, status_code=400)
+        if base.lower() in taken:   # case-insensitive collision with a DIFFERENT account
+            return JSONResponse({"ok": False, "error": f"'{base}' is already taken"}, status_code=409)
+        try:
+            npub = nostr_service.npub_of(target)
+        except Exception:
+            npub = data.target
+        kept.append(f"{base} {npub}")
+        granted_name = base
+    settings_store.put("nostr_relay_nip05_names", "\n".join(kept).strip("\n"))
+    try:
+        trigger_nip05_reload()
+    except Exception as e:
+        logger.warning("[client] nip05 reload after admin grant/remove failed: %s", e)
+    domain = _nip05_domain(request, db)
+    return JSONResponse({"ok": True, "granted": not data.remove, "name": granted_name,
+                         "nip05": (f"{granted_name}@{domain}" if granted_name else None)})

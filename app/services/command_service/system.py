@@ -35,7 +35,7 @@ class _SystemMixin:
         from app.services import node_service
 
         if not node_service.user_allowed(self.db, self.user):
-            return {"type": "text", "content": "⛔ Remote node management is disabled or you are not authorized. An admin can enable it in Admin → Services → Remote Node Management."}
+            return {"type": "text", "content": "⛔ Agentic node management is disabled or you are not authorized. An admin can enable it in Admin → Services → Agentic Node Management."}
 
         parts = arg.strip().split(maxsplit=2)
         sub = parts[0].lower() if parts else ""
@@ -43,7 +43,7 @@ class _SystemMixin:
 
         def _fmt_nodes() -> str:
             if not nodes:
-                return "No nodes configured. Add them in Admin → Services → Remote Node Management (one per line: `name|user@host`)."
+                return "No nodes configured. Add them in Admin → Services → Agentic Node Management (one per line: `name|user@host`)."
             lines = ["**Configured nodes:**"]
             for name, target in nodes.items():
                 where = "this host" if target == "local" else target
@@ -67,7 +67,7 @@ class _SystemMixin:
         # --- management subcommands ---
         if sub in ("", "list", "ls", "help"):
             usage = (
-                "**Remote node management**\n\n"
+                "**Agentic node management**\n\n"
                 "- `node <name> <command>` — run a command (long ones run in the background)\n"
                 "- `node all <command>` — run a command on every node\n"
                 "- `node agent <name> <goal>` — let the AI run commands toward a goal\n"

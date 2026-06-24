@@ -112,7 +112,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "feltedtables": "Turn an attached image into an MP4 set to the felted-tables clip: feltedtables",
         "prayer": "Turn an attached image into an MP4 set to the prayer clip: prayer",
-        "node": "Remote node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
+        "node": "Agentic node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
         "budget": "Show your budget summary (income, unpaid bills, remaining)",
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
         "pay": "Pay a bill by name: pay <bill name>",

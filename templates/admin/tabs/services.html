@@ -7,7 +7,7 @@
             <label for="logs_scheduler_enabled">
                 <input type="checkbox" id="logs_scheduler_enabled" name="logs_scheduler_enabled"> Enable Health Report Scheduler
             </label>
-            <small>🩺 Runs an agentic health check on each node (disks, SMART, RAID, failed services, recent errors) and files the report in the "Logs" conversation + Telegram (admin only). Requires <strong>Remote Node Management</strong> below to be enabled.</small>
+            <small>🩺 Runs an agentic health check on each node (disks, SMART, RAID, failed services, recent errors) and files the report in the "Logs" conversation + Telegram (admin only). Requires <strong>Agentic Node Management</strong> below to be enabled.</small>
         </div>
         <div class="form-group">
             <label for="logs_schedule">Schedule (cron hours)</label>
@@ -17,7 +17,7 @@
         <div class="form-group">
             <label for="logs_nodes">Nodes to Check</label>
             <input type="text" id="logs_nodes" name="logs_nodes" placeholder="empty = ALL nodes (or narrow, e.g. nas.lan,server1)">
-            <small><strong>Leave empty to check every node</strong> (all <strong>Remote Node Management</strong> nodes). Only fill this in to <em>narrow</em> the report to specific node names.</small>
+            <small><strong>Leave empty to check every node</strong> (all <strong>Agentic Node Management</strong> nodes). Only fill this in to <em>narrow</em> the report to specific node names.</small>
         </div>
         <div class="form-group" style="margin-top: 10px;">
             <small><strong>Note:</strong> Restart the service after changing scheduler settings.</small>
@@ -25,10 +25,11 @@
     </fieldset>
 
     <fieldset>
-        <legend>Remote Node Management</legend>
+        <legend>Agentic Node Management</legend>
         <div class="form-group">
+            <small>Run OS commands and <strong>agentic tasks</strong> (LLM-driven, multi-step goals) on SSH-reachable nodes or <code>local</code> — from chat, Telegram, or the health report.</small>
             <label for="node_exec_enabled">
-                <input type="checkbox" id="node_exec_enabled" name="node_exec_enabled"> Enable Remote Node Management
+                <input type="checkbox" id="node_exec_enabled" name="node_exec_enabled"> Enable Agentic Node Management
             </label>
             <small>Run OS commands on configured nodes from chat/Telegram (<code>node &lt;name&gt; &lt;cmd&gt;</code>, <code>node agent &lt;name&gt; &lt;goal&gt;</code>). ⚠️ This is unrestricted command execution — only enable on a trusted, private deployment.</small>
         </div>

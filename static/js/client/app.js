@@ -2848,7 +2848,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ Post with AI</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ AI Enhancer</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><input type="file" id="cmp-file" multiple hidden></div>
       <div class="cmp-right"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
@@ -4529,11 +4529,16 @@
     try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
+    let nipName='', nipDomain=location.host;
+    try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok){ nipName=r.name||''; if(r.nip05) nipDomain=r.nip05.split('@')[1]||nipDomain; } }catch(_){}
+    const _pp=profOf(pk)||{};
+    const defNip=((_pp.name||_pp.display_name||'')).toLowerCase().replace(/[^a-z0-9_.\-]/g,'').replace(/^[._\-]+|[._\-]+$/g,'').slice(0,30);
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
     const row=(id,checked,label)=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" ${id} ${checked?'checked':''}> ${label}</label>`;
     modal(`<h3>🔑 Additional permissions</h3>
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
+      <div class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05<input class="input" id="perm-nip05-name" placeholder="name" value="${enc(nipName||defNip)}" style="flex:1;min-width:0"><span class="muted small">@${enc(nipDomain)}</span></div>
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
       <p class="muted small">AI features</p>
       ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
@@ -4553,6 +4558,22 @@
             const auth=await sign(27235,'blossom',[['action',wantBl?'grant':'revoke'],['p',pk]]);
             const r=await fetch('/client/blossom-access',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({target:pk,grant:wantBl,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
+          }
+          // NIP-05: grant (or rename) when checked + changed, remove when unchecked
+          const wantNip=$('#perm-nip05',root).checked, nipVal=($('#perm-nip05-name',root).value||'').trim();
+          if(wantNip && (!nipName || nipVal!==nipName)){
+            if(!nipVal){ toast('enter a NIP-05 name'); ok=false; }
+            else{
+              const auth=await sign(27235,'nip05',[['action','grant'],['p',pk]]);
+              const r=await fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({target:pk,name:nipVal,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+              ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
+            }
+          } else if(!wantNip && nipName){
+            const auth=await sign(27235,'nip05',[['action','revoke'],['p',pk]]);
+            const r=await fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,remove:true,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+            ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
           }
           if(capsChanged){
             const auth=await sign(27235,'user-caps',[['p',pk]]);
