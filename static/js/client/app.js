@@ -2350,56 +2350,27 @@
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
   }
-  // NIP-32 self-labels marking a post NSFW (noteId → reason; '' = labeled, no specific reason).
-  const CW_LABELS = new Map();
-  // Posts the user just UNMARKED — suppresses re-blur from a label the relay hasn't dropped yet.
-  const CW_UNMARKED = new Set();
-  // A kind-1985 content-warning label → its reason ('' if none), or null if it isn't one.
-  function _cwLabelReason(ev){
-    if(!ev || ev.kind!==1985) return null;
-    const isCw = ev.tags.some(t=>t[0]==='L'&&t[1]==='content-warning') || ev.tags.some(t=>t[0]==='l'&&t[2]==='content-warning');
-    if(!isCw) return null;
-    let reason=String(ev.content||'').trim();
-    if(!reason){ const l=ev.tags.find(t=>t[0]==='l'&&t[2]==='content-warning'); if(l && l[1] && l[1]!=='nsfw') reason=l[1]; }
-    return reason;
-  }
-  // Inner HTML of the content-warning reveal overlay (shared by noteCard's template + _wrapNoteCw).
+  // Inner HTML of the NIP-36 content-warning reveal overlay (used by noteCard's blurred template).
   function _cwRevealInner(reason){ return `🔞 Sensitive content${reason?' — '+enc(reason):''}<span class="cw-show">Show</span>`; }
-  // Blur an already-rendered note in place (label discovered after render / just published). Wraps the
-  // body content between the header and the action row in the same cw-wrap structure noteCard emits.
-  function _wrapNoteCw(article, reason){
-    const body=article && article.querySelector(':scope > .body'); if(!body) return;
-    if(body.querySelector(':scope > .cw-wrap')) return;   // already blurred
-    const hd=body.querySelector(':scope > .hd'), acts=body.querySelector(':scope > .acts');
-    const inner=document.createElement('div'); inner.className='cw-inner';
-    const move=[]; let n=hd?hd.nextSibling:body.firstChild; while(n && n!==acts){ move.push(n); n=n.nextSibling; }
-    if(!move.length) return;
-    const wrap=document.createElement('div'); wrap.className='cw-wrap cw-on';
-    const rev=document.createElement('div'); rev.className='cw-reveal';
-    rev.innerHTML=_cwRevealInner(reason);
-    rev.onclick=e=>{ e.stopPropagation(); wrap.classList.remove('cw-on'); rev.remove(); };
-    move.forEach(x=>inner.appendChild(x)); wrap.appendChild(rev); wrap.appendChild(inner);
-    body.insertBefore(wrap, acts);
-  }
-  function _applyCwLabels(scope){ $$('.note[data-id]', scope||document).forEach(n=>{ if(CW_LABELS.has(n.dataset.id)) _wrapNoteCw(n, CW_LABELS.get(n.dataset.id)); }); }
-  // Mark one of YOUR OWN posts NSFW: publish a NIP-32 (kind-1985) content-warning label targeting it.
-  // Non-destructive — the original post + its engagement are untouched; this client honours the label.
-  async function markNsfw(id){
+  // Mark one of YOUR OWN posts NSFW after the fact. Nostr events are immutable, so the only way to
+  // get a warning that EVERY client honours (NIP-36) is to re-post: publish an identical copy carrying
+  // the content-warning tag, then delete the original. The copy is a NEW event — its engagement
+  // (likes/replies/zaps) starts fresh — so this is destructive and confirmed first.
+  async function repostWithWarning(id){
     const ev=Store.get(id); if(!ev){ toast('post not loaded'); return; }
-    if(ev.pubkey!==ME.pubkey){ toast('you can only mark your own posts'); return; }
+    if(ev.pubkey!==ME.pubkey){ toast('you can only do this to your own posts'); return; }
+    if(!confirm('Re-post this with an NSFW warning?\n\nNostr posts can’t be edited, so this DELETES the original and publishes a fresh copy with a content-warning that every client blurs. The new post won’t carry over the original’s likes, replies or zaps.')) return;
     const reason=(prompt('Content warning reason (optional):')||'').trim();
     try{
-      await publish(1985, reason, [['L','content-warning'], ['l', reason||'nsfw', 'content-warning'], ['e', id], ['p', ME.pubkey]]);
-      CW_UNMARKED.delete(id); CW_LABELS.set(id, reason); _applyCwLabels(); toast('🔞 marked sensitive');
-    }catch(e){ toast('failed: '+((e&&e.message)||e)); }
-  }
-  // Remove your NSFW label(s) from a post: delete the kind-1985 label events you authored for it.
-  async function unmarkNsfw(id){
-    try{
-      // _cwLabelReason returns '' (falsy) for a no-reason label — filter on !==null so those still delete.
-      const labels=(await Relay.query([{ kinds:[1985], authors:[ME.pubkey], '#e':[id], limit:50 }])).filter(l=>_cwLabelReason(l)!==null);
-      if(labels.length) await publish(5, 'remove content warning', labels.map(l=>['e', l.id]));
-      CW_UNMARKED.add(id); CW_LABELS.delete(id); toast('label removed'); renderView(true);   // CW_UNMARKED stops a not-yet-purged label re-blurring it next hydrate
+      // Re-use the original content + tags (mentions, reply/quote refs, imeta, hashtags), dropping any
+      // existing content-warning, and append ours. Keep the same kind so polls/community posts survive.
+      const tags=(ev.tags||[]).filter(t=>t[0]!=='content-warning').map(t=>t.slice());
+      tags.push(['content-warning', reason]);
+      const { ev:nu }=await publish(ev.kind||1, ev.content||'', tags);
+      await publish(5, 'replaced with a content-warning version', [['e', id]]);   // delete the original
+      if(nu) Store.saveEvent(nu);
+      toast('🔞 re-posted with warning');
+      renderView(true);
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
   }
   function noteCard(ev, prefix=''){
@@ -2415,11 +2386,10 @@
     const counts = countsFor(ev.id);
     const liked = myReaction(ev.id);
     const mine = ev.pubkey===ME.pubkey;
-    // Content warning: blur the body + media behind a reveal button. Either a NIP-36 tag on the post
-    // itself, or a NIP-32 self-label (the author tagged their own post NSFW after the fact — CW_LABELS).
+    // NIP-36 content warning: blur the body + media behind a reveal button.
     const cwTag = ev.tags.find(t=>t[0]==='content-warning');
-    const cw = !!cwTag || CW_LABELS.has(ev.id);
-    const cwReason = cwTag ? String(cwTag[1]||'').trim() : (CW_LABELS.get(ev.id)||'');
+    const cw = !!cwTag;
+    const cwReason = cwTag ? String(cwTag[1]||'').trim() : '';
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
@@ -2867,10 +2837,8 @@
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
-      // a compose-time NIP-36 tag is on the immutable event → can't be undone; only offer the toggle
-      // for label-based CW (or to add one). A tagged post simply shows no menu entry (already sensitive).
-      if(CW_LABELS.has(id)) items.push(['nsfw','🔞 Unmark sensitive']);
-      else if(!tagged) items.push(['nsfw','🔞 Mark sensitive / NSFW']); }
+      // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
+      if(!tagged) items.push(['nsfw','🔞 Re-post with NSFW warning']); }
     if(mine) items.push(['delete','🗑️ Delete','danger']);
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
@@ -2882,7 +2850,7 @@
       if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
       if(a==='pin') return togglePin(id);
-      if(a==='nsfw') return CW_LABELS.has(id)?unmarkNsfw(id):markNsfw(id);
+      if(a==='nsfw') return repostWithWarning(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
     });
@@ -6488,14 +6456,8 @@
     _ixT=null;
     const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
-    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735,1985], '#e':ids, limit:700 }]);
+    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735], '#e':ids, limit:600 }]);
       let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
-      // NIP-32 self-labels: honour a content-warning only when the LABEL's author is the note's author
-      // (so others can't blur your posts). Populate CW_LABELS, then blur any matching on-screen notes.
-      for(const e of evs){ const r=_cwLabelReason(e); if(r===null) continue;
-        const tgt=(e.tags.find(t=>t[0]==='e')||[])[1]; if(!tgt || CW_LABELS.has(tgt) || CW_UNMARKED.has(tgt)) continue;
-        const note=Store.get(tgt); if(note && note.pubkey===e.pubkey) CW_LABELS.set(tgt, r); }
-      _applyCwLabels();
       if(any){ invalidateCounts(); }
     }catch(_){}
     decorateCounts();
