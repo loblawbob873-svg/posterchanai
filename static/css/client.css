@@ -433,8 +433,12 @@ a.btn.full{display:block}
   letter-spacing:1px;text-transform:uppercase;color:var(--text);text-align:center}
 .nb-title span{background:linear-gradient(90deg,#c77dff,#7b2cbf);-webkit-background-clip:text;
   background-clip:text;color:transparent}
-@media(max-width:420px){.nostr-banner{padding:16px}.nostr-banner .ostrich{width:96px;height:96px}
-  .nb-title{font-size:18px}}
+@media(max-width:480px){.auth-stack{gap:12px}.nostr-banner{padding:15px;gap:9px}
+  .nostr-banner .ostrich{width:84px;height:84px}.nb-title{font-size:17px}}
+/* Short / landscape phones: compact-horizontal so the banner doesn't push the login form off-screen
+   (with so little vertical room, a big stacked hero would force scrolling past the buttons). */
+@media(max-height:640px){.nostr-banner{flex-direction:row;gap:12px;padding:12px 16px}
+  .nostr-banner .ostrich{width:54px;height:54px}.nb-title{font-size:16px;text-align:left}}
 @media(prefers-reduced-motion:reduce){.nostr-banner .ostrich{animation:none}}
 .logo-img{display:block;width:84px;height:84px;margin:0 auto 6px;border-radius:20px;
   border:1px solid var(--neon);box-shadow:var(--glow);object-fit:cover}
