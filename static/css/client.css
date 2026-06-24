@@ -275,11 +275,16 @@ a{color:var(--cyan);text-decoration:none}
 code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 
 /* fx layers */
+/* Scanlines: a faint full-screen overlay. We do NOT use mix-blend-mode — a full-screen blend mode
+   re-composites against the ENTIRE page every frame (can't be cached/promoted) and was the dominant
+   GPU cost. A plain low-opacity overlay (slightly darker lines) looks ~the same and is nearly free. */
 .scanlines{position:fixed;inset:0;pointer-events:none;z-index:9990;
-  background:repeating-linear-gradient(to bottom,rgba(255,255,255,.025) 0 1px,transparent 1px 3px);mix-blend-mode:overlay;opacity:.5}
+  background:repeating-linear-gradient(to bottom,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);opacity:.55;
+  transform:translateZ(0);contain:strict}
 .grid-bg{position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.18;
   background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
-  background-size:46px 46px;mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 75%)}
+  background-size:46px 46px;mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 75%);
+  transform:translateZ(0);contain:strict}   /* rasterize the masked grid once → no per-frame mask cost */
 
 /* ===== Live cyberpunk city skyline (pure CSS, GPU-cheap) =====
    Sits deepest (z-index:-2, behind the grid + all content). READABILITY-SAFE BY DESIGN: the buildings
@@ -349,13 +354,18 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
   .city-far,.city-mid,.city-near{animation:none}
   .city-bg::before{animation:none;opacity:.6}
 }
-/* Static city by default: a fully STATIC background image (rendered once from the existing gradients),
-   not an animated parallax. The continuous transform forced every backdrop-filter glass panel to
-   re-blur the MOVING background each frame — the dominant idle-GPU cost (laptops ran ~50%+). Going
-   static AND dropping will-change (which kept 3 separate GPU compositing layers alive) lets the scene
-   rasterize once and the blur cache → the GPU goes near-idle. The neon city looks the same. */
-.city-far,.city-mid,.city-near{ animation: none !important; will-change: auto !important; }
-.city-bg::before{ animation: none !important; }
+/* Static city = a cached raster texture (effectively a static image), NOT a live parallax. The old
+   continuous transform forced backdrop-filter to re-blur a MOVING background each frame (~50% GPU).
+   Now: animation:none (no motion) + translateZ(0)/contain (rasterize the ~18 stacked gradients to a
+   GPU texture ONCE). The glass panels then blur a flat cached bitmap instead of re-evaluating all
+   those gradients on every repaint, so even the always-on glow animations stay cheap. Near-idle GPU,
+   identical neon look. */
+.city-far,.city-mid,.city-near{
+  animation: none !important;
+  transform: translateZ(0);          /* promote to a cached raster layer (blur samples the texture) */
+  contain: strict;                    /* isolate so foreground glow repaints don't re-rasterize it */
+}
+.city-bg::before{ animation: none !important; transform: translateZ(0); }
 
 .glass{background:var(--panel);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);border:1px solid var(--line)}
 /* Perf/battery: pause ALL CSS animations when the tab/PWA is backgrounded (app.js toggles
