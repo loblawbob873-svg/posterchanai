@@ -38,6 +38,22 @@ _worker_process: Optional[subprocess.Popen] = None
 
 
 async def _run():
+    # This is a SEPARATE process with its OWN settings_store cache (the relay is the authoritative
+    # store). Hydrate it BEFORE starting the schedulers — otherwise setting-gated schedulers read their
+    # build-time DEFAULTS instead of the relay value and silently never run. e.g. logs_scheduler_enabled
+    # defaults to "false" but is "true" in the relay → the scheduled health report never fires. (The main
+    # app process hydrates on its own startup; this worker must do it independently.)
+    try:
+        from app.database import SessionLocal
+        from app.services import settings_store
+        db = SessionLocal()
+        try:
+            n = settings_store.hydrate_from_db(db)
+            logger.info(f"[worker] hydrated {n} setting(s) from relay before starting schedulers")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[worker] settings hydrate failed — schedulers may use defaults: {e}", exc_info=True)
     started = 0
     for name, module, fn in _SCHEDULERS:
         try:

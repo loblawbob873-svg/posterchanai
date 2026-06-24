@@ -2858,6 +2858,16 @@
       </div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
+      // Auto-save as a Draft if the composer is dismissed by ACCIDENT (click-outside / Escape) with
+      // unsaved text — leaving the New Post / reply window shouldn't lose what you typed. Posting or the
+      // 💾 Draft button set `committed` so they don't double-save; an empty composer saves nothing.
+      let committed=false;
+      const _autoSaveDraft=()=>{ if(committed || !(ta.value||'').trim()) return; committed=true;
+        try{ Drafts.save({id:draftId, text:ta.value.trim(), reply, replyPk, quote}); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
+      const _closeCmp=()=>{ document.removeEventListener('keydown',_escSave); closeModal(); };
+      const _escSave=e=>{ if(e.key==='Escape'){ e.preventDefault(); _autoSaveDraft(); _closeCmp(); } };
+      document.addEventListener('keydown', _escSave);
+      { const _bg=root.parentElement; if(_bg) _bg.onclick=e=>{ if(e.target===_bg){ _autoSaveDraft(); _closeCmp(); } }; }   // click-outside → save then close
       const _mh=$('#cmp-mentions',root); ta.addEventListener('input', ()=>updateMentionHint(ta,_mh)); updateMentionHint(ta,_mh);
       ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); const sb=$('#cmp-send',root); if(sb) sb.click(); } });   // Ctrl/⌘+Enter to post
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
@@ -2955,11 +2965,12 @@
       }
       $('#cmp-draft',root).onclick=()=>{
         const body=ta.value.trim(); if(!body){ toast('nothing to save'); return; }
-        Drafts.save({id:draftId, text:body, reply, replyPk, quote}); closeModal(); toast('saved to drafts');
+        committed=true; Drafts.save({id:draftId, text:body, reply, replyPk, quote}); _closeCmp(); toast('saved to drafts');
         if(VIEW==='drafts') renderView(true);
       };
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text)return;
+        committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
         // 📊 Poll (NIP-88 kind-1068) — only for top-level posts; question = text, options from the builder.
         { const pbox=$('#cmp-pollbox',root); if(pbox && !pbox.classList.contains('hidden')){
             const labels=[...$$('.poll-opt-in',root)].map(i=>i.value.trim()).filter(Boolean);
@@ -4601,7 +4612,7 @@
     modal(`<h3>🔑 Additional permissions</h3>
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
-      <div class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05<input class="input" id="perm-nip05-name" placeholder="name" value="${enc(nipName||defNip)}" style="flex:1;min-width:0"><span class="muted small">@${enc(nipDomain)}</span></div>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
       <p class="muted small">AI features</p>
       ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
@@ -4622,16 +4633,13 @@
             const r=await fetch('/client/blossom-access',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({target:pk,grant:wantBl,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
           }
-          // NIP-05: grant (or rename) when checked + changed, remove when unchecked
-          const wantNip=$('#perm-nip05',root).checked, nipVal=($('#perm-nip05-name',root).value||'').trim();
-          if(wantNip && (!nipName || nipVal!==nipName)){
-            if(!nipVal){ toast('enter a NIP-05 name'); ok=false; }
-            else{
-              const auth=await sign(27235,'nip05',[['action','grant'],['p',pk]]);
-              const r=await fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({target:pk,name:nipVal,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
-              ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
-            }
+          // NIP-05: simple toggle — grant their-own-name@domain when checked, remove when unchecked.
+          const wantNip=$('#perm-nip05',root).checked;
+          if(wantNip && !nipName){
+            const auth=await sign(27235,'nip05',[['action','grant'],['p',pk]]);
+            const r=await fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk, name:(defNip||('user'+pk.slice(0,8))), auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+            ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
           } else if(!wantNip && nipName){
             const auth=await sign(27235,'nip05',[['action','revoke'],['p',pk]]);
             const r=await fetch('/client/admin-nip05',{method:'POST',headers:{'Content-Type':'application/json'},
