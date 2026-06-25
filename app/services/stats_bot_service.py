@@ -1,4 +1,4 @@
-"""Nostr Stats Bot — optional, posts a cyberpunk activity graph once per day.
+"""Nostr Stats Bot — optional, posts a cyberpunk activity graph every 6 hours.
 
 Reads the built-in relay's Postgres directly (read-only) for two metrics over the past 7 days,
 counting ONLY pubkeys whose latest kind-0 profile carries a non-empty `nip05`:
@@ -351,7 +351,7 @@ def _stats_bots() -> list:
 # --- scheduler -----------------------------------------------------------
 
 async def _tick():
-    """Once per day: post for each enabled Nostr bot that has the stats feature on (gated by the bots
+    """Every 6 hours: post for each enabled Nostr bot that has the stats feature on (gated by the bots
     master switch, like every other bot). A node with no stats bot is a cheap no-op."""
     from app.services import settings_store
     if not settings_store.get_bool("bots_manager_enabled", False):
@@ -365,13 +365,14 @@ async def _tick():
 
 
 def start_stats_bot_scheduler():
-    # Register the DAILY job at a fixed UTC hour — it self-gates on the bots master switch + which
-    # bots have the stats feature (read live each tick), so enabling it on a bot needs no restart of
-    # this scheduler. A wall-clock CRON (not a 6h interval) means: exactly ONE post per day at a
-    # predictable time, and — unlike the old interval — a restart does NOT fire an immediate/extra
-    # post (cron computes the next H:00, it never fires on registration). UTC matches the chart's
-    # UTC-midnight buckets. `stats_bot_post_hour` (UTC 0–23) overrides the default; coalesce +
-    # misfire grace let a worker that was briefly down near the hour still post that day, just once.
+    # Register a job that posts EVERY 6 HOURS on fixed UTC wall-clock hours, anchored on
+    # `stats_bot_post_hour` (UTC 0–23, default 16): the four slots {h, h+6, h+12, h+18} mod 24, so
+    # the default posts at 04:00/10:00/16:00/22:00 UTC. It self-gates on the bots master switch +
+    # which bots have the stats feature (read live each tick), so enabling it on a bot needs no
+    # restart of this scheduler. A wall-clock CRON (not an interval) means a restart does NOT fire an
+    # immediate/extra post — cron computes the next matching H:00, it never fires on registration.
+    # UTC matches the chart's UTC-midnight buckets. coalesce + misfire grace let a worker that was
+    # briefly down near a slot still post that slot, just once.
     global stats_scheduler
     if stats_scheduler is not None:
         return
@@ -379,12 +380,13 @@ def start_stats_bot_scheduler():
     hour = settings_store.get_int("stats_bot_post_hour", 16)
     if not (0 <= hour <= 23):
         hour = 16
+    hours = ",".join(str((hour + 6 * k) % 24) for k in range(4))
     stats_scheduler = AsyncIOScheduler()
-    stats_scheduler.add_job(_tick, CronTrigger(hour=hour, minute=0, timezone="UTC"),
+    stats_scheduler.add_job(_tick, CronTrigger(hour=hours, minute=0, timezone="UTC"),
                             id="stats_bot", name="Nostr Stats Bot", replace_existing=True,
                             coalesce=True, misfire_grace_time=3600)
     stats_scheduler.start()
-    logger.info("[stats-bot] scheduler started (daily at %02d:00 UTC)", hour)
+    logger.info("[stats-bot] scheduler started (every 6h at UTC hours %s)", hours)
 
 
 def stop_stats_bot_scheduler():
