@@ -25,15 +25,18 @@ from apscheduler.triggers.cron import CronTrigger
 logger = logging.getLogger(__name__)
 
 stats_scheduler = None
-_DAYS = 30   # collect 30 days; the weekly panel is the last 7 of it (one Postgres pass)
+_DAYS = 30     # collect 30 days; the weekly panel is the last 7 of it (one Postgres pass)
+_MONTHS = 6    # also bucket the last 6 calendar months for the month-by-month panel (same pass)
 
 # Cyberpunk palette (matches the web client: --cyan / --neon-magenta on near-black). The 30-day
 # panel uses a SECOND pair (green/amber) so all four series read distinctly.
 _BG = (10, 7, 18)
 _CYAN = (0, 240, 255)        # weekly posts
 _MAGENTA = (255, 43, 214)    # weekly active users
-_GREEN = (57, 255, 130)      # monthly posts
-_AMBER = (255, 210, 90)      # monthly active users
+_GREEN = (57, 255, 130)      # 30-day posts
+_AMBER = (255, 210, 90)      # 30-day active users
+_VIOLET = (170, 120, 255)    # month-by-month posts
+_ORANGE = (255, 140, 60)     # month-by-month active users
 _GRID = (40, 30, 60)
 _TEXT = (200, 190, 220)
 _MUTED = (120, 110, 150)
@@ -56,11 +59,14 @@ def _relay_dsn() -> str:
                            "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"))
 
 
-def _collect_stats(days: int = _DAYS) -> dict:
-    """BLOCKING: query the relay's Postgres → daily posts + DAU for nip05 users (past `days`, UTC).
+def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
+    """BLOCKING: query the relay's Postgres → daily posts + DAU (past `days`) AND monthly posts + MAU
+    (past `months` calendar months) for nip05 users, all UTC, in ONE streaming pass.
 
-    Buckets are UTC midnights, oldest→newest, ending today. Returns a dict the renderer consumes.
+    Daily buckets are UTC midnights ending today; month buckets are calendar months ending with the
+    current month. Returns a dict the renderer consumes.
     """
+    import bisect
     import psycopg2
     conn = psycopg2.connect(_relay_dsn(), connect_timeout=10)
     try:
@@ -79,29 +85,52 @@ def _collect_stats(days: int = _DAYS) -> dict:
         now = datetime.now(timezone.utc)
         midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
         starts = [int((midnight - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]
-        since = starts[0]
+        day_since = starts[0]
         labels = [datetime.fromtimestamp(s, timezone.utc).strftime("%a") for s in starts]
         dates = [datetime.fromtimestamp(s, timezone.utc).strftime("%m/%d") for s in starts]
 
+        # Calendar-month buckets: the last `months` months, oldest→newest, ending with this month.
+        yms = []
+        y, mo = now.year, now.month
+        for _ in range(months):
+            yms.append((y, mo))
+            mo -= 1
+            if mo == 0:
+                mo, y = 12, y - 1
+        yms.reverse()
+        month_labels = [datetime(yy, mm, 1, tzinfo=timezone.utc).strftime("%b") for yy, mm in yms]
+        # Per-month start timestamps (ascending) — a bisect maps each event to its month bucket without
+        # building a datetime per row (the scan can be millions of rows on a busy relay).
+        month_starts = [int(datetime(yy, mm, 1, tzinfo=timezone.utc).timestamp()) for yy, mm in yms]
+        month_since = month_starts[0]
+
         posts = [0] * days
         actives = [set() for _ in range(days)]
-        # Only (created_at, pubkey), and via a SERVER-SIDE (named) cursor so a busy relay's 7-day
-        # kind-1 result STREAMS instead of buffering wholesale in the client (bounded memory/CPU).
+        m_posts = [0] * months
+        m_actives = [set() for _ in range(months)]
+        # Scan the WHOLE window (the earlier of the day/month start) ONCE, via a SERVER-SIDE (named)
+        # cursor so a busy relay's result STREAMS instead of buffering wholesale (bounded memory/CPU).
         # Uses the (kind, created_at) index; we filter to nip05 authors in Python.
+        since = min(day_since, month_since)
         scan = conn.cursor(name="stats_k1_scan")
         scan.itersize = 5000
         scan.execute("SELECT created_at, pubkey FROM events WHERE kind=1 AND created_at >= %s", (since,))
         for ts, pk in scan:
             if pk not in nip05:
                 continue
-            idx = int((ts - since) // 86400)              # UTC has no DST → each bucket is exactly 86400s
-            if idx < 0 or idx >= days:
-                continue
-            posts[idx] += 1
-            actives[idx].add(pk)
+            if ts >= day_since:
+                idx = int((ts - day_since) // 86400)       # UTC has no DST → each bucket is exactly 86400s
+                if 0 <= idx < days:
+                    posts[idx] += 1
+                    actives[idx].add(pk)
+            mi = bisect.bisect_right(month_starts, ts) - 1  # which calendar-month bucket
+            if 0 <= mi < months:
+                m_posts[mi] += 1
+                m_actives[mi].add(pk)
         scan.close()
 
         dau = [len(s) for s in actives]
+        mau = [len(s) for s in m_actives]
 
         def _union(sets):
             u = set()
@@ -109,10 +138,11 @@ def _collect_stats(days: int = _DAYS) -> dict:
                 u |= s
             return len(u)
 
-        # DAU is per-day DISTINCT, so a week/month "active users" total is the UNION of daily sets
-        # (not the sum of daily counts). Posts are simple sums.
+        # DAU/MAU are per-period DISTINCT, so a week/month "active users" total is the UNION of the
+        # finer sets (not the sum of counts). Posts are simple sums.
         return {
             "labels": labels, "dates": dates, "posts": posts, "dau": dau,
+            "month_labels": month_labels, "posts_by_month": m_posts, "mau": mau,
             "posts_week": sum(posts[-7:]), "posts_month": sum(posts),
             "active_week": _union(actives[-7:]), "active_month": _union(actives),
             "nip05_total": len(nip05),
@@ -225,11 +255,11 @@ def _draw_panel(base, reg, xlabels, posts, dau, post_color, dau_color, post_mode
 
 
 def _render_chart(stats: dict, title: str) -> bytes:
-    """BLOCKING: two-panel cyberpunk chart — weekly (cyan bars + magenta line) above monthly
-    (green/amber dual line) → PNG bytes."""
+    """BLOCKING: three-panel cyberpunk chart — weekly (cyan bars + magenta line), 30-day (green/amber
+    dual line), and month-by-month (violet bars + orange line) → PNG bytes."""
     from PIL import Image, ImageDraw
 
-    W, H = 1000, 1020
+    W, H = 1000, 1460
     base = Image.new("RGB", (W, H), _BG)
     sl = Image.new("RGB", (W, H), _BG)
     sld = ImageDraw.Draw(sl)
@@ -248,9 +278,14 @@ def _render_chart(stats: dict, title: str) -> bytes:
                 _CYAN, _MAGENTA, "bars", "Last 7 days", fonts)
     _draw_panel(base, (70, 620, W - 30, 940), dates, posts, dau,
                 _GREEN, _AMBER, "lines", "Last 30 days", fonts)
+    m_labels = stats.get("month_labels") or []
+    if m_labels:
+        _draw_panel(base, (70, 1090, W - 30, 1410), m_labels,
+                    stats.get("posts_by_month") or [], stats.get("mau") or [],
+                    _VIOLET, _ORANGE, "bars", f"Last {len(m_labels)} months", fonts)
 
     d = ImageDraw.Draw(base)
-    foot = (f"Posts = kind-1 notes by NIP-05 users · Active = distinct NIP-05 authors/day "
+    foot = (f"Posts = kind-1 notes by NIP-05 users · Active = distinct NIP-05 authors per period "
             f"· {stats['nip05_total']} NIP-05 users known")
     d.text((70, H - 38), foot, font=f_sm, fill=_MUTED, anchor="la")
 
