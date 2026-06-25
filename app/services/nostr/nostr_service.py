@@ -44,7 +44,6 @@ DEFAULT_RELAYS = [
     # moderate extras are fine.
     "wss://relay.0xchat.com/",
     "wss://yabu.me/",
-    "wss://relay.siamstr.com/",
     "wss://nostr.data.haus/",
 ]
 
