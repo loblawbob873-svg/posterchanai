@@ -1996,9 +1996,12 @@
     // Both NIP-28 channels (publish to our pool) and NIP-29 groups (authed publish to the group relay)
     // are writable now, so show the reply/react affordances in both.
     const canWrite = VIEW==='channel' || VIEW==='group';
-    const acts = canWrite
+    // 🌐 translate is a personal read-only action (DOM-only, like translatePost), so it's available on
+    // every message regardless of write access — but only when the node has the AI backend (not nostr-only).
+    const tr = window.PC_NOSTR_ONLY ? '' : `<button class="chat-mini chat-tr-btn" data-translate="${enc(e.id)}" title="translate">🌐</button>`;
+    const acts = (canWrite
       ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply">↩</button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">😀</button>`
-      : '';
+      : '') + tr;
     // reply context: when this message replies to one already loaded, show a tappable quote line.
     let rq=''; const par=_chatReplyParent(e);
     if(par){ const pm=_chatMsgs.get(par)||_groupMsgs.get(par); if(pm){ const pp=profOf(pm.pubkey);
@@ -2081,6 +2084,7 @@
     const sc=ev.target.closest('.chat-replyq');
     if(sc){ const cont=ev.currentTarget, el=cont.querySelector(`.chat-msg[data-mid="${_cssEsc(sc.dataset.scroll)}"]`);
       if(el) _flashChatMsg(el); else toast('that message isn’t loaded'); return; }
+    const tb=ev.target.closest('.chat-tr-btn'); if(tb){ translateChatMsg(tb.dataset.translate); return; }
     const rb=ev.target.closest('.chat-reply-btn'); if(rb){ _setChatReply(rb.dataset.reply); return; }
     const pill=ev.target.closest('.chat-react'); if(pill){ _doChatReact(pill.dataset.react, pill.dataset.emoji); return; }
     const add=ev.target.closest('.chat-react-add'); if(add){ openEmojiPopover(add, (emoji, close)=>{ close(); _doChatReact(add.dataset.reactAdd, emoji); }); }
@@ -2093,6 +2097,24 @@
       if(VIEW==='group'){ const ev=await _groupPublish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawGroup(); return; }
       const { ev }=await publish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawChannel(); toast('reacted '+emoji);
     }catch(e){ toast('react failed: '+((e&&e.message)||e)); }
+  }
+  // Translate a chat message in-place (channel + group), via the node's AI backend. DOM-only — the
+  // stored event is untouched, so a refresh restores the original. Mirrors translatePost.
+  async function translateChatMsg(id){
+    const msg=_chatMsgs.get(id)||_groupMsgs.get(id); if(!msg){ toast('message not loaded'); return; }
+    const src=(msg.content||'').trim(); if(!src){ toast('nothing to translate'); return; }
+    const box=$('#ch-msgs')||$('#grp-msgs');
+    const node=box&&box.querySelector(`.chat-msg[data-mid="${_cssEsc(id)}"] .chat-txt`);
+    if(!node){ toast('message not visible'); return; }
+    if(!node.dataset.orig) node.dataset.orig=node.innerHTML; node.style.opacity='.5';
+    try{
+      const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); node.style.opacity=''; return; }
+      if(j.text.trim()===src.trim()){ node.style.opacity=''; toast('nothing to translate — already in your language (or just sounds/emoji)'); return; }
+      node.style.opacity=''; node.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>';
+    }catch(_){ toast('translate failed'); node.style.opacity=''; }
   }
   // ---- in-room reply target (shared by channel + group compose) ----
   function _setChatReply(id){ const msg=_chatMsgs.get(id)||_groupMsgs.get(id); if(!msg) return; _chatReplyTo=id; _renderReplyBar(); const ta=$('#ch-input')||$('#grp-input'); if(ta) ta.focus(); }
