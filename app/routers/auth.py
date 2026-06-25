@@ -152,10 +152,14 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
                     _ss.put("nostr_relay_wot_seeds", (_seeds.rstrip() + "\n" + npub).strip() if _seeds.strip() else npub)
             except Exception as _e:
                 logger.warning("[auth] could not seed WoT with first admin: %s", _e)
-            # Refresh the relay's operator set so it trusts the new admin's keys for writes immediately.
+            # Refresh the relay's operator set so it trusts the new admin's keys for writes immediately,
+            # AND rebuild the WoT from the new seed + the admin's follows — otherwise a fresh turnkey node
+            # leaves the WoT-only global timeline empty until the next periodic rebuild (the "no global
+            # posts on a fresh node" report).
             try:
-                from app.services.nostr_relay.thread import trigger_block_reload
+                from app.services.nostr_relay.thread import trigger_block_reload, trigger_wot_refresh
                 trigger_block_reload()
+                trigger_wot_refresh()
             except Exception:
                 pass
 

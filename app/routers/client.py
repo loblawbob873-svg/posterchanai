@@ -1064,10 +1064,14 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "signature required (or stale request)"}, status_code=403)
-    # Re-check server-side: refuse if any admin already has an npub (instance already set up).
-    if db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).first():  # noqa: E712
-        return JSONResponse({"ok": False, "error": "an admin already exists"}, status_code=409)
     npub = nostr_service.npub_of(pk)
+    # Re-check server-side: refuse only if a DIFFERENT key already claimed admin (so a configured
+    # instance can't be taken over). IDEMPOTENT for the SAME key: on a turnkey node POSTERCHANAI_AUTO_ADMIN
+    # already promoted this npub at login, so the client's (stale-config) first-run claim by that same key
+    # must succeed — otherwise it 409s with the confusing "an admin already exists" right after first login.
+    admins = db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()  # noqa: E712
+    if admins and all(a.nostr_npub != npub for a in admins):
+        return JSONResponse({"ok": False, "error": "an admin already exists"}, status_code=409)
     u = db.query(User).filter(User.nostr_npub == npub).first()
     if not u:
         from app.auth import get_password_hash
