@@ -332,19 +332,50 @@ async def client_narrate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "narration unavailable"}, status_code=503)
 
 
+async def _img_data_uri(url: str, base_domain: str) -> str:
+    """Fetch an image URL → data: URI for the post card. Done SERVER-side because the client can't read
+    most avatars/images as bytes (cross-origin CORS). SSRF guard: allow public hosts + the instance's
+    own domain/subdomains (so LAN-resolved media.<host> works), refuse other private/internal targets."""
+    url = (url or "").strip()
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        return ""
+    from urllib.parse import urlparse
+    from app.services.command_service._common import _url_is_safe_to_fetch
+    host = (urlparse(url).hostname or "").lower()
+    ok = bool(base_domain) and (host == base_domain or host.endswith("." + base_domain))
+    if not ok:
+        ok = await asyncio.to_thread(_url_is_safe_to_fetch, url, [])
+    if not ok:
+        return ""
+    try:
+        import httpx
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0 (posterchanai-card)"})
+        if r.status_code != 200:
+            return ""
+        ct = (r.headers.get("content-type") or "").split(";")[0].strip()
+        if not ct.startswith("image/") or len(r.content) > 8_000_000:
+            return ""
+        import base64 as _b64
+        return f"data:{ct};base64,{_b64.b64encode(r.content).decode()}"
+    except Exception:
+        return ""
+
+
 @router.post("/screenshot")
 async def client_screenshot(request: Request, db: Session = Depends(get_db)):
     """Render a Nostr note as a clean tweet-style post card PNG (the timeline ☰ → Screenshot action) —
     JUST the post, like the Nitter cards. Reliable + instance-branded: built server-side from the
-    note's fields via _render_post_card_png (no live-SPA capture, no relay/render timing). The client
-    posts the note's text/author + PRE-FETCHED avatar/image bytes, so there's no server-side network
-    (no SSRF surface). Returns a base64 PNG."""
+    note's fields via _render_post_card_png (no live-SPA capture). Avatar/image are fetched server-side
+    (the client can't, due to cross-origin CORS) and embedded as data URIs. Returns a base64 PNG."""
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
     import asyncio
     import base64
+    from urllib.parse import urlparse
+    from app.services import settings_store
     from app.services.command_service import _render_post_card_png
     name = (body.get("name") or "").strip()
     handle = (body.get("handle") or "").strip()
@@ -353,10 +384,13 @@ async def client_screenshot(request: Request, db: Session = Depends(get_db)):
     if not (handle or text):
         return JSONResponse({"error": "nothing to render"}, status_code=400)
 
-    def _uri(b64, ct):
-        return f"data:{ct or 'image/jpeg'};base64,{b64}" if b64 else ""
-    media_uri = _uri(body.get("image_b64"), body.get("image_ct"))
-    avatar_uri = _uri(body.get("avatar_b64"), body.get("avatar_ct"))
+    # registrable domain of THIS instance → also trust its subdomains (e.g. a LAN media.<host>)
+    site_host = (urlparse(settings_store.get("site_url") or "").hostname or "")
+    req_host = (request.headers.get("host") or "").split(":")[0]
+    base = (site_host or req_host or "")
+    base_domain = ".".join(base.split(".")[-2:]).lower() if base else ""
+    avatar_uri = await _img_data_uri(body.get("avatar_url") or "", base_domain)
+    media_uri = await _img_data_uri(body.get("image_url") or "", base_domain)
     try:
         png = await asyncio.wait_for(asyncio.to_thread(
             _render_post_card_png, name or handle, handle, text, timestamp, media_uri, avatar_uri,

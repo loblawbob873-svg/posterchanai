@@ -2905,15 +2905,11 @@
     const text=(mediaParts(ev.content).text||ev.content||'').trim();
     let timestamp=''; try{ timestamp=new Date(ev.created_at*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }catch(_){}
     toast('📸 rendering…');
-    // pre-fetch avatar + first image as base64 so the server does no network (no SSRF surface)
-    const _b64=async u=>{ if(!u) return null; try{ const r=await fetch(u); if(!r.ok) return null; const blob=await r.blob();
-      const d=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result)); fr.onerror=()=>res(''); fr.readAsDataURL(blob); });
-      const m=(d||'').match(/^data:([^;]+);base64,(.*)$/); return m?{b64:m[2],ct:m[1]}:null; }catch(_){ return null; } };
-    const av=await _b64(p.picture), img=await _b64(postImageUrl(ev));
     try{
+      // Pass the avatar + first-image URLs; the SERVER fetches them (the client can't read most of
+      // them as bytes — cross-origin CORS — which is why the card was missing the avatar).
       const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
-        name, handle, text, timestamp,
-        avatar_b64: av&&av.b64||'', avatar_ct: av&&av.ct||'', image_b64: img&&img.b64||'', image_ct: img&&img.ct||'' }) });
+        name, handle, text, timestamp, avatar_url: p.picture||'', image_url: postImageUrl(ev)||'' }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.image){ toast('screenshot failed: '+(j.error||('http '+r.status))); return; }
       const bin=Uint8Array.from(atob(j.image), c=>c.charCodeAt(0));
