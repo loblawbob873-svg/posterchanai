@@ -60,7 +60,7 @@
     }
   };
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
   let _myFollowersLoaded = false;
   let signer = null;
   const subs = {};                 // view -> subId
@@ -150,12 +150,15 @@
     return await signer.signEvent(tpl);
   }
   async function publish(kind, content, tags){
+    if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
     if (!r.ok) toast('relay: ' + (r.msg||'rejected'));
     return { ev, ...r };
   }
+  // A guest tried to do something that needs an account → drop the guest chrome and show login.
+  function _guestPrompt(){ toast('Log in to interact'); const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); }
 
   // ---------- NIP-46 remote signer (Amber / nsecbunker) ----------
   // The user's secret key lives in the remote signer. We hold an EPHEMERAL "app key" (in the
@@ -479,7 +482,18 @@
     bindAuth();
     const s = Session.load();
     if (s) { try { await resume(s); return; } catch(e){ console.warn(e); Session.clear(); } }
+    // Not logged in, but the URL points at a shared note/profile? Nostr events + profiles are PUBLIC —
+    // render them read-only (guest mode) instead of slamming up the login wall. (A bare visit with no
+    // entity still shows login.) This is what makes screenshots/link-previews of poster.place work.
+    if (_entityFromPath()){ startGuest(); return; }
     showAuth();
+  }
+  // Public read-only session: no key, no signer. The guest sentinel ME (empty pubkey) keeps every
+  // `ev.pubkey===ME.pubkey` comparison safely false, and publish() blocks writes → "log in to interact".
+  function startGuest(){
+    ME = { mode:'guest', pubkey:'', npub:'' };
+    signer = null;
+    startApp();
   }
 
   async function resume(s){
@@ -645,6 +659,10 @@
 
   // ---------- app start ----------
   function startApp(){
+    GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    document.body.classList.toggle('guest', GUEST);
+    // ?embed=1 → chrome-less single-note view (for clean screenshots / link-preview captures)
+    if(/[?&]embed\b/.test(location.search)) document.body.classList.add('embed');
     updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
@@ -661,6 +679,13 @@
     // it can stay. Browsers also discourage auto-requests. In-app toasts work without it; OS
     // notifications are opt-in via Settings (a user gesture) instead. [was: Notification.requestPermission]
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
+    if(GUEST){   // a slim banner offering login; the rest of the app renders read-only
+      let gb=document.getElementById('guest-bar');
+      if(!gb){ gb=document.createElement('div'); gb.id='guest-bar';
+        gb.innerHTML='<span>👁 Viewing publicly — log in to post, reply, react or zap.</span><button class="btn btn-neon small" id="guest-login">Log in / Sign up</button>';
+        document.body.appendChild(gb); }
+      const gl=document.getElementById('guest-login'); if(gl) gl.onclick=()=>{ const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); };
+    }
     $('#btn-logout').onclick = logout;
     { const b=$('#btn-install'); if(b){
         if(_deferredInstall) b.classList.remove('hidden');   // prompt already captured before mount
@@ -716,8 +741,12 @@
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
-    Relay.onReady = ()=>{ fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications(); watchDeletions();
-      setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500); setTimeout(loadRightbar, 1500);
+    Relay.onReady = ()=>{
+      if(!GUEST){   // ME-specific data — a guest has none of it
+        fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications(); watchDeletions();
+        setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
+      }
+      setTimeout(loadRightbar, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     connectRelays();
     renderMe();
@@ -781,6 +810,7 @@
     else uc.classList.add('hidden');
   }
   function renderMe(){
+    if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}"><div><div class="mn">Guest</div></div>`; mc.onclick=_guestPrompt; } return; }
     const p = Store.profile(ME.pubkey) || {};
     const av = p.picture || LOGO;
     // One line only: show the username if set — that's all that's needed. No username → fall back to
@@ -2870,7 +2900,9 @@
   // (a headless browser there only sees the auth screen).
   async function screenshotPost(id){
     let nevent; try{ nevent=NT().nip19.neventEncode({id}); }catch(_){ try{ nevent=NT().nip19.noteEncode(id); }catch(__){ toast('bad post id'); return; } }
-    const url='https://njump.me/'+nevent;
+    // Our OWN instance now — notes are public (guest mode) and ?embed=1 strips the app chrome to a
+    // clean single-note card, so the screenshot is instance-branded instead of njump's.
+    const url=_webLink(nevent)+'?embed=1';
     toast('📸 capturing…');
     try{
       const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
@@ -3233,7 +3265,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<span class="cmp-ai-wrap" style="position:relative;display:inline-block"><button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><div id="cmp-ai-menu" hidden style="position:absolute;bottom:100%;left:0;margin-bottom:4px;z-index:60;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:8px;padding:4px;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.45)"><button class="btn btn-ghost small" id="cmp-ai-link" style="display:block;width:100%;text-align:left">✨ AI Enhancer</button><button class="btn btn-ghost small" id="cmp-ai-tags" style="display:block;width:100%;text-align:left"># Hashtags</button></div></span><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
       </div>
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
@@ -3289,51 +3321,38 @@
         if(add) add.onclick=()=>{ const wrap=$('#cmp-poll-opts',root); const n=wrap.children.length+1;
           const i=document.createElement('input'); i.className='input poll-opt-in'; i.placeholder='Option '+n; wrap.appendChild(i); i.focus(); };
       }
-      // 🤖 AI → summarize a pasted link into a detailed post (web pages + YouTube videos). Stays
-      // disabled until the draft contains a URL.
-      // 🤖 AI is a small menu: "Summarize link" (the original action) + "Hashtags" (suggest + append).
-      { const aiBtn=$('#cmp-ai',root), aiMenu=$('#cmp-ai-menu',root), sumBtn=$('#cmp-ai-link',root), tagBtn=$('#cmp-ai-tags',root);
+      // 🤖 AI → a small menu (✨ AI Enhancer = summarize a pasted link into a post; # Hashtags = suggest
+      // + append). Uses the shared openMenuPopover so it's consistent with the other menus and becomes a
+      // readable bottom-sheet on mobile (was a cramped hand-rolled dropdown).
+      { const aiBtn=$('#cmp-ai',root);
         const firstUrl=()=>{ const m=(ta.value||'').match(/https?:\/\/[^\s]+/i); return m?m[0]:null; };
         const hasImage=()=>/(?:!\[|https?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b|\/blossom\/|media\.)/i.test(ta.value||'');
-        const closeMenu=()=>{ if(aiMenu) aiMenu.hidden=true; };
         let lastTags='';   // the EXACT hashtag block we last appended — only strip THIS on re-run, never the user's own tags
-        if(aiMenu) aiMenu.addEventListener('click', e=>e.stopPropagation());
-        root.addEventListener('click', closeMenu);   // click-away closes the menu (root dies with the modal — no leak)
-        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); if(aiMenu) aiMenu.hidden=!aiMenu.hidden; };
-        // Summarize a pasted link into a post (enabled always; checks for a link on click so a URL
-        // pasted after the menu opened still works — no stale disabled state).
-        if(sumBtn) sumBtn.onclick=async()=>{ closeMenu();
+        const doEnhance=async()=>{
           const url=firstUrl(); if(!url){ toast('paste a link into the post first'); return; }
-          const lbl=sumBtn.textContent; sumBtn.disabled=true; sumBtn.textContent='✨ …';
           $('#cmp-status',root).textContent='summarizing link…';
           try{
-            const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({url})}).then(r=>r.json());
+            const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})}).then(r=>r.json());
             if(r&&r.text){ ta.value=r.text; lastTags=''; $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input')); }
             else $('#cmp-status',root).textContent='couldn\'t summarize: '+((r&&r.error)||'no content');
           }catch(_){ $('#cmp-status',root).textContent='summarize failed'; }
-          sumBtn.textContent=lbl; sumBtn.disabled=false;
         };
-        // Suggest commonly-used Nostr hashtags from the content + append them after a blank line
-        if(tagBtn) tagBtn.onclick=async()=>{ closeMenu();
+        const doTags=async()=>{
           const body=(ta.value||'').trim(); if(!body && !hasImage()){ toast('write something first'); return; }
-          const lbl=tagBtn.textContent; tagBtn.textContent='# …';
           $('#cmp-status',root).textContent='finding hashtags…';
           try{
-            const r=await fetch('/client/hashtags',{method:'POST',headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({text:body, has_image:hasImage()})}).then(r=>r.json());
+            const r=await fetch('/client/hashtags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:body, has_image:hasImage()})}).then(r=>r.json());
             if(r&&r.hashtags){
               // Re-run: strip ONLY the exact block WE appended last time (if it's still at the end), so a
               // user's own hand-typed trailing #tags are preserved — never blanket-strip trailing hashtags.
               let base=body;
               if(lastTags && base.endsWith(lastTags)) base=base.slice(0, base.length-lastTags.length).replace(/\s+$/,'');
-              ta.value = base + (base?'\n\n':'') + r.hashtags;
-              lastTags=r.hashtags;
+              ta.value = base + (base?'\n\n':'') + r.hashtags; lastTags=r.hashtags;
               $('#cmp-status',root).textContent=''; ta.dispatchEvent(new Event('input'));
             } else $('#cmp-status',root).textContent='no hashtags: '+((r&&r.error)||'try again');
           }catch(_){ $('#cmp-status',root).textContent='hashtags failed'; }
-          tagBtn.textContent=lbl;
         };
+        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); openMenuPopover(aiBtn, [['enhance','✨ AI Enhancer'],['tags','# Hashtags']], a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); }); };
       }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
