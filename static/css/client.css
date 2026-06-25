@@ -507,7 +507,9 @@ a.btn.full{display:block}
 .me .mn{font-weight:700;font-size:19px;line-height:1.15;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me .mk{font-size:12px;color:var(--muted)}
 /* Filled (btn-neon) logout — white text on the neon gradient (the old red #ff6b8b was unreadable on the fill) */
-#btn-logout{font-size:15px;padding:11px 14px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);transition:.15s}
+/* compact, content-width logout (was full-width: too wide in the sidebar) — align-self stops the
+   flex-column from stretching it; centered with a little breathing room */
+#btn-logout{align-self:center;margin:6px 0;font-size:15px;padding:9px 22px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);transition:.15s}
 #btn-logout:hover{filter:brightness(1.08);box-shadow:0 0 22px rgba(255,0,255,.45)}
 .conn{display:flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:6px 8px 10px}
 .usercount{text-align:center;font-size:15.5px;font-weight:700;line-height:1.7;letter-spacing:.4px;color:#bdfcff;text-shadow:0 0 8px rgba(0,255,255,.6);padding:2px 8px 12px;margin-top:-2px}
