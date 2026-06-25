@@ -23,6 +23,21 @@ from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
 
+
+async def _save_blob(owner_pubkey: str, data: bytes, mime: str = "application/octet-stream") -> dict:
+    """Blossom save on a FRESH short-lived DB session. A full mailbox sync interleaves many save_blob
+    calls with long IMAP/relay awaits; reusing the request session lets Postgres kill its idle
+    transaction mid-sync ('rollback() fully before proceeding') and every later write fails."""
+    from app.database import SessionLocal
+    _db = SessionLocal()
+    try:
+        return await blossom_service.save_blob(_db, owner_pubkey, data, mime)
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
+
 # How many messages per folder to mirror is governed by the `mail_sync_limit` setting (0 = all,
 # the default — full Nostr mailbox); see _sync_limit(). All of an account's real folders are synced.
 
@@ -45,7 +60,7 @@ def _aes_decrypt(ct: bytes, key: bytes, iv: bytes) -> bytes:
 async def _store_attachment(db: Session, owner_pubkey: str, att) -> dict:
     """Encrypt one EmailAttachment and stash the ciphertext in Blossom. Returns the doc ref."""
     ct, key, iv = _aes_encrypt(att.data or b"")
-    desc = await blossom_service.save_blob(db, owner_pubkey, ct, "application/octet-stream")
+    desc = await _save_blob(owner_pubkey, ct)
     return {
         "name": att.filename or "attachment",
         "type": att.content_type or "application/octet-stream",
@@ -73,7 +88,7 @@ async def store_b64_attachment(db: Session, owner_pubkey: str, att: dict) -> dic
     """Encrypt a compose/draft attachment ({name,type,b64}) → Blossom; return a {sha256,key,iv} ref."""
     raw = base64.b64decode(att.get("b64") or "")
     ct, key, iv = _aes_encrypt(raw)
-    desc = await blossom_service.save_blob(db, owner_pubkey, ct, "application/octet-stream")
+    desc = await _save_blob(owner_pubkey, ct)
     return {"name": att.get("name") or "attachment", "type": att.get("type") or "application/octet-stream",
             "size": len(raw), "sha256": desc.get("sha256"), "key": key.hex(), "iv": iv.hex()}
 
@@ -87,7 +102,7 @@ async def offload_body(db: Session, owner_pubkey: str, doc: dict) -> dict:
     payload = json.dumps({"body_text": doc.get("body_text", ""), "body_html": doc.get("body_html", "")}).encode("utf-8")
     try:
         ct, key, iv = _aes_encrypt(payload)
-        desc = await blossom_service.save_blob(db, owner_pubkey, ct, "application/octet-stream")
+        desc = await _save_blob(owner_pubkey, ct)
         doc["body_ref"] = {"sha256": desc.get("sha256"), "key": key.hex(), "iv": iv.hex()}
         doc["body_text"] = ""
         doc["body_html"] = ""
@@ -230,14 +245,21 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
 
 
 def _account_meta(db, user, account) -> tuple:
-    """(folders, special-use meta) for an account. Skips Gmail's All-Mail to avoid mirroring the
-    whole mailbox twice. The GUI's logical 'Drafts' is local-only and never IMAP-synced."""
+    """(folders, special-use meta) for an account, on a FRESH session (runs mid-sync after long IMAP
+    awaits). Skips Gmail's All-Mail to avoid mirroring twice. Logical 'Drafts' is local-only."""
+    from app.database import SessionLocal
+    _db = SessionLocal()
     try:
-        meta = mail_service.list_special_folders(user.id, db, account.email)
+        meta = mail_service.list_special_folders(user.id, _db, account.email)
         allf = [f for f in (meta.get("all") or []) if "all mail" not in f.lower()]
         return (allf or ["INBOX"], meta)
     except Exception:
         return (["INBOX"], {})
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
 
 
 async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
