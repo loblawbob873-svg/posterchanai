@@ -78,7 +78,7 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 /* primary buttons → neon gradient */
 .admin-page .btn-primary, .admin-page .save-btn{
   background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
-  color:#04020c; border:none; border-radius: 11px; padding: 10px 18px; font-weight:700; cursor:pointer;
+  color:#fff; border:none; border-radius: 11px; padding: 10px 18px; font-weight:700; cursor:pointer;   /* white text to match the client UI's filled buttons (was near-black #04020c) */
   box-shadow: var(--glow-cyan);
   align-self: flex-start; width: auto;   /* .settings-form is a flex column (align-items:stretch) — don't stretch the button full width */
 }

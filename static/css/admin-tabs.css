@@ -429,12 +429,13 @@
 .wizard-success .instructions li {
     margin: 8px 0;
 }
-.btn-small {
+/* MUST be `.admin-page .btn-small` (0,2,0): style.css loads AFTER this file and its plain
+   `.btn-small{border:none}` (0,1,0, no background) was winning the cascade — which is exactly why
+   earlier passes "did absolutely nothing". Scoping out-specifies it. Hardcoded cyan so it never
+   falls back to a colourless default; covers every bot-modal + bot-list small button. */
+.admin-page .btn-small {
     font-size: 12px;
     padding: 6px 12px;
-    /* Clearly THEMED (cyan accent), hardcoded so it never falls back to a plain grey/default button
-       when a CSS var doesn't resolve — every bot-modal + bot-list small button (Upload, Generate
-       identity, Connect, Edit, previews…) reads as an intentional, coloured button. */
     background: rgba(0,255,255,.10);
     border: 1px solid rgba(0,255,255,.45);
     color: #cfffff;
@@ -442,10 +443,13 @@
     cursor: pointer;
     font-weight: 600;
 }
-.btn-small:hover { background: rgba(0,255,255,.20); border-color: #00ffff; color: #fff; box-shadow: 0 0 10px rgba(0,255,255,.25); }
-/* the bot-modal × close — give it a matching subtle affordance instead of a bare glyph */
-.bot-modal-close { background: transparent; border: 1px solid rgba(0,255,255,.25); color: #cfffff; border-radius: 8px; cursor: pointer; line-height: 1; }
-.bot-modal-close:hover { border-color: #00ffff; color: #fff; }
+.admin-page .btn-small:hover { background: rgba(0,255,255,.20); border-color: #00ffff; color: #fff; box-shadow: 0 0 10px rgba(0,255,255,.25); }
+/* keep the danger variant red (don't cyan-ify Delete) */
+.admin-page .btn-small.btn-danger { background: rgba(255,51,102,.16); border-color: rgba(255,51,102,.5); color: #ff90a8; }
+.admin-page .btn-small.btn-danger:hover { border-color: #ff3366; color: #fff; box-shadow: 0 0 10px rgba(255,51,102,.3); }
+/* the bot-modal × close — matching subtle affordance instead of a bare glyph */
+.admin-page .bot-modal-close { background: transparent; border: 1px solid rgba(0,255,255,.25); color: #cfffff; border-radius: 8px; cursor: pointer; line-height: 1; }
+.admin-page .bot-modal-close:hover { border-color: #00ffff; color: #fff; }
 
 /* Plugin styles */
 .plugin-list {

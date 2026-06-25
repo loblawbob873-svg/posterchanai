@@ -618,10 +618,14 @@ a.btn.full{display:block}
   padding:10px 14px;background:var(--panel);border-top:1px solid var(--neon);box-shadow:0 -4px 18px rgba(0,0,0,.4);color:var(--text);font-size:13.5px}
 @media(max-width:820px){ #guest-bar{bottom:calc(62px + env(safe-area-inset-bottom))} }
 body.guest #btn-compose,body.guest #btn-compose-m{display:none}
-/* ?embed=1 — strip all app chrome so a screenshot/preview shows just the note, instance-branded */
+/* ?embed=1 — strip all app chrome so a screenshot/preview shows just the note, instance-branded.
+   .app is a GRID with fixed sidebar columns; hiding the asides isn't enough — collapse the grid to a
+   single full-width column AND let main/feed grow to content height (they're normally 100vh + clipped),
+   so the full-page capture gets the whole note instead of a tiny offset sliver. */
+body.embed .app{display:block !important;height:auto !important}
 body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilenav,body.embed #guest-bar{display:none !important}
-body.embed .main{margin:0 !important;width:100% !important}
-body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important}
+body.embed .main{margin:0 !important;width:100% !important;height:auto !important;overflow:visible !important}
+body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important;overflow:visible !important}
 .chat-zap{display:inline-flex;align-items:center;gap:4px;color:var(--neon2);font-size:13px;font-weight:700}
 .chat-mini{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:transparent;border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:13px;opacity:.55}
 .chat-mini:hover{opacity:1;border-color:var(--neon);color:var(--neon)}
@@ -780,8 +784,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Draft + Post on their own centered row beneath the tool buttons */
 /* center with text-align + inline-block buttons — robust even if a parent flex/grid context would
    otherwise shrink/left-align a flex row. */
-.cmp-actions{display:block;text-align:center;margin-top:12px;width:100%}
-.cmp-actions .btn{display:inline-flex;align-items:center;justify-content:center;min-width:120px;margin:0 5px;vertical-align:middle}
+.cmp-actions{display:flex !important;justify-content:center !important;align-items:center;gap:10px;margin-top:12px;width:100%}
+.cmp-actions .btn{flex:0 0 auto;min-width:120px;justify-content:center}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}

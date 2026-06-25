@@ -2900,10 +2900,8 @@
   // (a headless browser there only sees the auth screen).
   async function screenshotPost(id){
     let nevent; try{ nevent=NT().nip19.neventEncode({id}); }catch(_){ try{ nevent=NT().nip19.noteEncode(id); }catch(__){ toast('bad post id'); return; } }
-    // njump.me is SERVER-rendered, so a headless browser captures the note instantly. Our own SPA
-    // (even public/embed) renders client-side after a relay round-trip the capture races → near-blank
-    // tiny shot. So screenshots use njump for reliability (guest mode still makes the note viewable).
-    const url='https://njump.me/'+nevent;
+    // Our OWN instance — notes are public (guest mode) and ?embed=1 collapses the app to just the note.
+    const url=_webLink(nevent)+'?embed=1';
     toast('📸 capturing…');
     try{
       const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
