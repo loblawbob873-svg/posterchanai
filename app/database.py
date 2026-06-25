@@ -168,7 +168,7 @@ def init_db():
     try:
         # Default upstream relays the WoT relay syncs from. Seeded explicitly (instead of leaving
         # the field blank to fall back in code) so a fresh node SHOWS the list in Admin → Relay.
-        from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS
+        from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS, DEFAULT_WOT_SEEDS as _DEFAULT_WOT_SEEDS
         default_settings = {
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
@@ -235,18 +235,7 @@ def init_db():
             # accounts — deliberately NOT this deployment's admin npub (first-run claim-admin adds
             # the operator's own npub dynamically; see client.claim_admin). Admin edits the live set
             # in Admin → Relay.
-            "nostr_relay_wot_seeds": "\n".join([
-                "npub1gu9wxzm9y3uwunva2d6tedef64r33dfdessjhuvp5hf8zampj5nseec39q",
-                "npub153xmex42x4chdf757hp3q6zxagykkek7pdgwuwd074964dkyha9s82ryu8",
-                "npub1gcxzte5zlkncx26j68ez60fzkvtkm9e0vrwdcvsjakxf9mu9qewqlfnj5z",
-                "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
-                "npub1jk9h2jsa8hjmtm9qlcca942473gnyhuynz5rmgve0dlu6hpeazxqc3lqz7",
-                "npub18ams6ewn5aj2n3wt2qawzglx9mr4nzksxhvrdc4gzrecw7n5tvjqctp424",
-                "npub1utx00neqgqln72j22kej3ux7803c2k986henvvha4thuwfkper4s7r50e8",
-                "npub1lrnvvs6z78s9yjqxxr38uyqkmn34lsaxznnqgd877j4z2qej3j5s09qnw5",
-                "npub1gke42gwrz2ja5np9tpcr449785hx6zxgzf2329x8584h4d06puzqg33xp3",
-                "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m",
-            ]),
+            "nostr_relay_wot_seeds": "\n".join(_DEFAULT_WOT_SEEDS),
             # Native image generation (diffusers / torch-XPU) is the only image backend.
             # image_timeout also bounds the image LB request (chat_server_urls). The
             # model FIRST-RUN default can be seeded from the environment (the Docker image ships

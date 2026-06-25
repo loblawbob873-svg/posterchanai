@@ -174,6 +174,11 @@ def _read_config() -> dict:
             pk = nostr_service.to_pubkey_hex(tok.strip())
             if pk:
                 seeds.append(pk)
+        # BLANK = the built-in default seeds (turnkey convenience) — same pattern as upstream relays
+        # below. A fresh node's settings store isn't seeded at first WoT build, so without this the
+        # WoT was just the operator ("only 2 members on a new install"). Admin-set seeds override.
+        if not seeds and not seeds_raw.strip():
+            seeds = [pk for pk in (nostr_service.to_pubkey_hex(s) for s in nostr_service.DEFAULT_WOT_SEEDS) if pk]
 
         # Upstream relays: BLANK = the bots' DEFAULT_RELAYS (turnkey convenience). But if the admin
         # SET a value that yields no valid URLs, don't silently fall back to ALL defaults — that's
