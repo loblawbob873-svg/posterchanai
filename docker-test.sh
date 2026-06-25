@@ -4,7 +4,7 @@
 # All volumes and containers will be deleted 
 # so it builds clean for testing
 
-PROFILE=nostr
+PROFILE=$1
 
 clear
 
