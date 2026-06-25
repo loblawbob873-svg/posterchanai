@@ -751,12 +751,24 @@
         // notifications missing until I refresh"). The per-fetch re-renders raced too; one
         // settle-then-render applies everything without the refresh.
         Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-          .then(()=>{ if(!GUEST && !['ai','admin'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+          .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
         watchNotifications(); watchDeletions();
         setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
       }
       setTimeout(loadRightbar, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
+    // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
+    // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
+    // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
+    // recovers (the reported "1 notification, 0 home, 0 mutes"). Re-run the one-shot hydration here.
+    Relay.onReconnect = ()=>{
+      if(GUEST) return;
+      // Re-render only the views whose content depends on this per-user data AND that renderView()
+      // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
+      // case for those, so it'd blank them to a spinner). The fetches also self-render these.
+      Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
+        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+    };
     connectRelays();
     renderMe();
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the

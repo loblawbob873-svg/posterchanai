@@ -54,6 +54,8 @@
     status: 'init',
     onStatus: null,
     onReady: null,            // fired once when the first socket opens (run initial queries here)
+    onReconnect: null,        // fired on each LATER (re)open — re-run one-shot queries that onopen
+                              // can't re-arm (live subs auto-re-arm; query() subs are dropped on a drop)
     url: null,                // primary relay (first configured) — used as the display/zap relay
     _conns: new Map(),        // url -> Conn
     _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set}
@@ -83,7 +85,10 @@
       const sts = [...this._conns.values()].map(c=>c.status);
       this._setStatus(sts.some(x=>x==='ok') ? 'ok' : sts.some(x=>x==='connecting') ? 'connecting' : 'off');
     },
-    _connReady(){ if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } } },
+    _connReady(){
+      if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }
+      else if (this.onReconnect){ try { this.onReconnect(); } catch(e){ console.warn(e); } }   // reconnect: re-hydrate one-shot data
+    },
 
     _send(arr){ for (const c of this._conns.values()) c._send(arr); },
 
