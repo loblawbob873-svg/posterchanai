@@ -81,13 +81,19 @@ def _resolve_proxy_config() -> Optional[str]:
         from app.services import settings_store
 
         # PRIORITY 1: Check bt_proxy_host first (HTTP Proxy Host in admin UI - required for load-balanced setups)
-        # This is the shared proxy that all nodes should use
-        bt_proxy = settings_store.get("bt_proxy_host", "")
-        if bt_proxy and bt_proxy.strip():
-            proxy_port = settings_store.get("bt_proxy_port", "") or "8118"
-            logger.debug(f"Using bt_proxy_host (HTTP Proxy Host from admin UI): {bt_proxy}:{proxy_port}")
-            # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
-            return f"http://{bt_proxy}:{proxy_port}"
+        # This is the shared proxy that all nodes should use.
+        bt_proxy = (settings_store.get("bt_proxy_host", "") or "").strip()
+        if bt_proxy:
+            # A bt_proxy_host pointing at THIS node's own built-in proxy (localhost) is only real when
+            # that proxy is actually enabled — otherwise (proxy + Tor both off) it's a dead :8118 and
+            # every outbound connect refuses (ECONNREFUSED). A REMOTE bt_proxy_host (a shared LB proxy)
+            # is always honoured, since that's its whole purpose.
+            _local = bt_proxy in ("127.0.0.1", "localhost", "::1", "[::1]")
+            if (not _local) or settings_store.get_bool("proxy_enabled") or settings_store.get_bool("tor_enabled"):
+                proxy_port = settings_store.get("bt_proxy_port", "") or "8118"
+                logger.debug(f"Using bt_proxy_host (HTTP Proxy Host from admin UI): {bt_proxy}:{proxy_port}")
+                # httpx 0.28.1 uses 'proxy' (string) not 'proxies' (dict)
+                return f"http://{bt_proxy}:{proxy_port}"
 
         # PRIORITY 2: Check built-in HTTP proxy (for single-node setups)
         if settings_store.get_bool("proxy_enabled"):

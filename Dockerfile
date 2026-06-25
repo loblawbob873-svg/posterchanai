@@ -232,15 +232,16 @@ ENV POSTERCHANAI_PORT=3051 \
     POSTERCHANAI_LLM_TOOLS_MODEL= \
     POSTERCHANAI_IMAGE_MODEL_PATH=Lykon/dreamshaper-8 \
     POSTERCHANAI_IMAGE_MODEL_TYPE=sd15 \
-    POSTERCHANAI_TOR_ENABLED=false \
-    POSTERCHANAI_PROXY_ENABLED=false \
+    POSTERCHANAI_TOR_ENABLED=true \
+    POSTERCHANAI_PROXY_ENABLED=true \
     POSTERCHANAI_BT_ENABLED=false
-# Tor / built-in HTTP proxy / torrenting ship installed (the `tor` binary + libtorrent are in the
-# image) but are OFF by default — PosterChanAI starts and manages the Tor daemon (SOCKS5) itself
-# when you enable it, so nothing auto-starts a Tor process at boot. They're a chain (torrents → the
-# :8118 HTTP proxy → Tor), so they default off together. Opt in at first run with
-# -e POSTERCHANAI_TOR_ENABLED=true -e POSTERCHANAI_PROXY_ENABLED=true -e POSTERCHANAI_BT_ENABLED=true,
-# or toggle in Admin → Services (seeded only on first run, so this never overrides an existing choice).
+# Built-in Tor + the :8118 HTTP proxy are ON by default (PosterChanAI starts/manages the Tor daemon
+# itself — nothing auto-starts a Tor process at boot otherwise). This matches the regular install's
+# defaults and means outbound relay/social traffic is proxied out of the box; without it the proxy
+# never listened on :8118 and every upstream connect hit ECONNREFUSED before falling back to direct.
+# Torrenting stays OFF (opt in with -e POSTERCHANAI_BT_ENABLED=true). Disable the proxy/Tor with
+# -e POSTERCHANAI_TOR_ENABLED=false -e POSTERCHANAI_PROXY_ENABLED=false, or toggle in Admin → Services
+# (seeded only on first run, so this never overrides an existing choice).
 
 EXPOSE 3051
 # Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which

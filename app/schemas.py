@@ -290,8 +290,9 @@ class SettingsResponse(BaseModel):
     bt_proxy_host: str = ""
     bt_proxy_port: str = "8118"
     bt_listen_port: str = "6881"
-    # Built-in Tor settings
-    tor_enabled: str = "false"
+    # Built-in Tor settings (ON by default — matches database.py default_settings; the UI/GET-settings
+    # fallback was "false", so on a fresh install Tor read as disabled even though the seed enabled it).
+    tor_enabled: str = "true"
     tor_listen_host: str = "127.0.0.1"
     tor_socks_port: str = "9052"
     tor_control_port: str = "9053"
@@ -307,11 +308,15 @@ class SettingsResponse(BaseModel):
     # Onion (v3 hidden service) — expose this deployment at a persistent .onion address (primary Tor
     # daemon hosts it; keys persist in the tor data dir → same address across restarts).
     onion_enabled: str = "false"
-    # Built-in HTTP proxy settings
-    proxy_enabled: str = "false"
+    # Built-in HTTP proxy settings (ON by default — matches database.py; the "false" fallback made a
+    # fresh install read as disabled, so nothing listened on :8118 and every outbound relay connect hit
+    # ECONNREFUSED before falling back to direct).
+    proxy_enabled: str = "true"
     proxy_listen_host: str = "127.0.0.1"
     proxy_listen_port: str = "8118"
-    proxy_socks_host: str = ""
+    # SOCKS target the HTTP proxy forwards to (the built-in Tor). Must be non-empty or the proxy
+    # subprocess won't start ("no SOCKS5 target host configured"), defeating proxy_enabled.
+    proxy_socks_host: str = "127.0.0.1"
     proxy_socks_port: str = "9052"
     # Telegram Bot settings
     telegram_bot_token: str = ""  # Bot token from @BotFather
