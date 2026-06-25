@@ -398,14 +398,17 @@ a.btn.full{display:block}
 .btn.small{padding:7px 13px;font-size:13.5px}
 .btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--glow)}
 .btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--glow-cy)}
-.btn-ghost{background:transparent}
+/* was transparent → ghost buttons (e.g. AI-chat "Copy link", compose tools) looked colourless/plain
+   next to filled btn-neon/btn-cyan siblings. Give them the base panel fill (theme-safe) so every
+   button reads as an intentional, consistent button. */
+.btn-ghost{background:var(--panel2)}
 .btn-ghost:hover{border-color:var(--neon);color:var(--neon)}
 .input,textarea{width:100%;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:11px;
   color:var(--text);padding:12px 14px;font-size:15.5px;outline:none;margin:6px 0;font-family:inherit}
 .input:focus,textarea:focus{border-color:var(--cyan);box-shadow:var(--glow-cy)}
-.mini{cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--muted);
+.mini{cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);
   border-radius:8px;padding:4px 9px;font-size:12px;transition:.15s}
-.mini:hover{color:var(--cyan);border-color:var(--cyan)}
+.mini:hover{color:var(--neon);border-color:var(--neon)}
 #tl-media{font-size:16px;line-height:1;padding:4px 8px}
 #tl-media.active{color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,255,.12)}
 /* topbar refresh: the 12px muted ↻ was nearly invisible — make it a clear, tappable icon button */
@@ -775,8 +778,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cmp-right{margin-left:auto}
 /* Draft + Post on their own centered row beneath the tool buttons */
-.cmp-actions{display:flex;justify-content:center;align-items:center;gap:10px;margin-top:10px;width:100%}
-.cmp-actions .btn{min-width:120px;flex:0 0 auto;text-align:center}
+/* center with text-align + inline-block buttons — robust even if a parent flex/grid context would
+   otherwise shrink/left-align a flex row. */
+.cmp-actions{display:block;text-align:center;margin-top:12px;width:100%}
+.cmp-actions .btn{display:inline-flex;align-items:center;justify-content:center;min-width:120px;margin:0 5px;vertical-align:middle}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}

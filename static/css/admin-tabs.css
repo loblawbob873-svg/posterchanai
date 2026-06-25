@@ -432,16 +432,20 @@
 .btn-small {
     font-size: 12px;
     padding: 6px 12px;
-    /* was uncolored (browser-default grey) → inconsistent with btn-primary/secondary. Give it the
-       same themed secondary look so every bot-modal button (Upload, Generate identity, Connect…) matches. */
-    background: rgba(26,26,42,.8);
-    border: 1px solid var(--border-color, var(--border));
-    color: var(--text-primary, var(--text));
+    /* Clearly THEMED (cyan accent), hardcoded so it never falls back to a plain grey/default button
+       when a CSS var doesn't resolve — every bot-modal + bot-list small button (Upload, Generate
+       identity, Connect, Edit, previews…) reads as an intentional, coloured button. */
+    background: rgba(0,255,255,.10);
+    border: 1px solid rgba(0,255,255,.45);
+    color: #cfffff;
     border-radius: 9px;
     cursor: pointer;
     font-weight: 600;
 }
-.btn-small:hover { border-color: var(--accent); color: var(--accent); }
+.btn-small:hover { background: rgba(0,255,255,.20); border-color: #00ffff; color: #fff; box-shadow: 0 0 10px rgba(0,255,255,.25); }
+/* the bot-modal × close — give it a matching subtle affordance instead of a bare glyph */
+.bot-modal-close { background: transparent; border: 1px solid rgba(0,255,255,.25); color: #cfffff; border-radius: 8px; cursor: pointer; line-height: 1; }
+.bot-modal-close:hover { border-color: #00ffff; color: #fff; }
 
 /* Plugin styles */
 .plugin-list {

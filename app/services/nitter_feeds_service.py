@@ -317,54 +317,71 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> N
 
     changed = False
     for rss in feeds:
-        # Proxy-first with direct fallback; only a validly-parsed feed with items comes back.
-        items, avatar_url, channel_name, client = await _fetch_feed(rss, clients)
-        if not items:
-            continue
-        handle = _handle_from_rss(rss)
-
-        if rss not in seen:
-            # First poll for this feed: establish the baseline without forwarding backlog.
-            seen[rss] = [it["guid"] for it in items][:_MAX_SEEN]
-            changed = True
-            continue
-
-        # Normalise the stored cursor too, so legacy entries saved in the old full-URL form still
-        # match incoming (now status-id) guids — otherwise the first poll after this fix would
-        # re-send everything once.
-        prev_seen = [_stable_guid(g) for g in seen[rss]]
-        known = set(prev_seen)
-        new_items = [it for it in items if it["guid"] not in known]
-        # Only FORWARD genuinely-recent tweets — an unseen-but-old tweet (instance flip / post-downtime
-        # backlog) is skipped here but still falls through to the seen-cursor update below, so it's
-        # silenced for good instead of re-sent every poll. Unparseable date (epoch 0) → treat as recent.
-        _now = time.time()
-        fresh_items = [it for it in new_items if not it.get("epoch") or (_now - it["epoch"]) <= _MAX_AGE_SEC]
-        # Oldest-first so chat order is chronological; cap to avoid flooding.
-        unrendered = set()
-        for it in reversed(fresh_items[:_MAX_NEW_PER_FEED]):
-            png = await _render_card(client, it, handle, channel_name, avatar_url)
-            if not png:
-                # Transient render failure (avatar/media fetch, browser hiccup): DON'T mark it seen,
-                # so it's retried next poll instead of being silently dropped forever.
-                unrendered.add(it["guid"])
+        # One feed's failure must NOT abort the others or skip the commit below — that's exactly what
+        # replayed every feed's items each poll (the "100 messages" flood). Isolate each feed.
+        try:
+            # Proxy-first with direct fallback; only a validly-parsed feed with items comes back.
+            items, avatar_url, channel_name, client = await _fetch_feed(rss, clients)
+            if not items:
                 continue
-            try:
-                await tg.send_photo(chat_id, base64.b64encode(png).decode(),
-                                    caption=_caption(handle, it), parse_mode="")
-            except Exception as e:
-                logger.warning(f"[nitter] telegram send failed for user {user.id}: {e}")
-        # Record current guids as seen (whether or not each sent — a send failure is NOT retried to
-        # avoid duplicate posts), EXCEPT items that failed to render so those retry. Newest-first,
-        # capped.
-        cur_guids = [it["guid"] for it in items if it["guid"] not in unrendered]
-        cur_set = set(cur_guids)
-        seen[rss] = (cur_guids + [g for g in prev_seen if g not in cur_set])[:_MAX_SEEN]
-        changed = True
+            handle = _handle_from_rss(rss)
+
+            if rss not in seen:
+                # First poll for this feed: establish the baseline without forwarding backlog.
+                seen[rss] = [it["guid"] for it in items][:_MAX_SEEN]
+                changed = True
+                continue
+
+            # Normalise the stored cursor too, so legacy entries saved in the old full-URL form still
+            # match incoming (now status-id) guids — otherwise the first poll after this fix would
+            # re-send everything once.
+            prev_seen = [_stable_guid(g) for g in seen[rss]]
+            known = set(prev_seen)
+            new_items = [it for it in items if it["guid"] not in known]
+            # Only FORWARD genuinely-recent tweets — an unseen-but-old tweet (instance flip / post-downtime
+            # backlog) is skipped here but still falls through to the seen-cursor update below, so it's
+            # silenced for good instead of re-sent every poll. Unparseable date (epoch 0) → treat as recent.
+            _now = time.time()
+            fresh_items = [it for it in new_items if not it.get("epoch") or (_now - it["epoch"]) <= _MAX_AGE_SEC]
+            # Oldest-first so chat order is chronological; cap to avoid flooding.
+            unrendered = set()
+            for it in reversed(fresh_items[:_MAX_NEW_PER_FEED]):
+                try:
+                    png = await _render_card(client, it, handle, channel_name, avatar_url)
+                except Exception as e:
+                    logger.warning(f"[nitter] render error for user {user.id}: {e}")
+                    png = None
+                if not png:
+                    # Transient render failure (avatar/media fetch, browser hiccup): DON'T mark it seen,
+                    # so it's retried next poll instead of being silently dropped forever.
+                    unrendered.add(it["guid"])
+                    continue
+                try:
+                    await tg.send_photo(chat_id, base64.b64encode(png).decode(),
+                                        caption=_caption(handle, it), parse_mode="")
+                except Exception as e:
+                    logger.warning(f"[nitter] telegram send failed for user {user.id}: {e}")
+            # Record current guids as seen (whether or not each sent — a send failure is NOT retried to
+            # avoid duplicate posts), EXCEPT items that failed to render so those retry. Newest-first,
+            # capped.
+            cur_guids = [it["guid"] for it in items if it["guid"] not in unrendered]
+            cur_set = set(cur_guids)
+            seen[rss] = (cur_guids + [g for g in prev_seen if g not in cur_set])[:_MAX_SEEN]
+            changed = True
+        except Exception as e:
+            logger.warning(f"[nitter] feed {rss} failed for user {user.id}: {e}")
 
     if changed:
-        _set_user_setting(db, user.id, "nitter_seen", json.dumps(seen))
-        db.commit()
+        # Persist the seen-cursor even if something above hiccuped — a lost cursor = re-send everything.
+        try:
+            _set_user_setting(db, user.id, "nitter_seen", json.dumps(seen))
+            db.commit()
+        except Exception as e:
+            logger.warning(f"[nitter] could not persist seen-cursor for user {user.id}: {e}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
 
 async def poll_once(db: Session) -> None:
