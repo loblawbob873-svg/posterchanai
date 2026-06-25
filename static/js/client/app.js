@@ -116,7 +116,6 @@
         s.nip17unwrap = (wrap) => _nip17unwrapVia((p,ct)=>window.nostr.nip44.decrypt(p,ct), wrap);
         s.nip44dec = (peer, ct) => window.nostr.nip44.decrypt(peer, ct);
         s.nip44enc = (peer, text) => window.nostr.nip44.encrypt(peer, text);
-        s.nip44decMany = (peer, cts) => Promise.all((cts||[]).map(ct => Promise.resolve(window.nostr.nip44.decrypt(peer, ct)).then(p=>p,()=>null)));
       }
       return s;
     }
@@ -131,7 +130,6 @@
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip46.nip44dec(peer, ct),
         nip44enc: (peer, text) => Nip46.nip44enc(peer, text),
-        nip44decMany: (peer, cts) => Promise.all((cts||[]).map(ct => Promise.resolve(Nip46.nip44dec(peer, ct)).then(p=>p,()=>null))),
       };
     }
     return {  // local key — crypto in the worker
@@ -140,7 +138,6 @@
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
       nip04dec: (peer, ct) => Relay.worker.call('nip04dec', { peer, ct }).then(r=>r.pt),
       nip44dec: (peer, ct) => Relay.worker.call('nip44dec', { peer, ct }).then(r=>r.pt),
-      nip44decMany: (peer, cts) => Relay.worker.call('nip44decMany', { peer, cts }).then(r=>r.pts),
       nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
       nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text }),
@@ -4921,45 +4918,7 @@
   }
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
-    // Browser-side mailbox: the client reads the FEDERATED mail events straight from the relay and
-    // decrypts them here (the relay just delivers the notes). store = all decrypted message docs;
-    // _decCache reuses prior decryptions across resyncs (decrypt only NEW events). Mutations + the
-    // IMAP/SMTP side still go through /api/mail (the bridge owns the docs; browsers can't do IMAP).
-    store:[], _bridge:null, _mePub:null, _decCache:{}, _loaded:false,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
-    async _ensureBridge(){
-      if(this._bridge && this._mePub) return true;
-      try{ const b=await this.api('/bridge'); this._bridge=b.bridge_pubkey||null; this._mePub=b.user_pubkey||(window.ME&&ME.pubkey)||null; }catch(_){}
-      return !!(this._bridge && this._mePub);
-    },
-    async _loadStore(){
-      // Pull every mail event the bridge addressed to me, newest-per-d-tag, and decrypt the new ones.
-      if(!await this._ensureBridge() || !signer || !signer.nip44decMany){ this._loaded=true; return; }
-      let evs=[]; try{ evs=await Relay.query([{ authors:[this._bridge], kinds:[30078], '#p':[this._mePub], limit:5000 }]); }catch(_){ evs=[]; }
-      const best={};   // d-tag → newest event (defensive; the relay already keeps latest per addressable)
-      for(const ev of evs||[]){ const d=(ev.tags||[]).find(t=>t[0]==='d'); const dt=d&&d[1]; if(!dt||dt.indexOf('pcai:mail:')!==0) continue;
-        if(!best[dt] || (ev.created_at||0)>(best[dt].created_at||0)) best[dt]=ev; }
-      const evList=Object.values(best);
-      const need=evList.filter(ev=>!this._decCache[ev.id]);
-      if(need.length){
-        let pts=[]; try{ pts=await signer.nip44decMany(this._bridge, need.map(ev=>ev.content)); }catch(_){ pts=[]; }
-        need.forEach((ev,i)=>{ const pt=pts[i]; if(!pt) return; try{ const doc=JSON.parse(pt); doc._eid=ev.id; this._decCache[ev.id]=doc; }catch(_){} });
-      }
-      const live=new Set(evList.map(ev=>ev.id));
-      this.store=evList.map(ev=>this._decCache[ev.id]).filter(Boolean);
-      Object.keys(this._decCache).forEach(id=>{ if(!live.has(id)) delete this._decCache[id]; });   // drop deleted
-      this._recount(); this._loaded=true;
-    },
-    _recount(){ this.unread=this.store.filter(m=>!(m.flags&&m.flags.read) && (m.logical==='INBOX'||m.folder==='INBOX')).length; },
-    _filter(){
-      let rows;
-      if(this.acct==='__all') rows=this.store.filter(m=>m.logical===this.folder || m.folder===this.folder);
-      else rows=this.store.filter(m=>m.account===this.acct && m.folder===this.folder);
-      if(this.q){ const q=this.q.toLowerCase();
-        const base=(this.acct==='__all')?this.store:this.store.filter(m=>m.account===this.acct);   // search spans folders
-        rows=base.filter(m=>['subject','from','from_email','to','cc','preview','folder'].some(k=>String(m[k]||'').toLowerCase().includes(q))); }
-      return rows.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
-    },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
       try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
@@ -5015,18 +4974,17 @@
       // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is pulled on demand.
       if(this.acct!=='__all' && !['INBOX','Sent','Drafts'].includes(f)){
         try{ await this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder:f})}); }catch(_){}
-        try{ await this._loadStore(); }catch(_){}   // the on-demand pull federated new docs — refresh
       }
       this.loadList();
     },
-    _row(m){ return { uid:m.uid, account:m.account, folder:m.folder, from:m.from, from_email:m.from_email,
-      to:m.to, subject:m.subject, ts:m.ts, read:!!(m.flags&&m.flags.read), attachments:(m.attachments||[]).length,
-      preview:m.preview||'' }; },
     async loadList(){
       const box=$('#mail-items', this.root); if(!box) return; box.innerHTML='<div class="spinner"></div>';
-      if(!this._loaded){ try{ await this._loadStore(); }catch(_){} }
-      this._shown = 80;   // render-window cap so a huge folder doesn't build thousands of DOM rows at once
-      this.msgs=this._filter().map(m=>this._row(m));
+      try{
+        const r = this.q
+          ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
+          : await this.api('/messages?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(this.folder));
+        this.msgs=r.messages||[];
+      }catch(_){ this.msgs=[]; }
       this.drawList();
     },
     _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
@@ -5035,17 +4993,14 @@
       this.sel=this.sel||new Set();
       if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
       const isSent=this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
-      const shown=Math.min(this._shown||80, this.msgs.length);
-      box.innerHTML=this.msgs.slice(0,shown).map(m=>{ const key=this._key(m);
+      box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
         return `<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
         <input type="checkbox" class="mi-chk"${this.sel.has(key)?' checked':''}>
         <div class="mi-content">
           <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
           <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
-        </div></div>`; }).join('')
-        + (this.msgs.length>shown?`<button class="btn btn-ghost small mail-more" id="mail-more">⬇ Show more (${this.msgs.length-shown})</button>`:'');
-      { const mb=$('#mail-more',box); if(mb) mb.onclick=()=>{ this._shown=(this._shown||80)+80; this.drawList(); }; }
+        </div></div>`; }).join('');
       $$('.mail-item',box).forEach(el=>{
         const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
         const c=el.querySelector('.mi-content'); if(c) c.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account);
@@ -5069,55 +5024,25 @@
         const body={account, folder, uid}; if(action==='read') body.read=true;
         try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(_){}
       }
-      toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived'));
-      try{ await this._loadStore(); }catch(_){} this.loadList();
-    },
-    // Group a conversation from the in-browser store: close the Message-ID/References/In-Reply-To
-    // graph, with a normalized-subject fallback. Mirrors the server's _build_thread. Oldest→newest.
-    _threadOf(seed){
-      const ids=(m)=>{ const s=new Set(); ['message_id','in_reply_to'].forEach(k=>{ const v=(m[k]||'').trim(); if(v)s.add(v); });
-        (m.references||'').split(/\s+/).forEach(r=>{ r=r.trim(); if(r)s.add(r); }); return s; };
-      const norm=(s)=>String(s||'').replace(/^\s*(re|fwd|fw)\s*:\s*/i,'').trim().toLowerCase();
-      if(!(seed.in_reply_to || (seed.references||'').trim())) return [seed];
-      const related=ids(seed); const members=new Map(); const keyOf=(m)=>m.message_id||('uid:'+m.folder+':'+m.uid);
-      members.set(keyOf(seed), seed);
-      let added=true;
-      while(added){ added=false;
-        for(const m of this.store){ const k=keyOf(m); if(members.has(k)) continue;
-          let hit=false; ids(m).forEach(x=>{ if(related.has(x)) hit=true; });
-          if(hit){ members.set(k,m); ids(m).forEach(x=>related.add(x)); added=true; } } }
-      let msgs=[...members.values()];
-      if(msgs.length<=1){ const ns=norm(seed.subject); if(ns){ const by=new Map();
-        for(const m of this.store){ if(norm(m.subject)===ns) by.set(m.folder+'|'+m.uid, m); }
-        by.set(seed.folder+'|'+seed.uid, seed); msgs=[...by.values()]; } }
-      return msgs.sort((a,b)=>(a.ts||0)-(b.ts||0));
+      toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
     },
     async open(uid, folder, account){
       folder=folder||this.folder; const acct=account||this.acct; this.openUid=uid; this.drawList();
-      // Read straight from the in-browser store (already decrypted). Offloaded bodies / drafts need a
-      // server rehydrate (it decrypts the Blossom blob); inline-body messages need no round-trip.
-      let msg=this.store.find(m=>String(m.uid)===String(uid) && m.folder===folder && (account? m.account===account : true)) || null;
-      if(!msg || msg.body_ref || msg.is_draft){
-        try{ const r=await this.api('/message?account='+encodeURIComponent((msg&&msg.account)||acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); if(r.message) msg=r.message; }catch(_){}
-      }
+      let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
       if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
-        if(msg) this.compose({mode:'draft', draft:msg, acct:(msg.account||acct)});
+        if(msg) this.compose({mode:'draft', draft:msg, acct});
         else toast('draft unavailable');
         return;
       }
-      const pane=$('#mail-read', this.root); if(!pane) return; pane.classList.add('has-open');
+      const pane=$('#mail-read', this.root); if(!pane) return; pane.innerHTML='<div class="spinner"></div>'; pane.classList.add('has-open');
       if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
-      const racct=msg.account||acct;
-      // Mark read locally (instant) + tell the bridge (it owns the doc; re-federates the read flag).
-      if(!(msg.flags&&msg.flags.read)){ msg.flags=Object.assign({},msg.flags,{read:true});
-        const c=this.store.find(m=>String(m.uid)===String(uid)&&m.folder===folder&&m.account===racct); if(c) c.flags=Object.assign({},c.flags,{read:true});
-        this._recount(); this.drawList();
-        this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:racct,folder,uid})}).catch(()=>{}); }
-      const thread=this._threadOf(msg);
-      // Rehydrate any thread member whose large body was offloaded (usually none — inline is the norm).
-      await Promise.all(thread.map(async(mm,i)=>{ if(mm.body_ref && !mm.body_text && !mm.body_html){
-        try{ const r=await this.api('/message?account='+encodeURIComponent(mm.account)+'&folder='+encodeURIComponent(mm.folder)+'&uid='+encodeURIComponent(mm.uid)); if(r.message) thread[i]=r.message; }catch(_){} } }));
-      if(this.openUid===uid && pane.isConnected) this._renderThread(pane, thread, folder, racct, uid);
+      // Render the message immediately, then upgrade to the full conversation when /thread returns
+      // (threading scans the whole mailbox, so don't block the read on it).
+      this._renderThread(pane, [msg], folder, acct, uid);
+      this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
+        .then(t=>{ if(t && t.messages && t.messages.length>1 && this.openUid===uid && pane.isConnected)
+          this._renderThread(pane, t.messages, folder, acct, uid); })
+        .catch(()=>{});
     },
     _msgBlock(m, folder, acct, expanded){
       const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
@@ -5153,13 +5078,13 @@
     async action(act, msg, folder, acct){
       acct=acct||this.acct; const uid=msg.uid;
       if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder, acct});
-      if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); try{ await this._loadStore(); }catch(_){} this.loadList(); return; }
+      if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
       if(act==='archive'||act==='delete'){
         if(act==='delete' && !confirm('Delete this message?')) return;
         try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
         toast(act==='delete'?'deleted':'archived');
         const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
-        this.openUid=null; try{ await this._loadStore(); }catch(_){} this.loadList(); return;
+        this.openUid=null; this.loadList(); return;
       }
     },
     compose(opts){
@@ -5194,7 +5119,7 @@
       $('#cm-draft').onclick=async()=>{
         const btn=$('#cm-draft'); btn.disabled=true; btn.textContent='Saving…';
         try{ const r=await self.api('/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:sendAcct(), draft:{...gather(), uid:draftUid}})});
-          if(r.ok){ draftUid=r.uid; toast('draft saved'); closeModal(); if(self.folder==='Drafts'){ try{ await self._loadStore(); }catch(_){} self.loadList(); } }
+          if(r.ok){ draftUid=r.uid; toast('draft saved'); closeModal(); if(self.folder==='Drafts') self.loadList(); }
           else { toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; } }
         catch(_){ toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; }
       };
@@ -5218,8 +5143,7 @@
       const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
       try{ const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
-        try{ await this._loadStore(); }catch(_){}   // pull the freshly-federated events from the relay
-        if(total){ if(manual) toast(total+' new message'+(total>1?'s':'')); if(_msgTab==='email') {} else bumpDm(); }
+        if(total){ this.unread+=total; if(manual) toast(total+' new message'+(total>1?'s':'')); if(_msgTab==='email') {} else bumpDm(); }
         if(this.root && this.acct) this.loadList();
       }catch(_){ if(manual) toast('mail sync failed'); }
       this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
@@ -5231,8 +5155,7 @@
         const a=await this.api('/accounts'); if(!(a.accounts||[]).length) return;
         const r=await this.api('/sync',{method:'POST'});
         const total=Object.values(r.new||{}).reduce((x,y)=>x+(+y||0),0);
-        try{ await this._loadStore(); }catch(_){}   // warms the cache + sets the unread badge from the store
-        if(total){ toast('📧 '+total+' new email'+(total>1?'s':''));
+        if(total){ this.unread+=total; toast('📧 '+total+' new email'+(total>1?'s':''));
           if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} } }
       }catch(_){}
     },

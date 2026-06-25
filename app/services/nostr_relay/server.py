@@ -40,12 +40,6 @@ def _broadcastable(ev, cfg=None) -> bool:
     if k == 30078:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
         if d.startswith("pcai:"):
-            # Mailbox docs are the user's own NIP-44-encrypted mail, addressed to THEIR key (not the
-            # operator's). Federating them is the whole point — it makes the mailbox portable across
-            # relays/clients. They ride the paced outbox like any broadcast event. (Ciphertext to
-            # everyone but the recipient; producer-side pacing in mail_sync keeps the volume sane.)
-            if d.startswith("pcai:mail:"):
-                return True
             if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
                 return True
             return False

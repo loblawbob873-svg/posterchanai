@@ -66,14 +66,6 @@ self.onmessage = async (e) => {
         const ck = NT.nip44.getConversationKey(SK, args.peer);
         return reply(id, true, { pt: NT.nip44.decrypt(args.ct, ck) });
       }
-      case 'nip44decMany': {                   // args.peer, args.cts[] -> pts[] (null per failure)
-        // Same conversation key for every ciphertext from one author (the mailbox bridge), derived
-        // ONCE — so decrypting a whole mailbox is one worker call, not N. Bad items decrypt to null.
-        if (!SK) return reply(id, false, null, 'no local key');
-        const ckm = NT.nip44.getConversationKey(SK, args.peer);
-        const pts = (args.cts || []).map(ct => { try { return NT.nip44.decrypt(ct, ckm); } catch (_) { return null; } });
-        return reply(id, true, { pts });
-      }
       // ---- NIP-17 private DMs (gift-wrapped via NIP-59 seal + NIP-44 encryption), local key only ----
       case 'nip17wrap': {                      // args.peer (hex), args.text -> two kind-1059 wraps
         if (!SK) return reply(id, false, null, 'no local key');

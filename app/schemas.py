@@ -378,9 +378,6 @@ class SettingsResponse(BaseModel):
     nostr_relay_request_pace_sec: Optional[float] = None
     nostr_relay_outbox_min_interval_sec: Optional[float] = None
     nostr_relay_outbox_max_queue: Optional[int] = None
-    # Federated mail: seconds between outgoing mail-event publishes during sync (rate-limits the
-    # fan-out so a big mailbox can't overflow the outbox queue). Blank → use the outbox min interval.
-    mail_federate_min_interval_sec: Optional[float] = None
     nostr_relay_name: Optional[str] = None
     nostr_relay_description: Optional[str] = None
     nostr_relay_pubkey: Optional[str] = None

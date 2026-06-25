@@ -1,20 +1,14 @@
-"""IMAP → federated Nostr-mailbox sync + encrypted-Blossom attachments.
+"""IMAP → Nostr-mailbox sync + encrypted-Blossom attachments.
 
 `sync_all` is the login-triggered ("log in → fetch your mail") and manual-refresh entry point: for
 each configured account it pulls recent messages from IMAP (mail_service), AES-GCM-encrypts every
-attachment and stores the ciphertext in Blossom, then writes each message via `mail_box` as a
-bridge-authored, NIP-44-encrypted-to-the-user, FEDERATED kind-30078 doc. Only genuinely new UIDs are
-stored (dedup), and the new-message count per account is returned so the GUI can badge/notify.
-
-**Rate-limited.** Each stored message federates (the relay's paced outbox fans it to upstream), so a
-big initial backfill could flood. The producer paces itself between publishes (`mail_federate_min_
-interval_sec`) so the outbox queue can't overflow and drop mail — the requested rate limit on the
-outgoing requests.
+attachment and stores the ciphertext in Blossom, then writes each message as an encrypted kind-30078
+doc via mail_store. Only genuinely new UIDs are stored (dedup), and the new-message count per account
+is returned so the GUI can badge/notify.
 
 Attachments never touch the relay in the clear: the message doc holds only {name,type,size,sha256,
 key,iv}; `load_attachment` fetches the Blossom ciphertext and decrypts it on download (and the compose
 path reuses it to re-attach the real bytes to an outgoing SMTP message — exactly like a normal client).
-The web client reads the mailbox itself from the relay and decrypts in the browser.
 """
 import os
 import json
@@ -24,24 +18,10 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.services import mail_box, mail_service, blossom_service, settings_store
+from app.services import mail_store, mail_service, blossom_service, nostr_store
+from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
-
-
-def _pace_interval() -> float:
-    """Seconds to wait between federated mail publishes (rate-limits the outgoing fan-out). Defaults
-    to the outbox's own min interval so the producer can't outrun the drain and overflow its queue."""
-    try:
-        v = settings_store.get("mail_federate_min_interval_sec", "") or ""
-        if str(v).strip():
-            return max(0.0, float(v))
-    except Exception:
-        pass
-    try:
-        return max(0.0, float(settings_store.get("nostr_relay_outbox_min_interval_sec", "1.0") or 1.0))
-    except Exception:
-        return 1.0
 
 
 async def _save_blob(owner_pubkey: str, data: bytes, mime: str = "application/octet-stream") -> dict:
@@ -224,12 +204,10 @@ def _sync_limit() -> int:
         return 0
 
 
-async def _sync_folder(db: Session, user, user_pk: str, account, folder: str, limit: int = 0,
-                       logical: str = "", pace: float = 0.0) -> int:
+async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account, folder: str, limit: int = 0, logical: str = "") -> int:
     """INCREMENTAL mirror of one (account, folder): cheap UID SEARCH → diff against what's stored →
-    FETCH only the NEW messages → encrypt attachments/large bodies to Blossom → store (federated).
-    limit>0 caps to the most-recent N new (0 = all). `pace` rate-limits the federated publishes.
-    Returns count stored."""
+    FETCH only the NEW messages → encrypt attachments/large bodies to Blossom → store. limit>0 caps to
+    the most-recent N new (0 = all). Returns count stored."""
     import asyncio
     try:
         uids = await asyncio.to_thread(mail_service.list_uids, account, folder)
@@ -238,7 +216,7 @@ async def _sync_folder(db: Session, user, user_pk: str, account, folder: str, li
         return 0
     if not uids:
         return 0
-    have = await mail_box.have_uids(db, user_pk, account.email, folder)
+    have = await mail_store.have_uids(seckey, account.email, folder)
     new = [u for u in uids if str(u) not in have]
     if not new:
         return 0
@@ -254,18 +232,15 @@ async def _sync_folder(db: Session, user, user_pk: str, account, folder: str, li
         att_refs = []
         for att in (m.attachments or []):
             try:
-                att_refs.append(await _store_attachment(db, user_pk, att))
+                att_refs.append(await _store_attachment(db, owner_pk, att))
             except Exception as e:
                 logger.warning("[mail-sync] attachment store failed for %s: %s", m.uid, e)
         try:
-            doc = await offload_body(db, user_pk, _to_doc(m, att_refs, logical))
-            if await mail_box.store_message(db, user_pk, account.email, folder, doc):
+            doc = await offload_body(db, owner_pk, _to_doc(m, att_refs, logical))
+            if await mail_store.store_message(seckey, account.email, folder, doc):
                 stored += 1
         except Exception as e:
             logger.warning("[mail-sync] store msg %s failed: %s", m.uid, e)
-        # Rate-limit the outgoing federation: pacing the producer keeps the outbox queue from
-        # overflowing (which would silently drop mail from the fan-out) and is gentle on upstream.
-        await asyncio.sleep(pace if pace > 0 else 0.02)
     return stored
 
 
@@ -291,33 +266,27 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
     """Sync a single (account, folder) on demand (e.g. opening a folder). Drafts is local-only."""
     if folder == "Drafts":
         return 0
-    user_pk = mail_box.user_pubkey(user)
-    if not user_pk:
-        logger.warning("[mail-sync] %s has no nostr npub — cannot store federated mail", getattr(user, "username", "?"))
-        return 0
     acc = next((a for a in mail_service.get_user_mail_accounts(user.id, db) if a.email == account_email), None)
     if not acc:
         return 0
+    seckey = nostr_store.user_storage_seckey(db, user)
+    owner_pk = nostr_service.derive_pubkey(seckey)
     import asyncio
     _, meta = await asyncio.to_thread(_account_meta, db, user, acc)
-    return await _sync_folder(db, user, user_pk, acc, folder, await asyncio.to_thread(_sync_limit),
-                              _logical_of(folder, meta), _pace_interval())
+    return await _sync_folder(db, user, seckey, owner_pk, acc, folder,
+                              await asyncio.to_thread(_sync_limit), _logical_of(folder, meta))
 
 
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:
-    """Sync EVERY account's EVERY real folder into the encrypted mailbox (incremental, federated,
-    rate-limited). Returns {account_email: new_count}. limit per folder from `mail_sync_limit`
-    (0 = everything, the default)."""
+    """Sync EVERY account's EVERY real folder into the encrypted mailbox (incremental). Returns
+    {account_email: new_count}. limit per folder from `mail_sync_limit` (0 = everything, the default)."""
     import asyncio
-    user_pk = mail_box.user_pubkey(user)
-    if not user_pk:
-        logger.warning("[mail-sync] %s has no nostr npub — cannot store federated mail", getattr(user, "username", "?"))
-        return {}
     accounts = mail_service.get_user_mail_accounts(user.id, db)
     if not accounts:
         return {}
+    seckey = nostr_store.user_storage_seckey(db, user)
+    owner_pk = nostr_service.derive_pubkey(seckey)
     limit = await asyncio.to_thread(_sync_limit)
-    pace = _pace_interval()
     out = {}
     for acc in accounts:
         if folders is not None:
@@ -326,7 +295,7 @@ async def sync_all(db: Session, user, folders: list | None = None) -> dict:
             flist, meta = await asyncio.to_thread(_account_meta, db, user, acc)
         total = 0
         for folder in flist:
-            total += await _sync_folder(db, user, user_pk, acc, folder, limit, _logical_of(folder, meta), pace)
+            total += await _sync_folder(db, user, seckey, owner_pk, acc, folder, limit, _logical_of(folder, meta))
         out[acc.email] = total
     if any(out.values()):
         logger.info("[mail-sync] %s: new mail %s", getattr(user, "username", "?"),
