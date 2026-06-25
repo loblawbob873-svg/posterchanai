@@ -236,10 +236,14 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
 @router.get("/messages")
 async def mail_messages(account: str = "", folder: str = "INBOX",
                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sk = _seckey(db, current_user)
+    if account == "__all":   # unified view: this folder across EVERY account (each summary carries its own account)
+        msgs = [m for m in await mail_store.list_messages(sk, None, None) if m.get("folder") == folder]
+        return {"messages": [_summary(m) for m in msgs], "account": "__all"}
     acc = _resolve_account(db, current_user, account)
     if not acc:
         return {"messages": [], "account": None}
-    msgs = await mail_store.list_messages(_seckey(db, current_user), acc.email, folder)
+    msgs = await mail_store.list_messages(sk, acc.email, folder)
     return {"messages": [_summary(m) for m in msgs], "account": acc.email}
 
 
@@ -262,9 +266,12 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
 @router.get("/search")
 async def mail_search(q: str, account: str = "", folder: str = "",
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    acc = _resolve_account(db, current_user, account)
     sk = _seckey(db, current_user)
-    msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None)
+    if account == "__all":
+        msgs = await mail_store.list_messages(sk, None, None)
+    else:
+        acc = _resolve_account(db, current_user, account)
+        msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None)
     return {"messages": [_summary(m) for m in mail_store.search(msgs, q)]}
 
 
