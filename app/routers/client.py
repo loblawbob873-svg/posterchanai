@@ -334,40 +334,36 @@ async def client_narrate(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/screenshot")
 async def client_screenshot(request: Request, db: Session = Depends(get_db)):
-    """Full-page screenshot of a post's web URL (the timeline ☰ → Screenshot action). Same-origin
-    helper like /narrate; reuses the screenshot command's SSRF guard + headless capture and returns
-    a base64 PNG for the client to copy to the clipboard."""
+    """Render a Nostr note as a clean tweet-style post card PNG (the timeline ☰ → Screenshot action) —
+    JUST the post, like the Nitter cards. Reliable + instance-branded: built server-side from the
+    note's fields via _render_post_card_png (no live-SPA capture, no relay/render timing). The client
+    posts the note's text/author + PRE-FETCHED avatar/image bytes, so there's no server-side network
+    (no SSRF surface). Returns a base64 PNG."""
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
     import asyncio
     import base64
-    url = (body.get("url") or "").strip()
-    if not url:
-        return JSONResponse({"error": "no url"}, status_code=400)
-    if not re.match(r"^https?://", url, re.IGNORECASE):
-        url = "https://" + url
-    from app.services import settings_store
-    from app.services.command_service._common import _capture_full_page, _url_is_safe_to_fetch
-    from urllib.parse import urlparse
-    allow_value = settings_store.get("screenshot_allowed_hosts")
-    allowed_hosts = re.split(r"[\s,]+", allow_value.strip()) if allow_value else []
-    # ALWAYS allow our OWN instance host — capturing our own public note page is not SSRF, even though
-    # split-horizon DNS makes the public domain resolve to a LAN IP (which the guard otherwise refuses).
-    # Only the instance's OWN domains (site_url + the request host) — NOT the requested url's host, which
-    # would defeat the guard entirely.
-    for _h in (urlparse((settings_store.get("site_url") or "")).hostname,
-               (request.headers.get("host") or "").split(":")[0]):
-        if _h:
-            allowed_hosts.append(_h)
-    if not await asyncio.to_thread(_url_is_safe_to_fetch, url, allowed_hosts):
-        return JSONResponse({"error": "refused: private/internal address"}, status_code=400)
+    from app.services.command_service import _render_post_card_png
+    name = (body.get("name") or "").strip()
+    handle = (body.get("handle") or "").strip()
+    text = (body.get("text") or "").strip()
+    timestamp = (body.get("timestamp") or "").strip()
+    if not (handle or text):
+        return JSONResponse({"error": "nothing to render"}, status_code=400)
+
+    def _uri(b64, ct):
+        return f"data:{ct or 'image/jpeg'};base64,{b64}" if b64 else ""
+    media_uri = _uri(body.get("image_b64"), body.get("image_ct"))
+    avatar_uri = _uri(body.get("avatar_b64"), body.get("avatar_ct"))
     try:
-        png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=100)
+        png = await asyncio.wait_for(asyncio.to_thread(
+            _render_post_card_png, name or handle, handle, text, timestamp, media_uri, avatar_uri,
+        ), timeout=60)
     except Exception as e:
-        logger.warning(f"[client] screenshot failed: {e}")
-        return JSONResponse({"error": "screenshot failed"}, status_code=503)
+        logger.warning(f"[client] post-card render failed: {e}")
+        return JSONResponse({"error": "render failed"}, status_code=503)
     if not png:
         return JSONResponse({"error": "no image"}, status_code=503)
     return JSONResponse({"image": base64.b64encode(png).decode()})

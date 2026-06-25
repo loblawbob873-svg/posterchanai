@@ -89,6 +89,18 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 }
 .admin-page .btn-secondary:hover{ border-color: var(--accent); }
 .admin-page .btn-danger{ background: rgba(255,51,102,.16); border:1px solid var(--danger); color:#ff90a8; border-radius:10px; padding:8px 14px; cursor:pointer; }
+/* Small buttons (bot-list Edit/Delete, bot-modal Connect/Generate identity/Upload/previews). style.css
+   ships a plain `.btn-small{border:none}` (no fill) and loads BEFORE this file; this lives last + uses
+   !important so the bot UI's small buttons are always clearly cyan-themed instead of borderless text. */
+.admin-page .btn-small{
+  background: rgba(0,255,255,.14) !important; border:1px solid #00ffff !important; color:#bff8ff !important;
+  border-radius:9px !important; padding:6px 12px !important; font-size:12px !important; font-weight:600 !important; cursor:pointer !important;
+}
+.admin-page .btn-small:hover{ background: rgba(0,255,255,.26) !important; color:#fff !important; box-shadow:0 0 10px rgba(0,255,255,.3); }
+.admin-page .btn-small.btn-danger{ background: rgba(255,51,102,.18) !important; border-color:#ff3366 !important; color:#ff9fb3 !important; }
+.admin-page .btn-small.btn-danger:hover{ color:#fff !important; box-shadow:0 0 10px rgba(255,51,102,.3); }
+.admin-page .bot-modal-close{ background:transparent; border:1px solid rgba(0,255,255,.3); color:#bff8ff; border-radius:8px; cursor:pointer; line-height:1; }
+.admin-page .bot-modal-close:hover{ border-color:#00ffff; color:#fff; }
 
 /* bot cards → glass */
 .bot-card{ background: rgba(18,18,28,.66); border:1px solid var(--border-color); border-radius:13px; backdrop-filter: blur(8px); }

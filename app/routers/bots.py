@@ -57,10 +57,45 @@ class BotUpdate(BaseModel):
     config: Optional[Dict[str, Any]] = None
 
 
+def _publish_bot_profile(cfg: dict):
+    """Publish the bot's kind-0 NOW, directly from the app, using its saved name/nip05/avatar. This
+    makes Save update the on-relay profile IMMEDIATELY instead of relying on the bot restarting and
+    re-running ensure_profile (which only fires on startup — the reason the nip05 'never showed up').
+    A bare nip05 ('chess') is expanded to 'chess@<instance host>' the same way the bot's env is."""
+    nsec = cfg.get("nostr_nsec")
+    if not nsec:
+        return
+    name = (cfg.get("nostr_profile_name") or "").strip()
+    nip05 = (cfg.get("nostr_profile_nip05") or "").strip()
+    picture = (cfg.get("nostr_profile_picture") or "").strip()
+    if nip05 and "@" not in nip05:
+        try:
+            nip05 = bot_manager_service._nip05_full(nip05)
+        except Exception:
+            pass
+    if not (name or nip05 or picture):
+        return
+    meta = {"bot": True}
+    if name:
+        meta["name"] = name
+        meta["display_name"] = name
+    if nip05:
+        meta["nip05"] = nip05
+    if picture:
+        meta["picture"] = picture
+    import asyncio
+    from app.services.nostr import event as _ev, relay as _relay
+    seckey = nostr_service.decode_seckey(nsec)
+    ev = _ev.build_event(seckey, 0, json.dumps(meta, separators=(",", ":")), tags=[])
+    # update_bot is a sync endpoint (threadpool) → no running loop; a short asyncio.run is fine.
+    asyncio.run(_relay.publish(["ws://127.0.0.1:3052"], ev))
+
+
 def _refresh_wot_for_nostr(bot: Bot):
     """A newly created/updated nostr bot is an operator key — fold it into the relay's WoT now so its
     posts are accepted immediately (rather than waiting for the scheduled rebuild). Also (re)register
-    its NIP-05 name in the relay's served list so name@host resolves."""
+    its NIP-05 name in the relay's served list so name@host resolves, and republish its kind-0 NOW so
+    the profile (name/nip05/avatar) updates on Save."""
     if (bot.platform or "") != "nostr":
         return
     try:
@@ -77,6 +112,12 @@ def _refresh_wot_for_nostr(bot: Bot):
             _nip05_set(nip.split("@", 1)[0], pub)
     except Exception as e:
         logger.warning("[bots] nip05 register on save failed: %s", e)
+    # Publish the kind-0 immediately so the profile shows the new name/nip05/avatar without waiting for
+    # the bot to restart (independent of the registration above so one failing can't block the other).
+    try:
+        _publish_bot_profile(json.loads(bot.config or "{}"))
+    except Exception as e:
+        logger.warning("[bots] publish kind-0 profile on save failed: %s", e)
 
 
 def _serialize(bot: Bot) -> dict:

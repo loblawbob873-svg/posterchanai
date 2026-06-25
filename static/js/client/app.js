@@ -2870,7 +2870,7 @@
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
-    if(!window.PC_NOSTR_ONLY) items.push(['screenshot','📸 Screenshot']); // full-page capture of the post URL → clipboard
+    if(!window.PC_NOSTR_ONLY) items.push(['screenshot','📸 Screenshot']); // render the post as a clean card → Blossom link
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
@@ -2892,33 +2892,43 @@
       if(a==='block') return doBlock(pk);
     });
   }
-  // 📸 Screenshot: full-page capture of the post, UPLOADED to Blossom — we get back a public link
-  // (copying an image to the clipboard is unreliable: the capture takes seconds and outlives the
-  // click's user-activation, so the browser blocks the write). The link is text → copies reliably.
-  // We capture njump.me's public render of the note because our own /client is a login-gated SPA
-  // (a headless browser there only sees the auth screen).
+  // 📸 Screenshot: render the post as a clean tweet-style CARD (just the post, like the Nitter cards)
+  // server-side from the note's own fields — reliable + instance-branded, no live-SPA capture/timing.
+  // The card PNG is uploaded to Blossom and its link copied (image-on-clipboard is unreliable after a
+  // multi-second async op; a text link copies fine).
   async function screenshotPost(id){
-    let nevent; try{ nevent=NT().nip19.neventEncode({id}); }catch(_){ try{ nevent=NT().nip19.noteEncode(id); }catch(__){ toast('bad post id'); return; } }
-    // Our OWN instance — notes are public (guest mode) and ?embed=1 collapses the app to just the note.
-    const url=_webLink(nevent)+'?embed=1';
-    toast('📸 capturing…');
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const p=profOf(ev.pubkey);
+    const name=p.name||p.display_name||'';
+    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12)+'…');
+    const text=(mediaParts(ev.content).text||ev.content||'').trim();
+    let timestamp=''; try{ timestamp=new Date(ev.created_at*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }catch(_){}
+    toast('📸 rendering…');
+    // pre-fetch avatar + first image as base64 so the server does no network (no SSRF surface)
+    const _b64=async u=>{ if(!u) return null; try{ const r=await fetch(u); if(!r.ok) return null; const blob=await r.blob();
+      const d=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result)); fr.onerror=()=>res(''); fr.readAsDataURL(blob); });
+      const m=(d||'').match(/^data:([^;]+);base64,(.*)$/); return m?{b64:m[2],ct:m[1]}:null; }catch(_){ return null; } };
+    const av=await _b64(p.picture), img=await _b64(postImageUrl(ev));
     try{
-      const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
+      const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+        name, handle, text, timestamp,
+        avatar_b64: av&&av.b64||'', avatar_ct: av&&av.ct||'', image_b64: img&&img.b64||'', image_ct: img&&img.ct||'' }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.image){ toast('screenshot failed: '+(j.error||('http '+r.status))); return; }
       const bin=Uint8Array.from(atob(j.image), c=>c.charCodeAt(0));
-      const file=new File([bin], 'post-'+nevent.slice(0,12)+'.png', { type:'image/png' });
+      const file=new File([bin], 'post.png', { type:'image/png' });
       toast('📤 uploading…');
       const link=await uploadBlob(file);
       try{ await navigator.clipboard.writeText(link); }catch(_){}
-      modal(`<h3>📸 Screenshot</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
+      modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
         `<div class="row" style="justify-content:center;gap:8px;margin-top:12px"><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-ghost small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-ghost small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
           const cl=root.querySelector('#ss-close'); if(cl) cl.onclick=closeModal;
         });
-      toast('📸 uploaded to Blossom — link copied');
+      toast('📸 card ready — link copied');
     }catch(e){
       if(typeof _blossomDenied==='function' && _blossomDenied(e)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
       else toast('screenshot failed: '+((e&&e.message)||e));
@@ -3266,7 +3276,7 @@
       <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
       </div>
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions"><button class="btn btn-ghost small" id="cmp-draft">💾 Draft</button><button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
+      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px;min-width:120px">💾 Draft</button><button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px;min-width:120px">Post ▶</button></div>
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
