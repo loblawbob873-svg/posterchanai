@@ -645,7 +645,10 @@
   // First-run setup: fresh install with no admin → offer to claim it (chicken/egg: nobody can
   // grant AI access until an admin exists). Server re-checks + locks once any admin npub exists.
   async function maybeClaimAdmin(){
-    if(!CFG.admin_unclaimed || IS_ADMIN || !ME) return;
+    // Only after a REAL login: the guest sentinel is a truthy ME with an empty pubkey, so without the
+    // GUEST/pubkey guard this fired on page load before login and then claim-admin'd with no key →
+    // "setup failed". (startApp() runs for guests too, and schedules this when admin_unclaimed.)
+    if(!CFG.admin_unclaimed || IS_ADMIN || !ME || GUEST || !ME.pubkey) return;
     if(!confirm('This instance has no admin yet.\n\nBecome the admin? You\'ll be able to grant AI/Blossom access to users and manage settings.')) return;
     try{
       const auth=await sign(27235,'claim-admin',[['p',ME.pubkey]]);
