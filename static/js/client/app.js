@@ -743,18 +743,23 @@
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
+    // Per-user data load (mutes/follows/pins/bookmarks/profile + notification & deletion subs).
+    // CRITICAL: onReady fires only ONCE per page load. The page connects to the relay while you're
+    // still a GUEST (to show the public feed), so onReady fires THEN — with GUEST=true, which skips
+    // this. When you log in WITHOUT a reload, startApp() runs again but the relay is already connected,
+    // so onReady never re-fires → this never ran for the logged-in user → empty mutes/follows/notifs
+    // until a manual refresh (which loads already-authed). So we ALSO call hydrateUser() directly after
+    // connectRelays() when the socket is already open (see below). _hydrated guards against double-run.
+    let _hydrated = false;
+    const hydrateUser = ()=>{
+      if(GUEST || _hydrated) return; _hydrated = true;
+      Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
+        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+      watchNotifications(); watchDeletions();
+      setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
+    };
     Relay.onReady = ()=>{
-      if(!GUEST){   // ME-specific data — a guest has none of it
-        // Hydrate per-user data, THEN re-render once it's ALL in. These fire the instant the relay
-        // socket opens, racing the first view paint — so mutes/follows/bookmarks/pins could land
-        // AFTER the initial render and only appear on a manual refresh (the reported "mutes/
-        // notifications missing until I refresh"). The per-fetch re-renders raced too; one
-        // settle-then-render applies everything without the refresh.
-        Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-          .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
-        watchNotifications(); watchDeletions();
-        setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
-      }
+      hydrateUser();
       setTimeout(loadRightbar, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
@@ -770,6 +775,10 @@
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
     };
     connectRelays();
+    // Guest→login WITHOUT a page reload: the relay is already connected from guest browsing, so the
+    // once-only onReady won't fire again — run the per-user hydration now. (On a fresh/refresh load the
+    // socket isn't open yet here, _ready is false, and onReady will fire it on connect. _hydrated dedupes.)
+    if(!GUEST && Relay._ready) hydrateUser();
     renderMe();
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
     // profile/note); otherwise land on the global feed immediately.
