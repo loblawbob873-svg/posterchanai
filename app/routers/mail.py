@@ -14,7 +14,8 @@ from app.auth import get_current_user
 from app.models import User
 from app.services.mail_service import (get_attachment, get_user_mail_accounts, sanitize_filename,
                                        send_email, reply_to_message, forward_message,
-                                       archive_message, delete_message)
+                                       archive_message, delete_message, move_message,
+                                       list_special_folders as _list_special_folders)
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
 
 logger = logging.getLogger(__name__)
@@ -195,12 +196,17 @@ def _seckey(db, user):
 
 
 def _resolve_account(db, user, hint: str):
-    """Match an account by substring (or the first account when hint is blank)."""
+    """Match an account: EXACT email first (so 'a@x' can't resolve to 'aa@x'), then substring, then
+    the first account when hint is blank."""
     accts = get_user_mail_accounts(user.id, db)
     if not hint:
         return accts[0] if accts else None
+    hl = hint.lower()
     for a in accts:
-        if hint.lower() in a.email.lower():
+        if a.email.lower() == hl:
+            return a
+    for a in accts:
+        if hl in a.email.lower():
             return a
     return None
 
@@ -237,8 +243,10 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
 async def mail_messages(account: str = "", folder: str = "INBOX",
                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     sk = _seckey(db, current_user)
-    if account == "__all":   # unified view: this folder across EVERY account (each summary carries its own account)
-        msgs = [m for m in await mail_store.list_messages(sk, None, None) if m.get("folder") == folder]
+    if account == "__all":   # unified view: this logical folder across EVERY account (real folder
+        # names differ per account, so match the logical tag — or the local 'Drafts' folder).
+        msgs = [m for m in await mail_store.list_messages(sk, None, None)
+                if m.get("logical") == folder or m.get("folder") == folder]
         return {"messages": [_summary(m) for m in msgs], "account": "__all"}
     acc = _resolve_account(db, current_user, account)
     if not acc:
@@ -262,6 +270,12 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
         if body:
             msg["body_text"] = body.get("body_text", "")
             msg["body_html"] = body.get("body_html", "")
+    if msg.get("is_draft"):     # draft attachments offloaded to Blossom → rehydrate to b64 for the composer
+        for a in (msg.get("attachments") or []):
+            if a.get("sha256") and not a.get("b64"):
+                data, _ = await mail_sync.load_attachment(db, a)
+                if data is not None:
+                    a["b64"] = base64.b64encode(data).decode()
     if not (msg.get("flags") or {}).get("read"):     # opening marks it read
         await mail_store.set_flags(sk, acc.email, folder, uid, read=True)
         msg.setdefault("flags", {})["read"] = True
@@ -299,10 +313,19 @@ async def mail_delete(request: Request, db: Session = Depends(get_db), current_u
         raise HTTPException(status_code=404, detail="Account not found")
     folder, uid = d.get("folder", "INBOX"), d.get("uid")
     if folder != "Drafts":   # Drafts are local-only (never on IMAP) — skip the round-trip
-        try:   # IMAP delete is best-effort; the mailbox doc removal is what the GUI reflects
-            await _asyncio.to_thread(delete_message, current_user.id, db, acc.email, uid, folder)
+        moved = False
+        try:   # prefer MOVE to Trash (recoverable) over a permanent expunge
+            meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
+            trash = meta.get("trash")
+            if trash and trash != folder:
+                moved = await _asyncio.to_thread(move_message, current_user.id, db, acc.email, uid, folder, trash)
         except Exception as e:
-            logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
+            logger.debug("[mail] trash move failed (%s): %s", uid, e)
+        if not moved:   # no Trash folder / already in Trash → fall back to expunge
+            try:
+                await _asyncio.to_thread(delete_message, current_user.id, db, acc.email, uid, folder)
+            except Exception as e:
+                logger.debug("[mail] IMAP delete failed (%s): %s", uid, e)
     await mail_store.delete_message(_seckey(db, current_user), acc.email, folder, uid)
     return {"ok": True}
 
@@ -425,9 +448,6 @@ async def mail_save_draft(request: Request, db: Session = Depends(get_db), curre
     return {"ok": bool(ok), "uid": uid}
 
 
-from app.services.mail_service import list_special_folders as _list_special_folders
-
-
 @router.get("/folders")
 async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Account's REAL folders with friendly labels + special-use mapping (so 'Sent' points at the
@@ -480,3 +500,80 @@ async def mail_sync_folder(request: Request, db: Session = Depends(get_db), curr
     except Exception as e:
         logger.warning("[mail] sync-folder failed: %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+import re as _re
+
+
+def _normsubj(s: str) -> str:
+    return _re.sub(r'^\s*(re|fwd|fw)\s*:\s*', '', (s or '').strip(), flags=_re.I).strip().lower()
+
+
+def _idset(m: dict) -> set:
+    s = set()
+    for k in ("message_id", "in_reply_to"):
+        v = (m.get(k) or "").strip()
+        if v:
+            s.add(v)
+    for r in (m.get("references") or "").split():
+        r = r.strip()
+        if r:
+            s.add(r)
+    return s
+
+
+def _build_thread(seed: dict, allmsgs: list) -> list:
+    """Group a conversation: close the Message-ID/References/In-Reply-To reference graph, with a
+    normalized-subject fallback when there are no usable headers. Cross-folder. Oldest→newest."""
+    related = _idset(seed)
+    members = {seed.get("message_id") or f"uid:{seed.get('folder')}:{seed.get('uid')}": seed}
+    while True:
+        added = False
+        for m in allmsgs:
+            key = m.get("message_id") or f"uid:{m.get('folder')}:{m.get('uid')}"
+            if key in members:
+                continue
+            if _idset(m) & related:
+                members[key] = m
+                related |= _idset(m)
+                added = True
+        if not added:
+            break
+    msgs = list(members.values())
+    if len(msgs) <= 1:                                  # no header links → fall back to subject
+        ns = _normsubj(seed.get("subject", ""))
+        if ns:
+            by = {}
+            for m in allmsgs:
+                if _normsubj(m.get("subject", "")) == ns:
+                    by[(m.get("folder"), m.get("uid"))] = m
+            by[(seed.get("folder"), seed.get("uid"))] = seed
+            msgs = list(by.values())
+    msgs.sort(key=lambda m: m.get("ts", 0))
+    return msgs
+
+
+@router.get("/thread")
+async def mail_thread(account: str, uid: str, folder: str = "INBOX",
+                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The whole conversation for a message (across folders), bodies rehydrated."""
+    sk = _seckey(db, current_user)
+    if account == "__all":
+        allm = await mail_store.list_messages(sk, None, None)
+        seed = next((m for m in allm if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
+    else:
+        acc = _resolve_account(db, current_user, account)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Account not found")
+        seed = await mail_store.get_message(sk, acc.email, folder, uid)
+        allm = await mail_store.list_messages(sk, acc.email, None)
+    if not seed:
+        raise HTTPException(status_code=404, detail="Message not found")
+    thread = _build_thread(seed, allm)
+    for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
+        if m.get("body_ref"):
+            body = await mail_sync.load_body(db, m["body_ref"])
+            if body:
+                m["body_text"] = body.get("body_text", "")
+                m["body_html"] = body.get("body_html", "")
+    return {"messages": thread}

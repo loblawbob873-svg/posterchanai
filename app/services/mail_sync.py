@@ -12,6 +12,7 @@ path reuses it to re-attach the real bytes to an outgoing SMTP message — exact
 """
 import os
 import json
+import base64
 import logging
 from datetime import datetime, timezone
 
@@ -55,19 +56,33 @@ async def _store_attachment(db: Session, owner_pubkey: str, att) -> dict:
     }
 
 
-# NIP-44 caps encrypted plaintext at 65535 bytes; HTML emails routinely exceed that. Offload the
-# bodies to an encrypted Blossom blob below this size so any message stores as a (small) event.
-_DOC_MAX = 50000
+# NIP-44 caps encrypted plaintext at 65535 BYTES (not chars). Stay well under it (metadata + base64
+# padding overhead + headroom); offload the bodies — and any oversized inline attachment — to encrypted
+# Blossom blobs so any message/draft stores as a (small) event.
+_DOC_MAX = 48000
+
+
+def _doc_bytes(doc: dict) -> int:
+    try:
+        return len(json.dumps(doc).encode("utf-8"))   # NIP-44 limit is on UTF-8 BYTES
+    except Exception:
+        return _DOC_MAX + 1
+
+
+async def store_b64_attachment(db: Session, owner_pubkey: str, att: dict) -> dict:
+    """Encrypt a compose/draft attachment ({name,type,b64}) → Blossom; return a {sha256,key,iv} ref."""
+    raw = base64.b64decode(att.get("b64") or "")
+    ct, key, iv = _aes_encrypt(raw)
+    desc = await blossom_service.save_blob(db, owner_pubkey, ct, "application/octet-stream")
+    return {"name": att.get("name") or "attachment", "type": att.get("type") or "application/octet-stream",
+            "size": len(raw), "sha256": desc.get("sha256"), "key": key.hex(), "iv": iv.hex()}
 
 
 async def offload_body(db: Session, owner_pubkey: str, doc: dict) -> dict:
-    """If the serialized doc would blow the NIP-44 plaintext cap, move body_text/body_html into an
-    encrypted Blossom blob and keep just a `body_ref` + the inline `preview`. Idempotent-ish: a doc
-    that already fits is returned unchanged."""
-    try:
-        if len(json.dumps(doc)) <= _DOC_MAX:
-            return doc
-    except Exception:
+    """Keep the encrypted doc under the NIP-44 byte cap: move body_text/body_html (and, if still too
+    big, any inline b64 attachments — e.g. drafts) into encrypted Blossom blobs, leaving small refs +
+    the inline `preview`. A doc that already fits is returned unchanged."""
+    if _doc_bytes(doc) <= _DOC_MAX:
         return doc
     payload = json.dumps({"body_text": doc.get("body_text", ""), "body_html": doc.get("body_html", "")}).encode("utf-8")
     try:
@@ -79,7 +94,19 @@ async def offload_body(db: Session, owner_pubkey: str, doc: dict) -> dict:
     except Exception as e:
         logger.warning("[mail-sync] body offload failed (%s) — truncating to fit", e)
         doc["body_html"] = ""
-        doc["body_text"] = (doc.get("body_text", "") or "")[:40000]
+        doc["body_text"] = (doc.get("body_text", "") or "")[:30000]
+    # Still too big? Oversized inline attachments (drafts) — push them to Blossom too.
+    if _doc_bytes(doc) > _DOC_MAX and doc.get("attachments"):
+        out = []
+        for a in doc["attachments"]:
+            if a.get("b64"):
+                try:
+                    out.append(await store_b64_attachment(db, owner_pubkey, a))
+                    continue
+                except Exception as e:
+                    logger.warning("[mail-sync] draft attachment offload failed: %s", e)
+            out.append(a)
+        doc["attachments"] = out
     return doc
 
 
@@ -118,12 +145,24 @@ async def load_attachment(db: Session, ref: dict) -> tuple[bytes | None, str]:
 
 # --- message → doc -------------------------------------------------------------------------------
 
-def _to_doc(msg, att_refs: list) -> dict:
+def _logical_of(folder: str, meta: dict) -> str:
+    """Map a real folder name to a logical one (INBOX/Sent/Drafts/Trash/Spam/Archive) so the unified
+    'All inboxes' view can filter consistently across accounts whose real folder names differ."""
+    if (folder or "").upper() == "INBOX":
+        return "INBOX"
+    for key, name in (("sent", "Sent"), ("drafts", "Drafts"), ("trash", "Trash"), ("junk", "Spam"), ("archive", "Archive")):
+        if meta.get(key) == folder:
+            return name
+    return folder
+
+
+def _to_doc(msg, att_refs: list, logical: str = "") -> dict:
     """Map an EmailMessage (+ stored attachment refs) to the JSON we persist as the encrypted doc."""
     dt = msg.date if isinstance(msg.date, datetime) else None
     ts = int(dt.replace(tzinfo=dt.tzinfo or timezone.utc).timestamp()) if dt else 0
     return {
         "uid": str(msg.uid),
+        "logical": logical or "",
         "message_id": msg.message_id or "",
         "from": msg.sender or msg.sender_email or "",
         "from_email": msg.sender_email or "",
@@ -150,7 +189,7 @@ def _sync_limit() -> int:
         return 0
 
 
-async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account, folder: str, limit: int = 0) -> int:
+async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account, folder: str, limit: int = 0, logical: str = "") -> int:
     """INCREMENTAL mirror of one (account, folder): cheap UID SEARCH → diff against what's stored →
     FETCH only the NEW messages → encrypt attachments/large bodies to Blossom → store. limit>0 caps to
     the most-recent N new (0 = all). Returns count stored."""
@@ -182,7 +221,7 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
             except Exception as e:
                 logger.warning("[mail-sync] attachment store failed for %s: %s", m.uid, e)
         try:
-            doc = await offload_body(db, owner_pk, _to_doc(m, att_refs))
+            doc = await offload_body(db, owner_pk, _to_doc(m, att_refs, logical))
             if await mail_store.store_message(seckey, account.email, folder, doc):
                 stored += 1
         except Exception as e:
@@ -190,15 +229,15 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
     return stored
 
 
-def _account_folders(db, user, account) -> list:
-    """Every real IMAP folder for an account (skip Gmail's All-Mail to avoid mirroring the whole
-    mailbox twice). The GUI's logical 'Drafts' is local-only and never IMAP-synced."""
+def _account_meta(db, user, account) -> tuple:
+    """(folders, special-use meta) for an account. Skips Gmail's All-Mail to avoid mirroring the
+    whole mailbox twice. The GUI's logical 'Drafts' is local-only and never IMAP-synced."""
     try:
         meta = mail_service.list_special_folders(user.id, db, account.email)
         allf = [f for f in (meta.get("all") or []) if "all mail" not in f.lower()]
-        return allf or ["INBOX"]
+        return (allf or ["INBOX"], meta)
     except Exception:
-        return ["INBOX"]
+        return (["INBOX"], {})
 
 
 async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
@@ -211,7 +250,9 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
     seckey = nostr_store.user_storage_seckey(db, user)
     owner_pk = nostr_service.derive_pubkey(seckey)
     import asyncio
-    return await _sync_folder(db, user, seckey, owner_pk, acc, folder, await asyncio.to_thread(_sync_limit))
+    _, meta = await asyncio.to_thread(_account_meta, db, user, acc)
+    return await _sync_folder(db, user, seckey, owner_pk, acc, folder,
+                              await asyncio.to_thread(_sync_limit), _logical_of(folder, meta))
 
 
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:
@@ -226,10 +267,13 @@ async def sync_all(db: Session, user, folders: list | None = None) -> dict:
     limit = await asyncio.to_thread(_sync_limit)
     out = {}
     for acc in accounts:
-        flist = folders if folders is not None else await asyncio.to_thread(_account_folders, db, user, acc)
+        if folders is not None:
+            flist, meta = folders, {}
+        else:
+            flist, meta = await asyncio.to_thread(_account_meta, db, user, acc)
         total = 0
         for folder in flist:
-            total += await _sync_folder(db, user, seckey, owner_pk, acc, folder, limit)
+            total += await _sync_folder(db, user, seckey, owner_pk, acc, folder, limit, _logical_of(folder, meta))
         out[acc.email] = total
     if any(out.values()):
         logger.info("[mail-sync] %s: new mail %s", getattr(user, "username", "?"),

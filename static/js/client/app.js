@@ -1036,6 +1036,7 @@
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
     if(VIEW==='messages' && v!=='messages') dmActive=null;
+    if(v==='messages' && VIEW!=='messages') _msgTab='dm';   // clicking Messages defaults to DMs (not the last-used Email tab)
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -4896,6 +4897,25 @@
       : d.toLocaleDateString([], {month:'short', day:'numeric', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'}); }
   function _fileB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error);
     r.onload=()=>res(String(r.result).split(',',2)[1]||''); r.readAsDataURL(file); }); }
+  function _abB64(buf){ const u=new Uint8Array(buf); let s=''; const CH=0x8000; for(let i=0;i<u.length;i+=CH) s+=String.fromCharCode.apply(null, u.subarray(i,i+CH)); return btoa(s); }
+  // Attach an existing Blossom Drive file to an email: list the user's blobs (named via the Files
+  // index when known), fetch the chosen blob's bytes → base64 → hand back as a compose attachment.
+  async function _mailBlossomPicker(onPick){
+    const server=(CFG.blossom_url||mediaServer()||'').replace(/\/$/,'');
+    if(!server){ toast('Blossom not configured'); return; }
+    modal(`<h3>🌸 Attach from Blossom Drive</h3><div id="bp-list" class="bp-list"><div class="spinner"></div></div>`);
+    let list=null; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
+    const box=$('#bp-list'); if(!box) return;
+    if(!Array.isArray(list) || !list.length){ box.innerHTML='<div class="muted small">No Blossom files yet — upload some in Files first.</div>'; return; }
+    const nameOf=b=>{ try{ const f=FilesIdx&&FilesIdx.data&&FilesIdx.data.files&&FilesIdx.data.files[b.sha256]; if(f&&f.name) return f.name; }catch(_){}
+      const ext=(b.type||'').split('/')[1]||''; return (b.sha256||'file').slice(0,10)+(ext?'.'+ext:''); };
+    list.sort((a,b)=>(b.uploaded||b.size||0)-(a.uploaded||a.size||0));
+    box.innerHTML=list.map((b,i)=>`<button class="bp-item" data-i="${i}">📄 ${enc(nameOf(b))} <span class="muted small">${enc((b.type||'').split('/')[0]||'file')} · ${_fmtBytes(b.size||0)}</span></button>`).join('');
+    $$('.bp-item',box).forEach(btn=> btn.onclick=async()=>{ const b=list[+btn.dataset.i]; btn.disabled=true; const t=btn.textContent; btn.textContent='Loading…';
+      try{ const r=await fetch(server+'/'+b.sha256); if(!r.ok) throw 0; const buf=await r.arrayBuffer();
+        onPick({name:nameOf(b), type:b.type||'application/octet-stream', b64:_abB64(buf)}); closeModal(); toast('attached'); }
+      catch(_){ toast('could not load that file'); btn.disabled=false; btn.textContent=t; } });
+  }
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
@@ -5016,15 +5036,32 @@
       }
       const pane=$('#mail-read', this.root); if(!pane) return; pane.innerHTML='<div class="spinner"></div>'; pane.classList.add('has-open');
       if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
-      const atts=(msg.attachments||[]).map((a,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(acct)}/${encodeURIComponent(folder)}/${encodeURIComponent(uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(a.name||'attachment')} <span class="muted small">${_fmtBytes(a.size||0)}</span></a>`).join('');
-      // Email HTML is untrusted → render in a sandboxed iframe (no scripts/forms/popups); else plain text.
-      const bodyHtml = msg.body_html
-        ? `<iframe class="mail-html" sandbox="allow-same-origin" srcdoc="${enc(msg.body_html)}"></iframe>`
-        : `<div class="mail-text">${enc(msg.body_text||'').replace(/\n/g,'<br>')}</div>`;
+      // Render the message immediately, then upgrade to the full conversation when /thread returns
+      // (threading scans the whole mailbox, so don't block the read on it).
+      this._renderThread(pane, [msg], folder, acct, uid);
+      this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
+        .then(t=>{ if(t && t.messages && t.messages.length>1 && this.openUid===uid && pane.isConnected)
+          this._renderThread(pane, t.messages, folder, acct, uid); })
+        .catch(()=>{});
+    },
+    _msgBlock(m, folder, acct, expanded){
+      const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
+      // Untrusted email HTML → fully sandboxed iframe (no scripts/forms/same-origin); else plain text.
+      const body = m.body_html
+        ? `<iframe class="mail-html" sandbox srcdoc="${enc(m.body_html)}"></iframe>`
+        : `<div class="mail-text">${enc(m.body_text||'').replace(/\n/g,'<br>')}</div>`;
+      return `<div class="mail-msg${expanded?' open':''}">
+        <div class="mail-msg-hd"><div class="mm-who"><b>${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
+        <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
+      </div>`;
+    },
+    _renderThread(pane, thread, folder, acct, seedUid){
+      const latest=thread[thread.length-1];
+      // actions target the message the user actually OPENED (the seed), not just the newest in the thread
+      const target=thread.find(m=>String(m.uid)===String(seedUid)) || latest;
       pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
-          <div class="mr-meta"><div class="mr-subj">${enc(msg.subject||'(no subject)')}</div>
-            <div class="mr-from"><b>${enc(msg.from||'')}</b><span class="muted small"> · ${enc(_mailDate(msg.ts))}</span></div>
-            <div class="muted small mr-to">To: ${enc(msg.to||'')}</div></div></div>
+          <div class="mr-meta"><div class="mr-subj">${enc(latest.subject||'(no subject)')}</div>
+            ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`:''}</div></div>
         <div class="mail-actions">
           <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
           <button class="btn small" data-act="replyall">↩↩ Reply all</button>
@@ -5033,10 +5070,10 @@
           <button class="btn small" data-act="archive">🗄 Archive</button>
           <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
         </div>
-        ${atts?`<div class="mail-atts">${atts}</div>`:''}
-        <div class="mail-body">${bodyHtml}</div>`;
+        <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
-      $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, msg, folder, acct));
+      $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=()=> hd.parentElement.classList.toggle('open'));   // collapse/expand
+      $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
     },
     async action(act, msg, folder, acct){
       acct=acct||this.acct; const uid=msg.uid;
@@ -5069,11 +5106,12 @@
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" rows="9" placeholder="Write your message…">${enc(body)}</textarea>
-        <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
+        <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
         <div class="row"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`);
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
       $('#cm-attach').onclick=()=>$('#cm-file').click();
+      { const bb=$('#cm-blossom'); if(bb) bb.onclick=()=>_mailBlossomPicker(a=>{ atts.push(a); drawAtts(); }); }
       $('#cm-file').onchange=async ev=>{ for(const f of [...ev.target.files]){ try{ atts.push({name:f.name,type:f.type||'application/octet-stream',b64:await _fileB64(f)}); }catch(_){} } ev.target.value=''; drawAtts(); };
       const gather=()=>({to:$('#cm-to').value.trim(), cc:$('#cm-cc').value.trim(), subject:$('#cm-subj').value.trim(), body:$('#cm-body').value, attachments:atts});
       const sendAcct=()=>{ const s=$('#cm-from'); return (s&&s.value)||fromAcct; };
