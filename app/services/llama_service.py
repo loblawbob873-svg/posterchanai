@@ -486,6 +486,18 @@ class LlamaService:
         # CPU optimization settings
         self.cpu_mode = get_setting("llm_cpu_mode", "false").lower() == "true"
         self.n_batch = int(get_setting("llm_n_batch", "2048"))
+        # Intel Arc / SYCL guard: a large prompt-eval batch blows the level_zero HOST-memory pool
+        # during the quantize step (UR_RESULT_ERROR_OUT_OF_HOST_MEMORY → the whole process crashes on
+        # big agentic/opencode prompts), even though VRAM fits fine — the autofit budget is VRAM-only
+        # and can't see that host pool. 1024 was fatal, 256 is proven stable, so cap SYCL to 256 (a
+        # lower per-node llm_n_batch is still honored). CUDA/nas (no torch.xpu) is unaffected.
+        try:
+            import torch as _torch
+            if hasattr(_torch, "xpu") and _torch.xpu.is_available() and self.n_batch > 256:
+                logger.info(f"  [SYCL] capping n_batch {self.n_batch}->256 (level_zero host-mem OOM guard)")
+                self.n_batch = 256
+        except Exception:
+            pass
         self.use_mmap = get_setting("llm_use_mmap", "true").lower() == "true"
         self.use_mlock = get_setting("llm_use_mlock", "true").lower() == "true"
         self.flash_attn = get_setting("llm_flash_attn", "false").lower() == "true"

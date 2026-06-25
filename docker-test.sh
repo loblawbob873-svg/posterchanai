@@ -4,6 +4,14 @@
 # All volumes and containers will be deleted 
 # so it builds clean for testing
 
+if [ $# -eq 0 ] || [ -z "$1" ]; then
+    clear
+    echo "Error: No profile specified."
+    echo "Usage: $0 <profile>"
+    echo
+    exit 1
+fi
+
 PROFILE=$1
 
 clear
