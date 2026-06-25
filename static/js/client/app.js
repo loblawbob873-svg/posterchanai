@@ -5544,13 +5544,18 @@
   // needed) until the new assistant message lands — covers slow effects that finish after the drop —
   // then re-render it (which also reopens the WS). Bounded so it can't poll forever.
   function aiRecover(id){
+    if(_ai.recovering) return;   // one poller at a time — onclose AND the stall-watchdog can both call this
+    _ai.recovering=true;
     const had = $('#ai-msgs') ? $('#ai-msgs').querySelectorAll('.ai-msg.assistant').length : 0;
     let tries=0;
     (async function poll(){
-      if(!_ai.awaiting || VIEW!=='ai' || _ai.convId!==id || ++tries>20) return;   // done / left / gave up (~60s)
+      // ~5 min ceiling: a slow effect/video/music render can finish minutes after the socket drops. The
+      // old 60s bound expired before the file landed, leaving the reply unseen until a manual refresh
+      // (the recurring "clay never showed" report). Effects are the slowest path, so size for them.
+      if(!_ai.awaiting || VIEW!=='ai' || _ai.convId!==id || ++tries>100){ _ai.recovering=false; return; }
       let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
       const got=((conv&&conv.messages)||[]).filter(m=>m.role==='assistant').length;
-      if(got>had){ _ai.awaiting=false; if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id); return; }
+      if(got>had){ _ai.awaiting=false; _ai.recovering=false; if(VIEW==='ai' && _ai.convId===id) aiOpenConversation(id); return; }
       setTimeout(poll, 3000);
     })();
   }
@@ -5646,6 +5651,10 @@
     // double-geni-image). Skip only those (`persisted`). Non-persisted replays — e.g. interim agent
     // progress chunks the server never saves — still render, since the DB reload won't have them.
     if(d.pending && d.persisted){ if(d.type==='response') _ai.awaiting=false; return; }
+    // Any live frame means the socket is healthy → push the stall-watchdog out so an actively-streaming
+    // (or progress-reporting) reply never trips the recovery poll.
+    if(_ai.awaiting && _ai.recoverWatch){ clearTimeout(_ai.recoverWatch); const _cid=_ai.convId;
+      _ai.recoverWatch=setTimeout(()=>{ if(_ai.awaiting && VIEW==='ai' && _ai.convId===_cid) aiRecover(_cid); }, 30000); }
     if(d.type==='stream'){
       const c=(d.data&&d.data.content)??d.content??''; if(typeof c!=='string') return;
       if(!_ai.streamEl){ _ai.streamBuf=''; _ai.streamEl=aiAddMessage('assistant',''); }
@@ -5929,7 +5938,14 @@
     const docs=att.filter(a=>a.kind==='doc').map(a=>({base64:a.b64, filename:a.name, type:a.ext})); if(docs.length) payload.documents=docs;
     const vids=att.filter(a=>a.kind==='video').map(a=>({base64:a.b64, filename:a.name}));      if(vids.length) payload.videos=vids;   // compress/clip/extractaudio operate on the video bytes
     const txts=att.filter(a=>a.kind==='text').map(a=>({content:a.text, filename:a.name}));     if(txts.length) payload.files=txts;
+    const cid=_ai.convId;
     _ai.awaiting=true;   // a reply is now pending — if the WS drops before it lands, aiRecover() polls it back
+    // Safety net for a socket that STALLS without ever firing onclose (a proxy silently stops forwarding,
+    // or the result frame is dropped) — onclose-only recovery never fires there. If awaiting isn't
+    // resolved within 30s, start the recovery poll anyway. Live stream chunks reset it (see aiHandle), so
+    // a long but healthy streamed answer won't trip it; an effect (no streaming) just polls until it lands.
+    clearTimeout(_ai.recoverWatch);
+    _ai.recoverWatch=setTimeout(()=>{ if(_ai.awaiting && VIEW==='ai' && _ai.convId===cid) aiRecover(cid); }, 30000);
     aiWsSend(payload);   // sends now if open, else queues + (re)connects and flushes on open
     ta.value=''; ta.style.height='auto';
   }
