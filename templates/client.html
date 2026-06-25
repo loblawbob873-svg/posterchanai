@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0b0118">
+    <!-- Installed-PWA / iOS standalone hints. `capable` lets iOS "Add to Home Screen" launch
+         chrome-less (matches the manifest's display:standalone). status-bar-style stays `default`
+         (opaque, system-coloured) ON PURPOSE: the app ships LIGHT themes too (Professional is the
+         default), and `black-translucent` forces light status-bar text that would vanish over a
+         light theme's top edge. With `default` the web view sits below the bar, so
+         safe-area-inset-top collapses to ~0 and the existing inset padding doesn't double up. -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="PosterChan">
     <!-- Apply the theme BEFORE first paint (no flash). Default = Professional (clean, broad appeal)
          for the login page + a fresh visitor; a saved choice (incl. Cyberpunk, the bare :root) wins.
          Cached locally on every theme change/settings load; the Nostr-stored value re-syncs on login. -->

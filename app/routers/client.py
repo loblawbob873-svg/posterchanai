@@ -680,6 +680,24 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
             {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
             {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
         ],
+        # Long-press the home-screen icon → jump straight to a view / the composer. The SPA reads
+        # these query params on boot (see _consumeLaunchParams in app.js) and cleans the URL.
+        "shortcuts": [
+            {"name": "New post", "short_name": "Post", "url": "/client?compose=1",
+             "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
+            {"name": "Notifications", "short_name": "Notifs", "url": "/client?view=notifications",
+             "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
+            {"name": "Messages", "short_name": "Messages", "url": "/client?view=messages",
+             "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
+        ],
+        # Web Share Target (GET): share a link/text from any app → opens the composer pre-filled.
+        # GET keeps it backend-free (the shared text rides in the query string the SPA consumes);
+        # file/image sharing would need a POST handler in the service worker — deferred.
+        "share_target": {
+            "action": "/client",
+            "method": "GET",
+            "params": {"title": "title", "text": "text", "url": "url"},
+        },
     })
 
 

@@ -463,6 +463,30 @@
     switchView('global');   // unrecognised/failed → default feed
   }
 
+  // PWA launch params: the home-screen shortcuts (?compose=1 / ?view=<name>) and the Web Share
+  // Target (?title=&text=&url=) arrive as a query string on /client. Consume them once on boot, then
+  // strip the query (replaceState) so a refresh/restart doesn't replay — e.g. re-pop the composer.
+  // Returns true if it took over the initial view so the default switchView('global') is skipped.
+  function _consumeLaunchParams(){
+    let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ return false; }
+    if(![...sp.keys()].length) return false;
+    const view = sp.get('view'), wantCompose = sp.has('compose');
+    const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
+    const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
+    // Share target / compose shortcut → open the composer pre-filled (de-duped: a shared URL is
+    // often ALSO present in text, so keep unique lines only).
+    if(wantCompose || shared.length){
+      _clean();
+      const seen=new Set(), lines=[]; shared.forEach(s=>{ if(!seen.has(s)){ seen.add(s); lines.push(s); } });
+      switchView('home');                 // a sane backdrop behind the modal
+      compose({ text: lines.join('\n\n') });
+      return true;
+    }
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','settings']);
+    if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
+    return false;
+  }
+
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
     updateUserCount(); setInterval(()=>updateUserCount(true), 15000);   // WoT size: boot+login only; online: every 15s (onlineOnly → doesn't touch the frozen users count)
@@ -721,6 +745,7 @@
     { const mt=$('#tl-media'); if(mt) mt.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);
         mt.classList.toggle('active', _tlMedia); if(VIEW==='home'||VIEW==='global') _drawTimeline(false); }; }
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
+    bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
     document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden); });
@@ -783,7 +808,7 @@
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
     // profile/note); otherwise land on the global feed immediately.
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
-    else switchView('global');   // land on Nostrverse (global feed) by default
+    else if(!_consumeLaunchParams()) switchView('global');   // PWA shortcut/share, else land on Nostrverse (global feed)
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
@@ -1236,6 +1261,59 @@
     else if(VIEW==='profile') loadOlderProfile();
     else if(VIEW==='search') loadOlderSearch();
     else if(VIEW==='hashtag') loadOlderHashtag();
+  }
+  // ---------- mobile touch gestures (pull-to-refresh + swipe between primary tabs) ----------
+  // Both ride ONE set of touch listeners on #feed; the first significant move locks the axis so a
+  // vertical scroll never triggers a swipe and vice-versa. Deliberately conservative: pull only
+  // engages at the very top of a list-style view, swipe only over plain content (not media/code/
+  // games/inputs) and only between the bottom-nav's four primary feeds.
+  let _gesturesBound = false;
+  function bindMobileGestures(){
+    const feed = $('#feed'); if(!feed || _gesturesBound) return; _gesturesBound = true;
+    const SWIPE_VIEWS = ['home','global','notifications','messages'];   // mirrors the mobile bottom nav order
+    const REFRESHABLE = new Set(['home','global','notifications','messages','bookmarks','drafts','articles','market','streams','communities']);
+    const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
+    let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, ind=null;
+    // Don't hijack horizontal drags that belong to scrollable/interactive children.
+    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.scrollx,.dm-wrap'));
+    const indicator = ()=>{ if(!ind || !ind.isConnected){ ind=document.createElement('div'); ind.className='ptr-ind'; ind.textContent='↻'; document.body.appendChild(ind); } return ind; };
+    const resetInd = ()=>{ if(ind){ ind.style.opacity=''; ind.style.transform=''; ind.classList.remove('ready','spin'); } };
+    feed.addEventListener('touchstart', e=>{
+      if(e.touches.length!==1){ active=false; return; }
+      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; axis=''; pulling=false; swiping=false; active=true; startTop=feed.scrollTop;
+    }, {passive:true});
+    feed.addEventListener('touchmove', e=>{
+      if(!active || e.touches.length!==1) return;
+      const t=e.touches[0], dx=t.clientX-sx, dy=t.clientY-sy;
+      if(!axis){
+        if(Math.abs(dx)<8 && Math.abs(dy)<8) return;
+        if(Math.abs(dx) > Math.abs(dy)*1.3){                     // horizontal → swipe-nav candidate
+          if(window.innerWidth<=820 && !noSwipe(e.target)){ axis='x'; swiping=true; } else { active=false; }
+        } else if(dy>0 && startTop<=0 && REFRESHABLE.has(VIEW)){  // pull-down at the top → refresh
+          axis='y'; pulling=true;
+        } else { active=false; }                                 // ordinary vertical scroll — hands off
+        return;
+      }
+      if(axis==='y' && pulling){
+        const pull=Math.min(PTR_MAX, dy*0.5);
+        if(pull>0){ e.preventDefault(); const i=indicator();
+          i.style.opacity=Math.min(1, pull/PTR_TRIGGER); i.style.transform=`translateX(-50%) translateY(${pull}px) rotate(${pull*3}deg)`;
+          i.classList.toggle('ready', pull>=PTR_TRIGGER); }
+      }
+    }, {passive:false});
+    feed.addEventListener('touchend', e=>{
+      if(!active){ return; } active=false;
+      if(axis==='y' && pulling){
+        const ready = ind && ind.classList.contains('ready');
+        if(ready){ ind.classList.add('spin'); ind.style.opacity='1'; ind.style.transform='translateX(-50%) translateY(8px)';
+          try{ renderView(true); }catch(_){} setTimeout(resetInd, 600); }
+        else resetInd();
+      } else if(axis==='x' && swiping){
+        const dx=(e.changedTouches[0].clientX)-sx;
+        if(Math.abs(dx)>=SWIPE_MIN){ const cur=SWIPE_VIEWS.indexOf(VIEW);
+          if(cur>=0){ const next=cur+(dx<0?1:-1); if(next>=0 && next<SWIPE_VIEWS.length) switchView(SWIPE_VIEWS[next]); } }
+      }
+    }, {passive:true});
   }
   function loadSentinel(feed){
     let s=feed.querySelector('.load-sentinel'); if(s) return s;
