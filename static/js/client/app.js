@@ -2896,13 +2896,33 @@
   // server-side from the note's own fields — reliable + instance-branded, no live-SPA capture/timing.
   // The card PNG is uploaded to Blossom and its link copied (image-on-clipboard is unreliable after a
   // multi-second async op; a text link copies fine).
+  // Clean plain text for the screenshot card: a flat card can't render Nostr embeds, so resolve
+  // nostr: mentions to @names and replace quote/embed refs (nevent/note) with the quoted post's
+  // text when we have it cached (else strip the raw bech32 — the gibberish token looked broken).
+  function _cardText(ev){
+    let t=(mediaParts(ev.content).text||ev.content||'');
+    t=t.replace(/nostr:(npub1[0-9a-z]+|nprofile1[0-9a-z]+)/gi,(m,b)=>{
+      try{ const d=NT().nip19.decode(b); const pk=d.type==='npub'?d.data:(d.data&&d.data.pubkey);
+        if(pk){ const pr=profOf(pk); const nm=pr&&(pr.name||pr.display_name); return '@'+(nm||(NT().nip19.npubEncode(pk).slice(4,12)+'…')); } }catch(_){}
+      return '';
+    });
+    t=t.replace(/\s*nostr:(nevent1[0-9a-z]+|note1[0-9a-z]+)/gi,(m,b)=>{
+      try{ const d=NT().nip19.decode(b); const eid=d.type==='note'?d.data:(d.data&&d.data.id); const o=eid&&Store.get(eid);
+        if(o){ const op=profOf(o.pubkey); const onm=(op&&(op.name||op.display_name))||'anon';
+          const ot=(mediaParts(o.content).text||o.content||'').replace(/nostr:[0-9a-z]+/gi,'').replace(/\s+/g,' ').trim().slice(0,160);
+          return `\n\n↩ ${onm}: “${ot}”`; } }catch(_){}
+      return '';
+    });
+    t=t.replace(/\s*nostr:naddr1[0-9a-z]+/gi,'');
+    return t.replace(/\n{3,}/g,'\n\n').trim();
+  }
   async function screenshotPost(id){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     const p=profOf(ev.pubkey);
     const name=p.name||p.display_name||'';
     const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12)+'…');
-    const text=(mediaParts(ev.content).text||ev.content||'').trim();
+    const text=_cardText(ev);
     let timestamp=''; try{ timestamp=new Date(ev.created_at*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}); }catch(_){}
     toast('📸 rendering…');
     try{

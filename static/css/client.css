@@ -778,8 +778,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note-preview a.mention{color:var(--cyan)}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
-.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px;justify-content:space-between}
-.cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px;justify-content:center}   /* center the tool-button row to match the Draft/Post row below (was space-between → left-stuck the lone .cmp-left) */
+.cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center}
 .cmp-right{margin-left:auto}
 /* Draft + Post on their own centered row beneath the tool buttons */
 /* Draft/Post row. Centering is set INLINE in the composer markup (cache-proof, and zoom-immune since
