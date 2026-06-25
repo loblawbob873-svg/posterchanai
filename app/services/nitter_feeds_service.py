@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; posterchanai-nitter/1.0)"}
 _MAX_DL = 20_000_000          # cap media/avatar download size to bound memory
 _MAX_SEEN = 200               # guids retained per feed
-_MAX_NEW_PER_FEED = 5         # don't flood a chat if a feed jumps ahead
+_MAX_NEW_PER_FEED = 3         # don't flood a chat if a feed jumps ahead (busy feeds post constantly)
 # Don't FORWARD tweets older than this even if they're unseen — a nitter instance flip or a backlog
 # served after downtime can surface old tweets that scrolled out of the cursor window; without an age
 # gate they'd all get re-sent ("spamming old posts"). They're still marked seen, just not forwarded.
@@ -143,9 +143,19 @@ def _fmt_pubdate(pubdate: str) -> str:
 
 
 def _pubdate_epoch(pubdate: str) -> float:
-    """pubDate → epoch seconds, or 0.0 if unparseable (treated as 'recent' so it's never wrongly dropped)."""
+    """pubDate → epoch seconds, or 0.0 if unparseable. Handles RFC-822 (standard nitter <pubDate>) AND
+    ISO-8601 (some instances emit '2025-06-24T18:30:00Z'), so a parseable date is almost always found —
+    important because the forward filter now requires a valid recent date (see _poll_user)."""
+    pubdate = (pubdate or "").strip()
+    if not pubdate:
+        return 0.0
     try:
         return parsedate_to_datetime(pubdate).timestamp()
+    except Exception:
+        pass
+    try:
+        import datetime as _dt
+        return _dt.datetime.fromisoformat(pubdate.replace("Z", "+00:00")).timestamp()
     except Exception:
         return 0.0
 
@@ -342,7 +352,11 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> N
             # backlog) is skipped here but still falls through to the seen-cursor update below, so it's
             # silenced for good instead of re-sent every poll. Unparseable date (epoch 0) → treat as recent.
             _now = time.time()
-            fresh_items = [it for it in new_items if not it.get("epoch") or (_now - it["epoch"]) <= _MAX_AGE_SEC]
+            # STRICT: a tweet only forwards if we can CONFIRM it's recent. A missing/unparseable date
+            # (epoch 0) is treated as NOT recent, so undated or old backlog can never slip through — the
+            # old default ("no epoch ⇒ assume recent") was exactly how the old-post spam got through.
+            # Non-forwarded items still fall through to the seen-cursor below, so they're silenced.
+            fresh_items = [it for it in new_items if it.get("epoch") and (_now - it["epoch"]) <= _MAX_AGE_SEC]
             # Oldest-first so chat order is chronological; cap to avoid flooding.
             unrendered = set()
             for it in reversed(fresh_items[:_MAX_NEW_PER_FEED]):
