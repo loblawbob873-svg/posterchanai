@@ -55,11 +55,31 @@ setup_python_env() {
         if command -v "$cand" >/dev/null 2>&1; then PYBIN="$cand"; break; fi
     done
 
+    # Several deps (coincurve, libtorrent, torch-XPU) ship prebuilt wheels only up to cp313.
+    # On Python 3.14+ pip is forced to build from source — coincurve then dies on the cffi
+    # "Expected exactly one LICENSE file" build bug. A bare `python3` that has drifted to 3.14
+    # (e.g. nas.lan) must NOT be used; if 3.13/3.12 wasn't found above, refuse rather than ship
+    # a broken tree.
+    if ! "$PYBIN" -c 'import sys; sys.exit(0 if sys.version_info[:2] <= (3, 13) else 1)' 2>/dev/null; then
+        print_error "No supported Python found (need 3.13 or 3.12; $($PYBIN --version 2>&1) lacks prebuilt wheels for coincurve/libtorrent/torch-XPU)."
+        print_error "Install python3.13 (or 3.12) and re-run, e.g.:  sudo emerge -av dev-lang/python:3.13   # or your distro's python3.13 package"
+        return 1
+    fi
+
+    # If a venv already exists, make sure it was built with a supported Python — a stale 3.14
+    # venv reused here is the actual cause of the coincurve/cffi build failure. Recreate it.
+    if [ -d "$VENV_NAME" ] && [ -x "$VENV_NAME/bin/python" ]; then
+        if ! "$VENV_NAME/bin/python" -c 'import sys; sys.exit(0 if sys.version_info[:2] <= (3, 13) else 1)' 2>/dev/null; then
+            print_warning "Existing $VENV_NAME uses $($VENV_NAME/bin/python --version 2>&1) (unsupported — no prebuilt wheels). Recreating with $($PYBIN --version 2>&1)."
+            rm -rf "$VENV_NAME"
+        fi
+    fi
+
     if [ ! -d "$VENV_NAME" ]; then
         "$PYBIN" -m venv "$VENV_NAME"
         print_success "Created virtual environment: $VENV_NAME ($($PYBIN --version 2>&1))"
     else
-        print_success "Virtual environment exists: $VENV_NAME"
+        print_success "Virtual environment exists: $VENV_NAME ($($VENV_NAME/bin/python --version 2>&1))"
     fi
 
     source "$VENV_NAME/bin/activate"
