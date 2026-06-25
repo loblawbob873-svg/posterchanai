@@ -1968,7 +1968,7 @@
     // are writable now, so show the reply/react affordances in both.
     const canWrite = VIEW==='channel' || VIEW==='group';
     const acts = canWrite
-      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply">↩</button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">＋</button>`
+      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply">↩</button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">😀</button>`
       : '';
     // reply context: when this message replies to one already loaded, show a tappable quote line.
     let rq=''; const par=_chatReplyParent(e);
@@ -2863,12 +2863,12 @@
       if(a==='block') return doBlock(pk);
     });
   }
-  // 📸 Screenshot: full-page capture of the post's web URL via the node's headless browser, copied to
-  // the clipboard (falls back to opening the image where the clipboard image API is unavailable, e.g.
-  // most mobile browsers / non-secure contexts).
+  // 📸 Screenshot: full-page capture of the post, UPLOADED to Blossom — we get back a public link
+  // (copying an image to the clipboard is unreliable: the capture takes seconds and outlives the
+  // click's user-activation, so the browser blocks the write). The link is text → copies reliably.
+  // We capture njump.me's public render of the note because our own /client is a login-gated SPA
+  // (a headless browser there only sees the auth screen).
   async function screenshotPost(id){
-    // Capture a PUBLIC, server-rendered view of the note — our own /client is a login-gated SPA, so a
-    // headless browser would just photograph the auth screen. njump.me renders any note without login.
     let nevent; try{ nevent=NT().nip19.neventEncode({id}); }catch(_){ try{ nevent=NT().nip19.noteEncode(id); }catch(__){ toast('bad post id'); return; } }
     const url='https://njump.me/'+nevent;
     toast('📸 capturing…');
@@ -2876,16 +2876,23 @@
       const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.image){ toast('screenshot failed: '+(j.error||('http '+r.status))); return; }
-      const blob=await (await fetch('data:image/png;base64,'+j.image)).blob();
-      try{
-        if(!navigator.clipboard || !window.ClipboardItem) throw new Error('no clipboard image support');
-        await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
-        toast('📸 screenshot copied to clipboard');
-      }catch(_){
-        const u=URL.createObjectURL(blob); window.open(u,'_blank'); setTimeout(()=>URL.revokeObjectURL(u), 60000);
-        toast('📸 screenshot ready (couldn’t copy — opened instead)');
-      }
-    }catch(e){ toast('screenshot failed: '+((e&&e.message)||e)); }
+      const bin=Uint8Array.from(atob(j.image), c=>c.charCodeAt(0));
+      const file=new File([bin], 'post-'+nevent.slice(0,12)+'.png', { type:'image/png' });
+      toast('📤 uploading…');
+      const link=await uploadBlob(file);
+      try{ await navigator.clipboard.writeText(link); }catch(_){}
+      modal(`<h3>📸 Screenshot</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
+        `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
+        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px"><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-ghost small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-ghost small" id="ss-close">Close</button></div>`,
+        root=>{
+          const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
+          const cl=root.querySelector('#ss-close'); if(cl) cl.onclick=closeModal;
+        });
+      toast('📸 uploaded to Blossom — link copied');
+    }catch(e){
+      if(typeof _blossomDenied==='function' && _blossomDenied(e)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
+      else toast('screenshot failed: '+((e&&e.message)||e));
+    }
   }
   // Translate a post in-place via the node's AI backend. Only edits the DOM (the stored event is
   // untouched), so switching views / refreshing restores the original — exactly as asked.
