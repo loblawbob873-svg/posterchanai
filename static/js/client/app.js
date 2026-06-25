@@ -757,6 +757,7 @@
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions();
       setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
+      setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
     };
     Relay.onReady = ()=>{
       hydrateUser();
@@ -4846,7 +4847,19 @@
     try{ m.text=await signer.nip04dec(peer, m.ev.content); }catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
     return m.text;
   }
+  // Messages has two tabs: encrypted Nostr DMs and the Nostr-mailbox Email client. Email lives here
+  // (not Discover) to keep Discover uncluttered; the toggle is the same surface as a phone's mail/chat.
+  let _msgTab = 'dm';
+  function _msgTabBar(){
+    return `<div class="msg-tabs"><button class="mtab${_msgTab==='dm'?' on':''}" data-mt="dm">💬 DMs</button>`
+      + `<button class="mtab${_msgTab==='email'?' on':''}" data-mt="email">📧 Email${Mail.unread?` <span class="mtab-badge">${Mail.unread}</span>`:''}</button></div>`;
+  }
+  function _bindMsgTabs(root){ $$('.mtab',root).forEach(b=> b.onclick=()=>{ if(_msgTab===b.dataset.mt) return; _msgTab=b.dataset.mt; dmActive=null; renderMessages(); }); }
   function renderMessages(){
+    if(_msgTab==='email'){
+      const feed=$('#feed'); feed.innerHTML=_msgTabBar()+'<div id="mail-root" class="mail-root"></div>';
+      _bindMsgTabs(feed); return Mail.render($('#mail-root',feed));
+    }
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
     const feed=$('#feed');
@@ -4854,7 +4867,8 @@
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
     // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    feed.innerHTML=_msgTabBar()+`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    _bindMsgTabs(feed);
     const list=$('#dm-list');
     const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">+</span><b>New message</b></div>` + peers.map(pk=>{
@@ -4873,6 +4887,182 @@
     // (incoming DM, refresh) drops the class and bounces the user back to the conversation list.
     if(dmActive && dmPeers.has(dmActive)){ list.classList.add('has-active'); renderDmThread(dmActive); }
   }
+  // ---------- Email client (Nostr-native mailbox; Messages → 📧 Email tab) ----------
+  // The mailbox lives as encrypted kind-30078 events server-side; this GUI talks to /api/mail. IMAP/
+  // SMTP + at-rest encryption + Blossom attachments are all server-side. Themed via CSS vars (all 7
+  // themes) and collapses to a single-pane flow on mobile (see .mail-* in client.css).
+  function _mailDate(ts){ if(!ts) return ''; const d=new Date(ts*1000), now=new Date();
+    return d.toDateString()===now.toDateString() ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
+      : d.toLocaleDateString([], {month:'short', day:'numeric', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'}); }
+  function _fileB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error);
+    r.onload=()=>res(String(r.result).split(',',2)[1]||''); r.readAsDataURL(file); }); }
+  const Mail = {
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', msgs:[], openUid:null, q:'', _syncing:false,
+    async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
+    async render(root){
+      this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
+      try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
+      if(!this.accounts.length){
+        root.innerHTML=`<div class="mail-empty"><div class="me-ico">📧</div><h3>Email</h3>
+          <p class="muted">No mail accounts yet. Add IMAP/SMTP accounts in <b>Settings → Mail</b>, then they sync here as an encrypted Nostr mailbox.</p>
+          <button class="btn btn-neon" id="mail-go-settings">Open Settings → Mail</button></div>`;
+        const b=$('#mail-go-settings',root); if(b) b.onclick=()=>switchView('settings');
+        return;
+      }
+      if(!this.acct || !this.accounts.some(a=>a.email===this.acct)) this.acct=this.accounts[0].email;
+      this.draw(); this.sync();   // "log in → fetch your mail": pull fresh on open
+    },
+    draw(){
+      const root=this.root; if(!root) return;
+      root.innerHTML=`<div class="mail-wrap">
+        <div class="mail-side">
+          <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
+          <button class="btn btn-neon mail-compose" id="mail-compose">✏️ Compose</button>
+          <div class="mail-folders">${[['INBOX','📥 Inbox'],['Sent','📤 Sent'],['Drafts','📝 Drafts']].map(([f,l])=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${f}">${l}</button>`).join('')}</div>
+        </div>
+        <div class="mail-list">
+          <div class="mail-list-top"><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
+        </div>
+        <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
+      </div>`;
+      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.draw(); this.loadList(); this.sync(); };
+      $('#mail-compose',root).onclick=()=>this.compose({});
+      $$('[data-folder]',root).forEach(b=> b.onclick=()=>{ this.folder=b.dataset.folder; this.openUid=null; this.draw(); this.loadList(); });
+      { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
+      $('#mail-refresh',root).onclick=()=>this.sync(true);
+      this.loadList();
+    },
+    async loadList(){
+      const box=$('#mail-items', this.root); if(!box) return; box.innerHTML='<div class="spinner"></div>';
+      try{
+        const r = this.q
+          ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
+          : await this.api('/messages?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(this.folder));
+        this.msgs=r.messages||[];
+      }catch(_){ this.msgs=[]; }
+      this.drawList();
+    },
+    drawList(){
+      const box=$('#mail-items', this.root); if(!box) return;
+      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; return; }
+      const sent=this.folder==='Sent' && !this.q;
+      box.innerHTML=this.msgs.map(m=>`<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}">
+        <div class="mi-row"><span class="mi-from">${enc((sent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+        <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+        <div class="mi-prev muted small">${enc(m.preview||'')}</div></div>`).join('');
+      $$('.mail-item',box).forEach(el=> el.onclick=()=>this.open(el.dataset.uid, el.dataset.folder));
+    },
+    async open(uid, folder){
+      folder=folder||this.folder; this.openUid=uid; this.drawList();
+      let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
+      if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
+        if(msg) this.compose({mode:'draft', draft:msg});
+        else toast('draft unavailable');
+        return;
+      }
+      const pane=$('#mail-read', this.root); if(!pane) return; pane.innerHTML='<div class="spinner"></div>'; pane.classList.add('has-open');
+      if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
+      const atts=(msg.attachments||[]).map((a,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(this.acct)}/${encodeURIComponent(folder)}/${encodeURIComponent(uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(a.name||'attachment')} <span class="muted small">${_fmtBytes(a.size||0)}</span></a>`).join('');
+      // Email HTML is untrusted → render in a sandboxed iframe (no scripts/forms/popups); else plain text.
+      const bodyHtml = msg.body_html
+        ? `<iframe class="mail-html" sandbox="allow-same-origin" srcdoc="${enc(msg.body_html)}"></iframe>`
+        : `<div class="mail-text">${enc(msg.body_text||'').replace(/\n/g,'<br>')}</div>`;
+      pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
+          <div class="mr-meta"><div class="mr-subj">${enc(msg.subject||'(no subject)')}</div>
+            <div class="mr-from"><b>${enc(msg.from||'')}</b><span class="muted small"> · ${enc(_mailDate(msg.ts))}</span></div>
+            <div class="muted small mr-to">To: ${enc(msg.to||'')}</div></div></div>
+        <div class="mail-actions">
+          <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
+          <button class="btn small" data-act="replyall">↩↩ Reply all</button>
+          <button class="btn small" data-act="forward">↪ Forward</button>
+          <button class="btn small" data-act="unread">● Unread</button>
+          <button class="btn small" data-act="archive">🗄 Archive</button>
+          <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
+        </div>
+        ${atts?`<div class="mail-atts">${atts}</div>`:''}
+        <div class="mail-body">${bodyHtml}</div>`;
+      $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
+      $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, msg, folder));
+    },
+    async action(act, msg, folder){
+      const uid=msg.uid;
+      if(act==='reply'||act==='replyall'||act==='forward') return this.compose({mode:act, msg, folder});
+      if(act==='unread'){ try{ await this.api('/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder,uid,read:false})}); }catch(_){}; toast('marked unread'); this.loadList(); return; }
+      if(act==='archive'||act==='delete'){
+        if(act==='delete' && !confirm('Delete this message?')) return;
+        try{ await this.api('/'+act,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder,uid})}); }catch(_){ toast(act+' failed'); return; }
+        toast(act==='delete'?'deleted':'archived');
+        const pane=$('#mail-read',this.root); if(pane){ pane.classList.remove('has-open'); pane.innerHTML='<div class="empty">Select a message to read</div>'; }
+        this.openUid=null; this.loadList(); return;
+      }
+    },
+    compose(opts){
+      opts=opts||{}; const m=opts.msg; let to='', cc='', subj='', body='', draftUid=null;
+      const self=this, atts=[];
+      if(opts.mode==='reply'||opts.mode==='replyall'){ subj=/^re:/i.test(m.subject||'')?m.subject:('Re: '+(m.subject||'')); to=m.from_email||m.from||''; if(opts.mode==='replyall'&&m.to) cc=m.to; }
+      else if(opts.mode==='forward'){ subj=/^fwd:/i.test(m.subject||'')?m.subject:('Fwd: '+(m.subject||'')); body=`\n\n---------- Forwarded ----------\nFrom: ${m.from||''}\nSubject: ${m.subject||''}\n\n${m.body_text||''}`; }
+      else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
+        (dr.attachments||[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
+      const titles={forward:'Forward', reply:'Reply', replyall:'Reply all', draft:'Draft'};
+      modal(`<h3>✉️ ${titles[opts.mode]||'New message'}</h3>
+        <div class="muted small" style="margin:-4px 0 8px">From: ${enc(this.acct)}</div>
+        <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
+        <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
+        <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
+        <textarea class="input" id="cm-body" rows="9" placeholder="Write your message…">${enc(body)}</textarea>
+        <div class="row cmp-tools"><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small"></span></div>
+        <div class="row"><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><span class="spacer"></span><button class="btn btn-neon" id="cm-send">Send ▶</button></div>`);
+      const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
+      drawAtts();
+      $('#cm-attach').onclick=()=>$('#cm-file').click();
+      $('#cm-file').onchange=async ev=>{ for(const f of [...ev.target.files]){ try{ atts.push({name:f.name,type:f.type||'application/octet-stream',b64:await _fileB64(f)}); }catch(_){} } ev.target.value=''; drawAtts(); };
+      const gather=()=>({to:$('#cm-to').value.trim(), cc:$('#cm-cc').value.trim(), subject:$('#cm-subj').value.trim(), body:$('#cm-body').value, attachments:atts});
+      // 💾 Save draft → encrypted Nostr doc in the Drafts folder (overwrites the same uid on re-save).
+      $('#cm-draft').onclick=async()=>{
+        const btn=$('#cm-draft'); btn.disabled=true; btn.textContent='Saving…';
+        try{ const r=await self.api('/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:self.acct, draft:{...gather(), uid:draftUid}})});
+          if(r.ok){ draftUid=r.uid; toast('draft saved'); closeModal(); if(self.folder==='Drafts') self.loadList(); }
+          else { toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; } }
+        catch(_){ toast('save failed'); btn.disabled=false; btn.textContent='💾 Save draft'; }
+      };
+      $('#cm-send').onclick=async()=>{
+        const payload={account:this.acct, ...gather()};
+        let path='/send';
+        if(opts.mode==='reply'||opts.mode==='replyall'){ path='/reply'; payload.uid=m.uid; payload.folder=opts.folder; payload.reply_all=opts.mode==='replyall'; }
+        else if(opts.mode==='forward'){ path='/forward'; payload.uid=m.uid; payload.folder=opts.folder; }
+        if((path==='/send'||path==='/forward') && !payload.to){ toast('add a recipient'); return; }
+        const btn=$('#cm-send'); btn.disabled=true; btn.textContent='Sending…';
+        try{ const r=await self.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+          if(r.ok){ toast('sent ✉️');
+            if(draftUid){ try{ await self.api('/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:self.acct,folder:'Drafts',uid:draftUid})}); }catch(_){} }
+            closeModal(); if(self.folder==='Sent'||self.folder==='Drafts') self.sync(); }
+          else { toast(r.error||'send failed'); btn.disabled=false; btn.textContent='Send ▶'; } }
+        catch(_){ toast('send failed'); btn.disabled=false; btn.textContent='Send ▶'; }
+      };
+    },
+    async sync(manual){
+      if(this._syncing) return; this._syncing=true;
+      const rb=$('#mail-refresh',this.root); if(rb){ rb.textContent='⏳'; rb.disabled=true; }
+      try{ const r=await this.api('/sync',{method:'POST'});
+        const total=Object.values(r.new||{}).reduce((a,b)=>a+(+b||0),0);
+        if(total){ this.unread+=total; if(manual) toast(total+' new message'+(total>1?'s':'')); if(_msgTab==='email') {} else bumpDm(); }
+        if(this.root && this.acct) this.loadList();
+      }catch(_){ if(manual) toast('mail sync failed'); }
+      this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
+    },
+    // "log in → fetch your mail": pull IMAP → mailbox on login (background), notify on new mail, and
+    // surface the count on the Email tab badge — even before the user opens Messages.
+    async loginSync(){
+      try{
+        const a=await this.api('/accounts'); if(!(a.accounts||[]).length) return;
+        const r=await this.api('/sync',{method:'POST'});
+        const total=Object.values(r.new||{}).reduce((x,y)=>x+(+y||0),0);
+        if(total){ this.unread+=total; toast('📧 '+total+' new email'+(total>1?'s':''));
+          if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} } }
+      }catch(_){}
+    },
+  };
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function newDmModal(){
     modal(`<h3>✉ New message</h3>
@@ -6010,6 +6200,38 @@
   // ---------- settings view ----------
   // Local working copy of the relay list while editing (committed to ClientSettings on Save).
   let _setRelays = [];
+  // Mail accounts editor (client Settings → Mail accounts). Stored server-side via /api/auth/settings
+  // (UserSetting mail_accounts) so the server can do IMAP/SMTP; passwords are masked on read and a
+  // blank password on save preserves the stored one (see auth.py PUT merge).
+  async function _mailSettings(){
+    const box=$('#mail-acct-settings'); if(!box) return;
+    let accts=[]; try{ const s=await fetch('/api/auth/settings').then(r=>r.json()); accts=s.mail_accounts||[]; }catch(_){}
+    box.innerHTML = accts.length ? accts.map((a,i)=>`<div class="mail-acct-row"><div class="mar-meta"><b>${enc(a.email||'')}</b><div class="muted small">${enc(a.imap_server||'?')}:${a.imap_port||993} · ${enc(a.smtp_server||'?')}:${a.smtp_port||587}</div></div><div class="set-actions"><button class="btn btn-ghost small" data-edit="${i}">Edit</button><button class="btn btn-red small" data-del="${i}">Remove</button></div></div>`).join('') : '<div class="muted small">No accounts yet — add one to start syncing mail.</div>';
+    $$('[data-edit]',box).forEach(b=> b.onclick=()=>_mailAcctModal(accts, +b.dataset.edit));
+    $$('[data-del]',box).forEach(b=> b.onclick=async()=>{ if(!confirm('Remove this mail account?')) return; accts.splice(+b.dataset.del,1); await _saveMailAccts(accts); _mailSettings(); });
+    const add=$('#mail-acct-add'); if(add) add.onclick=()=>_mailAcctModal(accts, -1);
+  }
+  function _mailAcctModal(accts, idx){
+    const a = idx>=0 ? accts[idx] : {email:'',imap_server:'',imap_port:993,smtp_server:'',smtp_port:587};
+    modal(`<h3>${idx>=0?'Edit':'Add'} mail account</h3>
+      <input class="input" id="ma-email" placeholder="you@example.com" value="${enc(a.email||'')}" autocomplete="off">
+      <input class="input" id="ma-pass" type="password" placeholder="${idx>=0?'Password (blank = keep current)':'Password / app password'}" autocomplete="new-password">
+      <div class="row"><input class="input" id="ma-imap" placeholder="imap.example.com" value="${enc(a.imap_server||'')}" autocomplete="off"><input class="input" id="ma-imap-port" style="max-width:84px" placeholder="993" value="${a.imap_port||993}"></div>
+      <div class="row"><input class="input" id="ma-smtp" placeholder="smtp.example.com" value="${enc(a.smtp_server||'')}" autocomplete="off"><input class="input" id="ma-smtp-port" style="max-width:84px" placeholder="587" value="${a.smtp_port||587}"></div>
+      <div class="row"><span class="spacer"></span><button class="btn btn-neon" id="ma-save">Save</button></div>`);
+    $('#ma-save').onclick=async()=>{
+      const acc={email:$('#ma-email').value.trim(), imap_server:$('#ma-imap').value.trim(), imap_port:+($('#ma-imap-port').value||993), smtp_server:$('#ma-smtp').value.trim(), smtp_port:+($('#ma-smtp-port').value||587), password:$('#ma-pass').value};
+      if(!acc.email || !acc.imap_server){ toast('email + IMAP server required'); return; }
+      if(idx>=0) accts[idx]=acc; else accts.push(acc);
+      await _saveMailAccts(accts); closeModal(); _mailSettings(); toast('saved'); Mail.accounts=[];   // force account reload in the client
+    };
+  }
+  async function _saveMailAccts(accts){
+    // strip the read-mask so unchanged accounts keep their stored password (server preserves on blank)
+    const clean = accts.map(a=>({...a, password: (a.password==='********')?'':(a.password||'')}));
+    try{ await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({mail_accounts:clean})}); }
+    catch(_){ toast('save failed'); }
+  }
   function renderSettings(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings">
@@ -6038,9 +6260,16 @@
           <button class="btn btn-neon small" id="set-scan-qr">📷 Scan QR code</button>
         </div>
       </section>
+      <section class="set-card">
+        <div class="set-head"><div><div class="set-title">📧 Mail accounts</div>
+          <div class="muted small">IMAP/SMTP accounts for the Email client (Messages → 📧 Email). Mail syncs into your encrypted Nostr mailbox.</div></div></div>
+        <div class="set-body"><div id="mail-acct-settings"><div class="spinner"></div></div>
+          <div class="set-actions"><button class="btn btn-neon small" id="mail-acct-add">➕ Add account</button></div></div>
+      </section>
       <div id="user-settings"></div>
     </div>`;
 
+    _mailSettings();
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{

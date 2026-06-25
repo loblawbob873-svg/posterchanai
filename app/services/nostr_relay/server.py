@@ -22,7 +22,7 @@ from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridge
 
 # pcai: CONFIG d-tags eligible for the opt-in DR backup to upstream (small + critical). Bulky /
 # per-item docs (chat conversations/messages, upload refs, drafts, ai-requests) are NEVER broadcast.
-_BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:")
+_BACKUP_NS = ("pcai:setting:", "pcai:user:", "pcai:usercfg:", "pcai:bot:", "pcai:mail:")
 
 
 def _broadcastable(ev, cfg=None) -> bool:
