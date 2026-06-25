@@ -8,7 +8,7 @@
     if(!PC){ return setTimeout(init, 50); }
     const { $, $$, enc, sendDm, safePk, nip05Resolve, profOf, niceNip05, LOGO, toast, ensureProfile, NT } = PC;
     const Relay = window.Relay, Store = window.Store;
-    let _timer = null, _seatPicks = [], _holeCache = {}, _announced = {};
+    let _timer = null, _seatPicks = [], _holeCache = {}, _announced = {}, _raiseDraft = {};
 
     // Big, deliberate win/loss announcement that holds for a few seconds so the result of a hand is
     // unmissable before the bot deals the next one (which otherwise resets the board almost instantly).
@@ -113,6 +113,11 @@
     }
     async function _load(){
       const list=$('#hm-games'); if(!list) return;
+      // Don't yank the table out from under a raise the user is mid-typing: a full innerHTML rebuild
+      // wipes the bet field. While that field is focused it's their turn (everyone's waiting on them),
+      // so no external state can change — safe to skip this refresh tick entirely.
+      const _ae=document.activeElement;
+      if(_ae && _ae.classList && _ae.classList.contains('pk-amt')) return;
       const botPk=safePk(PC.CFG.holdem_bot_npub);
       if(!botPk){ list.innerHTML='<div class="empty">No bot configured.</div>'; return; }
       let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
@@ -185,9 +190,9 @@
       let controls='';
       if(myTurn){
         controls = `<div class="pk-controls">
-          <button class="btn small pk-fold">Fold</button>
+          <button class="btn btn-red small pk-fold">Fold</button>
           ${call===0?`<button class="btn btn-cyan small pk-check">Check</button>`:`<button class="btn btn-cyan small pk-call">Call ${call}</button>`}
-          <span class="pk-raise"><input class="input pk-amt" type="number" inputmode="numeric" placeholder="${(g.to_call||0)+(g.min_raise||g.bb||10)}" style="width:5em"><button class="btn btn-neon small pk-raisebtn">Raise</button></span>
+          <span class="pk-raise"><input class="input pk-amt" type="number" inputmode="numeric" value="${enc(_raiseDraft[g._gid]||'')}" placeholder="${(g.to_call||0)+(g.min_raise||g.bb||10)}" style="width:5em"><button class="btn btn-neon small pk-raisebtn">Raise</button></span>
           <button class="btn btn-magenta small pk-allin">All-in</button>
         </div>`;
       } else if(!over){ controls = `<div class="muted small" style="padding:6px 2px">Waiting on ${enc(g.to_act===me?'you':nameOf(g.to_act, names[g.to_act]))}…</div>`; }
@@ -227,6 +232,9 @@
         const bind=(sel,act,amtFn)=>{ const b=card.querySelector(sel); if(b) b.onclick=()=>{ if(busy)return; const amt=amtFn?amtFn():null; if(amtFn&&!amt){ toast('enter a raise amount'); return; } lock(); move(g, act, amt); }; };
         bind('.pk-fold','fold'); bind('.pk-check','check'); bind('.pk-call','call'); bind('.pk-allin','allin');
         bind('.pk-raisebtn','raise', ()=>{ const v=parseInt((card.querySelector('.pk-amt')||{}).value,10); return v>0?v:0; });
+        // keep the typed amount through refresh ticks (the focus guard covers active typing; this
+        // covers the case where the field was typed then blurred before the next rebuild)
+        { const _amt=card.querySelector('.pk-amt'); if(_amt) _amt.oninput=()=>{ _raiseDraft[g._gid]=_amt.value; }; }
       }
     }
     async function leaveTable(g){
@@ -243,6 +251,7 @@
         catch(e){ await new Promise(r=>setTimeout(r, 400*(i+1))); }
       }
       if(!ok){ toast('move failed — tap again'); return; }
+      if(action==='raise') delete _raiseDraft[game._gid];   // submitted — don't carry it into the next hand
       toast(action+' sent 🃏');
       // refresh the table a couple times to catch the bot's update (it polls every ~4s)
       [2500, 5000, 8000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='holdem') _load(); }, d));

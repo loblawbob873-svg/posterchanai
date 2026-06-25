@@ -398,6 +398,9 @@ a.btn.full{display:block}
 .btn.small{padding:7px 13px;font-size:13.5px}
 .btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--glow)}
 .btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--glow-cy)}
+/* filled "danger/negative" action (e.g. Hold'em Fold) — red reads as stop across all themes, so it's
+   intentionally a fixed red gradient like the admin's btn-danger, not theme vars. */
+.btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
 /* was transparent → ghost buttons (e.g. AI-chat "Copy link", compose tools) looked colourless/plain
    next to filled btn-neon/btn-cyan siblings. Give them the base panel fill (theme-safe) so every
    button reads as an intentional, consistent button. */
