@@ -99,6 +99,21 @@ def _render_board(raw: str) -> Optional[str]:
     return "\n".join(lines)
 
 
+async def _node_uptime(db, admin, name: str, target: str) -> str:
+    """Best-effort one-line system uptime for a node's report header (e.g. 'up 3 days, 4 hours').
+    Read-only + DETERMINISTIC (run directly, not via the agent) so it's always present and accurate.
+    Returns '' on any failure so the header just omits it."""
+    try:
+        job = await node_service.run_to_completion(
+            db, name, target, "uptime -p 2>/dev/null || uptime", user_id=admin.id, timeout=20)
+        out = (job.output or "").strip().splitlines()
+        line = out[0].strip() if out else ""
+        return line[:80] if line else ""
+    except Exception as e:
+        logger.warning(f"uptime fetch failed for {name}: {e}")
+        return ""
+
+
 async def _to_status_board(chat_service, summary: str) -> str:
     """Turn the agent's plain-text summary into the deterministic emoji board. On any failure, fall
     back to the raw summary so a node is never blank."""
@@ -211,7 +226,11 @@ async def build_health_report(db, admin: User, notify=None) -> str:
         except Exception as e:
             logger.error(f"Health check failed for node {name}: {e}")
             body = f"⚠️ agent error: {e}"
-        sections.append(f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`\n\n{(body or '').strip()}")
+        uptime = await _node_uptime(db, admin, name, target)
+        header = f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`"
+        if uptime:
+            header += f"\n⏱️ {uptime}"
+        sections.append(f"{header}\n\n{(body or '').strip()}")
 
     body = "\n\n".join(sections)
     return f"## 🩺 System Health Report\n🕒 {timestamp}\n\n{body}"

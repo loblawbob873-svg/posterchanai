@@ -622,13 +622,14 @@ def send_reply(status_obj, reply_text, own_acct=None, visibility=None,
         print(f"[nostr] send_reply failed: {e}")
 
 
-def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_bytes=None):
+def post_image_to_fediverse(text, image_bytes=None, audio_bytes=None, video_bytes=None, hashtags=None):
     if not _SECKEY:
         print("ERROR: NOSTR_NSEC not configured; cannot post.")
         return
     media = _to_media_list(image_bytes, video_bytes, audio_bytes)
     try:
-        _run(_svc.post_note(_SECKEY, _RELAYS, text or "", media_list=media, media_cfg=_MEDIA_CFG))
+        _run(_svc.post_note(_SECKEY, _RELAYS, text or "", media_list=media, media_cfg=_MEDIA_CFG,
+                            hashtags=hashtags))
         print("[nostr] posted note")
     except Exception as e:
         print(f"[nostr] post failed: {e}")

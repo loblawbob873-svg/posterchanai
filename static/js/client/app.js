@@ -2876,6 +2876,7 @@
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
       if(!tagged) items.push(['nsfw','🔞 Re-post with NSFW warning']); }
     if(mine) items.push(['delete','🗑️ Delete','danger']);
+    if(!mine) items.push(['mute', MUTED.has(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
@@ -2889,6 +2890,7 @@
       if(a==='pin') return togglePin(id);
       if(a==='nsfw') return repostWithWarning(id);
       if(a==='delete') return doDelete(id, art);
+      if(a==='mute') return toggleMute(pk);
       if(a==='block') return doBlock(pk);
     });
   }

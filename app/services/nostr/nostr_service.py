@@ -101,10 +101,12 @@ async def _attach_media(seckey: bytes, text: str, mediae: list, media_cfg: dict)
 
 
 async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = None,
-                    media_list: list | None = None, media_cfg: dict | None = None) -> dict:
+                    media_list: list | None = None, media_cfg: dict | None = None,
+                    hashtags: list | None = None) -> dict:
     """Build, sign and publish a kind-1 note. Uploads media first and embeds URLs.
 
-    `reply_to` is a parent event dict to reply to (adds NIP-10 tags). Returns the event.
+    `reply_to` is a parent event dict to reply to (adds NIP-10 tags). `hashtags` adds NIP-12
+    indexed `t` tags (so the note shows up in those #hashtag feeds). Returns the event.
     """
     relays = relay.normalize_relays(relays) or DEFAULT_RELAYS
     tags = _event.reply_tags(reply_to) if reply_to else []
@@ -116,6 +118,14 @@ async def post_note(seckey: bytes, relays, text: str, reply_to: dict | None = No
     if not had_text and media_list and not media_tags:
         raise RuntimeError("post_note: all media uploads failed; refusing to publish an empty note")
     tags = tags + media_tags
+    # NIP-12 hashtag tags (indexed, lowercased, deduped) so the note lands in #hashtag feeds.
+    if hashtags:
+        seen = set()
+        for h in hashtags:
+            h = str(h or "").lstrip("#").strip().lower()
+            if h and h not in seen:
+                seen.add(h)
+                tags.append(["t", h])
     ev = _event.build_event(seckey, 1, text, tags=tags)
     await relay.publish(relays, ev)
     return ev

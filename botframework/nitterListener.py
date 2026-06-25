@@ -60,6 +60,7 @@ _session.trust_env = os.getenv("NITTER_USE_PROXY", "").lower() in ("1", "true", 
 # fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
 _fedi_post = None
 _fedi_post_image = None
+_is_nostr = False
 if MISSKEY_SERVER:
     from misskey import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
 elif PLEROMA_ENDPOINT:
@@ -69,6 +70,26 @@ elif NOSTR_NSEC:
     # both the text-only and text+image cases, so both hooks point at it.
     from nostr import post_image_to_fediverse as _fedi_post_image
     _fedi_post = _fedi_post_image
+    _is_nostr = True
+
+# Nitter→Nostr posts are tagged with a hashtag (default #news) so they collect in that
+# hashtag feed. Overridable per-bot via NITTER_NOSTR_HASHTAG; Matrix/Pleroma/Misskey are
+# unaffected. The literal #tag is kept in the body (readable / client-linkified) AND a real
+# NIP-12 `t` tag is added by the Nostr poster so it also lands in indexed #hashtag feeds.
+NITTER_NOSTR_HASHTAG = (os.getenv("NITTER_NOSTR_HASHTAG", "news") or "news").lstrip("#").strip() or "news"
+
+
+def _news_text(text):
+    """Append the Nostr hashtag to a post's body (no-op off the Nostr path / if already present)."""
+    if not _is_nostr:
+        return text
+    tag = "#" + NITTER_NOSTR_HASHTAG
+    return text if tag.lower() in (text or "").lower() else ((text or "") + "\n\n" + tag)
+
+
+def _news_kwargs():
+    """Extra kwargs for the Nostr poster so the post carries a real NIP-12 `t` hashtag tag."""
+    return {"hashtags": [NITTER_NOSTR_HASHTAG]} if _is_nostr else {}
 
 _STATE_FILE = os.path.join(script_dir, ".nitter_seen.json")
 _MAX_SEEN_PER_FEED = 300  # cap stored GUIDs per feed so the state file stays small
@@ -416,9 +437,9 @@ def _post_item(feed, handle, item):
         return False
     # Fire-and-forget (no return value); treat as sent.
     if card and _fedi_post_image is not None:
-        _fedi_post_image(caption, image_bytes=card)
+        _fedi_post_image(_news_text(caption), image_bytes=card, **_news_kwargs())
     else:
-        _fedi_post(_format_post(handle, item))
+        _fedi_post(_news_text(_format_post(handle, item)), **_news_kwargs())
     return True
 
 
