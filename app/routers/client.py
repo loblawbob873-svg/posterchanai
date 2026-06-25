@@ -350,8 +350,17 @@ async def client_screenshot(request: Request, db: Session = Depends(get_db)):
         url = "https://" + url
     from app.services import settings_store
     from app.services.command_service._common import _capture_full_page, _url_is_safe_to_fetch
+    from urllib.parse import urlparse
     allow_value = settings_store.get("screenshot_allowed_hosts")
     allowed_hosts = re.split(r"[\s,]+", allow_value.strip()) if allow_value else []
+    # ALWAYS allow our OWN instance host — capturing our own public note page is not SSRF, even though
+    # split-horizon DNS makes the public domain resolve to a LAN IP (which the guard otherwise refuses).
+    # Only the instance's OWN domains (site_url + the request host) — NOT the requested url's host, which
+    # would defeat the guard entirely.
+    for _h in (urlparse((settings_store.get("site_url") or "")).hostname,
+               (request.headers.get("host") or "").split(":")[0]):
+        if _h:
+            allowed_hosts.append(_h)
     if not await asyncio.to_thread(_url_is_safe_to_fetch, url, allowed_hosts):
         return JSONResponse({"error": "refused: private/internal address"}, status_code=400)
     try:

@@ -482,11 +482,10 @@
     bindAuth();
     const s = Session.load();
     if (s) { try { await resume(s); return; } catch(e){ console.warn(e); Session.clear(); } }
-    // Not logged in, but the URL points at a shared note/profile? Nostr events + profiles are PUBLIC —
-    // render them read-only (guest mode) instead of slamming up the login wall. (A bare visit with no
-    // entity still shows login.) This is what makes screenshots/link-previews of poster.place work.
-    if (_entityFromPath()){ startGuest(); return; }
-    showAuth();
+    // Not logged in → browse PUBLICLY (read-only guest mode): the global feed and any note/profile,
+    // like every other Nostr client. Nostr events are public; only posting/reacting needs an account
+    // (the guest banner offers login). No more login wall just to read.
+    startGuest();
   }
   // Public read-only session: no key, no signer. The guest sentinel ME (empty pubkey) keeps every
   // `ev.pubkey===ME.pubkey` comparison safely false, and publish() blocks writes → "log in to interact".

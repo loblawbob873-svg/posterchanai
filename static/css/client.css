@@ -784,8 +784,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Draft + Post on their own centered row beneath the tool buttons */
 /* center with text-align + inline-block buttons — robust even if a parent flex/grid context would
    otherwise shrink/left-align a flex row. */
-.cmp-actions{display:flex !important;justify-content:center !important;align-items:center;gap:10px;margin-top:12px;width:100%}
-.cmp-actions .btn{flex:0 0 auto;min-width:120px;justify-content:center}
+/* desktop applies body{zoom} (see the min-width:821px rules) which mis-renders flexbox justify-content
+   — so center the OLD-school way: a block container with text-align + inline-block buttons. Immune to
+   the zoom/flex quirk; identical result on mobile (no zoom). */
+.cmp-actions{display:block !important;text-align:center !important;margin-top:12px}
+.cmp-actions .btn{display:inline-block !important;min-width:120px;margin:0 5px;text-align:center;vertical-align:middle}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
