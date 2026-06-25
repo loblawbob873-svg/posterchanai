@@ -745,7 +745,14 @@
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
     Relay.onReady = ()=>{
       if(!GUEST){   // ME-specific data — a guest has none of it
-        fetchFollows(); fetchMutes(); fetchPins(); fetchBookmarks(); fetchMyProfile(); watchNotifications(); watchDeletions();
+        // Hydrate per-user data, THEN re-render once it's ALL in. These fire the instant the relay
+        // socket opens, racing the first view paint — so mutes/follows/bookmarks/pins could land
+        // AFTER the initial render and only appear on a manual refresh (the reported "mutes/
+        // notifications missing until I refresh"). The per-fetch re-renders raced too; one
+        // settle-then-render applies everything without the refresh.
+        Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
+          .then(()=>{ if(!GUEST && !['ai','admin'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+        watchNotifications(); watchDeletions();
         setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
       }
       setTimeout(loadRightbar, 1500);
