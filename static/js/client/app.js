@@ -2867,7 +2867,10 @@
   // the clipboard (falls back to opening the image where the clipboard image API is unavailable, e.g.
   // most mobile browsers / non-secure contexts).
   async function screenshotPost(id){
-    let url; try{ url=_webLink(NT().nip19.neventEncode({id})); }catch(_){ try{ url=_webLink(NT().nip19.noteEncode(id)); }catch(__){ toast('bad post id'); return; } }
+    // Capture a PUBLIC, server-rendered view of the note — our own /client is a login-gated SPA, so a
+    // headless browser would just photograph the auth screen. njump.me renders any note without login.
+    let nevent; try{ nevent=NT().nip19.neventEncode({id}); }catch(_){ try{ nevent=NT().nip19.noteEncode(id); }catch(__){ toast('bad post id'); return; } }
+    const url='https://njump.me/'+nevent;
     toast('📸 capturing…');
     try{
       const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
