@@ -213,7 +213,7 @@ def init_db():
             # (settings/accounts/per-user config/bots) to the upstream relays. Off by default —
             # these are normally local-only. Safe because everyone but the operator sees ciphertext;
             # a fresh node can restore them from upstream with the operator nsec.
-            "nostr_relay_backup_datastore": "false",
+            "nostr_relay_backup_datastore": "true",
             # Timeline backfill ON by default: the mirror_feeds sweep pulls ~48h of recent history
             # per WoT member so a fresh relay's timeline is populated immediately instead of only
             # filling forward from the firehose. Toggle off in Admin → Relay (it's the heavier path).

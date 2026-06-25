@@ -351,7 +351,7 @@ class SettingsResponse(BaseModel):
     # fields show blank + "never save" in the admin UI.
     nostr_relay_enabled: Optional[bool] = None
     nostr_relay_disable_proxy: Optional[bool] = None  # bypass Tor for relay upstream traffic
-    nostr_relay_backup_datastore: Optional[bool] = False  # broadcast the encrypted pcai: config docs (settings/accounts/bots) to upstream relays for disaster recovery
+    nostr_relay_backup_datastore: Optional[bool] = True  # broadcast the encrypted pcai: config docs (settings/accounts/bots) to upstream relays for disaster recovery (ON by default — Nostr-based DR)
     nostr_relay_firehose_enabled: Optional[bool] = None  # live firehose sync (real-time)
     nostr_relay_bind: Optional[str] = None
     nostr_relay_port: Optional[int] = None
