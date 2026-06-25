@@ -670,6 +670,9 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({
         "name": f"{name} Nostr",
         "short_name": name,
+        # Stable install identity (defaults to start_url otherwise). Helps Samsung Internet / Chrome
+        # match an existing install instead of failing the WebAPK mint.
+        "id": "/client",
         "start_url": "/client",
         "scope": "/client",
         "display": "standalone",
@@ -677,8 +680,8 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
         "theme_color": "#0b0118",
         "description": "Cyberpunk Nostr client",
         "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
         ],
         # Long-press the home-screen icon → jump straight to a view / the composer. The SPA reads
         # these query params on boot (see _consumeLaunchParams in app.js) and cleans the URL.
@@ -698,7 +701,7 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
             "method": "GET",
             "params": {"title": "title", "text": "text", "url": "url"},
         },
-    })
+    }, media_type="application/manifest+json")   # not application/json — Samsung Internet's WebAPK install rejects the wrong MIME ("failed to download")
 
 
 @router.get("/sw.js")
