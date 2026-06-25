@@ -425,24 +425,46 @@ async def mail_save_draft(request: Request, db: Session = Depends(get_db), curre
     return {"ok": bool(ok), "uid": uid}
 
 
-from app.services.mail_service import list_folders as _list_folders
+from app.services.mail_service import list_special_folders as _list_special_folders
 
 
 @router.get("/folders")
 async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Real IMAP folder list for an account (INBOX/Sent/Drafts pinned first), so the GUI shows the
-    account's actual mailboxes rather than a fixed three."""
+    """Account's REAL folders with friendly labels + special-use mapping (so 'Sent' points at the
+    server's actual sent mailbox, e.g. INBOX.Sent / [Gmail]/Sent Mail). Returns ordered names + a
+    {name: label} map. 'Drafts' is the local compose-drafts folder, pinned separately."""
     acc = _resolve_account(db, current_user, account)
     if not acc:
-        return {"folders": ["INBOX", "Sent", "Drafts"]}
+        return {"folders": ["INBOX", "Drafts"], "labels": {"INBOX": "📥 Inbox", "Drafts": "📝 Drafts"}}
     try:
-        raw = await _asyncio.to_thread(_list_folders, current_user.id, db, acc.email)
+        meta = await _asyncio.to_thread(_list_special_folders, current_user.id, db, acc.email)
     except Exception as e:
-        logger.debug("[mail] list_folders failed: %s", e)
-        raw = []
-    pinned = ["INBOX", "Sent", "Drafts"]
-    rest = sorted({f for f in (raw or []) if f and f not in pinned})
-    return {"folders": pinned + rest}
+        logger.debug("[mail] list_special_folders failed: %s", e)
+        meta = {"all": ["INBOX"]}
+    allf = meta.get("all") or ["INBOX"]
+    sent, trash, junk, archive = meta.get("sent"), meta.get("trash"), meta.get("junk"), meta.get("archive")
+    inbox = next((f for f in allf if f.upper() == "INBOX"), "INBOX")
+
+    def label(n):
+        if n == sent: return "📤 Sent"
+        if n == trash: return "🗑 Trash"
+        if n == junk: return "⚠️ Spam"
+        if n == archive: return "🗄 Archive"
+        if n.upper() == "INBOX": return "📥 Inbox"
+        return "📁 " + (n.replace("INBOX.", "").replace("[Gmail]/", "").split("/")[-1] or n)
+
+    order = [inbox]
+    if sent and sent != inbox:
+        order.append(sent)
+    order.append("Drafts")   # local compose-drafts (virtual)
+    for f in allf:
+        if f not in order and f != inbox:
+            order.append(f)
+    labels = {"Drafts": "📝 Drafts"}
+    for f in order:
+        if f != "Drafts":
+            labels[f] = label(f)
+    return {"folders": order, "labels": labels, "sent": sent}
 
 
 @router.post("/sync-folder")

@@ -99,7 +99,8 @@ def search(messages: list, query: str) -> list:
         return messages
     out = []
     for m in messages:
-        hay = " ".join(str(m.get(k, "")) for k in ("subject", "from", "to", "cc", "body_text")).lower()
+        # include preview (always inline, even when the large body was offloaded to Blossom)
+        hay = " ".join(str(m.get(k, "")) for k in ("subject", "from", "from_email", "to", "cc", "body_text", "preview", "folder")).lower()
         if q in hay:
             out.append(m)
     return out

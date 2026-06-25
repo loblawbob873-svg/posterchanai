@@ -4897,7 +4897,7 @@
   function _fileB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error);
     r.onload=()=>res(String(r.result).split(',',2)[1]||''); r.readAsDataURL(file); }); }
   const Mail = {
-    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], msgs:[], openUid:null, q:'', _syncing:false,
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
@@ -4922,29 +4922,33 @@
         </div>
         <div class="mail-list">
           <div class="mail-list-top"><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-bulk"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>
         <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
       </div>`;
-      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; this.draw(); this.loadList(); this.sync(); };
+      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; if(this.sel) this.sel.clear(); this.draw(); this.loadList(); this.sync(); };
       $('#mail-compose',root).onclick=()=>this.compose({});
       $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
+      { const sa=$('#mail-selall',root); if(sa) sa.onchange=()=>{ this.sel=this.sel||new Set();
+        if(sa.checked) this.msgs.forEach(m=>this.sel.add(this._key(m))); else this.sel.clear(); this.drawList(); }; }
       this.loadList(); this.loadFolders();
     },
-    _folderLabel(f){ const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive','[Gmail]':'📁 Gmail'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
+    _folderLabel(f){ if(this.folderLabels && this.folderLabels[f]) return this.folderLabels[f];
+      const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
     async loadFolders(){
       if(this.acct==='__all' || !this.root) return;
-      let fl; try{ const r=await this.api('/folders?account='+encodeURIComponent(this.acct)); fl=r.folders; }catch(_){}
-      if(!fl || !fl.length) return;
-      this.folders=fl;
+      let r; try{ r=await this.api('/folders?account='+encodeURIComponent(this.acct)); }catch(_){}
+      if(!r || !r.folders || !r.folders.length) return;
+      this.folders=r.folders; this.folderLabels=r.labels||{};
       const box=this.root.querySelector('.mail-folders'); if(!box) return;
       box.innerHTML=this.folders.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('');
       box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
     },
     async selectFolder(f){
-      this.folder=f; this.openUid=null; this.q='';
+      this.folder=f; this.openUid=null; this.q=''; if(this.sel) this.sel.clear();
       if(this.root){ this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
         const b=$('#mail-items',this.root); if(b) b.innerHTML='<div class="spinner"></div>'; }
       // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is pulled on demand.
@@ -4963,15 +4967,44 @@
       }catch(_){ this.msgs=[]; }
       this.drawList();
     },
+    _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
     drawList(){
       const box=$('#mail-items', this.root); if(!box) return;
-      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; return; }
-      const sent=this.folder==='Sent' && !this.q, unified=this.acct==='__all';
-      box.innerHTML=this.msgs.map(m=>`<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}">
-        <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((sent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
-        <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
-        <div class="mi-prev muted small">${enc(m.preview||'')}</div></div>`).join('');
-      $$('.mail-item',box).forEach(el=> el.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account));
+      this.sel=this.sel||new Set();
+      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
+      const isSent=this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
+      box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
+        return `<div class="mail-item${m.read?'':' unread'}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
+        <input type="checkbox" class="mi-chk"${this.sel.has(key)?' checked':''}>
+        <div class="mi-content">
+          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+          <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+          <div class="mi-prev muted small">${enc(m.preview||'')}</div>
+        </div></div>`; }).join('');
+      $$('.mail-item',box).forEach(el=>{
+        const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
+        const c=el.querySelector('.mi-content'); if(c) c.onclick=()=>this.open(el.dataset.uid, el.dataset.folder, el.dataset.account);
+      });
+      this.updateBulk();
+    },
+    updateBulk(){
+      const sa=$('#mail-selall',this.root), act=$('#mail-bulk-act',this.root); const n=this.sel?this.sel.size:0;
+      if(sa) sa.checked = n>0 && n===this.msgs.length;
+      if(!act) return;
+      act.innerHTML = n ? `<span class="mail-bulk-n">${n} selected</span><button class="btn small" data-bulk="read">● Read</button><button class="btn small" data-bulk="archive">🗄 Archive</button><button class="btn btn-red small" data-bulk="delete">🗑 Delete</button>` : '';
+      act.querySelectorAll('[data-bulk]').forEach(b=> b.onclick=()=>this.bulk(b.dataset.bulk));
+    },
+    async bulk(action){
+      if(!this.sel || !this.sel.size) return;
+      if(action==='delete' && !confirm('Delete '+this.sel.size+' message(s)?')) return;
+      const keys=[...this.sel]; this.sel.clear(); this.updateBulk();
+      const path = action==='read' ? '/mark-read' : '/'+action;
+      for(const k of keys){ const i=k.indexOf('|'), j=k.indexOf('|', i+1);
+        const account=k.slice(0,i), folder=k.slice(i+1,j), uid=k.slice(j+1);
+        const body={account, folder, uid}; if(action==='read') body.read=true;
+        try{ await this.api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }catch(_){}
+      }
+      toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
     },
     async open(uid, folder, account){
       folder=folder||this.folder; const acct=account||this.acct; this.openUid=uid; this.drawList();

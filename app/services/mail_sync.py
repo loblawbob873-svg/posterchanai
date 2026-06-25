@@ -22,10 +22,8 @@ from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
 
-# Folders mirrored by default + how many recent messages per folder. Bounded so a huge mailbox can't
-# explode the relay; the GUI can pull more on demand later.
-SYNC_FOLDERS = ["INBOX", "Sent"]
-SYNC_LIMIT = 50
+# How many messages per folder to mirror is governed by the `mail_sync_limit` setting (0 = all,
+# the default — full Nostr mailbox); see _sync_limit(). All of an account's real folders are synced.
 
 
 # --- attachment crypto (AES-256-GCM; ciphertext = iv-free, iv stored alongside in the doc) ---------
@@ -143,19 +141,40 @@ def _to_doc(msg, att_refs: list) -> dict:
     }
 
 
-async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account, folder: str) -> int:
-    """Mirror recent messages of one (account, folder) into the encrypted mailbox. Returns new count."""
+def _sync_limit() -> int:
+    """How many messages per folder to mirror. 0 = EVERYTHING (default) — full Nostr mailbox."""
+    from app.services import settings_store
     try:
-        import asyncio
-        msgs = await asyncio.to_thread(mail_service.fetch_messages, account, folder, SYNC_LIMIT, False)
+        return max(0, settings_store.get_int("mail_sync_limit", 0))
+    except Exception:
+        return 0
+
+
+async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account, folder: str, limit: int = 0) -> int:
+    """INCREMENTAL mirror of one (account, folder): cheap UID SEARCH → diff against what's stored →
+    FETCH only the NEW messages → encrypt attachments/large bodies to Blossom → store. limit>0 caps to
+    the most-recent N new (0 = all). Returns count stored."""
+    import asyncio
+    try:
+        uids = await asyncio.to_thread(mail_service.list_uids, account, folder)
+    except Exception as e:
+        logger.warning("[mail-sync] list_uids %s/%s failed: %s", account.email, folder, e)
+        return 0
+    if not uids:
+        return 0
+    have = await mail_store.have_uids(seckey, account.email, folder)
+    new = [u for u in uids if str(u) not in have]
+    if not new:
+        return 0
+    if limit and limit > 0:
+        new = new[-limit:]            # SEARCH is oldest→newest, so keep the most recent N
+    try:
+        msgs = await asyncio.to_thread(mail_service.fetch_by_uids, account, folder, new)
     except Exception as e:
         logger.warning("[mail-sync] fetch %s/%s failed: %s", account.email, folder, e)
         return 0
-    have = await mail_store.have_uids(seckey, account.email, folder)
-    new = 0
+    stored = 0
     for m in msgs or []:
-        if str(m.uid) in have:
-            continue
         att_refs = []
         for att in (m.attachments or []):
             try:
@@ -165,15 +184,25 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
         try:
             doc = await offload_body(db, owner_pk, _to_doc(m, att_refs))
             if await mail_store.store_message(seckey, account.email, folder, doc):
-                new += 1
+                stored += 1
         except Exception as e:
             logger.warning("[mail-sync] store msg %s failed: %s", m.uid, e)
-    return new
+    return stored
+
+
+def _account_folders(db, user, account) -> list:
+    """Every real IMAP folder for an account (skip Gmail's All-Mail to avoid mirroring the whole
+    mailbox twice). The GUI's logical 'Drafts' is local-only and never IMAP-synced."""
+    try:
+        meta = mail_service.list_special_folders(user.id, db, account.email)
+        allf = [f for f in (meta.get("all") or []) if "all mail" not in f.lower()]
+        return allf or ["INBOX"]
+    except Exception:
+        return ["INBOX"]
 
 
 async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
-    """Sync a single (account, folder) on demand — used when the GUI opens a folder that isn't in the
-    default INBOX/Sent set. Returns new-message count (0 for the local-only Drafts folder)."""
+    """Sync a single (account, folder) on demand (e.g. opening a folder). Drafts is local-only."""
     if folder == "Drafts":
         return 0
     acc = next((a for a in mail_service.get_user_mail_accounts(user.id, db) if a.email == account_email), None)
@@ -181,23 +210,26 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
         return 0
     seckey = nostr_store.user_storage_seckey(db, user)
     owner_pk = nostr_service.derive_pubkey(seckey)
-    return await _sync_folder(db, user, seckey, owner_pk, acc, folder)
+    import asyncio
+    return await _sync_folder(db, user, seckey, owner_pk, acc, folder, await asyncio.to_thread(_sync_limit))
 
 
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:
-    """Sync every configured account → encrypted mailbox. Returns {account_email: new_count}.
-    Called on login and on manual refresh; new counts drive the GUI's unread badge / notification."""
+    """Sync EVERY account's EVERY real folder into the encrypted mailbox (incremental). Returns
+    {account_email: new_count}. limit per folder from `mail_sync_limit` (0 = everything, the default)."""
+    import asyncio
     accounts = mail_service.get_user_mail_accounts(user.id, db)
     if not accounts:
         return {}
     seckey = nostr_store.user_storage_seckey(db, user)
     owner_pk = nostr_service.derive_pubkey(seckey)
-    folders = folders or SYNC_FOLDERS
+    limit = await asyncio.to_thread(_sync_limit)
     out = {}
     for acc in accounts:
+        flist = folders if folders is not None else await asyncio.to_thread(_account_folders, db, user, acc)
         total = 0
-        for folder in folders:
-            total += await _sync_folder(db, user, seckey, owner_pk, acc, folder)
+        for folder in flist:
+            total += await _sync_folder(db, user, seckey, owner_pk, acc, folder, limit)
         out[acc.email] = total
     if any(out.values()):
         logger.info("[mail-sync] %s: new mail %s", getattr(user, "username", "?"),

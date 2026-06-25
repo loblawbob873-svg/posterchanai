@@ -1841,3 +1841,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .mi-acct{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:0 5px;font-size:10.5px;color:var(--cyan);margin-right:3px;vertical-align:middle}
 .mail-from{display:block;margin:-2px 0 8px}
 .mail-from select{margin-top:3px}
+/* mail bulk-select */
+.mail-item{display:flex;align-items:flex-start;gap:9px}
+.mi-chk{margin-top:3px;flex:0 0 auto;cursor:pointer;width:16px;height:16px}
+.mi-content{flex:1;min-width:0;cursor:pointer}
+.mail-bulk{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.mail-selall{display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
+.mail-bulk-act{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mail-bulk-n{color:var(--cyan);font-weight:600}
