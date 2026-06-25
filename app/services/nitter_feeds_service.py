@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import time
 from email.utils import parsedate_to_datetime
@@ -391,11 +392,24 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> N
             _set_user_setting(db, user.id, "nitter_seen", json.dumps(seen))
             db.commit()
         except Exception as e:
-            logger.warning(f"[nitter] could not persist seen-cursor for user {user.id}: {e}")
+            # A lost cursor = re-send EVERYTHING next poll (the spam). The usual cause is the poll's
+            # held DB connection dying during the long feed download ("server closed the connection").
+            # Don't just drop it — retry the write on a FRESH session so the cursor actually advances.
+            logger.warning(f"[nitter] seen-cursor write failed for user {user.id} ({e}); retrying on a fresh session")
             try:
                 db.rollback()
             except Exception:
                 pass
+            try:
+                from app.database import SessionLocal as _SL
+                _db2 = _SL()
+                try:
+                    _set_user_setting(_db2, user.id, "nitter_seen", json.dumps(seen))
+                    _db2.commit()
+                finally:
+                    _db2.close()
+            except Exception as e2:
+                logger.warning(f"[nitter] seen-cursor retry ALSO failed for user {user.id}: {e2} — feeds may re-send next poll")
 
 
 async def poll_once(db: Session) -> None:
@@ -445,6 +459,13 @@ def start_nitter_feeds_scheduler() -> None:
     (FastAPI startup), like start_social_notifications_scheduler."""
     global _scheduler
     if _scheduler is not None:
+        return
+    # Per-node kill-switch. Nitter→Telegram is a SINGLE-node feature (the primary, server1): every
+    # node runs this worker, so without a gate a second node (nas) re-polls the same user's feeds and
+    # double-posts — and if its seen-cursor write ever fails (DB conn death) it re-sends everything
+    # every cycle = the spam. Set POSTERCHANAI_DISABLE_NITTER=1 on secondary nodes to opt them out.
+    if os.getenv("POSTERCHANAI_DISABLE_NITTER", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("[nitter] POSTERCHANAI_DISABLE_NITTER set — not starting the feed poller on this node")
         return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from app.database import SessionLocal
