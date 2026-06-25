@@ -411,10 +411,13 @@ a.btn.full{display:block}
 .mini:hover{color:var(--neon);border-color:var(--neon)}
 #tl-media{font-size:16px;line-height:1;padding:4px 8px}
 #tl-media.active{color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,255,.12)}
-/* topbar refresh: a FILLED cyan icon button (was an unfilled muted ↻), consistent with the app's
-   btn-cyan + the filled admin buttons. winxp theme overrides this with its own button skin below. */
-#btn-refresh{flex-shrink:0;font-size:18px;line-height:1;padding:7px 11px;border:none;border-radius:10px;background:linear-gradient(135deg,#0bb6cf,var(--cyan));color:#04222a;box-shadow:var(--glow-cy)}
-#btn-refresh:hover{filter:brightness(1.12);box-shadow:0 0 14px rgba(0,255,255,.4)}
+/* topbar refresh: a FILLED icon button that MIRRORS btn-cyan per theme so it never clashes.
+   Base = cyberpunk cyan (dark text); the :root[data-theme] rule below mirrors the btn-cyan
+   readability layer (theme neon gradient + white text) for every other theme; winxp keeps its
+   own button skin (the !important override further down). */
+#btn-refresh{flex-shrink:0;font-size:17px;line-height:1;padding:6px 11px;border:none;border-radius:10px;background:linear-gradient(135deg,#0bb6cf,var(--cyan));color:#04222a;box-shadow:var(--glow-cy)}
+:root[data-theme] #btn-refresh{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff}
+#btn-refresh:hover{filter:brightness(1.12)}
 .muted{color:var(--muted)} .small{font-size:12.5px} .full{width:100%}
 
 /* ===== auth ===== */
