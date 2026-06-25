@@ -30,18 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def _pace_interval() -> float:
-    """Seconds to wait between federated mail publishes (rate-limits the outgoing fan-out). Defaults
-    to the outbox's own min interval so the producer can't outrun the drain and overflow its queue."""
+    """Seconds to wait between mail-doc writes during sync. Mail is stored on the home relay only (it
+    is NOT federated to the public upstream — that flooded the outbox), so this just yields the event
+    loop; a tiny default keeps sync fast. The `mail_federate_min_interval_sec` setting can raise it if
+    a future controlled (per-user-relay) federation path is added."""
     try:
         v = settings_store.get("mail_federate_min_interval_sec", "") or ""
         if str(v).strip():
             return max(0.0, float(v))
     except Exception:
         pass
-    try:
-        return max(0.0, float(settings_store.get("nostr_relay_outbox_min_interval_sec", "1.0") or 1.0))
-    except Exception:
-        return 1.0
+    return 0.02
 
 
 async def _save_blob(owner_pubkey: str, data: bytes, mime: str = "application/octet-stream") -> dict:
