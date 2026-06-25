@@ -496,6 +496,43 @@ async def restore_from_upstream(db) -> int:
     return restored
 
 
+async def republish_datastore(db, *, pace: float = 0.3) -> dict:
+    """DR BACKUP (the counterpart of restore_from_upstream): re-publish ALL of the operator's encrypted
+    CONFIG docs (settings/users/usercfg/bots) so the relay outbox federates the FULL current config to
+    upstream. Needed because federation is incremental — only docs WRITTEN since backup_datastore was
+    enabled reach upstream, so the bulk of existing settings would otherwise never be backed up.
+
+    Each doc is re-put with the operator key (fresh event → broadcastable → outbox), and the publishing
+    is PACED so the bounded outbox queue can't overflow (which would silently drop docs from the fan-out).
+    Returns {namespace: count}. Only actually federates when nostr_relay_backup_datastore is on."""
+    import asyncio
+    from app.services import nostr_store
+    op_sk = _OP_SK or _operator_seckey(db)
+    if not op_sk:
+        return {"error": "no operator key"}
+    port = _port()
+    counts: dict = {}
+    for ns in _BACKUP_NS:
+        try:
+            docs = await nostr_store.list_docs(port, ns, seckey=op_sk, encrypt=True)
+        except Exception as e:
+            logger.warning("[settings-store] backup: list %s failed: %s", ns, e)
+            continue
+        n = 0
+        for d_tag, content in docs.items():
+            if content is None:
+                continue
+            try:
+                if await nostr_store.put_doc(port, op_sk, d_tag, content, encrypt=True):
+                    n += 1
+            except Exception as e:
+                logger.warning("[settings-store] backup: republish %s failed: %s", d_tag, e)
+            await asyncio.sleep(pace)   # keep the producer at/under the outbox drain rate
+        counts[ns.rstrip(":").split(":")[-1]] = n
+    logger.info("[settings-store] DR backup: republished config docs %s (federating via outbox)", counts)
+    return counts
+
+
 async def write_through(db, changes: dict) -> int:
     """Mirror settings → relay (authoritative). Used by the background writer and admin save."""
     if not changes:

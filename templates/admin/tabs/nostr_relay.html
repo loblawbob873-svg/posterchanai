@@ -32,9 +32,11 @@
             </label>
             <small>Broadcasts the app's <strong>encrypted</strong> config docs (settings, accounts, per-user settings, bots) to the upstream relays — they're NIP-44 ciphertext, readable only with the operator <code>nsec</code>. Lets a wiped node be rebuilt with the button below. Chat history &amp; uploads stay local. <strong>Restart after changing.</strong></small>
             <div style="margin-top:8px">
+                <button type="button" id="relay-backup-btn" class="btn btn-secondary">Back up settings to upstream now</button>
                 <button type="button" id="relay-restore-btn" class="btn btn-secondary">Restore datastore from upstream</button>
                 <span id="relay-restore-status" class="muted small"></span>
             </div>
+            <small>Federation is incremental (only changed docs go up). <strong>Back up now</strong> re-publishes the full current config so it's all on upstream — paced over a few minutes.</small>
         </div>
         <div class="form-group">
             <label for="nostr_relay_bind">Bind address</label>
@@ -131,7 +133,20 @@
                 }).catch(function(e){ stat.textContent='✗ '+e; })
                 .finally(function(){ btn.disabled=false; });
             });
-            var rbtn=document.getElementById('relay-restore-btn'), rstat=document.getElementById('relay-restore-status');
+            var rstat=document.getElementById('relay-restore-status');
+            var kbtn=document.getElementById('relay-backup-btn');
+            if(kbtn){ kbtn.addEventListener('click', function(){
+                if(!confirm('Re-publish the full current config (settings/accounts/per-user/bots) to the upstream relays now? Paced over a few minutes.')) return;
+                kbtn.disabled=true; rstat.textContent='backing up to upstream… (runs in the background)';
+                var f=(window.csrfFetch||fetch);
+                f('/api/admin/nostr-relay/backup-datastore',{method:'POST'}).then(function(r){return r.json();})
+                .then(function(j){
+                    if(j && j.ok){ var c=j.republished||{}; rstat.textContent='✓ re-published '+Object.keys(c).map(function(k){return c[k]+' '+k;}).join(', '); }
+                    else rstat.textContent='✗ '+((j&&j.error)||'failed');
+                }).catch(function(e){ rstat.textContent='✗ '+e; })
+                .finally(function(){ kbtn.disabled=false; });
+            }); }
+            var rbtn=document.getElementById('relay-restore-btn');
             if(rbtn){ rbtn.addEventListener('click', function(){
                 if(!confirm('Pull the operator’s encrypted config docs from the upstream relays into this node? Use this on a fresh/rebuilt node.')) return;
                 rbtn.disabled=true; rstat.textContent='restoring from upstream…';

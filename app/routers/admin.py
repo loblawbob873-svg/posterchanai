@@ -376,6 +376,24 @@ def nostr_relay_restore_datastore(db: Session = Depends(get_db), admin: User = D
         return {"ok": False, "error": str(e)}
 
 
+@router.post("/nostr-relay/backup-datastore")
+def nostr_relay_backup_datastore(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """DR: re-publish ALL of the operator's encrypted pcai: CONFIG docs (settings/accounts/per-user
+    config/bots) so the relay outbox federates the FULL current config to upstream. Federation is
+    incremental (only docs written since 'Back up datastore' turned on reach upstream), so this seeds
+    the rest in one shot. Paced so it can't overflow the outbox. Needs 'Back up datastore' ON."""
+    import asyncio as _asyncio
+    from app.services import settings_store
+    if not settings_store.get_bool("nostr_relay_backup_datastore", True):
+        return {"ok": False, "error": "Enable 'Back up datastore' first"}
+    try:
+        counts = _asyncio.run(settings_store.republish_datastore(db))
+        return {"ok": True, "republished": counts}
+    except Exception as e:
+        logger.warning(f"[Admin] backup-datastore failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/nostr-relay/backfill")
 def nostr_relay_backfill(npub: str = Query(...), admin: User = Depends(get_admin_user)):
     """Backfill one or MORE users' Nostr history into the relay by npub/hex (Admin → Relay).
