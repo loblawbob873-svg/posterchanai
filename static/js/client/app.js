@@ -4897,7 +4897,7 @@
   function _fileB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onerror=()=>rej(r.error);
     r.onload=()=>res(String(r.result).split(',',2)[1]||''); r.readAsDataURL(file); }); }
   const Mail = {
-    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', msgs:[], openUid:null, q:'', _syncing:false,
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], msgs:[], openUid:null, q:'', _syncing:false,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
@@ -4918,7 +4918,7 @@
         <div class="mail-side">
           <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.length>1?`<option value="__all"${this.acct==='__all'?' selected':''}>📥 All inboxes</option>`:''}${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
           <button class="btn btn-neon mail-compose" id="mail-compose">✏️ Compose</button>
-          <div class="mail-folders">${[['INBOX','📥 Inbox'],['Sent','📤 Sent'],['Drafts','📝 Drafts']].map(([f,l])=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${f}">${l}</button>`).join('')}</div>
+          <div class="mail-folders">${(this.acct==='__all'?['INBOX','Sent','Drafts']:this.folders).map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')}</div>
         </div>
         <div class="mail-list">
           <div class="mail-list-top"><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
@@ -4926,11 +4926,31 @@
         </div>
         <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
       </div>`;
-      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.draw(); this.loadList(); this.sync(); };
+      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; this.draw(); this.loadList(); this.sync(); };
       $('#mail-compose',root).onclick=()=>this.compose({});
-      $$('[data-folder]',root).forEach(b=> b.onclick=()=>{ this.folder=b.dataset.folder; this.openUid=null; this.draw(); this.loadList(); });
+      $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
+      this.loadList(); this.loadFolders();
+    },
+    _folderLabel(f){ const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive','[Gmail]':'📁 Gmail'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
+    async loadFolders(){
+      if(this.acct==='__all' || !this.root) return;
+      let fl; try{ const r=await this.api('/folders?account='+encodeURIComponent(this.acct)); fl=r.folders; }catch(_){}
+      if(!fl || !fl.length) return;
+      this.folders=fl;
+      const box=this.root.querySelector('.mail-folders'); if(!box) return;
+      box.innerHTML=this.folders.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('');
+      box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+    },
+    async selectFolder(f){
+      this.folder=f; this.openUid=null; this.q='';
+      if(this.root){ this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
+        const b=$('#mail-items',this.root); if(b) b.innerHTML='<div class="spinner"></div>'; }
+      // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is pulled on demand.
+      if(this.acct!=='__all' && !['INBOX','Sent','Drafts'].includes(f)){
+        try{ await this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account:this.acct,folder:f})}); }catch(_){}
+      }
       this.loadList();
     },
     async loadList(){

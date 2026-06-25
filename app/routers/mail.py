@@ -213,7 +213,7 @@ def _summary(m: dict) -> dict:
         "subject": m.get("subject"), "date": m.get("date"), "ts": m.get("ts", 0),
         "read": bool((m.get("flags") or {}).get("read")),
         "attachments": len(m.get("attachments") or []),
-        "preview": (m.get("body_text") or "")[:140],
+        "preview": (m.get("preview") or m.get("body_text") or "")[:140],
     }
 
 
@@ -257,6 +257,11 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
     msg = await mail_store.get_message(sk, acc.email, folder, uid)
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get("body_ref"):     # large body was offloaded to an encrypted Blossom blob — rehydrate it
+        body = await mail_sync.load_body(db, msg["body_ref"])
+        if body:
+            msg["body_text"] = body.get("body_text", "")
+            msg["body_html"] = body.get("body_html", "")
     if not (msg.get("flags") or {}).get("read"):     # opening marks it read
         await mail_store.set_flags(sk, acc.email, folder, uid, read=True)
         msg.setdefault("flags", {})["read"] = True
@@ -404,14 +409,52 @@ async def mail_save_draft(request: Request, db: Session = Depends(get_db), curre
         raise HTTPException(status_code=404, detail="Account not found")
     dr = d.get("draft") or {}
     uid = str(dr.get("uid") or f"draft-{int(time.time() * 1000)}")
+    body = dr.get("body", "")
     doc = {
         "uid": uid, "is_draft": True, "from": acc.email,
         "to": dr.get("to", ""), "cc": dr.get("cc", ""),
         "subject": dr.get("subject", "") or "(no subject)",
-        "body_text": dr.get("body", ""),
+        "body_text": body, "preview": (body or "")[:200],
         "attachments": dr.get("attachments") or [],
         "mode": dr.get("mode"), "reply_uid": dr.get("reply_uid"), "reply_folder": dr.get("reply_folder"),
         "flags": {"read": True}, "ts": int(time.time()),
     }
-    ok = await mail_store.store_message(_seckey(db, current_user), acc.email, "Drafts", doc)
+    sk = _seckey(db, current_user)
+    doc = await mail_sync.offload_body(db, _ns.derive_pubkey(sk), doc)   # large draft body → encrypted blob
+    ok = await mail_store.store_message(sk, acc.email, "Drafts", doc)
     return {"ok": bool(ok), "uid": uid}
+
+
+from app.services.mail_service import list_folders as _list_folders
+
+
+@router.get("/folders")
+async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Real IMAP folder list for an account (INBOX/Sent/Drafts pinned first), so the GUI shows the
+    account's actual mailboxes rather than a fixed three."""
+    acc = _resolve_account(db, current_user, account)
+    if not acc:
+        return {"folders": ["INBOX", "Sent", "Drafts"]}
+    try:
+        raw = await _asyncio.to_thread(_list_folders, current_user.id, db, acc.email)
+    except Exception as e:
+        logger.debug("[mail] list_folders failed: %s", e)
+        raw = []
+    pinned = ["INBOX", "Sent", "Drafts"]
+    rest = sorted({f for f in (raw or []) if f and f not in pinned})
+    return {"folders": pinned + rest}
+
+
+@router.post("/sync-folder")
+async def mail_sync_folder(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Pull one folder on demand (the default sync only does INBOX/Sent)."""
+    d = await request.json()
+    acc = _resolve_account(db, current_user, d.get("account", ""))
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    try:
+        n = await mail_sync.sync_one(db, current_user, acc.email, d.get("folder", "INBOX"))
+        return {"ok": True, "new": n}
+    except Exception as e:
+        logger.warning("[mail] sync-folder failed: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

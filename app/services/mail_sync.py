@@ -11,6 +11,7 @@ key,iv}; `load_attachment` fetches the Blossom ciphertext and decrypts it on dow
 path reuses it to re-attach the real bytes to an outgoing SMTP message — exactly like a normal client).
 """
 import os
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -56,6 +57,46 @@ async def _store_attachment(db: Session, owner_pubkey: str, att) -> dict:
     }
 
 
+# NIP-44 caps encrypted plaintext at 65535 bytes; HTML emails routinely exceed that. Offload the
+# bodies to an encrypted Blossom blob below this size so any message stores as a (small) event.
+_DOC_MAX = 50000
+
+
+async def offload_body(db: Session, owner_pubkey: str, doc: dict) -> dict:
+    """If the serialized doc would blow the NIP-44 plaintext cap, move body_text/body_html into an
+    encrypted Blossom blob and keep just a `body_ref` + the inline `preview`. Idempotent-ish: a doc
+    that already fits is returned unchanged."""
+    try:
+        if len(json.dumps(doc)) <= _DOC_MAX:
+            return doc
+    except Exception:
+        return doc
+    payload = json.dumps({"body_text": doc.get("body_text", ""), "body_html": doc.get("body_html", "")}).encode("utf-8")
+    try:
+        ct, key, iv = _aes_encrypt(payload)
+        desc = await blossom_service.save_blob(db, owner_pubkey, ct, "application/octet-stream")
+        doc["body_ref"] = {"sha256": desc.get("sha256"), "key": key.hex(), "iv": iv.hex()}
+        doc["body_text"] = ""
+        doc["body_html"] = ""
+    except Exception as e:
+        logger.warning("[mail-sync] body offload failed (%s) — truncating to fit", e)
+        doc["body_html"] = ""
+        doc["body_text"] = (doc.get("body_text", "") or "")[:40000]
+    return doc
+
+
+async def load_body(db: Session, ref: dict) -> dict | None:
+    """Fetch + decrypt an offloaded body blob → {body_text, body_html}, or None if gone."""
+    pt, _ = await load_attachment(db, {"sha256": (ref or {}).get("sha256"),
+                                       "key": (ref or {}).get("key"), "iv": (ref or {}).get("iv")})
+    if pt is None:
+        return None
+    try:
+        return json.loads(pt.decode("utf-8"))
+    except Exception:
+        return None
+
+
 async def load_attachment(db: Session, ref: dict) -> tuple[bytes | None, str]:
     """Fetch + decrypt an attachment's bytes from Blossom (for download or to re-attach on forward).
     Returns (plaintext_bytes, mime) or (None, '') if the blob is gone."""
@@ -94,6 +135,7 @@ def _to_doc(msg, att_refs: list) -> dict:
         "ts": ts,
         "body_text": msg.body_text or "",
         "body_html": msg.body_html or "",
+        "preview": (msg.body_text or "")[:200],   # kept inline even when the body is offloaded (list view)
         "in_reply_to": msg.in_reply_to or "",
         "references": msg.references or "",
         "flags": {"read": bool(msg.is_read)},
@@ -121,11 +163,25 @@ async def _sync_folder(db: Session, user, seckey: bytes, owner_pk: str, account,
             except Exception as e:
                 logger.warning("[mail-sync] attachment store failed for %s: %s", m.uid, e)
         try:
-            if await mail_store.store_message(seckey, account.email, folder, _to_doc(m, att_refs)):
+            doc = await offload_body(db, owner_pk, _to_doc(m, att_refs))
+            if await mail_store.store_message(seckey, account.email, folder, doc):
                 new += 1
         except Exception as e:
             logger.warning("[mail-sync] store msg %s failed: %s", m.uid, e)
     return new
+
+
+async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
+    """Sync a single (account, folder) on demand — used when the GUI opens a folder that isn't in the
+    default INBOX/Sent set. Returns new-message count (0 for the local-only Drafts folder)."""
+    if folder == "Drafts":
+        return 0
+    acc = next((a for a in mail_service.get_user_mail_accounts(user.id, db) if a.email == account_email), None)
+    if not acc:
+        return 0
+    seckey = nostr_store.user_storage_seckey(db, user)
+    owner_pk = nostr_service.derive_pubkey(seckey)
+    return await _sync_folder(db, user, seckey, owner_pk, acc, folder)
 
 
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:
