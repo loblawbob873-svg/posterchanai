@@ -614,7 +614,7 @@ async def _main(cfg: dict) -> None:
         mr = cfg.get("firehose_max_relays", 0)
         grp = [asyncio.create_task(
             run_firehose(cfg["upstream"], cfg["ingest_kinds"], _firehose_event, fstop,
-                         cfg["direct"], max_relays=mr, stagger_span=span))]
+                         cfg["direct"], max_relays=mr, stagger_span=span, label=" (WoT)"))]
         # Targeted DM inbox: kind-4 (NIP-04) + 1059 (NIP-17 gift wrap) addressed to our operators.
         # These kinds aren't in ingest_kinds, so the global firehose never pulled incoming DMs —
         # only the user's own outgoing (published here) showed. Filtered by #p=operators.
@@ -622,7 +622,7 @@ async def _main(cfg: dict) -> None:
         if _ops:
             grp.append(asyncio.create_task(
                 run_firehose(cfg["upstream"], [4, 1059], _firehose_event, fstop, cfg["direct"],
-                             max_relays=mr, extra={"#p": _ops}, stagger_span=span)))
+                             max_relays=mr, extra={"#p": _ops}, stagger_span=span, label=" (DM inbox)")))
             # Distributed-LB (DVM): stream cluster job (5xxx) + result (6xxx) events addressed to
             # THIS node (#p=operator) from the upstream cluster relay, so a worker can use only its
             # LOCAL relay and still receive jobs/results via the WoT upstream sync.
@@ -630,7 +630,7 @@ async def _main(cfg: dict) -> None:
                 grp.append(asyncio.create_task(
                     run_firehose(cfg["upstream"], [5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202],
                                  _firehose_event, fstop, cfg["direct"], max_relays=mr,
-                                 extra={"#p": _ops}, stagger_span=span)))
+                                 extra={"#p": _ops}, stagger_span=span, label=" (DVM)")))
         _firehose["tasks"], _firehose["stop"] = grp, fstop
 
     async def _restart_firehose():

@@ -31,7 +31,7 @@ _STAGGER_SPAN = 6.0
 
 
 async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, direct: bool,
-                   extra: dict = None, start_delay: float = 0.0) -> None:
+                   extra: dict = None, start_delay: float = 0.0, label: str = "") -> None:
     """Maintain one persistent firehose subscription to `relay_url`, reconnecting forever. `extra`
     adds filter fields (e.g. {'#p': [operator pubkeys]} for the targeted DM inbox). `start_delay`
     staggers this stream's FIRST connect so N relays don't all replay their `since` window at the
@@ -55,7 +55,7 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                 if extra:
                     flt.update(extra)
                 await ws.send(json.dumps(["REQ", sub, flt]))
-                logger.info("[nostr-relay] firehose connected: %s", relay_url)
+                logger.info("[nostr-relay] firehose connected: %s%s", relay_url, label)
                 backoff = 2
                 while not stop.is_set():
                     try:
@@ -93,7 +93,8 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
 
 
 async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, direct: bool,
-                       max_relays: int = 0, extra: dict = None, stagger_span: float = _STAGGER_SPAN) -> None:
+                       max_relays: int = 0, extra: dict = None, stagger_span: float = _STAGGER_SPAN,
+                       label: str = "") -> None:
     """Run a persistent firehose subscription against the upstream relays until `stop`.
 
     `max_relays` caps how many relays to subscribe to (0 = ALL). The firehose is now the sole
@@ -108,10 +109,10 @@ async def run_firehose(upstream, kinds: list, on_event, stop: asyncio.Event, dir
     # once — keeps the event loop responsive to local /client handshakes during (re)start instead of
     # CPU-pegged on backfill. Spread the fleet over `stagger_span` seconds total.
     step = (stagger_span / len(relays)) if relays else 0.0
-    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct, extra, start_delay=i * step))
+    tasks = [asyncio.create_task(_run_one(u, kinds, on_event, stop, direct, extra, start_delay=i * step, label=label))
              for i, u in enumerate(relays)]
     logger.info("[nostr-relay] firehose started on %d/%d upstream relays%s",
-                len(tasks), len(upstream), " (DM inbox)" if extra else "")
+                len(tasks), len(upstream), label or "")
     try:
         await stop.wait()
     finally:
