@@ -3835,7 +3835,17 @@
     if(!users.length){ pane.innerHTML='<div class="empty">No Blossom uploads on this server yet.</div>'; return; }
     const miss=users.map(u=>u.pubkey).filter(pk=>!Store.haveProfile(pk)).slice(0,300);
     if(miss.length){ try{ (await Relay.query([{authors:miss,kinds:[0],limit:miss.length}])).forEach(e=>Store.saveProfile(e)); }catch(_){} }
-    pane.innerHTML=`<div class="muted small" style="padding:8px 4px">📊 ${users.length} uploader(s) · ${_fmtBytes(total)} total — tap a row to review files, tap avatar/name for their profile</div>
+    pane.innerHTML=`<div style="display:flex;gap:10px;padding:10px 4px 6px;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:12px;padding:10px 14px">
+          <div style="font-size:22px;font-weight:700;line-height:1.1;color:var(--cyan,#0ff)">${users.length}</div>
+          <div class="muted" style="font-size:12px">📊 uploader${users.length===1?'':'s'}</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:var(--panel,#16161c);border:1px solid var(--border,#333);border-radius:12px;padding:10px 14px">
+          <div style="font-size:22px;font-weight:700;line-height:1.1;color:var(--cyan,#0ff)">${_fmtBytes(total)}</div>
+          <div class="muted" style="font-size:12px">💾 total stored</div>
+        </div>
+      </div>
+      <div class="muted small" style="padding:2px 6px 8px">Tap a row to review files · tap an avatar or name for their profile</div>
       <div class="people-list">${users.map((u,i)=>{ const p=Store.profile(u.pubkey)||{}; const nm=p.name||p.display_name||(u.npub.slice(0,12)+'…');
         return `<div class="psearch badm-row" data-i="${i}" style="cursor:pointer">
           <img src="${enc(p.picture||LOGO)}" class="badm-prof" data-pk="${u.pubkey}" style="cursor:pointer" onerror="this.src='${LOGO}'">
