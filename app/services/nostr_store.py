@@ -190,6 +190,22 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     return {d: _decode(ev.get("content", ""), seckey, encrypt) for d, ev in best.items()}
 
 
+async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
+                     kind: int = APP_KIND) -> set:
+    """Just the d-tags under `prefix` — NO content decryption. For cheap existence/UID checks where the
+    key is encoded in the d-tag itself (e.g. mailbox dedup), avoiding decrypting the whole set."""
+    pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
+    if not pk:
+        raise ValueError("list_dtags needs seckey or pubkey")
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "limit": 5000}])
+    out = set()
+    for ev in evs:
+        d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+        if d and d.startswith(prefix):
+            out.add(d)
+    return out
+
+
 async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND) -> bool:
     """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord)."""
     pk = bip340.pubkey_from_seckey(seckey).hex()

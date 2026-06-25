@@ -86,9 +86,12 @@ async def delete_message(seckey: bytes, account_email: str, folder: str, uid: st
 
 
 async def have_uids(seckey: bytes, account_email: str, folder: str) -> set:
-    """UIDs already mirrored for (account, folder) — so sync only stores genuinely new mail."""
-    docs = await nostr_store.list_docs(_port(), _prefix(account_email, folder), seckey=seckey, encrypt=True)
-    return {str(v.get("uid")) for v in docs.values() if isinstance(v, dict) and v.get("uid")}
+    """UIDs already mirrored for (account, folder) — so sync only stores genuinely new mail. The UID is
+    the last d-tag segment, so this reads d-tags WITHOUT decrypting any content (sync ran a NIP-44
+    decrypt of the whole folder here on every pass, pegging the event loop — see the CPU-spike fix)."""
+    prefix = _prefix(account_email, folder)
+    dtags = await nostr_store.list_dtags(_port(), prefix, seckey=seckey)
+    return {d[len(prefix):] for d in dtags if len(d) > len(prefix)}
 
 
 def search(messages: list, query: str) -> list:

@@ -558,18 +558,24 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """The whole conversation for a message (across folders), bodies rehydrated."""
     sk = _seckey(db, current_user)
+    acc = None
     if account == "__all":
-        allm = await mail_store.list_messages(sk, None, None)
-        seed = next((m for m in allm if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
+        seed = next((m for m in await mail_store.list_messages(sk, None, None)
+                     if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
     else:
         acc = _resolve_account(db, current_user, account)
         if not acc:
             raise HTTPException(status_code=404, detail="Account not found")
         seed = await mail_store.get_message(sk, acc.email, folder, uid)
-        allm = await mail_store.list_messages(sk, acc.email, None)
     if not seed:
         raise HTTPException(status_code=404, detail="Message not found")
-    thread = _build_thread(seed, allm)
+    # Only scan/decrypt the whole mailbox when this message is actually part of a thread (has reply
+    # headers). Most messages are singletons — return just the seed and skip the expensive load.
+    if not (seed.get("in_reply_to") or (seed.get("references") or "").strip()):
+        thread = [seed]
+    else:
+        allm = await mail_store.list_messages(sk, acc.email if acc else None, None)
+        thread = _build_thread(seed, allm)
     for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
         if m.get("body_ref"):
             body = await mail_sync.load_body(db, m["body_ref"])
