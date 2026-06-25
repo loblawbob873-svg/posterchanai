@@ -2890,7 +2890,7 @@
     if(!text){ toast('write something first'); return; }
     // Thai kept near the top so it's visible without scrolling the picker (the popover caps at ~12
     // rows before it scrolls — Thai lower in the list read as "missing").
-    const langs=['English','Thai','Spanish','French','German','Italian','Portuguese','Tagalog','Cebuano','Swahili','Japanese','Korean','Chinese','Hindi','Arabic','Russian','Indonesian'];
+    const langs=['English','Thai','Chinese','Spanish','French','German','Italian','Portuguese','Tagalog','Cebuano','Swahili','Japanese','Korean','Hindi','Arabic','Russian','Indonesian'];
     const items=langs.map(n=>[n,'🌐 '+n]).concat([['__other','✏️ Other…']]);
     openMenuPopover(btn, items, async name=>{
       let to=name;
