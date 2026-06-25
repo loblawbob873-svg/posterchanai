@@ -2857,7 +2857,7 @@
   async function composeTranslate(ta, btn){
     const text=(ta.value||'').trim();
     if(!text){ toast('write something first'); return; }
-    const langs=['English','Spanish','French','German','Italian','Portuguese','Tagalog','Cebuano','Swahili','Japanese','Korean','Chinese','Hindi','Arabic','Russian','Indonesian'];
+    const langs=['English','Spanish','French','German','Italian','Portuguese','Tagalog','Cebuano','Swahili','Japanese','Korean','Chinese','Thai','Hindi','Arabic','Russian','Indonesian'];
     const items=langs.map(n=>[n,'🌐 '+n]).concat([['__other','✏️ Other…']]);
     openMenuPopover(btn, items, async name=>{
       let to=name;

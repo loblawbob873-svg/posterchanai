@@ -652,6 +652,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .chatroom-compose textarea{flex:1;resize:none;max-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 13px;font-family:inherit;font-size:15.5px;line-height:1.4}
 .chatroom-compose textarea:focus{border-color:var(--neon);outline:none}
 .chatroom-compose .btn{flex:0 0 auto;min-height:42px}
+/* the attach 📎 / translate 🌐 buttons use the global .mini (tiny 12px) — enlarge them in the compose
+   bar so they match the Send button height and are an easy tap target (mirrors .dm-tools .mini). */
+.chatroom-compose .mini{flex:0 0 auto;font-size:20px;line-height:1;padding:0 12px;min-height:42px}
 .chatroom-compose.readonly{justify-content:center;align-items:center;text-align:center;min-height:44px}
 .channel-card .stream-play{font-size:30px}
 @media(max-width:820px){
@@ -662,6 +665,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .chatroom-msgs{padding:12px 10px}
   .chatroom-compose{padding:10px}
   .chatroom-compose textarea{font-size:16px}   /* ≥16px stops iOS zoom-on-focus */
+  /* bigger per-message reply/react/translate buttons + reaction pills for a comfortable touch target */
+  .chat-mini{min-width:34px;height:32px;font-size:16px}
+  .chat-reacts{gap:8px}
+  .chat-react{font-size:14px;padding:4px 10px}
 }
 .act.actq{color:var(--cyan)}
 .act.actq:hover{color:var(--neon)}
