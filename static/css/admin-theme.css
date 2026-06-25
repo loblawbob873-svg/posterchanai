@@ -83,12 +83,18 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
   align-self: flex-start; width: auto;   /* .settings-form is a flex column (align-items:stretch) — don't stretch the button full width */
 }
 .admin-page .btn-primary:hover, .admin-page .save-btn:hover{ filter: brightness(1.08); }
+/* Every admin action button is a FILLED button. Secondary = solid cyan fill (one step down from the
+   cyan→magenta gradient primary), so the whole panel reads as colored/consistent, not outline-only. */
 .admin-page .btn-secondary{
-  background: rgba(0,255,255,.10); border:1px solid #00ffff; color:#bff8ff;
-  border-radius: 10px; padding: 8px 14px; cursor:pointer; font-weight:600;
+  background: linear-gradient(135deg,#0bb6cf,#00d4e6); border:none; color:#04222a;
+  border-radius: 10px; padding: 8px 14px; cursor:pointer; font-weight:700;
 }
-.admin-page .btn-secondary:hover{ background: rgba(0,255,255,.2); color:#fff; }
-.admin-page .btn-danger{ background: rgba(255,51,102,.16); border:1px solid var(--danger); color:#ff90a8; border-radius:10px; padding:8px 14px; cursor:pointer; }
+.admin-page .btn-secondary:hover{ filter:brightness(1.1); box-shadow:0 0 12px rgba(0,255,255,.35); }
+/* destructive "Delete all posts" → filled, but semantically RED (not cyan like the rest) */
+.admin-page #bot_f_delposts, .admin-page .btn-secondary.btn-danger{ background: linear-gradient(135deg,#ff3366,#ff5a7d) !important; color:#fff !important; }
+.admin-page #bot_f_delposts:hover, .admin-page .btn-secondary.btn-danger:hover{ filter:brightness(1.1) !important; box-shadow:0 0 12px rgba(255,51,102,.4); }
+.admin-page .btn-danger{ background: linear-gradient(135deg,#ff3366,#ff5a7d); border:none; color:#fff; border-radius:10px; padding:8px 14px; cursor:pointer; font-weight:700; }
+.admin-page .btn-danger:hover{ filter:brightness(1.1); box-shadow:0 0 12px rgba(255,51,102,.4); }
 /* Small buttons (bot-list Edit/Delete, bot-modal Connect/Generate identity/Upload/previews). style.css
    ships a plain `.btn-small{border:none}` (no fill) and loads BEFORE this file; this lives last + uses
    !important so the bot UI's small buttons are always clearly cyan-themed instead of borderless text. */
