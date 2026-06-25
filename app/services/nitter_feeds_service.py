@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import re
+import time
 from email.utils import parsedate_to_datetime
 from urllib.parse import unquote
 
@@ -33,6 +34,10 @@ _UA = {"User-Agent": "Mozilla/5.0 (compatible; posterchanai-nitter/1.0)"}
 _MAX_DL = 20_000_000          # cap media/avatar download size to bound memory
 _MAX_SEEN = 200               # guids retained per feed
 _MAX_NEW_PER_FEED = 5         # don't flood a chat if a feed jumps ahead
+# Don't FORWARD tweets older than this even if they're unseen — a nitter instance flip or a backlog
+# served after downtime can surface old tweets that scrolled out of the cursor window; without an age
+# gate they'd all get re-sent ("spamming old posts"). They're still marked seen, just not forwarded.
+_MAX_AGE_SEC = 48 * 3600
 _DC_CREATOR = "{http://purl.org/dc/elements/1.1/}creator"
 # Nitter uses these literal placeholder strings as the RSS <title> of a tweet that
 # has NO text (just media), instead of an empty title — so they must be treated as
@@ -137,6 +142,14 @@ def _fmt_pubdate(pubdate: str) -> str:
         return ""
 
 
+def _pubdate_epoch(pubdate: str) -> float:
+    """pubDate → epoch seconds, or 0.0 if unparseable (treated as 'recent' so it's never wrongly dropped)."""
+    try:
+        return parsedate_to_datetime(pubdate).timestamp()
+    except Exception:
+        return 0.0
+
+
 def _resolve_pic(url: str) -> str:
     """Nitter /pic/ proxy URL → underlying Twitter CDN URL (more reliable than the
     proxy). Returns the input unchanged if it isn't a /pic/ URL."""
@@ -230,6 +243,7 @@ def _parse_feed(content: bytes):
             "text": text or title,
             "media_url": media_url,
             "timestamp": _fmt_pubdate(item.findtext("pubDate") or ""),
+            "epoch": _pubdate_epoch(item.findtext("pubDate") or ""),
         })
     return items, avatar_url, channel_name
 
@@ -321,9 +335,14 @@ async def _poll_user(db: Session, tg: TelegramService, user: User, clients) -> N
         prev_seen = [_stable_guid(g) for g in seen[rss]]
         known = set(prev_seen)
         new_items = [it for it in items if it["guid"] not in known]
+        # Only FORWARD genuinely-recent tweets — an unseen-but-old tweet (instance flip / post-downtime
+        # backlog) is skipped here but still falls through to the seen-cursor update below, so it's
+        # silenced for good instead of re-sent every poll. Unparseable date (epoch 0) → treat as recent.
+        _now = time.time()
+        fresh_items = [it for it in new_items if not it.get("epoch") or (_now - it["epoch"]) <= _MAX_AGE_SEC]
         # Oldest-first so chat order is chronological; cap to avoid flooding.
         unrendered = set()
-        for it in reversed(new_items[:_MAX_NEW_PER_FEED]):
+        for it in reversed(fresh_items[:_MAX_NEW_PER_FEED]):
             png = await _render_card(client, it, handle, channel_name, avatar_url)
             if not png:
                 # Transient render failure (avatar/media fetch, browser hiccup): DON'T mark it seen,

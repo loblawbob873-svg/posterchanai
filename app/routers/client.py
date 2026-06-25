@@ -332,6 +332,38 @@ async def client_narrate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "narration unavailable"}, status_code=503)
 
 
+@router.post("/screenshot")
+async def client_screenshot(request: Request, db: Session = Depends(get_db)):
+    """Full-page screenshot of a post's web URL (the timeline ☰ → Screenshot action). Same-origin
+    helper like /narrate; reuses the screenshot command's SSRF guard + headless capture and returns
+    a base64 PNG for the client to copy to the clipboard."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    import asyncio
+    import base64
+    url = (body.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"error": "no url"}, status_code=400)
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        url = "https://" + url
+    from app.services import settings_store
+    from app.services.command_service._common import _capture_full_page, _url_is_safe_to_fetch
+    allow_value = settings_store.get("screenshot_allowed_hosts")
+    allowed_hosts = re.split(r"[\s,]+", allow_value.strip()) if allow_value else []
+    if not await asyncio.to_thread(_url_is_safe_to_fetch, url, allowed_hosts):
+        return JSONResponse({"error": "refused: private/internal address"}, status_code=400)
+    try:
+        png = await asyncio.wait_for(asyncio.to_thread(_capture_full_page, url), timeout=100)
+    except Exception as e:
+        logger.warning(f"[client] screenshot failed: {e}")
+        return JSONResponse({"error": "screenshot failed"}, status_code=503)
+    if not png:
+        return JSONResponse({"error": "no image"}, status_code=503)
+    return JSONResponse({"image": base64.b64encode(png).decode()})
+
+
 @router.post("/stt")
 async def client_stt(audio: UploadFile = File(...)):
     """Voice input for the web client's AI chat — Whisper speech-to-text. Same-origin helper (no

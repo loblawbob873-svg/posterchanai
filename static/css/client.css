@@ -609,6 +609,7 @@ a.btn.full{display:block}
 .chat-react:hover{border-color:var(--neon)}
 .chat-react.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
 .chat-react .n{opacity:.8;font-weight:700}
+.chat-react-img{width:17px;height:17px;object-fit:contain;vertical-align:middle;display:inline-block}
 .chat-zap{display:inline-flex;align-items:center;gap:4px;color:var(--neon2);font-size:13px;font-weight:700}
 .chat-mini{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 6px;border-radius:12px;background:transparent;border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:13px;opacity:.55}
 .chat-mini:hover{opacity:1;border-color:var(--neon);color:var(--neon)}
@@ -1053,7 +1054,9 @@ a.btn.full{display:block}
      gaps) and drop the action group (Draft/Post) onto its own full-width row, right-aligned. */
   .cmp-tools{justify-content:flex-start}
   .cmp-left{flex:1 1 100%}
-  .cmp-left .btn{flex:1 1 calc(50% - 4px)}
+  .cmp-left > .btn,.cmp-left > .cmp-ai-wrap{flex:1 1 calc(50% - 4px)}   /* AI ▾ is wrapped in a span — size it like the other buttons */
+  .cmp-left .cmp-ai-wrap{display:flex !important}
+  .cmp-left .cmp-ai-wrap > .btn{flex:1 1 auto;width:100%}               /* and stretch the button to fill its wrapper */
   .cmp-right{width:100%;justify-content:flex-end}
 }
 

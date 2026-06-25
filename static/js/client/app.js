@@ -2008,10 +2008,14 @@
   }
   // Record a kind-7 reaction into _chatReacts keyed by its target (last e-tag, per NIP-25).
   // Returns true if it was new (so the caller can redraw).
+  const _chatEmojiImg = new Map();   // NIP-30 custom-emoji ":shortcode:" → image URL (stable cache)
   function _recordReact(ev){
     if(!ev || ev.kind!==7) return false;
     const tid=_lastE(ev); if(!tid) return false;
     let emoji=ev.content||''; if(emoji==='+'||emoji===''){ emoji='❤️'; } else if(emoji==='-'){ emoji='👎'; }
+    // NIP-30 custom emoji: content is ":shortcode:" with an ["emoji", shortcode, url] tag. Cache the
+    // url so the pill shows the IMAGE — otherwise the bare ":shortcode:" text reads like inline code.
+    if(/^:[^:\s]+:$/.test(emoji)){ const nm=emoji.slice(1,-1); const t=(ev.tags||[]).find(x=>x[0]==='emoji'&&x[1]===nm&&x[2]); if(t) _chatEmojiImg.set(emoji, t[2]); }
     let m=_chatReacts.get(tid); if(!m){ m=new Map(); _chatReacts.set(tid,m); }
     let s=m.get(emoji); if(!s){ s=new Set(); m.set(emoji,s); }
     if(s.has(ev.pubkey)) return false; s.add(ev.pubkey); return true;
@@ -2037,7 +2041,9 @@
     const mine=ME&&ME.pubkey;
     return [...m.entries()].filter(([,s])=>s.size).sort((a,b)=>b[1].size-a[1].size).map(([emoji,s])=>{
       const on=mine && s.has(mine);
-      return `<button class="chat-react${on?' on':''}" data-react="${enc(id)}" data-emoji="${enc(emoji)}" title="react ${enc(emoji)}">${enc(emoji)} <span class="n">${s.size}</span></button>`;
+      const url=_chatEmojiImg.get(emoji);
+      const disp = url ? `<img class="chat-react-img" src="${enc(url)}" alt="${enc(emoji)}" loading="lazy">` : enc(emoji);
+      return `<button class="chat-react${on?' on':''}" data-react="${enc(id)}" data-emoji="${enc(emoji)}" title="react ${enc(emoji)}">${disp} <span class="n">${s.size}</span></button>`;
     }).join('');
   }
   function chatZapPill(id){ const z=_chatZaps.get(id); return z&&z.sats?`<span class="chat-zap" title="${z.n} zap${z.n>1?'s':''}">⚡ ${fmtSats(z.sats)}</span>`:''; }
@@ -2835,6 +2841,7 @@
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
+    if(!window.PC_NOSTR_ONLY) items.push(['screenshot','📸 Screenshot']); // full-page capture of the post URL → clipboard
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
@@ -2849,11 +2856,33 @@
       if(a==='summary') return summarizePost(id);
       if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
+      if(a==='screenshot') return screenshotPost(id);
       if(a==='pin') return togglePin(id);
       if(a==='nsfw') return repostWithWarning(id);
       if(a==='delete') return doDelete(id, art);
       if(a==='block') return doBlock(pk);
     });
+  }
+  // 📸 Screenshot: full-page capture of the post's web URL via the node's headless browser, copied to
+  // the clipboard (falls back to opening the image where the clipboard image API is unavailable, e.g.
+  // most mobile browsers / non-secure contexts).
+  async function screenshotPost(id){
+    let url; try{ url=_webLink(NT().nip19.neventEncode({id})); }catch(_){ try{ url=_webLink(NT().nip19.noteEncode(id)); }catch(__){ toast('bad post id'); return; } }
+    toast('📸 capturing…');
+    try{
+      const r=await fetch('/client/screenshot',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url }) });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.image){ toast('screenshot failed: '+(j.error||('http '+r.status))); return; }
+      const blob=await (await fetch('data:image/png;base64,'+j.image)).blob();
+      try{
+        if(!navigator.clipboard || !window.ClipboardItem) throw new Error('no clipboard image support');
+        await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+        toast('📸 screenshot copied to clipboard');
+      }catch(_){
+        const u=URL.createObjectURL(blob); window.open(u,'_blank'); setTimeout(()=>URL.revokeObjectURL(u), 60000);
+        toast('📸 screenshot ready (couldn’t copy — opened instead)');
+      }
+    }catch(e){ toast('screenshot failed: '+((e&&e.message)||e)); }
   }
   // Translate a post in-place via the node's AI backend. Only edits the DOM (the stored event is
   // untouched), so switching views / refreshing restores the original — exactly as asked.
@@ -5774,7 +5803,7 @@
     const k=new Set(_ai.attach.map(a=>a.kind));
     if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme ']];
     if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr']];
-    if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio'],['🔄 Convert','fill','convert ']];
+    if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio']];   // matches Telegram's video keyboard (Convert is image↔PDF only — useless for video)
     return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
   }
   function _aiMediaAction(mode, cmd){

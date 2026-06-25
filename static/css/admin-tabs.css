@@ -431,8 +431,17 @@
 }
 .btn-small {
     font-size: 12px;
-    padding: 4px 10px;
+    padding: 6px 12px;
+    /* was uncolored (browser-default grey) → inconsistent with btn-primary/secondary. Give it the
+       same themed secondary look so every bot-modal button (Upload, Generate identity, Connect…) matches. */
+    background: rgba(26,26,42,.8);
+    border: 1px solid var(--border-color, var(--border));
+    color: var(--text-primary, var(--text));
+    border-radius: 9px;
+    cursor: pointer;
+    font-weight: 600;
 }
+.btn-small:hover { border-color: var(--accent); color: var(--accent); }
 
 /* Plugin styles */
 .plugin-list {

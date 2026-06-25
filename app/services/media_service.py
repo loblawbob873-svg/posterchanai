@@ -564,7 +564,7 @@ def circle_crop(data: bytes, max_dimension: int = IMAGE_MAX_DIMENSION) -> bytes:
         top = (img.height - side) // 2
         img = img.crop((left, top, left + side, top + side))
 
-        big = side * 4
+        big = side * 2   # 2× supersample is enough for smooth edges (4× allocated up to ~64MP for a 2048px image)
         mask = Image.new("L", (big, big), 0)
         ImageDraw.Draw(mask).ellipse((0, 0, big - 1, big - 1), fill=255)
         mask = mask.resize((side, side), Image.LANCZOS)

@@ -304,9 +304,11 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
     if old_name != bot.name:
         bots_store.delete_bot_blocking(db, old_name)   # drop the stale relay doc on rename
     bots_store.sync_bot_blocking(db, bot)
+    # Register the NIP-05 name + WoT FIRST, then restart — so when the bot republishes its kind-0 on
+    # startup the name already resolves in /.well-known/nostr.json (was: restart raced the register).
+    _refresh_wot_for_nostr(bot)
     # config/cred/mode changes need a respawn; nudge a reconcile and restart the running child.
     bot_manager_service.restart_bot(bot.name)
-    _refresh_wot_for_nostr(bot)
     return _serialize(bot)
 
 

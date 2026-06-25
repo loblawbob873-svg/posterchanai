@@ -332,6 +332,7 @@ async function provisionBot() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || r.statusText);
         _setVal('bot_f_nostr_nsec', d.nsec);
+        if (d.nip05) _setVal('bot_f_nostr_profile_nip05', d.nip05);   // persist the RESOLVED name@host so Save registers/publishes the same value
         if (!_val('bot_f_nostr_profile_name')) _setVal('bot_f_nostr_profile_name', name);
         // upload the chosen avatar now, signed by the freshly minted key
         const fEl = _g('bot_f_nostr_avatar_file');
