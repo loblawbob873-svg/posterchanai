@@ -1949,7 +1949,7 @@
       ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
       <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
       <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
-      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button><input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
+      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button>${window.PC_NOSTR_ONLY?'':'<button class="mini" id="ch-translate" title="translate your message">🌐</button>'}<input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
     $('#ch-back').onclick=()=>switchView('chat');
     { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
@@ -1957,6 +1957,8 @@
     { const b=$('#ch-send'); if(b) b.onclick=send; }
     { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
       ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
+    // 🌐 translate YOUR draft to another language before sending (same picker as new Post / reply).
+    { const tb=$('#ch-translate'), ta=$('#ch-input'); if(tb && ta) tb.onclick=()=>composeTranslate(ta, tb); }
     // 📎 attach: upload to Blossom, append the URL to the message (inline media renders in kind-42).
     { const ab=$('#ch-attach'), fi=$('#ch-file'), ta=$('#ch-input');
       if(ab && fi && ta){
