@@ -1183,6 +1183,17 @@
   // Blur NIP-36 sensitive/NSFW posts behind a reveal. ON by default; User Settings → Muted toggles it.
   // Stored per-device in ClientSettings (localStorage), so the choice survives reloads/PWA restarts.
   let BLUR_NSFW = ClientSettings.get('blurNsfw', true) !== false;
+  // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
+  // content-warning, OR a topic `t` tag in this set, OR an inline #nsfw-style hashtag — so the common
+  // "#nsfw" convention auto-blurs even without a formal content-warning tag.
+  const _NSFW_TAGS = new Set(['nsfw','porn','nude','nudity','sex','xxx','explicit','gore']);
+  const _NSFW_RE = /(^|\s)#(nsfw|porn|nude|nudity|sex|xxx|explicit|gore)\b/i;
+  function isSensitive(ev){
+    if(!ev || !ev.tags) return false;
+    if(ev.tags.some(t=>t[0]==='content-warning')) return true;
+    if(ev.tags.some(t=>t[0]==='t' && _NSFW_TAGS.has(String(t[1]||'').toLowerCase()))) return true;
+    return _NSFW_RE.test(ev.content||'');
+  }
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
@@ -1272,7 +1283,7 @@
       const pics=[]; const seen=new Set();
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
       feed.innerHTML = pics.length
-        ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && x.e.tags.some(t=>t[0]==='content-warning');
+        ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && isSensitive(x.e);
             return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
         : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
       $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
@@ -2597,8 +2608,8 @@
     const mine = ev.pubkey===ME.pubkey;
     // NIP-36 content warning: blur the body + media behind a reveal button.
     const cwTag = ev.tags.find(t=>t[0]==='content-warning');
-    const cw = !!cwTag && BLUR_NSFW;   // honour the per-device "blur sensitive posts" preference
-    const cwReason = cwTag ? String(cwTag[1]||'').trim() : '';
+    const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
+    const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}

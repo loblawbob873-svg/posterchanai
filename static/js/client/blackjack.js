@@ -176,7 +176,7 @@
       if(!over && !myDone){
         controls = `<div class="pk-controls"><button class="btn btn-cyan small bj-hit">Hit</button><button class="btn btn-neon small bj-stand">Stand</button><button class="btn small bj-leave">Leave</button></div>`;
       } else if(!over && myDone){
-        controls = `<div class="muted small" style="padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</div>`;
+        controls = `<div class="pk-controls" style="align-items:center"><span class="muted small" style="flex:1;padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</span><button class="btn small bj-leave">Leave</button></div>`;
       } else {
         const nb = myStack>0 ? Math.min(myBet||getBet(), myStack) : 0;
         controls = myStack>0
