@@ -2442,6 +2442,11 @@
 
   // ---------- note rendering ----------
   function profOf(pk){ return Store.profile(pk)||{}; }
+  // Monero address published in kind-0 metadata. No standard key exists yet, so we WRITE `xmr` and
+  // READ a few aliases other clients might use. Light validation: mainnet std(95)/integrated(106),
+  // base58, starts 4 (std/integrated) or 8 (subaddress).
+  function xmrOf(p){ return ((p&&(p.xmr||p.monero||p.monero_address))||'').toString().trim(); }
+  function isXmrAddr(a){ return /^[48][0-9A-Za-z]{94,105}$/.test((a||'').trim()); }
   function noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
@@ -2582,6 +2587,7 @@
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
           <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          ${isXmrAddr(xmrOf(profOf(ev.pubkey)))?`<button class="act actxmr" data-a="xmrtip" title="tip Monero (XMR)">ɱ</button>`:''}
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -2752,6 +2758,7 @@
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
       if(a==='zap') return doZap(id,pk);
+      if(a==='xmrtip') return doXmrTip(id,pk);
       if(a==='bookmark') return toggleBookmark(id,btn);
       if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
       if(a==='translate') return translatePost(id);
@@ -2883,6 +2890,42 @@
       <button class="btn btn-cyan full" id="z-copy">Copy invoice</button>`, root=>{
       $('#z-copy',root).onclick=()=>{ navigator.clipboard.writeText(pr); toast('invoice copied'); };
     });
+  }
+  // ---------- Monero tips (non-custodial) ----------
+  // Mirrors the zap UX but there's no LNURL/invoice: the recipient publishes an XMR address in their
+  // kind-0, and the SENDER pays from their own wallet (scan the QR, or the monero: deeplink opens a
+  // wallet app prefilled). Nothing touches this server except the QR render (segno, /client/qr —
+  // stays on the box, no third-party leak). On confirmation we post a public kind-1 tip note (the
+  // chosen "always post" behaviour) crediting the recipient — there's no cryptographic receipt for XMR.
+  async function doXmrTip(noteId, pk){
+    const p=profOf(pk); const addr=xmrOf(p);
+    if(!isXmrAddr(addr)){ toast('no Monero address on this profile'); return; }
+    const name=enc(p.name||p.display_name||'anon');
+    const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
+    modal(`<h3>ɱ Tip ${name} · Monero</h3>
+      <p class="muted small">Send XMR from your own wallet — scan the QR or open your wallet app. Non-custodial: nothing touches this server.</p>
+      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" placeholder="amount (XMR) — optional"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
+      <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
+      <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them">✓ I sent it</button>`}</div>`,
+      root=>{
+        const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root); let _u=null;
+        const renderQr=()=>{ const a=(amtEl.value||'').trim(); openBtn.href=uri(a);
+          fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri(a)})
+            .then(r=>r.ok?r.blob():null).then(b=>{ if(!b) return; if(_u) URL.revokeObjectURL(_u); _u=URL.createObjectURL(b);
+              qrBox.innerHTML=`<img alt="Monero tip QR" src="${_u}">`; }).catch(()=>{}); };
+        renderQr(); let _t; amtEl.addEventListener('input',()=>{ clearTimeout(_t); _t=setTimeout(renderQr,400); });
+        $('#xmr-copy',root).onclick=()=>{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>{}); };
+        { const s=$('#xmr-sent',root); if(s) s.onclick=()=>{ const a=(amtEl.value||'').trim(); closeModal(); _postXmrTipNote(noteId, pk, a); }; }
+      });
+  }
+  async function _postXmrTipNote(noteId, pk, amt){
+    try{
+      const who='nostr:'+NT().nip19.npubEncode(pk);
+      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero`;
+      const tags=[['p',pk],['t','monerotip']].concat(noteId?[['e',noteId]]:[]).concat(amt?[['amount_xmr',String(amt)]]:[]);
+      await publish(1, body, tags); toast('ɱ tip note posted');
+    }catch(e){ toast('could not post tip note'); }
   }
   function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
   async function doBlock(pk){
@@ -5110,11 +5153,13 @@
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button> <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`:`
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
+          ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div>
       <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
+        ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
@@ -5144,6 +5189,8 @@
     $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); _prof.tab=t.dataset.tab; fillList(t.dataset.tab); hydrate(feed); });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
+    { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
+    { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
     $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
     $('#show-followers').onclick=async()=>{   // lazy-load the follower LIST only when actually opened (count was already fetched via NIP-45)
       if(!_prof.followers || !_prof.followers.length){
@@ -5376,13 +5423,16 @@
       <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
+      <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
-      $('#pf-save',root).onclick=async()=>{ const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
+      $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
+        if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); return; }
+        const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), xmr:_xmr, picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
   }
