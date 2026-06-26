@@ -1,6 +1,24 @@
 <!-- Site Settings Tab -->
 <div class="tab-content" id="tab-site">
     <fieldset>
+        <legend>Appearance</legend>
+        <div class="form-group">
+            <label for="client_default_theme">Default theme (web client)</label>
+            <select id="client_default_theme" name="client_default_theme">
+                <option value="cyberpunk">Cyberpunk</option>
+                <option value="cherryblossom">Cherry Blossom</option>
+                <option value="professional">Professional</option>
+                <option value="win98">Windows 98</option>
+                <option value="winxp">Windows XP</option>
+                <option value="animegirl">Anime Girl 🌸</option>
+                <option value="sovietgothic">Soviet Gothic ☭</option>
+                <option value="dark">Dark 🌙</option>
+            </select>
+            <small>Theme applied to <code>/client</code> for any visitor/device that hasn't picked their
+                own theme in User Settings. A logged-in user's saved theme always wins.</small>
+        </div>
+    </fieldset>
+    <fieldset>
         <legend>Effects</legend>
         <div class="form-group">
             <label for="effect_outro_enabled">Append "made with PosterChanAI" end-card to effect videos</label>

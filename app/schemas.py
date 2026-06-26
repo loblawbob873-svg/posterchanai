@@ -87,6 +87,10 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    # Default UI theme for the Nostr web client (/client) — applied to any visitor/device that
+    # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "professional"
+    # if unknown. Stored in the relay like every other setting (restorable via the datastore backup).
+    client_default_theme: str = "professional"
     # Native image generation (diffusers / torch-XPU). image_timeout also bounds the
     # image load-balancer request when chat_server_urls is configured.
     image_timeout: str = "300000"  # image request timeout in ms

@@ -28,8 +28,11 @@
   const THEME_SLUGS = new Set(THEMES.map(t=>t[0]));
   // persist defaults true (a SAVED choice). Pass persist=false for a live preview that must NOT stick:
   // preview only repaints; it reverts to the cached/saved theme on reload because pc_theme is untouched.
+  // The site-wide default theme the admin set (from /client/config); falls back to professional until
+  // CFG loads or if the admin value is stale. Used wherever no per-user/per-device theme is chosen.
+  function siteDefaultTheme(){ return THEME_SLUGS.has(CFG&&CFG.default_theme) ? CFG.default_theme : 'professional'; }
   function applyTheme(slug, persist){
-    slug = THEME_SLUGS.has(slug) ? slug : 'professional';   // professional is the default
+    slug = THEME_SLUGS.has(slug) ? slug : siteDefaultTheme();   // site default when unknown/unset
     if(slug==='cyberpunk') document.documentElement.removeAttribute('data-theme');   // cyberpunk = bare :root
     else document.documentElement.setAttribute('data-theme', slug);
     if(persist!==false){ try{ localStorage.setItem('pc_theme', slug); }catch(_){} }   // no-flash re-apply next load
@@ -1177,6 +1180,9 @@
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
   let _tlMedia = !!ClientSettings.get('tlMedia', false);   // Home/Global "media grid" toggle (image posts only)
+  // Blur NIP-36 sensitive/NSFW posts behind a reveal. ON by default; User Settings → Muted toggles it.
+  // Stored per-device in ClientSettings (localStorage), so the choice survives reloads/PWA restarts.
+  let BLUR_NSFW = ClientSettings.get('blurNsfw', true) !== false;
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
     const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
@@ -1266,7 +1272,8 @@
       const pics=[]; const seen=new Set();
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
       feed.innerHTML = pics.length
-        ? `<div class="pics-grid">${pics.map(x=>`<div class="pic-card" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()"></div>`).join('')}</div>`
+        ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && x.e.tags.some(t=>t[0]==='content-warning');
+            return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
         : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
       $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
       if(preserveScroll) feed.scrollTop=top;
@@ -2590,7 +2597,7 @@
     const mine = ev.pubkey===ME.pubkey;
     // NIP-36 content warning: blur the body + media behind a reveal button.
     const cwTag = ev.tags.find(t=>t[0]==='content-warning');
-    const cw = !!cwTag;
+    const cw = !!cwTag && BLUR_NSFW;   // honour the per-device "blur sensitive posts" preference
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : '';
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
@@ -6302,8 +6309,8 @@
     // The select must reflect the theme CURRENTLY applied on this device (local choice wins over the
     // server value), and we must NOT re-apply on open (that would revert an unsaved live preview).
     let _curTheme; try{ _curTheme=localStorage.getItem('pc_theme'); }catch(_){}
-    _curTheme=_curTheme||s.theme||'professional';
-    if(!THEME_SLUGS.has(_curTheme)) _curTheme='professional';   // stale/removed slug → don't desync the dropdown
+    _curTheme=_curTheme||s.theme||siteDefaultTheme();
+    if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
     const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
     const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
     // init the relay rows ONCE — renderUserSettings re-runs on connect/disconnect actions in other
@@ -6409,6 +6416,8 @@
           <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
         </div>
         <div class="us-pane" data-pane="muted">
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
           <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
           <textarea class="input" id="set-muted-words" rows="4" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
           <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
@@ -6457,6 +6466,12 @@
         if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
         ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
     { const nc=$('#set-nwc-clear'); if(nc) nc.onclick=()=>{ ClientSettings.set('nwc',''); const i=$('#set-nwc'); if(i) i.value=''; const st=$('#set-nwc-status'); if(st) st.textContent='Disconnected'; toast('wallet disconnected'); }; }
+    // Blur-NSFW toggle: persist immediately (per-device) and re-render the open feed so it applies live.
+    { const bn=$('#set-blur-nsfw'); if(bn) bn.onchange=()=>{
+        BLUR_NSFW = bn.checked; ClientSettings.set('blurNsfw', BLUR_NSFW);
+        toast(BLUR_NSFW?'sensitive posts blurred':'sensitive posts shown');
+        if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }; }
     { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
         const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
         wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';

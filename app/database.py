@@ -170,6 +170,8 @@ def init_db():
         # the field blank to fall back in code) so a fresh node SHOWS the list in Admin → Relay.
         from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS, DEFAULT_WOT_SEEDS as _DEFAULT_WOT_SEEDS
         default_settings = {
+            # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
+            "client_default_theme": "professional",
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code

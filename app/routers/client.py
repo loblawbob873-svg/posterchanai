@@ -45,6 +45,14 @@ def _setting(db: Session, key: str, default: str = "") -> str:
     return (v if v else default)
 
 
+def _default_theme(db: Session) -> str:
+    """Admin-chosen default UI theme for /client, validated against the known theme slugs so a stale
+    value can never paint a broken theme. Visitors/devices without their own pick get this one."""
+    from app.schemas import CLIENT_THEMES
+    t = _setting(db, "client_default_theme", "professional")
+    return t if t in CLIENT_THEMES else "professional"
+
+
 def _relay_url(request: Request, db: Session) -> str:
     explicit = _setting(db, "client_relay_url")
     if explicit:
@@ -108,7 +116,7 @@ def _static_version() -> str:
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-async def client_app(request: Request):
+async def client_app(request: Request, db: Session = Depends(get_db)):
     # `secure` gates the upgrade-insecure-requests CSP: harmless over HTTPS (server1 via Cloudflare),
     # but over plain HTTP (e.g. http://nas.lan:3051 on the LAN) it would force every script/CSS to
     # https://<host> — which a node serving bare HTTP doesn't have — breaking the whole page.
@@ -117,7 +125,7 @@ async def client_app(request: Request):
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     return _TEMPLATES.TemplateResponse("client.html",
         {"request": request, "ver": _static_version(), "secure": proto == "https",
-         "nostr_only": nostr_only})
+         "nostr_only": nostr_only, "default_theme": _default_theme(db)})
 
 
 @router.get("/config")
@@ -140,6 +148,8 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
         "name": _setting(db, "site_name", "PosterChan"),
+        # Default UI theme for visitors/devices without their own saved pick (Admin → Site Settings).
+        "default_theme": _default_theme(db),
         # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
         "users": _relay_user_count(),
         # npubs of the enabled game-referee bots (chess/ttt/hangman), so each Games tab can tag the
