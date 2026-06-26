@@ -238,6 +238,9 @@ def _read_config() -> dict:
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
+            # Nostr↔Fediverse bridge: optional shorter retention for the mirrored global-timeline
+            # firehose (origin='bridge'). 0 = use the general retention_days above.
+            "bridge_retention_days": gi("fedi_bridge_retention_days", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 604800),  # weekly (was daily)
             "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
@@ -334,6 +337,14 @@ def _read_config() -> dict:
             "max_filters_per_req": _MAX_FILTERS_PER_REQ,
         }
         cfg["operator"] = _collect_operator_pubkeys(db)
+        # Nostr↔Fediverse bridge: the secret our deterministic fedi "puppet" keys derive from. The
+        # relay validates a puppet event by re-deriving its pubkey (see nostr.bridge_keys), so it
+        # needs the same secret the app signs with. Local keystore only — never leaves the node.
+        try:
+            from app.services import keystore
+            cfg["bridge_secret"] = keystore.get_bridge_secret()
+        except Exception:
+            cfg["bridge_secret"] = None
         return cfg
     finally:
         db.close()
@@ -418,13 +429,15 @@ async def _main(cfg: dict) -> None:
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     store = RelayStore(
         cfg["pg_dsn"],
-        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
+        max_events=cfg["max_events"], retention_days=cfg["retention_days"],
+        bridge_retention_days=cfg.get("bridge_retention_days", 0))
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_relay_loop_exception_handler)
     store.open(loop)
     gate = WotGate()
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
+    gate.set_bridge_secret(cfg.get("bridge_secret"))   # validate fediverse puppet events
     store.set_preserve_pubkeys(cfg["operator"])   # local users' notes are never pruned
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
     # Moderation is ON THE FLY at ingest (server._on_event + the sync sweep): every post is checked
@@ -443,6 +456,7 @@ async def _main(cfg: dict) -> None:
                     retries=cfg["outbox_retries"], retry_delay=cfg["outbox_retry_delay"])
     outbox.start()
     server = RelayServer(store, gate, cfg, outbox_cb=outbox.enqueue)
+    await server.warm_bridge_nip05()   # load persisted fediverse-puppet NIP-05 names before serving
     _relay.store, _relay.gate, _relay.server, _relay.outbox = store, gate, server, outbox
     _relay.stop_event = asyncio.Event()
 
@@ -832,6 +846,7 @@ async def _main(cfg: dict) -> None:
                             fresh = _read_config()
                             store.retention_days = fresh["retention_days"]
                             store.max_events = fresh["max_events"]
+                            store.bridge_retention_days = fresh.get("bridge_retention_days", 0)
                             cfg["retention_days"] = fresh["retention_days"]
                             cfg["max_events"] = fresh["max_events"]
                             logger.info("[nostr-relay] control: store config reloaded "

@@ -172,6 +172,15 @@ def init_db():
         default_settings = {
             # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
             "client_default_theme": "professional",
+            # Nostr ↔ Fediverse bridge — non-secret defaults (instance_url/token/blocked_domains are
+            # deployment-specific, left to the schema defaults). Master switch OFF so deploying the
+            # code is inert until an admin configures a read account in Admin → Services.
+            "fedi_bridge_enabled": "false",
+            "fedi_bridge_type": "global",
+            "fedi_bridge_poll_seconds": "90",
+            "fedi_bridge_include_replies": "true",
+            "fedi_bridge_broadcast": "false",
+            "fedi_bridge_retention_days": "0",
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code

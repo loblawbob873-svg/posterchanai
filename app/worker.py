@@ -33,6 +33,9 @@ _SCHEDULERS = [
     ("fedi-timeline", "app.services.fedi_timeline_service", "start_fedi_timeline_scheduler"),
     ("matrix-notifications", "app.services.matrix_notifications_service", "start_matrix_notifications_scheduler"),
     ("stats-bot", "app.services.stats_bot_service", "start_stats_bot_scheduler"),
+    ("fedi-nostr-bridge", "app.services.fedi_nostr_bridge_service", "start_fedi_bridge_scheduler"),
+    ("fedi-nostr-writeback", "app.services.fedi_nostr_writeback_service", "start_fedi_writeback_listener"),
+    ("fedi-nostr-personal", "app.services.fedi_nostr_personal_service", "start_fedi_personal_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

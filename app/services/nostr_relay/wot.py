@@ -22,6 +22,13 @@ class WotGate:
         self._members: frozenset = frozenset()
         self._operator: frozenset = frozenset()
         self._blocked: frozenset = frozenset()
+        # Fediverse-bridge "puppet" secret: the app mirrors the global fediverse timeline through
+        # deterministic per-fedi-user keys derived from this secret (see nostr.bridge_keys). A puppet
+        # event self-validates — it carries the actor URI it derives from — so there is NO allowlist:
+        # the relay re-derives the pubkey and accepts only when it matches the (already verified)
+        # signer. Puppets are NOT web-of-trust members (the upstream sync/firehose never accept them);
+        # the exemption applies ONLY on the local WS publish path, for a fixed kind set.
+        self._bridge_secret: bytes | None = None
         # Accounts detected as living on a blocked bridge relay (mostr.pub etc.). Like _blocked,
         # but grown at runtime as a bridge account's profile/relay-list flows through, and reseeded
         # from a store scan on (re)load — kept separate so the daily WoT rebuild can't undo it.
@@ -40,6 +47,9 @@ class WotGate:
 
     def set_blocked(self, blocked_hex) -> None:
         self._blocked = frozenset(blocked_hex or [])
+
+    def set_bridge_secret(self, secret) -> None:
+        self._bridge_secret = secret or None
 
     def set_bridged(self, bridged_hex) -> None:
         self._bridged = set(bridged_hex or [])
@@ -80,6 +90,13 @@ class WotGate:
     def is_operator(self, pubkey: str) -> bool:
         """A relay user (linked account/bot). DMs addressed to one are accepted as inbox."""
         return bool(pubkey) and pubkey in self._operator
+
+    def is_puppet_event(self, ev: dict) -> bool:
+        """A fediverse-bridge puppet event (self-validating — see nostr.bridge_keys). Gate-exempt on
+        the local WS publish path ONLY (a fixed kind set), never a WoT member, so it can't widen the
+        upstream-facing trust graph."""
+        from app.services.nostr import bridge_keys
+        return bridge_keys.is_puppet_event(self._bridge_secret, ev)
 
     def members(self) -> frozenset:
         return self._members | self._operator

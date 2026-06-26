@@ -582,6 +582,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
         matrix_notif_enabled=current_user.matrix_notif_enabled if hasattr(current_user, 'matrix_notif_enabled') else False,
+        fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
         nitter_feeds=nitter_feeds,
     )
 
@@ -710,6 +711,10 @@ def update_user_settings(
     # Relay fediverse notifications to Matrix DM (independent per-user toggle)
     if settings.matrix_notif_enabled is not None:
         current_user.matrix_notif_enabled = settings.matrix_notif_enabled
+
+    # Nostr ↔ Fediverse bridge: opt in to personal DMs + notifications on the Nostr side
+    if settings.fedi_bridge_enabled is not None:
+        current_user.fedi_bridge_enabled = settings.fedi_bridge_enabled
 
     try:
         # Flush changes to database before commit

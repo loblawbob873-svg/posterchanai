@@ -125,6 +125,14 @@ CREATE TABLE IF NOT EXISTS relay_kv (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Fediverse-bridge NIP-05: a puppet's local-part → its derived pubkey. Populated as puppet kind-0
+-- profiles are stored (server._register_bridge_nip05); the in-memory map is warmed from here on
+-- start. Kept out of the `events`/WoT machinery — it's a pure name index for /.well-known/nostr.json.
+CREATE TABLE IF NOT EXISTS bridge_nip05 (
+    name   TEXT PRIMARY KEY,
+    pubkey TEXT NOT NULL
+);
 """
 
 
@@ -146,12 +154,16 @@ _PRUNABLE_KINDS = (1, 6, 7, 42, 1111, 30023, 30311)
 class RelayStore:
     def __init__(self, dsn: str = None, *,
                  read_workers: int = 4, max_events: int = 0,
-                 retention_days: int = 30):
+                 retention_days: int = 30, bridge_retention_days: int = 0):
         # `dsn` is a libpq connection string. Postgres tunes its own buffers/WAL server-side, so
         # there are no SQLite-style page-cache/mmap/WAL knobs here — auto-clean is age + count only.
         self.dsn = dsn or _DEFAULT_DSN
         self.max_events = max_events
         self.retention_days = retention_days
+        # Optional, shorter retention for the fediverse-bridge mirror (origin='bridge'). 0 = use the
+        # general retention. The global fedi timeline is a high-volume firehose, so an operator may
+        # want it aged out faster than the WoT feed. Profiles (kind 0) are never pruned regardless.
+        self.bridge_retention_days = bridge_retention_days
         self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
@@ -629,6 +641,25 @@ class RelayStore:
     async def kv_set(self, key: str, value: str) -> None:
         await self._w(self._kv_set_sync, key, value)
 
+    # --- fediverse-bridge NIP-05 name index ---------------------------------
+
+    def _bridge_nip05_set_sync(self, name: str, pubkey: str) -> None:
+        conn = self._conn()
+        conn.execute("INSERT INTO bridge_nip05 (name, pubkey) VALUES (?,?) "
+                     "ON CONFLICT(name) DO UPDATE SET pubkey=excluded.pubkey", (name, pubkey))
+        conn.commit()
+
+    async def bridge_nip05_set(self, name: str, pubkey: str) -> None:
+        await self._w(self._bridge_nip05_set_sync, name, pubkey)
+
+    def _bridge_nip05_all_sync(self) -> dict:
+        conn = self._conn()
+        return {r["name"]: r["pubkey"] for r in
+                conn.execute("SELECT name, pubkey FROM bridge_nip05").fetchall()}
+
+    async def bridge_nip05_all(self) -> dict:
+        return await self._r(self._bridge_nip05_all_sync)
+
     # --- WoT membership -----------------------------------------------------
 
     def _wot_replace_sync(self, members: list, extra: list | None = None) -> int:
@@ -743,6 +774,16 @@ class RelayStore:
             rows = conn.execute(
                 f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
                 f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
+            gone += [r["id"] for r in rows]; removed += len(rows)
+        # Fediverse-bridge firehose: optionally age mirrored notes (origin='bridge') out FASTER than
+        # the general WoT feed. Only touches reconstructable mirror content (prunable kinds, never
+        # 'direct'/preserved, never puppet profiles which aren't a prunable kind) — same safety as the
+        # general prune, just a tighter window for the high-volume global timeline.
+        if self.bridge_retention_days:
+            bcut = int(time.time()) - self.bridge_retention_days * 86400
+            rows = conn.execute(
+                f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
+                f"AND origin = 'bridge' RETURNING id", (bcut,)).fetchall()
             gone += [r["id"] for r in rows]; removed += len(rows)
         # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:

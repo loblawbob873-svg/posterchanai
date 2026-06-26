@@ -6371,6 +6371,8 @@
             ${s.pleroma_has_access_token
               ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:#ff6b8b">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
+            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
+            <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
             <div class="us-stat muted small" id="us-plr-stat"></div>
           </div>
           <div class="us-conn"><div class="set-title small">Misskey</div>
@@ -6537,6 +6539,7 @@
       const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
         matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
+        fedi_bridge_enabled:(($('#us-fedi-bridge')||{}).checked)||false,
         matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
         theme:($('#us-theme')&&$('#us-theme').value)||'professional',

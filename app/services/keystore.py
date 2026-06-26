@@ -95,3 +95,22 @@ def set_operator_nsec(nsec: str) -> None:
         if data.get("operator_nsec") != nsec:
             data["operator_nsec"] = nsec
             _save(data)
+
+
+# ---- fediverse-bridge derivation secret ----
+def get_bridge_secret() -> bytes:
+    """The stable HMAC secret the Nostr↔Fediverse bridge derives puppet keypairs from. Generated
+    once on first use and persisted, so a given fedi account always maps to the same npub on this
+    deployment (and a DB loss can't change anyone's bridged identity). Local-only by design — it must
+    never leave the node (knowing it lets one forge every puppet's posts)."""
+    with _LOCK:
+        data = _load()
+        hexsec = data.get("bridge_secret")
+        if not hexsec:
+            hexsec = os.urandom(32).hex()
+            data["bridge_secret"] = hexsec
+            _save(data)
+        try:
+            return bytes.fromhex(hexsec)
+        except ValueError:
+            return hexsec.encode("utf-8")

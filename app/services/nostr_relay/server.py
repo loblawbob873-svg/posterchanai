@@ -137,6 +137,11 @@ class RelayServer:
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
         self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
         self._conn_ips: dict = {}  # conn -> client IP (for the deduped "online people" estimate)
+        # Fediverse-bridge NIP-05: local-part -> puppet pubkey, populated as puppet kind-0 profiles
+        # are stored (and warmed from the store at startup). Resolved on ?name= lookups only; never
+        # enumerated in the no-name nostr.json dump (there can be tens of thousands).
+        self._bridge_nip05: dict = {}
+        self._bridge_pubkeys: set = set()   # puppet pubkeys (values of _bridge_nip05) — DM inbox set
 
     def _send(self, conn, obj) -> None:
         """Enqueue a message to a client WITHOUT blocking. If the client is too slow and its
@@ -197,11 +202,48 @@ class RelayServer:
             doc["contact"] = c["contact"]
         return json.dumps(doc).encode("utf-8")
 
+    def _register_bridge_nip05(self, ev: dict) -> None:
+        """Record a fediverse puppet's NIP-05 local-part → pubkey from its just-stored kind-0, in the
+        live map (served immediately) and the persistent table (warmed on the next start). The
+        local-part is the part of the profile's `nip05` before '@' (we only serve OUR domain)."""
+        try:
+            meta = json.loads(ev.get("content") or "{}")
+        except (ValueError, TypeError):
+            return
+        nip05 = (meta.get("nip05") or "").strip().lower()
+        local = nip05.split("@", 1)[0] if nip05 else ""
+        pk = ev.get("pubkey", "")
+        if not local or not pk:
+            return
+        if self._bridge_nip05.get(local) == pk:
+            return
+        self._bridge_nip05[local] = pk
+        self._bridge_pubkeys.add(pk)
+        try:
+            asyncio.create_task(self.store.bridge_nip05_set(local, pk))   # persist off-loop
+        except Exception:
+            pass
+
+    async def warm_bridge_nip05(self) -> int:
+        """Load the persisted puppet NIP-05 map into memory at startup (before serving)."""
+        try:
+            self._bridge_nip05 = dict(await self.store.bridge_nip05_all())
+        except Exception as e:
+            logger.debug("[nostr-relay] bridge nip05 warm failed: %s", e)
+            self._bridge_nip05 = {}
+        self._bridge_pubkeys = set(self._bridge_nip05.values())
+        return len(self._bridge_nip05)
+
     def nip05_doc(self, raw_path: str) -> bytes:
         """Build a NIP-05 `/.well-known/nostr.json` response. With `?name=<n>` return only that
         identity (+ its relays); without it, return all. Empty when disabled or unknown."""
         n = self.cfg.get("nip05") or {}
-        names = (n.get("names") or {}) if n.get("enabled", False) else {}
+        enabled = n.get("enabled", False)
+        names = (n.get("names") or {}) if enabled else {}
+        # Fediverse-bridge puppets get a NIP-05 here too, but there can be tens of thousands of them,
+        # so they are resolved ONLY by explicit ?name= lookup and never dumped in the enumerate-all
+        # response (which stays the small operator/admin set).
+        bridge_names = self._bridge_nip05 if enabled else {}
         relays = n.get("relays") or []
         want = None
         if "?" in raw_path:
@@ -210,7 +252,7 @@ class RelayServer:
             if vals:
                 want = vals[0]
         if want is not None:
-            pk = names.get(want)
+            pk = names.get(want) or bridge_names.get(want)
             out_names = {want: pk} if pk else {}
         else:
             out_names = dict(names)
@@ -363,6 +405,15 @@ class RelayServer:
                 return True
         return False
 
+    def _dm_for_puppet(self, ev: dict) -> bool:
+        """A DM (gift wrap / seal) addressed to a fediverse puppet — a local user replying to a
+        bridged DM. Accept it so the bridge can unwrap it (with the puppet's derived key) and post
+        the reply back out to the fediverse. The puppet's pubkey is known once its profile is stored."""
+        for t in ev.get("tags", []):
+            if len(t) >= 2 and t[0] == "p" and t[1] in self._bridge_pubkeys:
+                return True
+        return False
+
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
             return
@@ -378,8 +429,12 @@ class RelayServer:
             return
         # Bridge blocklist: an account on a blocked bridge relay (mostr.pub etc.) is denied; learning
         # it from this event's profile/relay-list also bars everything else it posts (via is_member).
+        # Our own fediverse-bridge puppets legitimately carry a NIP-48 proxy tag (pointing at the
+        # original fedi note) and post mirrored content — they must skip the bridge/proxy denials
+        # below, which exist to block OTHER instances' mirror accounts (mostr.pub etc.).
+        _is_puppet = self.gate.is_puppet_event(ev)
         _br = self.cfg.get("blocked_relays")
-        if _br and reveals_blocked_bridge(ev, _br):
+        if not _is_puppet and _br and reveals_blocked_bridge(ev, _br):
             if author_on_blocked_bridge(ev, _br):
                 self.gate.mark_bridged_identity(ev.get("pubkey", ""))   # kind-0 nip05 → block even members
             else:
@@ -388,8 +443,9 @@ class RelayServer:
             return
         # Opt-in "block bridged posts": drop any NIP-48 proxy (fediverse/Bluesky-bridged) event,
         # whatever bridge relayed it. Operators / registered local users are exempt (their own
-        # cross-posts are first-party data, never dropped).
-        if self.cfg.get("block_bridged") and is_bridged_post(ev) and not self.gate.is_operator(ev.get("pubkey", "")):
+        # cross-posts are first-party data, never dropped); so are our own bridge puppets.
+        if self.cfg.get("block_bridged") and is_bridged_post(ev) and not _is_puppet \
+                and not self.gate.is_operator(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: bridged (proxy) content not accepted"])
             return
         # WoT publishing gate — skippable. When wot_enabled is off (e.g. a processing node whose
@@ -410,7 +466,7 @@ class RelayServer:
             # relay users (operator inbox). The p-tag is the real recipient per NIP-59, so this is
             # the same routing relays rely on.
             if _wot and not (any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))
-                    or self._dm_for_operator(ev)):
+                    or self._dm_for_operator(ev) or self._dm_for_puppet(ev)):
                 self._send(conn, ["OK", eid, False, "blocked: zap/DM not for a web-of-trust member"])
                 return
         elif kind == 9735:
@@ -424,6 +480,13 @@ class RelayServer:
             # DVM compute job from a SHARE-ALLOWLISTED sender: accepted even if not a WoT member —
             # sharing your GPU is a deliberate per-npub grant, separate from the social web of trust.
             # The DVM worker re-checks the same allowlist (is_trusted) before running anything.
+            pass
+        elif _is_puppet and kind in (0, 1, 6, 7):
+            # Fediverse-bridge puppet: the app mirrors the global fediverse timeline through these
+            # deterministic per-fedi-user keys. Gate-exempt for the mirrored content kinds only
+            # (profile / note / repost / reaction), and ONLY here on the loopback WS publish path —
+            # they are not WoT members, so the upstream sync/firehose never accept them. A valid
+            # signature is still required (verify_event above), and the author must be allowlisted.
             pass
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
@@ -451,11 +514,18 @@ class RelayServer:
         # origin="direct": a client chose THIS relay as a destination (entrusted data), as
         # opposed to "wot" (a mirror of the public feed we pulled via sync/firehose). Prune
         # keeps direct writes forever and only trims the reconstructable synced feed.
-        stored = await self.store.add_event(ev, origin="direct")
+        # origin="bridge": a mirrored fediverse note injected by our own puppet — reconstructable
+        # like the synced feed, so the auto-prune ages it out (it is NOT a preserved local write),
+        # and the outbox only re-broadcasts it when the operator opted into bridge broadcast (the
+        # app omits the `nofederate` tag in that case; see _broadcastable).
+        _origin = "bridge" if _is_puppet else "direct"
+        stored = await self.store.add_event(ev, origin=_origin)
         self._send(conn, ["OK", eid, True, ""])
         if stored:
+            if _is_puppet and kind == 0:
+                self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
             self.subs.fanout(ev, self._send)
-            if self.outbox_cb and _broadcastable(ev, self.cfg):
+            if self.outbox_cb and _broadcastable(ev, self.cfg) and not self._dm_for_puppet(ev):
                 # Blaster: re-broadcast inbound writes to the upstream relays — notes, profile
                 # updates, published articles, AND DMs (encrypted, so no content leaks; this is how
                 # they reach recipients when a user treats this as their only relay). EXCEPT private/

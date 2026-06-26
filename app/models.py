@@ -85,6 +85,14 @@ class User(Base):
     # Fediverse notifications → Matrix DM (independent per-user toggle, separate from Telegram above)
     matrix_notif_enabled = Column(Boolean, default=False)
 
+    # Nostr ↔ Fediverse bridge: per-user opt-in for the PERSONAL plane (your fedi DMs arrive as
+    # NIP-17 Nostr DMs, your fedi notifications as the matching Nostr events). The public global-
+    # timeline mirror is server-wide (admin setting) and independent of this. Needs a linked Pleroma
+    # account + a linked Nostr identity. Cursors are kept separate from the Telegram/Matrix relays'.
+    fedi_bridge_enabled = Column(Boolean, default=False)
+    fedi_bridge_dm_since = Column(Text, nullable=True)      # last-seen fedi direct-conversation id
+    fedi_bridge_notif_since = Column(Text, nullable=True)   # last-seen fedi notification id
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
@@ -318,6 +326,84 @@ class MatrixNotifyMap(Base):
     instance_url = Column(String(255), nullable=False)
     target_id = Column(String(255), nullable=False)  # note/status id to reply to
     visibility = Column(String(20), nullable=True)   # inherit the parent's visibility
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FediPuppet(Base):
+    """A fediverse account mirrored into the Nostr side by the Nostr↔Fediverse bridge.
+
+    Each fedi author the bridge encounters (in the global timeline mirror, a DM, or a notification)
+    gets a deterministic "puppet" Nostr keypair — `pubkey_hex = BIP340(HMAC(operator_bridge_secret,
+    canonical_actor_uri))` — so the same fedi user always maps to the same npub, no secret is stored
+    (the app re-derives it on demand; only the pubkey is recorded), and it survives a DB loss. The
+    relay subprocess loads `pubkey_hex` (publish allowlist) + `nip05_name`→`pubkey_hex` (NIP-05
+    resolution) from this table on start (thread._collect_bridge_pubkeys) and incrementally via the
+    `bridge-add` control command. `profile_sig` is a hash of the last-published kind-0 fields so the
+    bridge only re-publishes the profile when the display name/avatar actually change. `last_seen`
+    bounds the registry: puppets unseen past retention (and with no surviving notes) are GC'd."""
+    __tablename__ = "fedi_puppets"
+    __table_args__ = (
+        Index('ix_fedi_puppet_pubkey', 'pubkey_hex'),
+        Index('ix_fedi_puppet_nip05', 'nip05_name'),
+    )
+
+    actor_uri = Column(String(512), primary_key=True)   # canonical AP actor URI (the derivation input)
+    acct = Column(String(255), nullable=False)          # fedi handle, e.g. alice@mastodon.social
+    instance_host = Column(String(255), nullable=True)  # host part (for the domain blocklist)
+    pubkey_hex = Column(String(64), nullable=False)     # derived x-only pubkey
+    nip05_name = Column(String(255), nullable=False)    # local-part served at <name>@<this instance>
+    display_name = Column(String(255), nullable=True)
+    avatar_url = Column(String(512), nullable=True)
+    profile_sig = Column(String(64), nullable=True)     # hash of last-published kind-0 (change detect)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FediBridgeDelivered(Base):
+    """Maps a mirrored fediverse post ↔ the Nostr note the bridge published for it.
+
+    The public-plane analogue of TimelinePost: drives dedup (skip a note already mirrored, keyed on
+    note_uri cross-instance / note_id same-instance) and resolution (a local NIP-05 user's Nostr
+    reply/like/repost on `nostr_event_id` routes back to the fedi `note_id` on `instance_url`; a
+    reply note finds its parent's `nostr_event_id` for the e/p tags). A write-back action records a
+    synthetic row so the global-timeline poller won't re-mirror the user's own post once it federates
+    back. Prunable: rows whose puppet/note aged out of the relay can be GC'd alongside the notes."""
+    __tablename__ = "fedi_bridge_delivered"
+    __table_args__ = (
+        Index('ix_fedi_deliv_uri', 'note_uri'),
+        Index('ix_fedi_deliv_note', 'instance_url', 'note_id'),
+        Index('ix_fedi_deliv_event', 'nostr_event_id'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(20), nullable=False)        # "pleroma" | "misskey"
+    instance_url = Column(String(255), nullable=False)   # instance the note was read from
+    note_id = Column(String(255), nullable=False)        # status/note id on instance_url
+    note_uri = Column(String(512), nullable=True)        # canonical AP URI (cross-instance key)
+    author_acct = Column(String(255), nullable=True)
+    nostr_event_id = Column(String(64), nullable=False)  # the kind-1 we published (puppet-signed)
+    nostr_pubkey = Column(String(64), nullable=True)     # the puppet that authored it
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FediBridgeMap(Base):
+    """Personal-plane reply routing: maps a Nostr event the bridge delivered to a user (a NIP-17 DM
+    or a notification mirror) → the fediverse target to act on when the user replies on Nostr.
+
+    The Nostr analogue of MatrixNotifyMap. `kind` distinguishes a DM (reply stays visibility=direct
+    in the same conversation) from a notification (reply to the referenced status)."""
+    __tablename__ = "fedi_bridge_map"
+    __table_args__ = (Index('ix_fedi_map_event', 'nostr_event_id'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    nostr_event_id = Column(String(64), nullable=False)  # the DM/notif event we delivered to the user
+    kind = Column(String(10), nullable=False)            # "dm" | "notif"
+    platform = Column(String(20), nullable=False)
+    instance_url = Column(String(255), nullable=False)
+    peer_pubkey = Column(String(64), nullable=True)      # the sender/actor puppet pubkey (DM convo key)
+    target_id = Column(String(255), nullable=True)       # status id to reply to (notif) / latest in convo (dm)
+    visibility = Column(String(20), nullable=True)       # preserve the parent's visibility
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

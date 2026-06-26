@@ -267,6 +267,28 @@ class SettingsResponse(BaseModel):
     # Admin kill-switch (default off); per-user opt-in is the User.matrix_notif_enabled column.
     matrix_notif_enabled: str = "false"
     matrix_notif_poll_seconds: str = "60"
+    # Nostr ↔ Fediverse bridge (see app/services/fedi_nostr_bridge_service.py + fedi_bridge_identity.py).
+    # PUBLIC plane: one shared "read" account mirrors the fediverse GLOBAL timeline into the Nostr
+    # global timeline (each fedi author → a deterministic puppet npub + NIP-05). The read account
+    # never posts on anyone's behalf — interaction + personal DMs/notifications go through each
+    # user's OWN linked Pleroma account (per-user User.fedi_bridge_enabled opt-in, gated on being a
+    # local NIP-05 user). Cursor lives in the local-only fedi_bridge_global_since key.
+    fedi_bridge_enabled: str = "false"          # master switch for the whole bridge (default off)
+    fedi_bridge_instance_url: str = ""          # the shared read account's instance
+    fedi_bridge_access_token: str = ""          # the shared read account's token (READ-only use)
+    fedi_bridge_type: str = "global"            # which timeline to mirror: global | local | home
+    fedi_bridge_poll_seconds: str = "90"
+    fedi_bridge_include_replies: str = "true"   # mirror replies (threaded via e/p tags) too
+    # Broadcast the mirrored fediverse notes to OTHER Nostr relays (upstream). Default OFF — the
+    # mirror stays local to this instance's relay; flip on to federate it to the wider network.
+    fedi_bridge_broadcast: str = "false"
+    # Optional shorter retention (days) for the mirrored firehose (relay origin='bridge'); 0 = use
+    # the relay's general retention. Puppet profiles are never pruned.
+    fedi_bridge_retention_days: str = "0"
+    # Admin domain blocklist enforced AT INGEST: posts whose author host (or origin instance) matches
+    # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
+    # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
+    fedi_bridge_blocked_domains: str = ""
     # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
     node_exec_enabled: str = "false"
     node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)
@@ -614,6 +636,8 @@ class UserSettingsUpdate(BaseModel):
     social_notif_enabled: Optional[bool] = None
     # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
     matrix_notif_enabled: Optional[bool] = None
+    # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
+    fedi_bridge_enabled: Optional[bool] = None
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
@@ -660,6 +684,8 @@ class UserSettingsResponse(BaseModel):
     social_notif_enabled: bool = False
     # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
     matrix_notif_enabled: bool = False
+    # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side
+    fedi_bridge_enabled: bool = False
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: str = ""
 

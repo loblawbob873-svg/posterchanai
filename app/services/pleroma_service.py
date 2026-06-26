@@ -257,6 +257,23 @@ async def fetch_timeline(instance_url: str, access_token: str, timeline_type: st
         return data if isinstance(data, list) else []
 
 
+async def fetch_direct(instance_url: str, access_token: str, since_id: str | None = None,
+                       limit: int = 20) -> list[dict]:
+    """Direct-message timeline (visibility=direct statuses), newest-first. since_id returns only
+    those newer than it. Pleroma/Mastodon support /api/v1/timelines/direct."""
+    url = instance_url.rstrip("/") + "/api/v1/timelines/direct"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params: dict = {"limit": limit}
+    if since_id:
+        params["since_id"] = since_id
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
 async def fetch_context(instance_url: str, access_token: str, status_id: str) -> dict:
     """Fetch a status's thread context ({"ancestors": [...], "descendants": [...]})."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/context"
@@ -314,6 +331,40 @@ async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict
         data = resp.json()
     statuses = (data or {}).get("statuses") or []
     return statuses[0] if statuses else None
+
+
+async def _fetch_account_list(instance_url: str, access_token: str, path: str, limit: int = 80) -> list[dict]:
+    """Page through an account-list endpoint (/api/v1/blocks, /api/v1/mutes), following the
+    Link: rel="next" max_id pagination, returning all raw account objects (bounded)."""
+    out: list[dict] = []
+    headers = {"Authorization": f"Bearer {access_token}"}
+    url = instance_url.rstrip("/") + path
+    params: dict = {"limit": limit}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        for _ in range(20):   # hard page cap so a huge list can't run unbounded
+            resp = await client.get(url, headers=headers, params=params)
+            if resp.status_code != 200:
+                break
+            batch = resp.json()
+            if not isinstance(batch, list) or not batch:
+                break
+            out.extend(batch)
+            # Mastodon/Pleroma paginate these via max_id of the LAST row (Link header has the URL too).
+            last = batch[-1].get("id") if isinstance(batch[-1], dict) else None
+            if not last or len(batch) < limit:
+                break
+            params = {"limit": limit, "max_id": last}
+    return out
+
+
+async def fetch_blocks(instance_url: str, access_token: str) -> list[dict]:
+    """Accounts this account has blocked (raw account objects)."""
+    return await _fetch_account_list(instance_url, access_token, "/api/v1/blocks")
+
+
+async def fetch_mutes(instance_url: str, access_token: str) -> list[dict]:
+    """Accounts this account has muted (raw account objects)."""
+    return await _fetch_account_list(instance_url, access_token, "/api/v1/mutes")
 
 
 async def verify_credentials(instance_url: str, access_token: str) -> dict:
