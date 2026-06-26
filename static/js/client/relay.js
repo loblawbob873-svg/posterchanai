@@ -42,7 +42,8 @@
       this.ws.onmessage = (e) => this.pool._onMessage(this, e.data);
     }
     _setStatus(s){ this.status = s; this.pool._recomputeStatus(); }
-    _retry(){ clearTimeout(this._rt); const d = this._backoff || 600; this._backoff = Math.min(d*1.7, 8000);
+    _retry(){ clearTimeout(this._rt); const cap = this.trusted ? 2500 : 8000;   // our built-in relay is always up → reconnect fast, never wait 8s
+              const d = this._backoff || 600; this._backoff = Math.min(d*1.7, cap);
               this._rt = setTimeout(()=>this._open(), d + Math.random()*300); }
     _send(arr){ if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(arr)); }
     destroy(){ this.status = 'closed'; clearTimeout(this._rt);
@@ -79,6 +80,18 @@
     },
     // back-compat single-relay entry point (built-in WoT relay, trusted)
     connect(url){ this.configure({ urls: url ? [url] : [], verify: false }); },
+
+    // Force a fresh connection on every relay — call when the app returns to the foreground. A mobile
+    // PWA's WebSocket is frozen while backgrounded and very often comes back DEAD-but-still-"open"
+    // (zombie): the client thinks it's connected, no events flow, and the next query times out against a
+    // dead socket → the "relay timeout when loading" symptom. Tearing the socket down and reopening
+    // (our relay reconnects in ~0.1s, re-arming live subs) refreshes the feed instantly on focus.
+    wake(){
+      for (const c of this._conns.values()){
+        if (c.ws){ try{ c.ws.onclose = c.ws.onerror = c.ws.onmessage = null; c.ws.close(); }catch(_){} c.ws = null; }
+        clearTimeout(c._rt); c._backoff = 600; try{ c._open(); }catch(_){}
+      }
+    },
 
     _setStatus(s){ if (s === this.status) return; this.status = s; if (this.onStatus) this.onStatus(s); },
     _recomputeStatus(){
