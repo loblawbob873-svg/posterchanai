@@ -174,14 +174,14 @@
         </div>`;
       let controls='';
       if(!over && !myDone){
-        controls = `<div class="pk-controls"><button class="btn btn-cyan small bj-hit">Hit</button><button class="btn btn-neon small bj-stand">Stand</button><button class="btn small bj-leave">Leave</button></div>`;
+        controls = `<div class="pk-controls"><button class="btn btn-cyan small bj-hit">Hit</button><button class="btn btn-neon small bj-stand">Stand</button><button class="btn btn-red small bj-leave">Leave</button></div>`;
       } else if(!over && myDone){
-        controls = `<div class="pk-controls" style="align-items:center"><span class="muted small" style="flex:1;padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</span><button class="btn small bj-leave">Leave</button></div>`;
+        controls = `<div class="pk-controls" style="align-items:center"><span class="muted small" style="flex:1;padding:6px 2px">✋ Locked in — the dealer plays when the table's done.</span><button class="btn btn-red small bj-leave">Leave</button></div>`;
       } else {
         const nb = myStack>0 ? Math.min(myBet||getBet(), myStack) : 0;
         controls = myStack>0
-          ? `<div class="bj-betbar">${chipRowHtml(nb, myStack)}<div class="pk-controls"><button class="btn btn-cyan bj-deal" style="flex:3 1 60%">${betting?'Deal hand ▶':'Deal next hand ▶'}</button><button class="btn small bj-leave" style="flex:1 1 28%">Leave</button></div></div>`
-          : `<div class="muted small" style="padding:8px 2px">💀 You're out of chips. <button class="btn small bj-leave" style="margin-left:6px">Leave</button></div>`;
+          ? `<div class="bj-betbar">${chipRowHtml(nb, myStack)}<div class="pk-controls"><button class="btn btn-cyan bj-deal" style="flex:3 1 60%">${betting?'Deal hand ▶':'Deal next hand ▶'}</button><button class="btn btn-red small bj-leave" style="flex:1 1 28%">Leave</button></div></div>`
+          : `<div class="muted small" style="padding:8px 2px">💀 You're out of chips. <button class="btn btn-red small bj-leave" style="margin-left:6px">Leave</button></div>`;
       }
       card.innerHTML = `<div class="chess-card-hd">
           <div class="cc-meta"><b>Blackjack ${players.length>1?`· ${players.length} seats`:'vs dealer'}</b><span class="muted small">round #${g.round_no||1} · dealer stands on 17</span></div>
