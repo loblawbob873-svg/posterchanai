@@ -59,6 +59,20 @@
       const a=document.createElement('a'); a.href=src; a.target='_blank'; a.rel='noopener'; a.textContent=src; el.replaceWith(a);
     }
   };
+  // AI-chat artifact media (effect/video outputs at /api/files/…enc_<sha>): the URL can be requested a
+  // beat before the Blossom blob is readable (the note↔blossom race), and that transient 404 then gets
+  // CACHED by the browser/CDN — so it stayed broken until a manual log-out + cache clear. Retry a few
+  // times with a cache-BUSTING query so we sidestep the cached 404 and load the instant the artifact is
+  // ready; after a few tries hand off to __blobFallback (plain link). Self-heals — no cache clear needed.
+  window.__aiMediaRetry = function(el){
+    if(!el || !el.dataset) return;
+    if(!el.dataset.osrc) el.dataset.osrc = (el.getAttribute('src')||'').split('#')[0].replace(/[?&]_r=\d+/,'');
+    const n = (+el.dataset.r || 0), base = el.dataset.osrc;
+    if(!base) return;
+    if(n >= 5){ if(window.__blobFallback) window.__blobFallback(el); return; }
+    el.dataset.r = n + 1;
+    setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, 700 * (n + 1));
+  };
 
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
   let _myFollowersLoaded = false;
@@ -5691,7 +5705,7 @@
       if(!msgs.length) box.innerHTML = _aiWelcomeHtml();   // fresh chat → friendly splash with starter commands
       for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
-        if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy"></div>`;
+        if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
         aiAddMessage(m.role, html);
       }
       aiScroll();
@@ -5927,11 +5941,11 @@
       } }catch(_){}
       return '';
     });
-    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}"></video></div>`+_aiFileActions(u)));
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u)));
     src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`+_aiFileActions(u)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
-    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(u)}" data-full="${enc(u)}"></div>`+_aiFileActions(u)));
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(u)}" data-full="${enc(u)}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u)));
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
