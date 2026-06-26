@@ -1294,7 +1294,7 @@
       if(!axis){
         if(Math.abs(dx)<8 && Math.abs(dy)<8) return;
         if(Math.abs(dx) > Math.abs(dy)*1.3){                     // horizontal → swipe-nav candidate
-          if(window.innerWidth<=820 && !noSwipe(e.target)){ axis='x'; swiping=true; } else { active=false; }
+          if(window.innerWidth<=820 && !noSwipe(e.target)){ axis='x'; swiping=true; e.preventDefault(); } else { active=false; }
         } else if(dy>0 && startTop<=0 && REFRESHABLE.has(VIEW)){  // pull-down at the top → refresh
           axis='y'; pulling=true;
         } else { active=false; }                                 // ordinary vertical scroll — hands off
@@ -1305,8 +1305,11 @@
         if(pull>0){ e.preventDefault(); const i=indicator();
           i.style.opacity=Math.min(1, pull/PTR_TRIGGER); i.style.transform=`translateX(-50%) translateY(${pull}px) rotate(${pull*3}deg)`;
           i.classList.toggle('ready', pull>=PTR_TRIGGER); }
+      } else if(axis==='x' && swiping){
+        e.preventDefault();   // keep claiming the horizontal gesture so the OS/browser edge-back can't steal the back-direction swipe (→ touchcancel, handler never fires)
       }
     }, {passive:false});
+    feed.addEventListener('touchcancel', ()=>{ active=false; resetInd(); }, {passive:true});
     feed.addEventListener('touchend', e=>{
       if(!active){ return; } active=false;
       if(axis==='y' && pulling){
