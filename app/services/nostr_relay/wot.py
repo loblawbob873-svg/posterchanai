@@ -111,7 +111,8 @@ class WotGate:
 
     async def build(self, store, upstream_relays, seeds_hex, depth: int = 1, direct: bool = False,
                     *, batch: int = 200, pace: float = 1.0, min_followers: int = 2,
-                    max_members: int = 0, min_keep_ratio: float = 0.85) -> int:
+                    max_members: int = 0, min_keep_ratio: float = 0.85,
+                    depth3_crawl_max: int = 2500) -> int:
         """Build the WoT and swap it in. Depth 1 = seeds + their follows; depth 2 also adds
         friends-of-friends (followed by >= `min_followers` of your follows); depth 3 also adds
         friends-of-friends-of-friends (followed by >= `min_followers` of your FoF), capped at
@@ -147,8 +148,19 @@ class WotGate:
                         len(members) - len(seeds) - len(follows1), min_followers)
 
         # Depth 3: friends-of-friends-of-friends, pruned the same way against the FoF tier.
+        fofof_counter: Counter = Counter()
         if depth >= 3 and fof:
-            fofof_counter = await self._follows_counter(upstream_relays, fof, direct, batch, pace)
+            # BOUND THE CRAWL INPUT. The FoF tier can be tens of thousands of pubkeys (35k seen in
+            # prod); crawling kind-3 for all of them fans out a federation storm and pegs the box.
+            # Only crawl the most-trusted FoF — the top `depth3_crawl_max` by how many of your follows
+            # follow them — so the upstream fan-out is bounded regardless of how big the FoF tier got.
+            if depth3_crawl_max and len(fof) > depth3_crawl_max:
+                crawl_seeds = [pk for pk, _ in fof_counter.most_common() if pk in fof][:depth3_crawl_max]
+                logger.info("[nostr-relay] WoT depth-3: crawling top %d of %d FoF (bounded)",
+                            len(crawl_seeds), len(fof))
+            else:
+                crawl_seeds = list(fof)
+            fofof_counter = await self._follows_counter(upstream_relays, crawl_seeds, direct, batch, pace)
             before = len(members)
             fofof = {pk for pk, c in fofof_counter.items() if c >= min_followers}
             members |= fofof

@@ -365,6 +365,7 @@ class SettingsResponse(BaseModel):
     nostr_relay_wot_depth: Optional[int] = None
     nostr_relay_wot_min_followers: Optional[int] = None
     nostr_relay_wot_max: Optional[int] = None
+    nostr_relay_wot_depth3_crawl_max: Optional[int] = None
     nostr_relay_max_connections: Optional[int] = None
     nostr_relay_fetch_ancestors: Optional[bool] = None
     nostr_relay_max_ancestors: Optional[int] = None

@@ -253,6 +253,7 @@ def _read_config() -> dict:
             "wot_depth": gi("nostr_relay_wot_depth", 1),                  # 1=follows, 2=+FoF
             "wot_min_followers": gi("nostr_relay_wot_min_followers", 2),  # FoF inclusion threshold
             "wot_max": gi("nostr_relay_wot_max", 50000),                  # cap on total members
+            "wot_depth3_crawl_max": gi("nostr_relay_wot_depth3_crawl_max", 2500),  # depth-3: max FoF to crawl (flood guard)
             "max_connections": gi("nostr_relay_max_connections", 5000),
             # windowed ingestion
             "sync_window_sec": gi("nostr_relay_sync_window_sec", 600),
@@ -950,7 +951,8 @@ async def _build_wot(gate, store, cfg) -> int:
         depth=cfg["wot_depth"], direct=cfg["direct"],
         batch=cfg["author_batch"], pace=cfg["request_pace_sec"],
         min_followers=cfg["wot_min_followers"], max_members=cfg["wot_max"],
-        min_keep_ratio=cfg.get("wot_shrink_guard_ratio", 0.85))
+        min_keep_ratio=cfg.get("wot_shrink_guard_ratio", 0.85),
+        depth3_crawl_max=cfg.get("wot_depth3_crawl_max", 2500))
     # Refresh the daily stamp only on a CLEAN build (follows resolved AND not a kept-cache partial), so
     # a partial crawl stays "due" and retries next cycle instead of marking the cache fresh.
     if n > len(set(cfg["seeds"]) | set(cfg["operator"])) and not gate.last_build_partial:

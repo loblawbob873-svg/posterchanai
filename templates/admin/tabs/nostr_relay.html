@@ -68,6 +68,11 @@
             <small>Depth 2 adds follows-of-follows; depth 3 adds another hop (much larger again). The graph rebuilds daily.</small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_wot_depth3_crawl_max">Depth-3 crawl cap</label>
+            <input type="number" id="nostr_relay_wot_depth3_crawl_max" name="nostr_relay_wot_depth3_crawl_max" min="0" placeholder="2500">
+            <small>Depth-3 only: max friends-of-friends to crawl upstream (the most-trusted are kept). The FoF tier can be 30k+; crawling all of them floods upstream relays and pegs the CPU. Lower = safer. 0 = uncapped (not recommended).</small>
+        </div>
+        <div class="form-group">
             <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>
             <span id="relayWotStatus" style="margin-left:10px;color:#9aa;"></span>
             <small>Rebuilds the follow graph from the seeds immediately (otherwise daily). Save seed changes first.</small>
