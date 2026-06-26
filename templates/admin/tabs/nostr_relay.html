@@ -68,6 +68,15 @@
             <small>Depth 2 adds follows-of-follows; depth 3 adds another hop (much larger again). The graph rebuilds daily.</small>
         </div>
         <div class="form-group">
+            <label for="nostr_relay_wot_refresh_sec">Rebuild frequency</label>
+            <select id="nostr_relay_wot_refresh_sec" name="nostr_relay_wot_refresh_sec">
+                <option value="86400">Daily</option>
+                <option value="604800">Weekly</option>
+                <option value="1209600">Every 2 weeks</option>
+            </select>
+            <small>How often the full follow-graph crawl runs (at the low-traffic UTC hour). New members are still admitted instantly all day; this only refreshes the friends-of-friends graph. Weekly is plenty for a deep (depth-2/3) graph.</small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_wot_depth3_crawl_max">Depth-3 crawl cap</label>
             <input type="number" id="nostr_relay_wot_depth3_crawl_max" name="nostr_relay_wot_depth3_crawl_max" min="0" placeholder="2500">
             <small>Depth-3 only: max friends-of-friends to crawl upstream (the most-trusted are kept). The FoF tier can be 30k+; crawling all of them floods upstream relays and pegs the CPU. Lower = safer. 0 = uncapped (not recommended).</small>

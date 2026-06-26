@@ -239,7 +239,7 @@ def _read_config() -> dict:
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
-            "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 86400),  # daily
+            "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 604800),  # weekly (was daily)
             "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
             # Keep the cached set if a crawl resolves < this fraction of it (partial-crawl protection).
             "wot_shrink_guard_ratio": float(g("nostr_relay_wot_shrink_guard_ratio", "0.85") or 0.85),
@@ -553,8 +553,8 @@ async def _main(cfg: dict) -> None:
         # `overdue` is a safety net so the gate can never go badly stale if a night was missed (downtime).
         age = time.time() - _read_wot_stamp(cfg)
         hour = datetime.datetime.now(datetime.timezone.utc).hour
-        nightly = hour == cfg.get("wot_refresh_hour", 4) and age >= cfg.get("wot_refresh_sec", 86400) - 4 * 3600
-        overdue = age >= cfg.get("wot_refresh_sec", 86400) * 2
+        nightly = hour == cfg.get("wot_refresh_hour", 4) and age >= cfg.get("wot_refresh_sec", 604800) - 4 * 3600
+        overdue = age >= cfg.get("wot_refresh_sec", 604800) * 2
         if nightly or overdue:
             logger.info("[nostr-relay] %s WoT refresh — rebuilding the full graph (age %dh)",
                         "nightly" if nightly else "overdue", int(age / 3600))
@@ -933,7 +933,7 @@ def _write_wot_stamp(cfg) -> None:
 def _wot_stale(cfg) -> bool:
     """True if it's been >= the daily refresh interval since the last successful build, so a
     restart should rebuild. Within the interval, a restart reuses the snapshot-warmed gate."""
-    return (time.time() - _read_wot_stamp(cfg)) >= cfg.get("wot_refresh_sec", 86400)
+    return (time.time() - _read_wot_stamp(cfg)) >= cfg.get("wot_refresh_sec", 604800)
 
 
 # Coalesce + throttle full WoT rebuilds. Every signup/follow/bot-change drops a "refresh-wot" control
