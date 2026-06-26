@@ -1629,8 +1629,22 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
     if data.drafts is not None:
-        await store.put_doc(port, sk, "pcai:drafts", {"drafts": data.drafts[:300]})
-        return JSONResponse({"ok": True})
+        # MERGE with the stored doc — never blind-overwrite. The doc is ONE replaceable kind-30078
+        # event (last-write-wins), so a second device pushing its own list would otherwise clobber
+        # drafts only the first device had ("draft shows on phone, not desktop"). Union by id, newest
+        # ts wins; a del:true tombstone with a fresh ts makes a deletion win. (Mirrors the client merge
+        # in Drafts.pull, and the replaceable-list-wipe fix pattern.)
+        existing = await store.get_doc(port, "pcai:drafts", seckey=sk)
+        prev = existing.get("drafts", []) if isinstance(existing, dict) else []
+        merged: dict = {}
+        for d in [*(prev if isinstance(prev, list) else []), *data.drafts]:
+            if isinstance(d, dict) and d.get("id"):
+                cur = merged.get(d["id"])
+                if cur is None or (d.get("ts") or 0) >= (cur.get("ts") or 0):
+                    merged[d["id"]] = d
+        out = sorted(merged.values(), key=lambda x: x.get("ts") or 0, reverse=True)[:300]
+        await store.put_doc(port, sk, "pcai:drafts", {"drafts": out})
+        return JSONResponse({"ok": True, "drafts": out})
     doc = await store.get_doc(port, "pcai:drafts", seckey=sk)
     drafts = doc.get("drafts", []) if isinstance(doc, dict) else []
     return JSONResponse({"ok": True, "drafts": drafts if isinstance(drafts, list) else []})

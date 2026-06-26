@@ -748,7 +748,13 @@
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
-    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden); });
+    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
+      // Back to the foreground: if an AI reply was still pending when we backgrounded, kick the recovery
+      // poll now. A slow effect/video render can finish (and its single WS frame be lost) while hidden,
+      // and background tabs throttle the timed recoverWatch — so without this the result sits unseen
+      // until a manual refresh (the "I have to refresh to see the effect" report). aiRecover self-guards
+      // (no-op if not awaiting / already polling), so this is safe to fire on every foreground.
+      if(!document.hidden && VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId); });
     if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
