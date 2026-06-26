@@ -3891,8 +3891,18 @@
     bg.innerHTML=`<div class="modal glass neon-border"><h3>🌸 Attach from your Blossom files</h3><div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
     $('#modal-root').appendChild(bg);
+    FilesIdx.loadLocal();
     (async()=>{
       let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
+      // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
+      // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
+      list = list.filter(b=>{
+        if(b.sha256===FilesIdx._lastIndexSha) return false;        // the encrypted Files index blob itself
+        const m=FilesIdx.meta(b.sha256);
+        if(m && m.enc) return false;                               // encrypted ciphertext — not publicly viewable
+        if(!m && /octet-stream/.test(b.type||'')) return false;    // stale index blobs / unnamed binaries
+        return true;
+      });
       const grid=bg.querySelector('#bp-grid');
       grid.innerHTML = list.length ? list.map(b=>{
         return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`;
