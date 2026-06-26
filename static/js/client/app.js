@@ -2988,6 +2988,18 @@
       top = (above >= M) ? above : Math.max(M, vh - M - ph);
     }
     pop.style.left=left+'px'; pop.style.top=top+'px';
+    // BULLETPROOF on-screen guarantee: re-measure the menu's REAL rendered rect (the earlier offsetWidth
+    // can be wrong/stale for long items, so a right-edge ☰ menu hung off the right and taps fell through
+    // to the Zap button behind it) and shove it fully inside the viewport. getBoundingClientRect forces a
+    // synchronous layout, so this corrects before the first paint — no visible jump.
+    {
+      const b=pop.getBoundingClientRect();
+      if(b.right > vw - M) left -= (b.right - (vw - M));
+      if(left < M) left = M;
+      if(b.bottom > vh - M) top -= (b.bottom - (vh - M));
+      if(top < M) top = M;
+      pop.style.left=left+'px'; pop.style.top=top+'px';
+    }
   }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
