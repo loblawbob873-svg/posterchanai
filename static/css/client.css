@@ -1291,8 +1291,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .pop-backdrop{position:fixed;inset:0;z-index:355;background:rgba(4,2,12,.5);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 @keyframes sheetup{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
 @media(max-width:1179px){
-  .menu-pop.sheet,.emoji-pop.sheet{left:0;right:0;bottom:8px;top:auto;min-width:0;
-    width:min(480px,calc(100vw - 16px));margin-inline:auto;max-height:72vh;border-radius:18px;
+  .menu-pop.sheet,.emoji-pop.sheet{left:0;right:0;bottom:calc(8px + env(safe-area-inset-bottom));top:auto;min-width:0;
+    width:min(480px,calc(100vw - 16px));margin-inline:auto;max-height:calc(82vh - env(safe-area-inset-bottom));border-radius:18px;
     animation:sheetup .2s ease-out}
   .menu-pop.sheet button{font-size:17px;padding:15px 16px}
   .emoji-pop.sheet{justify-content:center}

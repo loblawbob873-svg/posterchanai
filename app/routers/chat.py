@@ -1543,12 +1543,30 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     except Exception as _e:
                                         logger.warning(f"[node] webui notify send failed: {_e}")
 
-                            result = await command_service.execute_command(
-                                command, arg, last_prompt,
-                                stop_check=should_stop_command,
-                                attachments=mail_attachments or media_attachments,
-                                node_notify=node_notify,
-                            )
+                            # Keep the socket alive across a long render. Effects/video run in a worker
+                            # thread (asyncio.to_thread), so the event loop is FREE here — but with no
+                            # traffic flowing, nginx/Cloudflare close the WS on their idle read timeout
+                            # (~60s/~100s). That loses the live result frame and forces the slow recovery
+                            # path — exactly why FAST image effects work but SLOW video effects "never
+                            # update until refresh". A ping every 20s keeps the connection active; the
+                            # client ignores {type:ping} (and treats any frame as "still alive").
+                            async def _keepalive():
+                                try:
+                                    while True:
+                                        await asyncio.sleep(20)
+                                        await websocket.send_json({"type": "ping"})
+                                except Exception:
+                                    pass
+                            _ka = asyncio.create_task(_keepalive())
+                            try:
+                                result = await command_service.execute_command(
+                                    command, arg, last_prompt,
+                                    stop_check=should_stop_command,
+                                    attachments=mail_attachments or media_attachments,
+                                    node_notify=node_notify,
+                                )
+                            finally:
+                                _ka.cancel()
 
                             # Check if stopped during execution
                             if manager.should_stop(user.id, conn_id, conversation_id):
@@ -1609,6 +1627,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             image_len = len(result.get("image", "")) if result.get("image") else 0
                             logger.info(f"[WEBSOCKET] Sending generated_image response: image_length={image_len}, has_prompt={bool(result.get('prompt'))}")
                         
+                        # DIAGNOSTIC (temporary): tells us, per command result, whether the live push will be
+                        # DELIVERED or QUEUED — i.e. is the socket still in the registry, and is conn_id still
+                        # the current one for this conversation (a mismatch = it went stale during the render).
+                        _cur = manager.connection_ids.get((user.id, conversation_id))
+                        logger.info("[CHAT-DELIVER] conv=%s type=%s conn=%s current=%s ws_alive=%s → %s",
+                                    conversation_id, result.get("type"), conn_id, _cur,
+                                    conn_id in manager.active_connections,
+                                    "DELIVER" if (_cur == conn_id and conn_id in manager.active_connections) else "QUEUE")
                         await manager.send_json(user.id, {
                             "type": "response",
                             "data": result,
