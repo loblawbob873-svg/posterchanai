@@ -62,7 +62,7 @@
             <p class="muted">Beat the dealer to 21 without busting. Wager chips each hand (blackjack pays 3:2); the table keeps dealing until you leave or bust out. Hit/stand here or by replying to the bot's DM. Dealer stands on 17.</p>
             ${start}
           </div>
-          <div class="chess-games"><h3>🃏 Your tables</h3><div id="bj-games"><div class="spinner"></div></div></div>
+          <div class="chess-games"><h3>🃏 Your tables <button class="btn small" id="bj-clear" style="display:none;float:right;font-size:.8em">✕ Clear all</button></h3><div id="bj-games"><div class="spinner"></div></div></div>
         </div>`;
       if(botNpub){
         const sb=$('#bj-solo'); if(sb) sb.onclick=()=>startTable([]);
@@ -128,6 +128,8 @@
       const games=Object.values(byGame).filter(g=>['betting','playing','over'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='playing'?0:1)-(b.status==='playing'?0:1)||(b._t||0)-(a._t||0));
       const allpks=new Set(); games.forEach(g=>(g.seats||[]).forEach(pk=>allpks.add(pk)));
       await Promise.all([...allpks].map(pk=>ensureProfile(pk).catch(()=>{})));
+      const clearBtn=$('#bj-clear');
+      if(clearBtn){ clearBtn.style.display = games.length>1 ? '' : 'none'; clearBtn.onclick=()=>clearAll(games); }
       if(!games.length){ list.innerHTML='<div class="empty">No tables yet. Deal one above.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
       games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));
@@ -210,8 +212,19 @@
     }
     async function leaveTable(g){
       if(!confirm('Leave this table? You keep your chips.')) return;
-      try{ await _cmd({action:'leave', gameid:g.root}); }catch(_){}
-      _hide(g._gid||g.root); _load();
+      // Hide it locally FIRST so it disappears from your list immediately — even if the bot is slow or the
+      // leave command doesn't land. (The command channel is a single replaceable event per user, so a rapid
+      // second leave can clobber the first server-side; the local hide is what reliably clears the UI.)
+      _hide(g._gid||g.root);
+      const gid=g.root||g._gid;
+      for(let i=0;i<3;i++){ try{ await _cmd({action:'leave', gameid:gid}); break; }catch(_){ await new Promise(r=>setTimeout(r, 400*(i+1))); } }
+      toast('left the table 👋');
+      _load();
+    }
+    async function clearAll(games){
+      if(!confirm(`Clear all ${games.length} tables from your list? You keep your chips.`)) return;
+      for(const g of games){ _hide(g._gid||g.root); const gid=g.root||g._gid; try{ await _cmd({action:'leave', gameid:gid}); }catch(_){} }
+      toast('cleared 🧹'); _load();
     }
 
     (window.PCGames = window.PCGames || {}).blackjack = render;

@@ -82,7 +82,11 @@
         if(hidden.has(gid)) continue;
         if(!byGame[gid] || (e.created_at||0) > byGame[gid]._t){ s._t=e.created_at||0; byGame[gid]=s; }
       }
-      const games=Object.values(byGame).filter(g=>['active'].includes(g.status))/* show only in-progress games; finished/left/resigned drop out (left holdem/bj tables also caught by s.left above) */.sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.started||0)-(a.started||0));
+      // Show in-progress games AND recently-finished ones (last 2 days) so the win/loss/draw banner is
+      // actually visible — otherwise a finished game just vanished and you never saw who won. The ✕ button
+      // dismisses a finished game; old ones age out on their own.
+      const _recent = Math.floor(Date.now()/1000) - 2*86400;
+      const games=Object.values(byGame).filter(g=> g.status==='active' || (g._t||0) > _recent).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b._t||0)-(a._t||0));
       if(!games.length){ list.innerHTML='<div class="empty">No games yet. Challenge someone or play the bot.</div>'; return; }
       list.innerHTML = games.map((g,i)=>`<div class="chess-game-card glass" data-gi="${i}"></div>`).join('');
       games.forEach((g,i)=>_card(g, $(`.chess-game-card[data-gi="${i}"]`, list)));

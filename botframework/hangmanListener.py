@@ -24,7 +24,9 @@ from app.services.nostr import event as _ev, nip44 as _nip44
 
 _KIND_APP = 30078
 _MAX_WRONG = 6
-_START_RE = re.compile(r"\b(?:hang\s*man|start)\b", re.IGNORECASE)
+# Must name THIS game — a bare "start" used to match, but every game listener shares the one bot
+# identity, so "start connect4" fired hangman too. The app always posts the #hangman tag.
+_START_RE = re.compile(r"\b(?:hang\s*man|hangman)\b", re.IGNORECASE)
 # An app-embedded game pointer inside a DM ("g:<64-hex-root>"); bare human DM replies omit it and
 # fall back to the per-player pending-game pointer.
 _DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)

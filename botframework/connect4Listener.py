@@ -24,7 +24,10 @@ from app.services.nostr import event as _ev
 
 _KIND_APP = 30078
 COLS, ROWS = 7, 6
-_START_RE = re.compile(r"\b(connect\s*4|connect\s*four|connectfour|c4|start)\b", re.IGNORECASE)
+# A start must name THIS game. A bare "start" used to match here too, but every game listener shares
+# the one bot identity, so a bare "start" (e.g. "start #hangman") fired ALL of them at once — spawning
+# phantom games. The app always posts the specific #connect4 tag, so require a connect4-specific token.
+_START_RE = re.compile(r"\b(connect\s*4|connect\s*four|connectfour|c4)\b", re.IGNORECASE)
 # An app-embedded game pointer inside a DM ("g:<64-hex-root> <move>"); bare human DM replies omit it
 # and fall back to the per-player pending-game pointer.
 _DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
