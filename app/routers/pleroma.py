@@ -33,6 +33,7 @@ def _evict_expired_states() -> None:
 
 class PleromaOAuthStartRequest(BaseModel):
     instance_url: str
+    target: str = "user"   # "user" = link the caller's account; "bridge" = the global bridge read account (admin only)
 
 
 class PleromaOAuthStartResponse(BaseModel):
@@ -65,6 +66,10 @@ async def start_oauth(
     if not client_id or not client_secret:
         raise HTTPException(status_code=502, detail="Instance did not return client credentials")
 
+    target = "bridge" if (data.target or "user").strip().lower() == "bridge" else "user"
+    if target == "bridge" and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+
     state = str(uuid.uuid4())
     _oauth_states[state] = {
         "user_id": current_user.id,
@@ -72,6 +77,7 @@ async def start_oauth(
         "client_id": client_id,
         "client_secret": client_secret,
         "redirect_uri": redirect_uri,
+        "target": target,
         "created_at": time.time(),
     }
 
@@ -127,6 +133,30 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
         logger.warning(f"Could not verify Pleroma credentials after token exchange: {e}")
         display = "unknown"
 
+    instance_url = pending["instance_url"]
+
+    # Bridge read account (admin): save into the GLOBAL fedi_bridge_* settings instead of a user, so
+    # the Nostr↔Fediverse global-timeline mirror reads through it. One click, no token pasting.
+    if pending.get("target") == "bridge":
+        from app.services import settings_store
+        settings_store.put("fedi_bridge_instance_url", instance_url)
+        settings_store.put("fedi_bridge_access_token", access_token)
+        safe_display = html.escape(display)
+        safe_instance = html.escape(instance_url)
+        return HTMLResponse(
+            "<html><head><style>"
+            "body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;"
+            "min-height:100vh;margin:0;background:#111;color:#eee;}"
+            "div{text-align:center;} h2{color:#4caf50;}"
+            "</style></head><body><div>"
+            "<h2>✓ Bridge read account connected!</h2>"
+            f"<p>Reading as <strong>@{safe_display}</strong> on <strong>{safe_instance}</strong>.</p>"
+            "<p>You can close this tab. Enable the bridge in Admin → Services and restart.</p>"
+            "<script>if(window.opener){window.opener.postMessage('pleroma_bridge_connected','*');}"
+            "setTimeout(()=>window.close(),3000);</script>"
+            "</div></body></html>"
+        )
+
     user = db.query(User).filter(User.id == pending["user_id"]).first()
     if not user:
         return _error_page("User not found.")
@@ -135,8 +165,6 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
     user.pleroma_instance_url = pending["instance_url"]
     user.pleroma_access_token = access_token
     db.commit()
-
-    instance_url = pending["instance_url"]
     # Escape values that came from user input / the remote instance before putting them in HTML.
     safe_display = html.escape(display)
     safe_instance = html.escape(instance_url)

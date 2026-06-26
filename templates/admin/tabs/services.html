@@ -179,10 +179,44 @@
             <input type="url" id="fedi_bridge_instance_url" name="fedi_bridge_instance_url" placeholder="https://pleroma.example">
         </div>
         <div class="form-group">
+            <button type="button" class="btn" id="fedi_bridge_oauth_btn">🔗 Connect read account with OAuth</button>
+            <span id="fedi_bridge_oauth_status" style="margin-left:8px;color:#888;"></span>
+            <small>One click: authorize the account above and its token is saved automatically — no pasting. Used only to READ the global timeline; its own block &amp; mute lists are honored at ingest.</small>
+        </div>
+        <details class="form-group">
+            <summary style="cursor:pointer;color:#888;">Or paste an access token manually</summary>
             <label for="fedi_bridge_access_token">Read Account Access Token</label>
             <input type="text" id="fedi_bridge_access_token" name="fedi_bridge_access_token" placeholder="Pleroma/Mastodon access token (read-only use)">
-            <small>The shared account whose global/federated timeline is mirrored. Used only to READ; its own block &amp; mute lists are honored at ingest.</small>
-        </div>
+        </details>
+        <script>
+        (function(){
+          var btn = document.getElementById('fedi_bridge_oauth_btn');
+          if (!btn || btn._wired) return; btn._wired = true;
+          var status = document.getElementById('fedi_bridge_oauth_status');
+          btn.addEventListener('click', async function(){
+            var inst = (document.getElementById('fedi_bridge_instance_url')||{}).value || '';
+            inst = inst.trim();
+            if (!/^https?:\/\//.test(inst)) { status.textContent = 'Enter the instance URL first (https://…).'; return; }
+            status.textContent = 'Opening authorization…';
+            try {
+              var r = await fetch('/api/pleroma/oauth/start', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({instance_url: inst, target: 'bridge'})
+              });
+              var d = await r.json();
+              if (!r.ok || !d.auth_url) { status.textContent = 'Failed: ' + (d.detail || 'could not start OAuth'); return; }
+              window.open(d.auth_url, 'fedibridge_oauth', 'width=600,height=750');
+              status.textContent = 'Waiting for authorization…';
+            } catch(e){ status.textContent = 'Error: ' + e; }
+          });
+          window.addEventListener('message', function(ev){
+            if (ev.data === 'pleroma_bridge_connected') {
+              status.textContent = '✓ Connected. Enable the bridge above and restart.';
+              status.style.color = '#4caf50';
+            }
+          });
+        })();
+        </script>
         <div class="form-row">
             <div class="form-group">
                 <label for="fedi_bridge_type">Timeline</label>

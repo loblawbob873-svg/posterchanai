@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models import FediBridgeDelivered
+from app.models import FediBridgeDelivered, FediPuppet
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.fedi_timeline_service import _norm, _canonical_uri   # reuse the proven normalizers
@@ -36,6 +36,9 @@ _PAGE = 20
 _MAX_PAGES = 8
 _MODERATION_TTL = 600          # seconds to cache the read account's block/mute lists
 _mod_cache: dict = {"at": 0.0, "blocked_accts": set()}
+_DELETION_INTERVAL = 300       # min seconds between deletion re-checks (deletions are rare)
+_DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion per cycle
+_last_deletion_check = 0.0
 
 
 # --- settings ---------------------------------------------------------------
@@ -209,6 +212,39 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
     await _deliver(db, port, platform, instance_url, instance_host, raw, post)
 
 
+# --- deletions --------------------------------------------------------------
+
+async def _check_deletions(db: Session, port: int, instance_url: str, token: str, broadcast: bool) -> None:
+    """Re-check the most recent mirrored notes; if one was deleted on the fediverse (definitive
+    404/410), publish a NIP-09 deletion from its puppet (which removes it on the relay and federates
+    upstream iff broadcasting), then drop the bookkeeping row. Bounded + throttled — deletions are
+    rare and per-status checks cost a request each."""
+    global _last_deletion_check
+    now = time.monotonic()
+    if now - _last_deletion_check < _DELETION_INTERVAL:
+        return
+    _last_deletion_check = now
+    rows = (db.query(FediBridgeDelivered)
+            .filter(FediBridgeDelivered.instance_url == instance_url)
+            .order_by(FediBridgeDelivered.id.desc()).limit(_DELETION_BATCH).all())
+    for row in rows:
+        try:
+            if not await pleroma_service.status_deleted(instance_url, token, row.note_id):
+                continue
+            actor_uri = None
+            if row.nostr_pubkey:
+                pup = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == row.nostr_pubkey).first()
+                actor_uri = pup.actor_uri if pup else None
+            if actor_uri:
+                await ident.delete_note(port, actor_uri, row.nostr_event_id, broadcast)
+            db.delete(row)
+            db.commit()
+            logger.info("[fedi-bridge] mirrored note %s deleted on source → NIP-09 delete published", row.note_id)
+        except Exception as e:
+            db.rollback()
+            logger.debug("[fedi-bridge] deletion check failed for %s: %s", row.note_id, e)
+
+
 # --- poll -------------------------------------------------------------------
 
 async def poll_once(db: Session) -> None:
@@ -270,6 +306,9 @@ async def poll_once(db: Session) -> None:
             settings_store.put("fedi_bridge_global_since", cursor)
         if transient or len(raw_posts) < _PAGE:
             break
+
+    # Propagate fediverse deletions → NIP-09 (throttled). Federates upstream iff broadcasting is on.
+    await _check_deletions(db, port, instance_url, token, _broadcast_on())
 
 
 # --- maintenance ------------------------------------------------------------

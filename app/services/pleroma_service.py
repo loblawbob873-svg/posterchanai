@@ -214,6 +214,19 @@ async def fetch_status(instance_url: str, access_token: str, status_id: str) -> 
         return data if isinstance(data, dict) else None
 
 
+async def status_deleted(instance_url: str, access_token: str, status_id: str) -> bool:
+    """True ONLY when the instance definitively says the status is gone (404/410). A transient error
+    (5xx / network) returns False so the bridge never deletes a mirror on a flaky fetch."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+            resp = await client.get(url, headers=headers)
+            return resp.status_code in (404, 410)
+    except Exception:
+        return False
+
+
 async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None, limit: int = 20) -> list[dict]:
     """Fetch recent notifications (raw Mastodon/Pleroma objects). When since_id is given,
     only notifications newer than it are returned (newest-first)."""

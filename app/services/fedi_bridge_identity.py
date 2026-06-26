@@ -91,6 +91,25 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
     }
 
 
+def puppet_from_actor(actor_uri: str, acct: str = "") -> dict:
+    """Re-derive a puppet's signing identity from just its canonical actor URI — used to sign a
+    NIP-09 deletion for a note we mirrored earlier (we only stored the pubkey, not the secret)."""
+    sk = bridge_keys.derive_seckey(_secret(), actor_uri)
+    pubkey_hex = nostr_service.derive_pubkey(sk)
+    return {"seckey": sk, "pubkey_hex": pubkey_hex, "npub": nostr_service.npub_of(pubkey_hex),
+            "actor_uri": actor_uri, "acct": acct, "host": "", "nip05_name": "",
+            "display_name": "", "avatar_url": "", "about": ""}
+
+
+async def delete_note(port: int, actor_uri: str, nostr_event_id: str, broadcast: bool = False) -> bool:
+    """Publish a NIP-09 kind-5 deletion (signed by the puppet) for a mirrored note that was removed
+    on the fediverse. Federates upstream iff broadcast is on (see build_event's nofederate handling)."""
+    p = puppet_from_actor(actor_uri)
+    ev = build_event(p, 5, "deleted on source", tags=[["e", nostr_event_id]], broadcast=broadcast)
+    ok, _ = await publish(port, ev)
+    return ok
+
+
 def _profile_content(p: dict) -> dict:
     domain = nip05_domain()
     out = {

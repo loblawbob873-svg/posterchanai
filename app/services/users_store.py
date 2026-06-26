@@ -52,6 +52,7 @@ CONFIG_FIELDS = (
     "matrix_enabled", "matrix_homeserver", "matrix_user_id", "matrix_access_token",
     "matrix_dm_bot_user_id",
     "finance_api_key", "social_notif_enabled", "matrix_notif_enabled",
+    "fedi_bridge_enabled",   # Nostr↔Fediverse personal-plane opt-in (cursors *_since stay local)
 )
 
 _SYNCED = ACCOUNT_FIELDS + CONFIG_FIELDS
