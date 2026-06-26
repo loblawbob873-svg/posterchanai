@@ -1072,8 +1072,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   html,body,.app,.main,.feed{max-width:100vw;overflow-x:hidden}
   .note{padding:12px 12px}
   .note .txt img,.note .txt video,.note .txt audio,.link-card,.quoted,.note-preview{max-width:100%}
-  .acts{gap:6px}
-  .act{font-size:15px;padding:6px 9px}
+  /* Action row must FIT the card: posts with reaction/boost COUNTS widen the buttons and used to push
+     the last button (☰) off the right edge — taps then hit Zap. Tighten padding/gaps so a full row of
+     counts fits, and flex-wrap as a hard guarantee it can NEVER overflow off-screen (wraps instead). */
+  .acts{gap:4px;flex-wrap:wrap;row-gap:6px}
+  .act{font-size:15px;padding:6px 7px;gap:4px}
+  .act .n{max-width:48px;overflow:hidden;text-overflow:ellipsis}
   .act.actq{font-size:22px;padding-top:6px;padding-bottom:4px}
   /* shrink the messages view so the compose bar + list clear the fixed bottom nav */
   /* lift the DM composer above the fixed bottom nav (reliable, no :has/height-calc) */

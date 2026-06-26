@@ -2587,10 +2587,10 @@
         ${quoteHtml(ev)}
         ${cw?`</div></div>`:''}
         <div class="acts">
-          <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies||''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts||''}</span></button>
+          <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
-          <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions||''}</span></button>
+          <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           ${isXmrAddr(xmrOf(p))?`<button class="act actxmr" data-a="xmrtip" title="tip Monero (XMR)">ɱ</button>`:''}
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
