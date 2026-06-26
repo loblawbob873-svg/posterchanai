@@ -16,6 +16,7 @@
     function nameOf(pk, fb){ const m=profOf(pk)||{}; return m.name||m.display_name||niceNip05(m.nip05)||fb||'player'; }
     function _hidden(){ try{ return new Set(JSON.parse(localStorage.getItem('pc_bj_hidden')||'[]')); }catch(_){ return new Set(); } }
     function _hide(gid){ const s=_hidden(); s.add(gid); try{ localStorage.setItem('pc_bj_hidden', JSON.stringify([...s])); }catch(_){} }
+    function _unhideAll(){ try{ localStorage.removeItem('pc_bj_hidden'); }catch(_){} }
     function getBet(){ const b=parseInt(localStorage.getItem('pc_bj_bet')||'25',10); return (b>0?b:25); }
     function setBetLS(b){ try{ localStorage.setItem('pc_bj_bet', String(b)); }catch(_){} }
     // graphical poker-chip bet picker: clickable chips + a live bet amount + a typed-amount input.
@@ -98,7 +99,12 @@
       friends=(friends||[]).filter(pk=>pk&&pk!==PC.ME.pubkey&&pk!==botPk);
       if(!friends.length){
         // SOLO: private command — starts a table in the "place your bet" state (bet is IN the game).
-        try{ await _cmd({action:'start'}); toast('new game… 🃏'); setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, 4000); }
+        // Un-hide first: the bot keeps a persistent table and won't deal a brand-new one while you still
+        // have a live (even just-'over') table it can resume. If we'd hidden that table locally, 'start'
+        // resumes it but you'd see nothing — the button looks dead. Surfacing hidden tables guarantees
+        // you always land on a playable table (a 'left' table stays filtered out by _load).
+        _unhideAll();
+        try{ await _cmd({action:'start'}); toast('new game… 🃏'); [2000,4500,7000].forEach(d=>setTimeout(()=>{ if(PC.VIEW==='blackjack') _load(); }, d)); }
         catch(e){ toast('could not start — try again'); }
         return;
       }
@@ -223,7 +229,15 @@
     }
     async function clearAll(games){
       if(!confirm(`Clear all ${games.length} tables from your list? You keep your chips.`)) return;
-      for(const g of games){ _hide(g._gid||g.root); const gid=g.root||g._gid; try{ await _cmd({action:'leave', gameid:gid}); }catch(_){} }
+      // The command channel is ONE replaceable event per user, so leaves fired back-to-back overwrite
+      // each other before the bot (10s poll) reads them — only the last would register, and the rest
+      // would resurface next time you start a game. Space them out so every LEAVE actually lands.
+      for(let i=0;i<games.length;i++){
+        const g=games[i]; _hide(g._gid||g.root);
+        try{ await _cmd({action:'leave', gameid:g.root||g._gid}); }catch(_){}
+        _load();
+        if(i<games.length-1){ toast(`clearing ${i+1}/${games.length}…`); await new Promise(r=>setTimeout(r, 11000)); }
+      }
       toast('cleared 🧹'); _load();
     }
 

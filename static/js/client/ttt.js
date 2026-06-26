@@ -133,6 +133,9 @@
         let busy=false;
         card.querySelectorAll('.ttt-cell.empty').forEach(c=> c.onclick=()=>{
           if(busy) return; busy=true; c.classList.add('pending');
+          // flip the badge immediately so you can SEE the turn hand off — vs the bot it replies in a
+          // second or two, so without this the badge looks stuck on "Your move" the whole game.
+          const bdg=card.querySelector('.cc-badge'); if(bdg){ bdg.textContent="Opponent's turn…"; bdg.className='cc-badge wait'; }
           move(g, String(parseInt(c.dataset.i,10)+1));
         });
       }

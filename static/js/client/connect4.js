@@ -147,6 +147,9 @@
           busy=true;
           const disc = allCells[rr*COLS+c].querySelector('.c4-disc');
           if(disc) disc.classList.add(myMark==='1'?'d1':'d2');   // optimistic: show my disc now
+          // flip the badge immediately so you can SEE the turn hand off — vs the bot it replies in a
+          // second or two, so without this the badge looks stuck on "Your move" the whole game.
+          const bdg=card.querySelector('.cc-badge'); if(bdg){ bdg.textContent="Opponent's turn…"; bdg.className='cc-badge wait'; }
           move(g, String(c+1));
         });
       }
