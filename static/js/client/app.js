@@ -1281,7 +1281,9 @@
     const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
     let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, ind=null;
     // Don't hijack horizontal drags that belong to scrollable/interactive children.
-    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.scrollx,.dm-wrap'));
+    // `.dm-thread` (an OPEN conversation), not `.dm-wrap` (the whole Messages pane) — so the
+    // conversation LIST stays swipeable (swipe back to Notifications) while an open chat isn't yanked out from under you.
+    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.scrollx,.dm-thread'));
     const indicator = ()=>{ if(!ind || !ind.isConnected){ ind=document.createElement('div'); ind.className='ptr-ind'; ind.textContent='↻'; document.body.appendChild(ind); } return ind; };
     const resetInd = ()=>{ if(ind){ ind.style.opacity=''; ind.style.transform=''; ind.classList.remove('ready','spin'); } };
     feed.addEventListener('touchstart', e=>{
