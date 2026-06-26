@@ -63,8 +63,9 @@
             <select id="nostr_relay_wot_depth" name="nostr_relay_wot_depth">
                 <option value="1">1 — seeds + their follows</option>
                 <option value="2">2 — also friends-of-friends</option>
+                <option value="3">3 — also friends-of-friends-of-friends</option>
             </select>
-            <small>Depth 2 adds follows-of-follows (much larger). The graph rebuilds daily.</small>
+            <small>Depth 2 adds follows-of-follows; depth 3 adds another hop (much larger again). The graph rebuilds daily.</small>
         </div>
         <div class="form-group">
             <button type="button" id="relayRefreshWotBtn" class="btn-primary">↻ Refresh Web of Trust now</button>

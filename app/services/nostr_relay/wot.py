@@ -113,7 +113,8 @@ class WotGate:
                     *, batch: int = 200, pace: float = 1.0, min_followers: int = 2,
                     max_members: int = 0, min_keep_ratio: float = 0.85) -> int:
         """Build the WoT and swap it in. Depth 1 = seeds + their follows; depth 2 also adds
-        friends-of-friends (followed by >= `min_followers` of your follows), capped at
+        friends-of-friends (followed by >= `min_followers` of your follows); depth 3 also adds
+        friends-of-friends-of-friends (followed by >= `min_followers` of your FoF), capped at
         `max_members` (highest-occurrence kept). Falls back to the prior set on total failure, and
         KEEPS the cached set if a crawl resolves < `min_keep_ratio` of the cached size (partial crawl
         protection — an upstream timeout must not shrink/degrade the trusted set)."""
@@ -137,18 +138,37 @@ class WotGate:
         members = set(seeds) | follows1
 
         # Depth 2: friends-of-friends, pruned by how many of your follows also follow them.
+        fof = set()
         if depth >= 2 and follows1:
             fof_counter = await self._follows_counter(upstream_relays, follows1, direct, batch, pace)
             fof = {pk for pk, c in fof_counter.items() if c >= min_followers}
             members |= fof
-            if max_members and len(members) > max_members:
-                # Keep seeds + direct follows always; fill remaining room with the most-followed FoF.
-                core = set(seeds) | follows1
-                room = max(0, max_members - len(core))
-                top = [pk for pk, _ in fof_counter.most_common() if pk not in core][:room]
-                members = core | set(top)
             logger.info("[nostr-relay] WoT depth-2: +%d friends-of-friends (>=%d followers)",
                         len(members) - len(seeds) - len(follows1), min_followers)
+
+        # Depth 3: friends-of-friends-of-friends, pruned the same way against the FoF tier.
+        if depth >= 3 and fof:
+            fofof_counter = await self._follows_counter(upstream_relays, fof, direct, batch, pace)
+            before = len(members)
+            fofof = {pk for pk, c in fofof_counter.items() if c >= min_followers}
+            members |= fofof
+            logger.info("[nostr-relay] WoT depth-3: +%d friends-of-friends-of-friends (>=%d followers)",
+                        len(members) - before, min_followers)
+
+        if depth >= 2 and max_members and len(members) > max_members:
+            # Keep seeds + direct follows always; fill remaining room with the most-followed outer
+            # members (FoF first, then FoFoF) by occurrence across the crawled tiers.
+            core = set(seeds) | follows1
+            room = max(0, max_members - len(core))
+            outer = Counter()
+            if depth >= 2:
+                outer.update({pk: c for pk, c in fof_counter.items() if pk not in core})
+            if depth >= 3:
+                for pk, c in fofof_counter.items():
+                    if pk not in core:
+                        outer[pk] += c
+            top = [pk for pk, _ in outer.most_common()][:room]
+            members = core | set(top)
 
         new_members = frozenset(members)
         prior = self._members
