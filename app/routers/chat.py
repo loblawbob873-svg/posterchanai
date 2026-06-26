@@ -910,51 +910,61 @@ foxnews.com|Fox News"""
 # WebSocket for real-time chat
 
 class ConnectionManager:
+    # Keyed by the globally-unique conn_id (one per live socket), NOT per user — so multiple conversations
+    # for the same user each keep their own live socket. The old per-user registry let a second open chat
+    # (e.g. the effects studio opens its OWN conversation) steal the single slot, so the first chat's reply
+    # was queued instead of delivered live: the "effect result never updates until refresh" bug.
     def __init__(self):
-        self.active_connections: dict[int, WebSocket] = {}
-        self.connection_ids: dict[int, int] = {}  # Track connection ID per user to detect stale connections
-        self.conversation_ids: dict[int, int] = {}  # Track which conversation each user is connected to
-        self.last_image_prompts: dict[int, str] = {}  # Track last image prompt per user
-        self.stop_flags: dict[int, bool] = {}  # Stop streaming flags per user
-        self.pending_results: dict[tuple, list] = {}  # (user_id, conv_id) -> list of pending results
+        self.active_connections: dict[int, WebSocket] = {}   # conn_id -> socket
+        self.user_conns: dict[int, set] = {}                 # user_id -> {conn_id, …}  (user-level broadcast, e.g. reminders)
+        self.connection_ids: dict[tuple, int] = {}           # (user_id, conv_id) -> CURRENT conn_id (staleness + reconnect continuity)
+        self.last_image_prompts: dict[int, str] = {}         # per-user (img2img convenience)
+        self.stop_flags: dict[tuple, bool] = {}              # (user_id, conv_id) -> stop
+        self.pending_results: dict[tuple, list] = {}         # (user_id, conv_id) -> list of pending results
         self._next_conn_id = 0
         self._conn_lock = asyncio.Lock()  # Protect connection ID increment
 
     async def connect(self, user_id: int, conversation_id: int, websocket: WebSocket) -> int:
         if websocket.client_state.name != "CONNECTED":
             await websocket.accept()
-        # If same user reconnects to same conversation, don't kill the stream - just switch socket
-        prev_conv = self.conversation_ids.get(user_id)
-        same_conversation = prev_conv == conversation_id
-        if not same_conversation:
-            self.stop_flags[user_id] = True
-        self.active_connections[user_id] = websocket
-        self.conversation_ids[user_id] = conversation_id
+        key = (user_id, conversation_id)
         async with self._conn_lock:
-            if same_conversation and user_id in self.connection_ids:
-                conn_id = self.connection_ids[user_id]
-            else:
+            # Reconnect to the SAME conversation reuses its conn_id so an in-flight generation survives the
+            # socket swap (it checks conn_id, not the socket). A first connect gets a fresh id.
+            conn_id = self.connection_ids.get(key)
+            if conn_id is None:
                 self._next_conn_id += 1
                 conn_id = self._next_conn_id
-                self.connection_ids[user_id] = conn_id
-        self.stop_flags[user_id] = False
+                self.connection_ids[key] = conn_id
+            self.active_connections[conn_id] = websocket
+            self.user_conns.setdefault(user_id, set()).add(conn_id)
+        self.stop_flags[key] = False
         return conn_id
 
-    def disconnect(self, user_id: int):
-        self.active_connections.pop(user_id, None)
-        self.stop_flags.pop(user_id, None)
-        self.conversation_ids.pop(user_id, None)
+    def disconnect(self, user_id: int, conversation_id: int, conn_id: int = None, websocket: WebSocket = None):
+        key = (user_id, conversation_id)
+        # Only drop the socket if it's still the one we hold — a fast reconnect may have already replaced it.
+        if conn_id is not None and (websocket is None or self.active_connections.get(conn_id) is websocket):
+            self.active_connections.pop(conn_id, None)
+            conns = self.user_conns.get(user_id)
+            if conns is not None:
+                conns.discard(conn_id)
+                if not conns:
+                    self.user_conns.pop(user_id, None)
+        self.stop_flags.pop(key, None)
+        # Keep connection_ids[key] so a reconnect to this conversation keeps its conn_id (in-flight continuity).
 
-    def should_stop(self, user_id: int, conn_id: int = None) -> bool:
-        # Stop if flag is set OR if connection ID doesn't match (user switched chats)
-        if self.stop_flags.get(user_id, False):
+    def should_stop(self, user_id: int, conn_id: int = None, conversation_id: int = None) -> bool:
+        key = (user_id, conversation_id)
+        # Stop if flag is set OR if this conn_id is no longer the current one for its conversation (superseded).
+        if self.stop_flags.get(key, False):
             return True
-        if conn_id is not None and self.connection_ids.get(user_id) != conn_id:
+        if conn_id is not None and self.connection_ids.get(key) != conn_id:
             return True
         return False
 
-    def set_stop(self, user_id: int, value: bool):
-        self.stop_flags[user_id] = value
+    def set_stop(self, user_id: int, value: bool, conversation_id: int = None):
+        self.stop_flags[(user_id, conversation_id)] = value
 
     def queue_result(self, user_id: int, conversation_id: int, data: dict):
         """Queue a result for later delivery when user reconnects to this conversation"""
@@ -973,21 +983,28 @@ class ConnectionManager:
         return results
 
     async def send_json(self, user_id: int, data: dict, conn_id: int = None, conversation_id: int = None):
-        # Check if connection ID matches (prevents sending to wrong chat)
-        if conn_id is not None and self.connection_ids.get(user_id) != conn_id:
-            # Connection is stale - queue the result for later
-            if conversation_id is not None and data.get("type") == "response":
+        # A specific connection (a generation delivering to its own socket): if this conn_id is no longer
+        # current for its conversation, it's stale → queue the response for the reconnect instead of sending.
+        if conn_id is not None and conversation_id is not None and self.connection_ids.get((user_id, conversation_id)) != conn_id:
+            if data.get("type") == "response":
                 self.queue_result(user_id, conversation_id, data)
             return
-        ws = self.active_connections.get(user_id)
-        if ws:
+        if conn_id is not None:
+            ws = self.active_connections.get(conn_id)
+            targets = [ws] if ws else []
+        else:
+            # No conn_id → a user-level broadcast (e.g. a fired reminder): deliver to every open socket the user has.
+            targets = [self.active_connections[c] for c in list(self.user_conns.get(user_id, ()))
+                       if c in self.active_connections]
+        sent = False
+        for ws in targets:
             try:
                 await ws.send_json(data)
+                sent = True
             except Exception:
-                # Failed to send - queue for later if it's a response
-                if conversation_id is not None and data.get("type") == "response":
-                    self.queue_result(user_id, conversation_id, data)
                 pass  # Connection may be closed
+        if not sent and conn_id is not None and conversation_id is not None and data.get("type") == "response":
+            self.queue_result(user_id, conversation_id, data)  # nothing live got it → queue for reconnect
 
 
 manager = ConnectionManager()
@@ -1080,11 +1097,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                 logger.debug(f"Received: type={data.get('type')}, content={data.get('content', '')[:50] if data.get('content') else ''}, has_image={data.get('image_data') is not None}")
 
                 if data.get("type") == "stop":
-                    manager.set_stop(user.id, True)
+                    manager.set_stop(user.id, True, conversation_id)
                     continue
 
                 if data.get("type") == "message":
-                    manager.set_stop(user.id, False)  # Reset for new message
+                    manager.set_stop(user.id, False, conversation_id)  # Reset for new message
                     content = data.get("content", "").strip()
                     image_data = data.get("image_data")  # base64 image (single, for backward compat)
                     images = data.get("images", [])  # Array of {base64, filename}
@@ -1322,7 +1339,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         # Execute command with stop check
                         try:
                             # Check if already stopped before starting
-                            if manager.should_stop(user.id, conn_id):
+                            if manager.should_stop(user.id, conn_id, conversation_id):
                                 logger.debug("Command cancelled before start")
                                 continue
 
@@ -1331,7 +1348,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                             # Create stop check function for long-running commands
                             def should_stop_command():
-                                return manager.should_stop(user.id, conn_id)
+                                return manager.should_stop(user.id, conn_id, conversation_id)
 
                             # Prepare attachments for mail command - support multiple attachments
                             mail_attachments = None
@@ -1534,9 +1551,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             )
 
                             # Check if stopped during execution
-                            if manager.should_stop(user.id, conn_id):
+                            if manager.should_stop(user.id, conn_id, conversation_id):
                                 logger.debug("Command stopped during execution")
-                                manager.set_stop(user.id, False)
+                                manager.set_stop(user.id, False, conversation_id)
                                 continue
 
                             logger.debug(f"Command result type: {result.get('type')}")
@@ -1629,9 +1646,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
 
                                     if action_result:
                                         # Check if stopped during execution
-                                        if manager.should_stop(user.id, conn_id):
+                                        if manager.should_stop(user.id, conn_id, conversation_id):
                                             logger.debug("Intent action stopped during execution")
-                                            manager.set_stop(user.id, False)
+                                            manager.set_stop(user.id, False, conversation_id)
                                             continue
 
                                         # Save assistant response
@@ -1872,7 +1889,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
 
                             async for chunk in chat_service.chat_stream(messages):
                                 # Check if user requested stop OR switched to another chat
-                                if manager.should_stop(user.id, conn_id):
+                                if manager.should_stop(user.id, conn_id, conversation_id):
                                     break
                                 full_response += chunk
                                 buffer += chunk
@@ -1939,7 +1956,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 }, conn_id)
 
                             # Ensure we always send stream_end, even if there was an error or stop request
-                            logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id)}")
+                            logger.info(f"[STREAM] Complete, total_len={len(full_response)}, stopped={manager.should_stop(user.id, conn_id, conversation_id)}")
                             
                             # Always send stream_end, even if full_response is empty
                             await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
@@ -1973,7 +1990,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
 
         except WebSocketDisconnect:
             if user:
-                manager.disconnect(user.id)
+                manager.disconnect(user.id, conversation_id, conn_id, websocket)
     finally:
         if db:
             db.close()
