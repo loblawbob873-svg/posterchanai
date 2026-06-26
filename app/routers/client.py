@@ -682,6 +682,10 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
         "icons": [
             {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            # Maskable variants (logo padded into the safe zone). Samsung Internet's WebAPK mint
+            # commonly fails ("failed to download") without a maskable icon present.
+            {"src": "/static/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
+            {"src": "/static/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
         ],
         # Long-press the home-screen icon → jump straight to a view / the composer. The SPA reads
         # these query params on boot (see _consumeLaunchParams in app.js) and cleans the URL.
