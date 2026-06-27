@@ -1,19 +1,18 @@
-"""Write-back: a local NIP-05 user's Nostr interactions → the fediverse (interact-only).
+"""Write-back: a bridge-whitelisted user's Nostr interactions → the fediverse.
 
 The Nostr counterpart of the Matrix bridge's /api/matrix/timeline-action — but the trigger isn't an
 HTTP call, it's the app's OWN relay. This service keeps a live subscription to the local relay and,
-when a **local NIP-05 user** replies to / likes / reposts a bridged "puppet" note, performs the
-matching action on the fediverse through THAT user's own linked Pleroma account:
+when a WHITELISTED user replies to / likes / reposts a bridged "puppet" note, performs the matching
+action on the fediverse through THAT user's own linked Pleroma account:
 
     Nostr kind-1 reply  → Pleroma reply        (post_status in_reply_to)
     Nostr kind-7 like   → Pleroma favourite
     Nostr kind-6 repost → Pleroma reblog
 
-Gating is strict: the author must (a) be a NIP-05 user on this instance (their pubkey is in
-nostr_relay_nip05_names) and (b) map to a PosterChan user with a linked Pleroma account. Anyone else
-is ignored — so a random npub wandering into the relay can never drive fediverse actions. The result
-post is recorded in FediBridgeDelivered so the global-timeline mirror won't echo the user's own reply
-back as a puppet note.
+Gating: the author must be on the bridge WHITELIST — a PosterChan user with a linked Pleroma account
+AND bridge/cross-post enabled by the admin or themselves (NO local-NIP-05 requirement; see
+_bridge_allowed_pubkeys). Anyone else is ignored, so a random npub can never drive fediverse actions.
+Results are recorded in FediBridgeDelivered so the global mirror won't echo a user's own post back.
 """
 import asyncio
 import json
@@ -48,19 +47,35 @@ def _port() -> int:
         return 3052
 
 
-_nip05_cache: dict = {"at": 0.0, "set": frozenset()}
+_allowed_cache: dict = {"at": 0.0, "set": frozenset()}
 
 
-def _local_nip05_pubkeys() -> frozenset:
-    """Pubkeys (hex) that hold a NIP-05 name on this instance — the write-back allowlist. Cached for
-    30s so the per-event filter on the live relay stream is a cheap set lookup, not a parse."""
+def _bridge_allowed_pubkeys() -> frozenset:
+    """The write-back WHITELIST: pubkeys of users the operator (or the user themselves) opted into the
+    bridge — i.e. a linked Pleroma account AND fedi_bridge_enabled or fedi_crosspost_enabled. NO local
+    NIP-05 requirement, so the admin can whitelist anyone (any domain / no nip05). Cached 30s so the
+    per-event relay-stream filter is a cheap set lookup."""
     now = time.monotonic()
-    if now - _nip05_cache["at"] > 30:
-        from app.services.nostr_relay.thread import _parse_nip05
-        names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
-        _nip05_cache["set"] = frozenset(names.values())
-        _nip05_cache["at"] = now
-    return _nip05_cache["set"]
+    if now - _allowed_cache["at"] > 30:
+        from app.database import SessionLocal
+        from app.models import User
+        db = SessionLocal()
+        out = set()
+        try:
+            for u in db.query(User).filter(User.pleroma_enabled == True).all():   # noqa: E712
+                if not (getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False)):
+                    continue
+                npub = getattr(u, "nostr_npub", None)
+                h = nostr_service.to_pubkey_hex(npub) if npub else None
+                if h:
+                    out.add(h)
+        except Exception as e:
+            logger.debug("[fedi-writeback] allowed-pubkey refresh failed: %s", e)
+        finally:
+            db.close()
+        _allowed_cache["set"] = frozenset(out)
+        _allowed_cache["at"] = now
+    return _allowed_cache["set"]
 
 
 def _user_for_pubkey(db, pk: str):
@@ -187,7 +202,7 @@ async def _handle_dm_reply(db, ev: dict) -> None:
     except Exception as e:
         logger.debug("[fedi-writeback] DM unwrap failed: %s", e)
         return
-    if sender_hex not in _local_nip05_pubkeys():
+    if sender_hex not in _bridge_allowed_pubkeys():
         return
     user = _user_for_pubkey(db, sender_hex)
     if not user:
@@ -255,7 +270,7 @@ async def _handle(db, ev: dict) -> None:
         await _handle_dm_reply(db, ev)
         return
     pk = ev.get("pubkey", "")
-    if pk not in _local_nip05_pubkeys():
+    if pk not in _bridge_allowed_pubkeys():
         return
     user = _user_for_pubkey(db, pk)
     if not user:
@@ -326,7 +341,7 @@ async def _listen_once() -> None:
     # (so the relay never streams us the whole puppet firehose), plus gift-wraps (1059) addressed to a
     # puppet — those carry an ephemeral author, so they can't be author-filtered and are handled by
     # checking the p-tag. The lookback replays missed events; idempotency (below) prevents double-posts.
-    locals_ = list(_local_nip05_pubkeys())
+    locals_ = list(_bridge_allowed_pubkeys())
     filters = []
     if locals_:
         filters.append({"kinds": [1, 6, 7], "authors": locals_, "since": since})

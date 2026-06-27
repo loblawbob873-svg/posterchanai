@@ -5408,9 +5408,10 @@
   // sign + call the ones that actually changed (fewer signer prompts).
   async function openPermissions(pk){
     if(!IS_ADMIN) return;
-    let caps={}, aiOn=false, blossomOn=false;
+    let caps={}, aiOn=false, blossomOn=false, bridgeOn=false;
     try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
+    try{ const r=await fetch('/client/bridge-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); bridgeOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
     let nipName='', nipDomain=location.host;
     try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok){ nipName=r.name||''; if(r.nip05) nipDomain=r.nip05.split('@')[1]||nipDomain; } }catch(_){}
@@ -5422,6 +5423,7 @@
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
+      ${row('id="perm-bridge"', bridgeOn, '🌉 Bridge Access <span class="muted small">(create fedi account + enable bridge)</span>')}
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
       <p class="muted small">AI features</p>
       ${C.map(([k,l])=>row('data-cap="'+k+'"', !!caps[k], l)).join('')}
@@ -5459,6 +5461,14 @@
             const auth=await sign(27235,'user-caps',[['p',pk]]);
             const r=await fetch('/client/user-caps',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({target:pk,caps:out,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json()); ok=ok&&r.ok;
+          }
+          const wantBridge=$('#perm-bridge',root).checked;
+          if(wantBridge!==bridgeOn){
+            toast(wantBridge?'creating fediverse account…':'disabling bridge…');
+            const auth=await sign(27235,'bridge-access',[['action',wantBridge?'grant':'revoke'],['p',pk]]);
+            const r=await fetch('/client/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,grant:wantBridge,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+            ok=ok&&r.ok; if(r&&!r.ok&&r.error) toast(r.error);
           }
           toast(ok?'permissions saved':'some changes failed'); closeModal();
         }catch(_){ toast('save failed'); }
@@ -6332,13 +6342,6 @@
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="set-body">
         <div class="us-pane active" data-pane="profile">
-          <div class="us-conn" style="margin-bottom:12px"><div class="set-title small">🌉 Bridge Access (1-click)</div>
-            <div class="muted small">One click connects you to the Fediverse as a native Nostr user: it creates a fediverse account for you, copies your Nostr profile, assigns your NIP-05 name, and turns on DMs/notifications + cross-posting. Your top-level posts then appear on the Fediverse, and you can reply/like/repost fediverse posts from Nostr.</div>
-            ${(s.fedi_bridge_enabled && s.pleroma_has_access_token)
-              ? `<div class="us-ok">✓ Bridge access active${s.pleroma_instance_url?(' on '+enc(s.pleroma_instance_url)):''}.</div><button class="btn-secondary" id="us-bridge-off" style="color:#ff6b8b">Disable Bridge Access</button>`
-              : `<button class="btn-secondary" id="us-bridge-on">🌉 Enable Bridge Access</button>`}
-            <div class="us-stat muted small" id="us-bridge-stat"></div>
-          </div>
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
@@ -6524,15 +6527,6 @@
         const d=await r.json().catch(()=>({})); if(r.ok){ toast('Matrix connected'); renderUserSettings(); } else st.textContent=d.detail||'connect failed'; }; }
     { const d=$('#us-mx-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Matrix?'))return; await fetch('/api/matrix/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Pleroma OAuth (opens instance; callback posts 'pleroma_connected')
-    // 1-click Bridge Access: auto-create a fediverse account + enable the bridge (or disable)
-    { const b=$('#us-bridge-on'); if(b) b.onclick=async()=>{ const st=$('#us-bridge-stat'); b.disabled=true; st.textContent='Setting up your fediverse account…';
-        try{ const r=await fetch('/api/auth/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enable:true})}); const d=await r.json().catch(()=>({}));
-          if(r.ok){ st.textContent='✓ Bridge access enabled!'; setTimeout(()=>renderUserSettings(),1100); } else { st.textContent='Failed: '+(d.detail||'error'); b.disabled=false; } }
-        catch(e){ st.textContent='Error: '+e; b.disabled=false; } }; }
-    { const b=$('#us-bridge-off'); if(b) b.onclick=async()=>{ const st=$('#us-bridge-stat'); if(!confirm('Disable Bridge Access? (your fediverse account is kept)'))return; b.disabled=true; st.textContent='Disabling…';
-        try{ const r=await fetch('/api/auth/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enable:false})}); const d=await r.json().catch(()=>({}));
-          if(r.ok){ st.textContent='Disabled.'; setTimeout(()=>renderUserSettings(),900); } else { st.textContent='Failed: '+(d.detail||'error'); b.disabled=false; } }
-        catch(e){ st.textContent='Error: '+e; b.disabled=false; } }; }
     { const c=$('#us-plr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-plr-stat'); const url=$('#us-plr-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='registering app…';
         const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';

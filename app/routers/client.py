@@ -1403,6 +1403,45 @@ async def ai_requests(db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "requests": out})
 
 
+class BridgeAccessGrantReq(BaseModel):
+    target: str          # npub/hex to grant/revoke bridge access for
+    grant: bool = True
+    auth: str            # admin-signed event (p-tags target), same proof as /ai-access
+
+
+@router.get("/bridge-access")
+async def bridge_access_status(pubkey: str, db: Session = Depends(get_db)):
+    """Whether a user currently has Bridge Access (fedi bridge / cross-post enabled), so the admin
+    Permissions panel shows the right toggle state."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    on = bool(u and (getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False)))
+    return JSONResponse({"ok": True, "enabled": on})
+
+
+@router.post("/bridge-access")
+async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(get_db)):
+    """Admin-only: grant Bridge Access to a user (auto-create their fediverse account, copy profile,
+    set NIP-05, enable cross-post + DMs/notifications) or revoke it. The admin whitelists anyone —
+    no requirement that the user hold a NIP-05 on this domain."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin authorization required"}, status_code=403)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
+    if not u:
+        return JSONResponse({"ok": False, "error": "that user has no account yet (they must sign in once)"},
+                            status_code=404)
+    from app.services import fedi_bridge_access
+    r = await (fedi_bridge_access.enable(db, u) if data.grant else fedi_bridge_access.disable(db, u))
+    if not r.get("ok"):
+        return JSONResponse({"ok": False, "error": r.get("error") or "failed"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
 _USER_CAPS = ("can_image", "can_music", "can_video", "can_torrent")
 
 
