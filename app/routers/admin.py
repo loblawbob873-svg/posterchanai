@@ -329,7 +329,14 @@ def get_settings(
 ):
     from app.database import safe_query_settings
     settings = safe_query_settings(db)
-    return SettingsResponse(**settings)
+    resp = SettingsResponse(**settings)
+    # Mask secret tokens that are set OUT-OF-BAND (OAuth) so the admin form doesn't pre-fill them and
+    # then re-submit a STALE value on Save, clobbering a freshly-connected token. These keys are
+    # excluded from the clearable text-keys, so a blank field on Save means "leave as-is".
+    for _k in ("fedi_bridge_access_token", "fedi_bridge_admin_token"):
+        if getattr(resp, _k, None):
+            setattr(resp, _k, "")
+    return resp
 
 
 @router.post("/models/{kind}/download")
