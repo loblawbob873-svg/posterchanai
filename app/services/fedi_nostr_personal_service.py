@@ -202,9 +202,18 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
     status = n.get("status") or {}
     try:
         if ntype == "mention" and status:
-            # Properly threaded note (e/p + ancestor backfill from the user's instance) + p-tag the user.
-            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
             post = _norm_pleroma(status)
+            vis = (status.get("visibility") or "public").lower()
+            if vis in ("direct", "private"):
+                # A private/DM mention must NOT become a public note (that leaks the DM). Deliver it
+                # privately as a NIP-17 DM from the sender's puppet instead.
+                body = (post.get("text") or "").strip()
+                for m in (post.get("media") or []):
+                    if m.get("url"):
+                        body += ("\n" if body else "") + m["url"]
+                return bool(await _wrap_dm(port, puppet, recipient, body or "​"))
+            # Public/unlisted mention → properly threaded public note (e/p + ancestor backfill) + p-tag.
+            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
             uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
             if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
                 r = await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,

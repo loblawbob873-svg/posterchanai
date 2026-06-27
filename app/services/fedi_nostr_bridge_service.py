@@ -187,6 +187,10 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None) -> str | None:
+    # NEVER mirror a non-public status as a PUBLIC Nostr note — a `direct` (DM) or `private`
+    # (followers-only) status published as a public kind-1 leaks private content into the feed.
+    if (raw.get("visibility") or "public").lower() in ("direct", "private"):
+        return None
     account = raw.get("account") or {}
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
