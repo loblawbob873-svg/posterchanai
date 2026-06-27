@@ -39,6 +39,8 @@ _mod_cache: dict = {"at": 0.0, "blocked_accts": set()}
 _DELETION_INTERVAL = 300       # min seconds between deletion re-checks (deletions are rare)
 _DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion per cycle
 _last_deletion_check = 0.0
+_MAX_ANCESTORS = 8             # cap ancestors backfilled to anchor an orphan reply's thread
+_BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
 
 
 # --- settings ---------------------------------------------------------------
@@ -150,8 +152,38 @@ def _build_content(post: dict) -> str:
     return "\n".join(parts).strip() or "​"   # never publish empty content
 
 
+async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
+                              instance_host: str, post: dict) -> None:
+    """Mirror a reply's ancestor chain (toward the conversation root) so the reply threads under a
+    real parent instead of appearing as an orphan with missing context. Ancestors come root-first,
+    so each is delivered before its child and never triggers a further backfill (recursion guard)."""
+    token = _get("fedi_bridge_access_token")
+    try:
+        ctx = await pleroma_service.fetch_context(instance_url, token, post["id"])
+        ancestors = ctx.get("ancestors") or []
+    except Exception as e:
+        logger.debug("[fedi-bridge] ancestor fetch failed for %s: %s", post.get("id"), e)
+        return
+    blocked = _blocked_domains()
+    for raw in ancestors[-_MAX_ANCESTORS:]:           # closest N (always includes the immediate parent)
+        anc = _norm(platform, raw)
+        if not anc.get("id"):
+            continue
+        uri = _canonical_uri(platform, instance_url, anc)
+        if _seen(db, instance_url, anc["id"], uri):
+            continue
+        acct = anc.get("author", {}).get("acct") or ""
+        host = _host_of(acct, instance_host)
+        if _domain_blocked(host, blocked) or _author_muted(acct, host, instance_host):
+            continue
+        try:
+            await _deliver(db, port, platform, instance_url, instance_host, raw, anc, backfill=False)
+        except Exception as e:
+            logger.debug("[fedi-bridge] ancestor deliver failed: %s", e)
+
+
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
-                   raw: dict, post: dict) -> str | None:
+                   raw: dict, post: dict, backfill: bool = True) -> str | None:
     account = raw.get("account") or {}
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
@@ -159,9 +191,12 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
     uri = _canonical_uri(platform, instance_url, post)
 
     tags: list = []
-    # Threading (NIP-10): if the parent is already mirrored, tag it as the reply target.
+    # Threading (NIP-10): if the parent isn't mirrored yet, backfill the ancestor chain first so this
+    # reply threads under a real root (no missing-parent orphans); then tag the parent as the target.
     parent_id = post.get("in_reply_to_id")
     if parent_id:
+        if backfill and not _parent_event(db, instance_url, parent_id):
+            await _backfill_ancestors(db, port, platform, instance_url, instance_host, post)
         parent = _parent_event(db, instance_url, parent_id)
         if parent:
             tags.append(["e", parent.nostr_event_id, "", "reply"])
@@ -245,6 +280,39 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
             logger.debug("[fedi-bridge] deletion check failed for %s: %s", row.note_id, e)
 
 
+async def _backfill_recent(db: Session, port: int, platform: str, instance_url: str,
+                           instance_host: str, blocked_domains: set, include_replies: bool) -> None:
+    """On a fresh connect, mirror a bounded window of RECENT history (paging backward with max_id) so
+    the Nostr global timeline isn't empty until new posts trickle in. Mirrors oldest-first (parents
+    before replies) and then sets the forward cursor to the newest seen."""
+    token = _get("fedi_bridge_access_token")
+    ttype = _get("fedi_bridge_type", "global")
+    collected: list = []
+    max_id = None
+    for _ in range(_BACKFILL_PAGES):
+        batch = await pleroma_service.fetch_timeline(instance_url, token, ttype, limit=_PAGE, max_id=max_id)
+        if not batch:
+            break
+        collected.extend(batch)
+        max_id = batch[-1].get("id")            # oldest in this page (timeline is newest-first)
+        if not max_id or len(batch) < _PAGE:
+            break
+    if not collected:
+        return
+    newest = max((r.get("id") for r in collected if r.get("id")), default=None)
+    done = 0
+    for raw in sorted(collected, key=lambda r: r.get("created_at") or ""):   # oldest-first
+        try:
+            await _process(db, port, platform, instance_url, instance_host,
+                           blocked_domains, include_replies, raw)
+            done += 1
+        except Exception as e:
+            logger.debug("[fedi-bridge] backfill mirror failed: %s", e)
+    if newest:
+        settings_store.put("fedi_bridge_global_since", newest)
+    logger.info("[fedi-bridge] initial backfill mirrored %d recent post(s)", done)
+
+
 # --- poll -------------------------------------------------------------------
 
 async def poll_once(db: Session) -> None:
@@ -269,13 +337,21 @@ async def poll_once(db: Session) -> None:
                                                     min_id=(None if first else cursor))
 
     if not since:
-        # First poll: set the cursor to newest without backfilling history.
-        raw_posts = await _fetch(None, True)
-        if raw_posts:
-            newest = max((r.get("id") for r in raw_posts if r.get("id")), default=None)
-            if newest:
-                settings_store.put("fedi_bridge_global_since", newest)
-        return
+        # No cursor. If we already have mirrored history for this instance, the cursor was LOST
+        # (restart with a wiped local_settings.json) — resume forward from the newest delivered note
+        # so the gap during downtime is recovered, not skipped. Otherwise it's a fresh connect:
+        # backfill a bounded window of recent posts so the global timeline isn't empty on day one.
+        last = (db.query(FediBridgeDelivered)
+                .filter(FediBridgeDelivered.instance_url == instance_url)
+                .order_by(FediBridgeDelivered.id.desc()).first())
+        if last and last.note_id:
+            since = last.note_id
+            settings_store.put("fedi_bridge_global_since", since)
+            logger.info("[fedi-bridge] cursor lost — resuming forward from newest delivered note %s", since)
+        else:
+            await _backfill_recent(db, port, platform, instance_url, instance_host,
+                                   blocked_domains, include_replies)
+            return
 
     cursor = since
     drain_start = time.monotonic()
@@ -346,7 +422,7 @@ def start_fedi_bridge_scheduler() -> None:
         return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     try:
-        secs = max(15, int(_get("fedi_bridge_poll_seconds", "90") or "90"))
+        secs = max(60, int(_get("fedi_bridge_poll_seconds", "90") or "90"))
     except ValueError:
         secs = 90
 

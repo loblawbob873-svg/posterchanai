@@ -40,11 +40,19 @@ def _port() -> int:
         return 3052
 
 
-def _local_nip05_pubkeys() -> set:
-    """Pubkeys (hex) that hold a NIP-05 name on this instance — the write-back allowlist."""
-    from app.services.nostr_relay.thread import _parse_nip05
-    names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
-    return set(names.values())
+_nip05_cache: dict = {"at": 0.0, "set": frozenset()}
+
+
+def _local_nip05_pubkeys() -> frozenset:
+    """Pubkeys (hex) that hold a NIP-05 name on this instance — the write-back allowlist. Cached for
+    30s so the per-event filter on the live relay stream is a cheap set lookup, not a parse."""
+    now = time.monotonic()
+    if now - _nip05_cache["at"] > 30:
+        from app.services.nostr_relay.thread import _parse_nip05
+        names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
+        _nip05_cache["set"] = frozenset(names.values())
+        _nip05_cache["at"] = now
+    return _nip05_cache["set"]
 
 
 def _user_for_pubkey(db, pk: str):
@@ -204,14 +212,22 @@ async def _listen_once() -> None:
         logger.info("[fedi-writeback] subscribed to local relay for write-back events")
         while True:
             msg = json.loads(await ws.recv())
-            if msg[0] == "EVENT" and msg[1] == sub and isinstance(msg[2], dict):
-                db = SessionLocal()
-                try:
-                    await _handle(db, msg[2])
-                except Exception as e:
-                    logger.debug("[fedi-writeback] handle error: %s", e)
-                finally:
-                    db.close()
+            if msg[0] != "EVENT" or msg[1] != sub or not isinstance(msg[2], dict):
+                continue
+            ev = msg[2]
+            kind = int(ev.get("kind", 1))
+            # CHEAP pre-filter (no DB): the subscription also streams the whole mirror firehose
+            # (puppet kind-1/6/7). A public interaction matters ONLY when its author is a local NIP-05
+            # user — skip everything else without touching the DB. DMs (1059) are rare → handle those.
+            if kind != 1059 and ev.get("pubkey", "") not in _local_nip05_pubkeys():
+                continue
+            db = SessionLocal()
+            try:
+                await _handle(db, ev)
+            except Exception as e:
+                logger.debug("[fedi-writeback] handle error: %s", e)
+            finally:
+                db.close()
 
 
 async def _run() -> None:

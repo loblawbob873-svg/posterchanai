@@ -114,9 +114,35 @@ async def _self_acct(user: User) -> str | None:
         return None
 
 
-_NOTICE = {"favourite": "❤️ favourited your post", "reblog": "🔁 boosted your post",
-           "follow": "➕ followed you", "follow_request": "➕ requested to follow you",
-           "reaction": "⭐ reacted to your post", "emoji_reaction": "⭐ reacted to your post"}
+def _delivered_event_for(db: Session, instance_url: str, status: dict) -> str | None:
+    """The Nostr event id we already published for a fediverse status, or None."""
+    uri = status.get("uri") or status.get("url")
+    sid = status.get("id")
+    row = None
+    if uri:
+        row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.note_uri == uri).first()
+    if not row and sid:
+        row = (db.query(FediBridgeDelivered)
+               .filter(FediBridgeDelivered.instance_url == instance_url,
+                       FediBridgeDelivered.note_id == sid).first())
+    return row.nostr_event_id if row else None
+
+
+async def _ensure_status_event(db: Session, port: int, user: User, instance_host: str,
+                               status: dict, broadcast: bool) -> str | None:
+    """Resolve (or mirror) the Nostr event for a fediverse status so a reaction/repost can reference
+    a REAL event. The reacted/boosted status is the user's own post — mirror it under its author's
+    puppet if we haven't already, so the notification threads to a concrete note."""
+    eid = _delivered_event_for(db, user.pleroma_instance_url, status)
+    if eid or not status.get("id"):
+        return eid
+    try:
+        from app.services.fedi_nostr_bridge_service import _deliver
+        post = _norm_pleroma(status)
+        return await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host, status, post)
+    except Exception as e:
+        logger.debug("[fedi-personal] mirror-for-reaction failed: %s", e)
+        return None
 
 
 async def _deliver_notifications(db: Session, port: int, user: User, instance_host: str) -> None:
@@ -135,8 +161,11 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
         account = n.get("account") or {}
         puppet = await ident.ensure_puppet(db, port, account, instance_host)
         if puppet:
-            ntype = n.get("type")
+            ntype = (n.get("type") or "").lower()
             status = n.get("status") or {}
+            # Each fediverse notification → the matching NATIVE Nostr notification event (NOT a DM):
+            # mention → kind-1 reply, favourite/reaction → kind-7, boost → kind-6, follow → a brief
+            # mention note. All p-tag the user so they surface in the client's notifications tab.
             if ntype == "mention" and status:
                 post = _norm_pleroma(status)
                 content = (post.get("text") or "").strip()
@@ -148,19 +177,25 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
                                        object_uri=uri, broadcast=broadcast)
                 ok, _ = await ident.publish(port, ev)
                 if ok and status.get("id"):
-                    # Record like a mirrored note so a Nostr reply routes back (fedi_nostr_writeback).
                     db.add(FediBridgeDelivered(platform="pleroma", instance_url=user.pleroma_instance_url,
                                                note_id=status["id"], note_uri=uri,
                                                author_acct=puppet["acct"], nostr_event_id=ev["id"],
                                                nostr_pubkey=puppet["pubkey_hex"]))
-            else:
-                # Non-mention: a private NIP-17 notice so the puppet's public feed stays clean.
-                notice = _NOTICE.get(ntype or "", f"{ntype} you")
-                snippet = ""
-                if status:
-                    snippet = (_norm_pleroma(status).get("text") or "").strip()[:200]
-                text = f"{notice}" + (f":\n{snippet}" if snippet else "")
-                await _wrap_dm(port, puppet, recipient, text)
+            elif ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
+                target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
+                emoji = n.get("emoji") or "+"
+                tags = [["p", recipient]] + ([["e", target]] if target else [])
+                await ident.publish(port, ident.build_event(puppet, 7, ("+" if ntype == "favourite" else emoji),
+                                                            tags=tags, broadcast=broadcast))
+            elif ntype == "reblog" and status:
+                target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
+                tags = [["p", recipient]] + ([["e", target]] if target else [])
+                await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
+            elif ntype in ("follow", "follow_request"):
+                msg = "➕ followed you" if ntype == "follow" else "➕ requested to follow you"
+                await ident.publish(port, ident.build_event(puppet, 1, msg, tags=[["p", recipient]],
+                                                            broadcast=broadcast))
+            # other notification types (poll, update, …) are intentionally not bridged
         user.fedi_bridge_notif_since = n.get("id") or user.fedi_bridge_notif_since
         try:
             db.commit()
@@ -199,7 +234,7 @@ def start_fedi_personal_scheduler() -> None:
         return
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     try:
-        secs = max(15, int(_get("fedi_bridge_poll_seconds", "90") or "90"))
+        secs = max(60, int(_get("fedi_bridge_poll_seconds", "90") or "90"))
     except ValueError:
         secs = 90
 

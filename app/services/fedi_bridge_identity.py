@@ -17,17 +17,42 @@ Public surface:
 
 import re
 import json
-import time
+import asyncio
 import hashlib
 import logging
+from collections import OrderedDict
 from datetime import datetime
 
 from app.services import keystore, settings_store
 from app.services.nostr import bridge_keys, nostr_service
 from app.services.nostr.event import build_event as _build_event
-from app.services.nostr_store import _ws_publish
 
 logger = logging.getLogger(__name__)
+
+# --- persistent local-relay publisher ---------------------------------------
+# The global-timeline mirror publishes a lot of events; opening a fresh WebSocket (TCP + WS upgrade)
+# per event is the dominant CPU/latency cost. Keep ONE warm connection to ws://127.0.0.1:<port>/relay
+# and serialize sends through it (we await the OK, so one in-flight at a time). Reconnect on error.
+_ws = None
+_ws_port = None
+_ws_lock = asyncio.Lock()
+
+
+async def _relay_ws(port: int):
+    global _ws, _ws_port
+    if _ws is not None and _ws_port == port:
+        if getattr(_ws, "open", True):
+            return _ws
+    import websockets
+    if _ws is not None:
+        try:
+            await _ws.close()
+        except Exception:
+            pass
+    _ws = await websockets.connect(f"ws://127.0.0.1:{port}/relay", open_timeout=10,
+                                   close_timeout=2, ping_interval=30, max_queue=64)
+    _ws_port = port
+    return _ws
 
 
 def _secret() -> bytes:
@@ -126,9 +151,24 @@ def _profile_content(p: dict) -> dict:
     return out
 
 
-def _profile_sig(p: dict) -> str:
-    raw = "\x1f".join([p["display_name"], p["avatar_url"], p["about"][:200], nip05_domain()])
+def _profile_sig_from(display_name: str, avatar_url: str, about: str) -> str:
+    raw = "\x1f".join([display_name or "", avatar_url or "", (about or "")[:200], nip05_domain()])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _account_profile_sig(account: dict) -> str:
+    """The profile signature computed straight from a raw account object — WITHOUT deriving the puppet
+    key — so a cache lookup can decide 'unchanged' cheaply (no HMAC/EC work for repeat authors)."""
+    return _profile_sig_from(
+        (account.get("display_name") or account.get("name") or "").strip(),
+        (account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or "").strip(),
+        (account.get("note") or account.get("description") or "").strip())
+
+
+# Provisioned-this-process puppets: actor_uri → {"p": puppet dict, "sig": profile sig}. A hit skips
+# key derivation + the FediPuppet DB round-trip entirely (timelines repeat the same authors a lot).
+_PUPPET_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+_PUPPET_CACHE_MAX = 5000
 
 
 def build_event(p: dict, kind: int, content: str, tags: list | None = None,
@@ -145,8 +185,25 @@ def build_event(p: dict, kind: int, content: str, tags: list | None = None,
     return _build_event(p["seckey"], kind, content, tags=t)
 
 
-async def publish(port: int, ev: dict) -> tuple[bool, str]:
-    return await _ws_publish(port, ev)
+async def publish(port: int, ev: dict, timeout: float = 8.0) -> tuple[bool, str]:
+    """Publish over the warm persistent connection; reconnect once on failure. Serialized by a lock
+    so concurrent callers don't interleave their OK responses on the shared socket."""
+    async with _ws_lock:
+        for attempt in (1, 2):
+            try:
+                ws = await _relay_ws(port)
+                await ws.send(json.dumps(["EVENT", ev]))
+                while True:
+                    msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                    if msg[0] == "OK" and msg[1] == ev["id"]:
+                        return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
+                    # NOTICE / other control frames on a publish-only socket → ignore and keep reading
+            except Exception as e:
+                global _ws
+                _ws = None        # drop the dead socket; second attempt reconnects
+                if attempt == 2:
+                    return False, str(e)
+    return False, "unreachable"
 
 
 async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -> dict | None:
@@ -154,13 +211,19 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
     its kind-0 profile when first seen or when the display name/avatar/bio/domain changed. Returns
     the puppet dict, or None if the account has no usable actor URI."""
     from app.models import FediPuppet
-    p = puppet_for(account, instance_host)
-    if not p["actor_uri"]:
+    actor_uri = actor_uri_of(account)
+    if not actor_uri:
         return None
+    sig = _account_profile_sig(account)
+    # Fast path: already provisioned this run with an unchanged profile → no key derivation, no DB.
+    cached = _PUPPET_CACHE.get(actor_uri)
+    if cached is not None and cached["sig"] == sig:
+        _PUPPET_CACHE.move_to_end(actor_uri)
+        return cached["p"]
 
+    p = puppet_for(account, instance_host)
     row = db.query(FediPuppet).filter(FediPuppet.actor_uri == p["actor_uri"]).first()
     now = datetime.utcnow()
-    sig = _profile_sig(p)
     need_profile = False
     if row is None:
         row = FediPuppet(actor_uri=p["actor_uri"], acct=p["acct"], instance_host=p["host"],
@@ -198,4 +261,10 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
                 db.rollback()
         else:
             logger.debug("[fedi-bridge] profile publish failed for %s: %s", p["acct"], msg)
+            return p   # don't cache as 'done' until the profile actually published
+
+    _PUPPET_CACHE[actor_uri] = {"p": p, "sig": sig}
+    _PUPPET_CACHE.move_to_end(actor_uri)
+    while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
+        _PUPPET_CACHE.popitem(last=False)
     return p
