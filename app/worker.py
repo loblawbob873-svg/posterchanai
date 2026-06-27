@@ -67,8 +67,21 @@ async def _run():
         except Exception as e:
             logger.error(f"[worker] failed to start {name} scheduler: {e}", exc_info=True)
     logger.info(f"[worker] {started}/{len(_SCHEDULERS)} schedulers running")
-    while True:  # keep the loop (and its schedulers) alive
-        await asyncio.sleep(3600)
+    # Keep the loop alive AND periodically re-hydrate settings from the relay, so changes made in the
+    # main process (admin Save, the bridge OAuth token write) reach this separate process within a
+    # couple of minutes without a restart. hydrate_from_db reads the relay's Postgres directly (cheap).
+    from app.database import SessionLocal
+    from app.services import settings_store
+    while True:
+        await asyncio.sleep(120)
+        try:
+            db = SessionLocal()
+            try:
+                settings_store.hydrate_from_db(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"[worker] periodic settings re-hydrate failed: {e}")
 
 
 # --- supervised by the app (parent) -----------------------------------------

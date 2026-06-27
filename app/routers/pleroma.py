@@ -141,6 +141,15 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
         from app.services import settings_store
         settings_store.put("fedi_bridge_instance_url", instance_url)
         settings_store.put("fedi_bridge_access_token", access_token)
+        # Persist SYNCHRONOUSLY to the relay (not the fire-and-forget put above) so the token is
+        # durably saved + hydrated on restart — a dropped background write is how it went missing.
+        try:
+            await settings_store.write_through(db, {
+                "fedi_bridge_instance_url": instance_url,
+                "fedi_bridge_access_token": access_token,
+            })
+        except Exception as e:
+            logger.warning(f"[pleroma] bridge token write-through failed: {e}")
         safe_display = html.escape(display)
         safe_instance = html.escape(instance_url)
         return HTMLResponse(

@@ -315,6 +315,9 @@ def _settings_text_keys() -> set:
         base = next((a for a in args if a is not type(None)), ann) if args else ann
         if base is str:
             out.add(name)
+    # Secret tokens set OUT-OF-BAND (OAuth), never typed into the form: a blank field on Save must
+    # mean "leave as-is", NOT clear — otherwise a normal Save wipes the token the admin never sees.
+    out -= {"fedi_bridge_access_token"}
     _TEXT_KEYS_CACHE = out
     return out
 
