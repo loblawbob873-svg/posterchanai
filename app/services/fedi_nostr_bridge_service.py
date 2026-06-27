@@ -184,6 +184,35 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
             logger.debug("[fedi-bridge] ancestor deliver failed: %s", e)
 
 
+async def _rewrite_mentions(db: Session, port: int, instance_host: str, content: str,
+                            mentions: list) -> tuple:
+    """Make fediverse @handle mentions CLICKABLE on Nostr: for each mentioned account, provision its
+    puppet, replace the `@handle` text with a `nostr:<npub>` reference (which clients render as a
+    profile link), and p-tag it. Returns (rewritten_content, [p-tags])."""
+    ptags = []
+    # Longest acct first so '@user@host' is replaced before a bare '@user' substring.
+    for m in sorted(mentions or [], key=lambda x: len(x.get("acct", "")), reverse=True):
+        url = (m.get("url") or "").strip()
+        acct = (m.get("acct") or m.get("username") or "").strip()
+        username = (m.get("username") or "").strip()
+        if not url or not acct:
+            continue
+        try:
+            p = await ident.ensure_puppet(
+                db, port, {"url": url, "acct": acct, "username": username, "display_name": username},
+                instance_host)
+        except Exception:
+            p = None
+        if not p:
+            continue
+        ptags.append(["p", p["pubkey_hex"]])
+        ref = "nostr:" + p["npub"]
+        for token in ("@" + acct, "@" + username):
+            if token and token != "@" and token in content:
+                content = content.replace(token, ref)
+    return content, ptags
+
+
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None) -> str | None:
@@ -222,8 +251,13 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         if pk and not any(t[0] == "p" and t[1] == pk for t in tags if len(t) >= 2):
             tags.append(["p", pk])
 
-    ev = ident.build_event(p, 1, _build_content(post), tags=tags, object_uri=uri,
-                           broadcast=_broadcast_on())
+    # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
+    content = _build_content(post)
+    content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content, raw.get("mentions") or [])
+    for t in mention_ptags:
+        if not any(x[0] == "p" and x[1] == t[1] for x in tags if len(x) >= 2):
+            tags.append(t)
+    ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
     ok, msg = await ident.publish(port, ev)
     if not ok:
         logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
