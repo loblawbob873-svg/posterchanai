@@ -1431,10 +1431,33 @@ async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin authorization required"}, status_code=403)
-    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(target)).first()
+    npub = nostr_service.npub_of(target)
+    u = db.query(User).filter(User.nostr_npub == npub).first()
     if not u:
-        return JSONResponse({"ok": False, "error": "that user has no account yet (they must sign in once)"},
-                            status_code=404)
+        if not data.grant:
+            return JSONResponse({"ok": True})   # nothing to revoke for a non-existent account
+        # Onboard a native Nostr user who has never signed in: create their User row (mirrors the
+        # nostr_login signup) so the admin can grant Bridge Access to ANY npub, then provision below.
+        from app.auth import get_password_hash
+        import secrets as _secrets
+        base = "npub_" + npub[4:16]
+        username = base
+        for i in range(2, 100):
+            if not db.query(User).filter(User.username == username).first():
+                break
+            username = f"{base}{i}"
+        u = User(username=username, email=None,
+                 password_hash=get_password_hash(_secrets.token_urlsafe(32)),
+                 is_admin=False, email_verified=True, nostr_npub=npub,
+                 can_image=True, can_music=True, can_video=False, can_torrent=False,
+                 can_blossom=False, can_ai=False)
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        try:
+            await follow_and_admit(db, target)   # admit to the relay WoT + operator follow
+        except Exception as e:
+            logger.warning("[bridge-access] follow/admit for new user failed: %s", e)
     from app.services import fedi_bridge_access
     r = await (fedi_bridge_access.enable(db, u) if data.grant else fedi_bridge_access.disable(db, u))
     if not r.get("ok"):

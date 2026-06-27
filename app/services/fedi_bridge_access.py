@@ -117,7 +117,11 @@ async def enable(db, user) -> dict:
     if not pk:
         return {"ok": False, "error": "Your account has no linked Nostr key."}
 
-    nickname = _nickname_for(pk)
+    # The user's Nostr profile (kind-0) — drives both the fediverse nickname and the copied profile.
+    prof = await _nostr_profile(pk)
+    # Nickname: prefer their Nostr profile name, then an existing NIP-05 name, else npub-derived.
+    nickname = (_sanitize_nick(prof.get("name") or prof.get("display_name") or "")
+                or _nickname_for(pk))
 
     # 1. Ensure a linked fediverse account (create it the first time).
     if not (user.pleroma_enabled and user.pleroma_access_token and user.pleroma_instance_url):
@@ -147,7 +151,6 @@ async def enable(db, user) -> dict:
         db.commit()
 
         # 2. Copy the Nostr profile onto the new account (best-effort).
-        prof = await _nostr_profile(pk)
         avatar = await _download(prof.get("picture") or "")
         try:
             await pleroma_service.update_credentials(
