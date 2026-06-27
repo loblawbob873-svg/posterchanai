@@ -6366,6 +6366,13 @@
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Matrix DM<label class="switch"><input type="checkbox" id="us-mx-notif" ${s.matrix_notif_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="us-stat muted small" id="us-mx-stat"></div>
           </div>
+          <div class="us-conn"><div class="set-title small">🌉 Bridge Access (1-click)</div>
+            <div class="muted small">One click connects you to the Fediverse as a native Nostr user: it creates a fediverse account for you, copies your Nostr profile, assigns your NIP-05 name, and turns on DMs/notifications + cross-posting. Your top-level posts then appear on the Fediverse, and you can reply/like/repost fediverse posts from Nostr.</div>
+            ${(s.fedi_bridge_enabled && s.pleroma_has_access_token)
+              ? `<div class="us-ok">✓ Bridge access active${s.pleroma_instance_url?(' on '+enc(s.pleroma_instance_url)):''}.</div><button class="btn-secondary" id="us-bridge-off" style="color:#ff6b8b">Disable Bridge Access</button>`
+              : `<button class="btn-secondary" id="us-bridge-on">🌉 Enable Bridge Access</button>`}
+            <div class="us-stat muted small" id="us-bridge-stat"></div>
+          </div>
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
             ${s.pleroma_has_access_token
@@ -6517,6 +6524,15 @@
         const d=await r.json().catch(()=>({})); if(r.ok){ toast('Matrix connected'); renderUserSettings(); } else st.textContent=d.detail||'connect failed'; }; }
     { const d=$('#us-mx-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Matrix?'))return; await fetch('/api/matrix/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Pleroma OAuth (opens instance; callback posts 'pleroma_connected')
+    // 1-click Bridge Access: auto-create a fediverse account + enable the bridge (or disable)
+    { const b=$('#us-bridge-on'); if(b) b.onclick=async()=>{ const st=$('#us-bridge-stat'); b.disabled=true; st.textContent='Setting up your fediverse account…';
+        try{ const r=await fetch('/api/auth/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enable:true})}); const d=await r.json().catch(()=>({}));
+          if(r.ok){ st.textContent='✓ Bridge access enabled!'; setTimeout(()=>renderUserSettings(),1100); } else { st.textContent='Failed: '+(d.detail||'error'); b.disabled=false; } }
+        catch(e){ st.textContent='Error: '+e; b.disabled=false; } }; }
+    { const b=$('#us-bridge-off'); if(b) b.onclick=async()=>{ const st=$('#us-bridge-stat'); if(!confirm('Disable Bridge Access? (your fediverse account is kept)'))return; b.disabled=true; st.textContent='Disabling…';
+        try{ const r=await fetch('/api/auth/bridge-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enable:false})}); const d=await r.json().catch(()=>({}));
+          if(r.ok){ st.textContent='Disabled.'; setTimeout(()=>renderUserSettings(),900); } else { st.textContent='Failed: '+(d.detail||'error'); b.disabled=false; } }
+        catch(e){ st.textContent='Error: '+e; b.disabled=false; } }; }
     { const c=$('#us-plr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-plr-stat'); const url=$('#us-plr-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='registering app…';
         const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';

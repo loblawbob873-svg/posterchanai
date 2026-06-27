@@ -317,7 +317,7 @@ def _settings_text_keys() -> set:
             out.add(name)
     # Secret tokens set OUT-OF-BAND (OAuth), never typed into the form: a blank field on Save must
     # mean "leave as-is", NOT clear — otherwise a normal Save wipes the token the admin never sees.
-    out -= {"fedi_bridge_access_token"}
+    out -= {"fedi_bridge_access_token", "fedi_bridge_admin_token"}
     _TEXT_KEYS_CACHE = out
     return out
 

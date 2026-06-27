@@ -37,6 +37,8 @@ _LOOKBACK_SEC = 6 * 3600        # on (re)connect, replay this far back so intera
 _DM_LOOKBACK_SEC = 3 * 86400    # NIP-59 gift-wraps carry a RANDOMIZED created_at up to 2 days in the
                                 # PAST, and the relay enforces `since` on live fanout — so a 6h window
                                 # would silently drop ~most DM-reply wraps. Use >2d so they're matched.
+_RESUBSCRIBE_SEC = 300          # re-establish the subscription this often so a newly NIP-05'd user
+                                # (just enabled Bridge Access) is added to the author filter w/o a restart.
 
 
 def _port() -> int:
@@ -331,17 +333,30 @@ async def _listen_once() -> None:
         await ws.send(json.dumps(["REQ", sub, *filters]))
         logger.info("[fedi-writeback] subscribed (authors=%d, lookback=%dh) for write-back events",
                     len(locals_), _LOOKBACK_SEC // 3600)
-        while True:
-            msg = json.loads(await ws.recv())
-            if msg[0] != "EVENT" or msg[1] != sub or not isinstance(msg[2], dict):
-                continue
-            db = SessionLocal()
+        # Re-subscribe periodically so a NEWLY NIP-05'd user (e.g. just enabled Bridge Access) is
+        # picked up into the author-scoped filter without needing a restart. Closing the socket after
+        # the interval makes _run reconnect with a fresh author list.
+        async def _cycle():
+            await asyncio.sleep(_RESUBSCRIBE_SEC)
             try:
-                await _handle(db, msg[2])
-            except Exception as e:
-                logger.debug("[fedi-writeback] handle error: %s", e)
-            finally:
-                db.close()
+                await ws.close()
+            except Exception:
+                pass
+        cycle = asyncio.ensure_future(_cycle())
+        try:
+            while True:
+                msg = json.loads(await ws.recv())
+                if msg[0] != "EVENT" or msg[1] != sub or not isinstance(msg[2], dict):
+                    continue
+                db = SessionLocal()
+                try:
+                    await _handle(db, msg[2])
+                except Exception as e:
+                    logger.debug("[fedi-writeback] handle error: %s", e)
+                finally:
+                    db.close()
+        finally:
+            cycle.cancel()
 
 
 async def _run() -> None:

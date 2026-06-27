@@ -282,6 +282,10 @@ class SettingsResponse(BaseModel):
     # Broadcast the mirrored fediverse notes to OTHER Nostr relays (upstream). Default OFF — the
     # mirror stays local to this instance's relay; flip on to federate it to the wider network.
     fedi_bridge_broadcast: str = "false"
+    # Admin token on the home instance (= the read instance above) for the 1-click "Bridge Access"
+    # feature, which auto-creates a fediverse account for a native Nostr user via the Pleroma admin
+    # API. Blank → fall back to the read access token (if that account has admin rights).
+    fedi_bridge_admin_token: str = ""
     # Optional shorter retention (days) for the mirrored firehose (relay origin='bridge'); 0 = use
     # the relay's general retention. Puppet profiles are never pruned.
     fedi_bridge_retention_days: str = "0"
@@ -640,6 +644,10 @@ class UserSettingsUpdate(BaseModel):
     fedi_bridge_enabled: Optional[bool] = None
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: Optional[bool] = None
+
+
+class BridgeAccessRequest(BaseModel):
+    enable: bool = True   # True = 1-click provision + enable; False = disable bridge access
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to

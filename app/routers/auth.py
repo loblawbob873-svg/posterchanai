@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 from app.models import User, APIKey, VerificationToken
 from app.schemas import (
     UserLogin, UserResponse, Token, APIKeyCreate, APIKeyResponse, APIKeyListItem,
-    UserSettingsUpdate, UserSettingsResponse
+    UserSettingsUpdate, UserSettingsResponse, BridgeAccessRequest
 )
 from app.auth import verify_password, create_access_token, get_current_user, get_password_hash
 from app.services.email_service import EmailService
@@ -761,6 +761,26 @@ def update_user_settings(
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
     return {"message": "Settings updated"}
+
+
+@router.post("/bridge-access")
+async def bridge_access(
+    data: BridgeAccessRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """1-click Bridge Access: auto-create a fediverse account on the configured home instance, copy
+    this user's Nostr profile, register their NIP-05, and enable both bridge toggles (or disable)."""
+    from app.services import fedi_bridge_access
+    try:
+        result = await (fedi_bridge_access.enable(db, current_user) if data.enable
+                        else fedi_bridge_access.disable(db, current_user))
+    except Exception as e:
+        logger.error(f"[Auth] bridge-access failed for {current_user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Bridge access error: {e}")
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "Bridge access failed")
+    return result
 
 
 @router.post("/avatar")

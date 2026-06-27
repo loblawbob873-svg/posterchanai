@@ -188,6 +188,11 @@
             <label for="fedi_bridge_access_token">Read Account Access Token</label>
             <input type="text" id="fedi_bridge_access_token" name="fedi_bridge_access_token" placeholder="Pleroma/Mastodon access token (read-only use)">
         </details>
+        <div class="form-group">
+            <label for="fedi_bridge_admin_token">Admin Token (for 1-click Bridge Access)</label>
+            <input type="text" id="fedi_bridge_admin_token" name="fedi_bridge_admin_token" placeholder="Pleroma admin token on the read instance (blank = reuse the read token)">
+            <small>Lets a native Nostr user click "Bridge Access" in their profile to auto-create a fediverse account on the instance above. Needs a Pleroma <strong>admin</strong> token. Leave blank to reuse the read token if that account is an admin.</small>
+        </div>
         <script>
         (function(){
           var btn = document.getElementById('fedi_bridge_oauth_btn');

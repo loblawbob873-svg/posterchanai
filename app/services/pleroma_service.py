@@ -207,6 +207,62 @@ async def post_status(
         return resp.json()
 
 
+async def admin_create_user(instance_url: str, admin_token: str, nickname: str, email: str,
+                            password: str) -> dict:
+    """Create a user on a Pleroma instance via the admin API (no email confirmation needed).
+    Requires an ADMIN token. Returns {"ok": bool, "error": str|None}. Idempotent-ish: an
+    already-existing nickname is reported as ok so the caller can proceed to mint a token."""
+    url = instance_url.rstrip("/") + "/api/v1/pleroma/admin/users"
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    body = {"users": [{"nickname": nickname, "email": email, "password": password}]}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
+        resp = await client.post(url, json=body, headers=headers)
+    if resp.status_code in (200, 201):
+        return {"ok": True, "error": None}
+    txt = resp.text or ""
+    # Pleroma returns the nickname already-taken as an error string; treat as ok (user exists).
+    if "already" in txt.lower() or "taken" in txt.lower() or resp.status_code == 409:
+        return {"ok": True, "error": None}
+    return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}"}
+
+
+async def admin_confirm_approve(instance_url: str, admin_token: str, nickname: str) -> None:
+    """Best-effort: confirm the email + approve a just-created account so it can post immediately,
+    even on instances configured to require confirmation/approval. Ignores errors (often no-ops for
+    admin-created users)."""
+    base = instance_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        for path in ("/api/v1/pleroma/admin/users/confirm_email",
+                     "/api/v1/pleroma/admin/users/approve"):
+            try:
+                await client.patch(base + path, json={"nicknames": [nickname]}, headers=headers)
+            except Exception:
+                pass
+
+
+async def update_credentials(instance_url: str, access_token: str, display_name: str | None = None,
+                             note: str | None = None, avatar_bytes: bytes | None = None,
+                             avatar_mime: str = "image/png") -> dict | None:
+    """Update the authenticated account's profile (display name / bio / avatar) — used to copy a
+    Nostr profile onto a freshly-created bridge account."""
+    url = instance_url.rstrip("/") + "/api/v1/accounts/update_credentials"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    data: dict = {}
+    if display_name is not None:
+        data["display_name"] = display_name
+    if note is not None:
+        data["note"] = note
+    files = None
+    if avatar_bytes:
+        files = {"avatar": ("avatar", avatar_bytes, avatar_mime)}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=30) as client:
+        resp = await client.patch(url, headers=headers, data=data, files=files)
+    if resp.status_code != 200:
+        return None
+    return resp.json()
+
+
 async def fetch_status(instance_url: str, access_token: str, status_id: str) -> dict | None:
     """Fetch a single status by id (raw Mastodon/Pleroma object), or None if not found."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
