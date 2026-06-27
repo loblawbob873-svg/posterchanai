@@ -231,10 +231,10 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             tags = [["p", recipient]] + ([["e", target]] if target else [])
             ok, _ = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
             return ok
-        if ntype in ("follow", "follow_request"):
-            msg = ("➕ @%s followed you" if ntype == "follow" else "➕ @%s requested to follow you") % puppet["acct"]
-            return bool(await _wrap_dm(port, puppet, recipient, msg))
-        return True                                  # untracked type (poll/update/…) → skip (advance)
+        # Follow / follow-request / follow-accepted are intentionally NOT bridged: a feed post leaks
+        # into the timeline and a DM is noise, and Nostr has no clean "new follower" notification
+        # primitive (a kind-3 would overwrite the puppet's whole follow list). So we just skip them.
+        return True                                  # follow* + untracked types (poll/update/…) → skip
     except Exception as e:
         logger.debug("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
         return True                                  # poison item → skip so the drain can't wedge
