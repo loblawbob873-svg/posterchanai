@@ -81,17 +81,73 @@ def _referenced_event_ids(ev: dict) -> list:
     return [t[1] for t in reversed(etags)]   # last e-tag first
 
 
+def _reply_parent_id(ev: dict) -> str | None:
+    """The DIRECT reply target only (NIP-10): the 'reply'-marked e-tag; else the 'root' marker when
+    that's the parent; else the last positional e-tag. NEVER the thread root when a distinct reply
+    target exists — otherwise a reply to a NATIVE nostr user inside a thread whose ROOT happens to be
+    bridged would be mis-resolved to that root and wrongly federated (the reported bug)."""
+    etags = [t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
+    if not etags:
+        return None
+    marked: dict = {}
+    for t in etags:
+        if len(t) >= 4 and t[3] in ("root", "reply", "mention"):
+            marked.setdefault(t[3], t[1])
+    if "reply" in marked:
+        return marked["reply"]
+    if "root" in marked:          # only a root marker → this IS a direct reply to the root
+        return marked["root"]
+    return etags[-1][1]           # deprecated positional NIP-10: the last e-tag is the reply target
+
+
 def _target_row(db, ev: dict):
-    for eid in _referenced_event_ids(ev):
-        row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first()
-        if row:
-            return row
-    return None
+    """The bridged note this event DIRECTLY interacts with (its immediate reply parent), or None.
+    Reactions/reposts e-tag exactly the target; replies use the direct parent (never the root)."""
+    pid = _reply_parent_id(ev)
+    if not pid:
+        return None
+    return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == pid).first()
 
 
 def _strip_nostr_refs(text: str) -> str:
     import re
     return re.sub(r"\bnostr:[a-z0-9]+\b", "", text or "").strip()
+
+
+import re as _re
+_URL_RE = _re.compile(r"https?://[^\s]+")
+_MEDIA_EXT = _re.compile(r"\.(gif|jpe?g|png|webp|apng|bmp|mp4|webm|mov|m4v)(?:[?#]|$)", _re.I)
+_MIME = {"gif": "image/gif", "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+         "webp": "image/webp", "apng": "image/apng", "bmp": "image/bmp", "mp4": "video/mp4",
+         "webm": "video/webm", "mov": "video/quicktime", "m4v": "video/mp4"}
+
+
+async def _extract_media(text: str):
+    """Pull direct image/gif/video URLs out of a note, download them, and return (text_without_those,
+    [(bytes, mime), …]) so they post as real fediverse ATTACHMENTS instead of a bare URL (the reported
+    'gif rendered as a URL' issue). Bounded in count/size; non-media and page URLs are left in text."""
+    import httpx
+    media, consumed = [], []
+    for u in _URL_RE.findall(text or ""):
+        if len(media) >= 4:
+            break
+        m = _MEDIA_EXT.search(u)
+        if not m:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+                r = await c.get(u, headers={"User-Agent": "posterchanai-bridge/1.0"})
+            if r.status_code != 200 or len(r.content) > 40_000_000:
+                continue
+            mime = (r.headers.get("content-type", "").split(";")[0].strip()
+                    or _MIME.get(m.group(1).lower(), "application/octet-stream"))
+            media.append((r.content, mime))
+            consumed.append(u)
+        except Exception as e:
+            logger.debug("[fedi-writeback] media fetch failed for %s: %s", u, e)
+    for u in consumed:
+        text = text.replace(u, "")
+    return text.strip(), media
 
 
 async def _resolve_target_id(user, row) -> str | None:
@@ -166,11 +222,12 @@ async def _crosspost(db, user, ev: dict) -> None:
     if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
         return
     text = _strip_nostr_refs(ev.get("content", ""))
-    if not text:
+    text, media = await _extract_media(text)
+    if not text and not media:
         return
     try:
         status = await pleroma_service.post_status(user.pleroma_instance_url, user.pleroma_access_token,
-                                                   text, visibility="public")
+                                                   text, visibility="public", media=media or None)
         if isinstance(status, dict) and status.get("id"):
             db.add(FediBridgeDelivered(
                 platform="pleroma", instance_url=user.pleroma_instance_url, note_id=status["id"],
@@ -226,11 +283,13 @@ async def _handle(db, ev: dict) -> None:
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
                 return
             text = _strip_nostr_refs(ev.get("content", ""))
-            if not text:
+            text, media = await _extract_media(text)
+            if not text and not media:
                 return
             if row.author_acct and ("@" + row.author_acct) not in text:
-                text = f"@{row.author_acct} {text}"
-            status = await pleroma_service.post_status(inst, token, text, in_reply_to_id=target_id)
+                text = f"@{row.author_acct} {text}".strip()
+            status = await pleroma_service.post_status(inst, token, text, in_reply_to_id=target_id,
+                                                       media=media or None)
             # Record the resulting status so the global mirror won't re-publish the user's own reply
             # as a puppet note when it federates back into the timeline.
             if isinstance(status, dict) and status.get("id"):
