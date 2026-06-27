@@ -6332,6 +6332,13 @@
       <div class="us-tabs">${tabs.map((t,i)=>`<button class="us-tab${i===0?' active':''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div>
       <div class="set-body">
         <div class="us-pane active" data-pane="profile">
+          <div class="us-conn" style="margin-bottom:12px"><div class="set-title small">🌉 Bridge Access (1-click)</div>
+            <div class="muted small">One click connects you to the Fediverse as a native Nostr user: it creates a fediverse account for you, copies your Nostr profile, assigns your NIP-05 name, and turns on DMs/notifications + cross-posting. Your top-level posts then appear on the Fediverse, and you can reply/like/repost fediverse posts from Nostr.</div>
+            ${(s.fedi_bridge_enabled && s.pleroma_has_access_token)
+              ? `<div class="us-ok">✓ Bridge access active${s.pleroma_instance_url?(' on '+enc(s.pleroma_instance_url)):''}.</div><button class="btn-secondary" id="us-bridge-off" style="color:#ff6b8b">Disable Bridge Access</button>`
+              : `<button class="btn-secondary" id="us-bridge-on">🌉 Enable Bridge Access</button>`}
+            <div class="us-stat muted small" id="us-bridge-stat"></div>
+          </div>
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
@@ -6365,13 +6372,6 @@
             <label class="fld">DM bot user id<input class="input" id="us-mx-bot" value="${enc(s.matrix_dm_bot_user_id||'')}" placeholder="@posterchan:server"></label>
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Matrix DM<label class="switch"><input type="checkbox" id="us-mx-notif" ${s.matrix_notif_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="us-stat muted small" id="us-mx-stat"></div>
-          </div>
-          <div class="us-conn"><div class="set-title small">🌉 Bridge Access (1-click)</div>
-            <div class="muted small">One click connects you to the Fediverse as a native Nostr user: it creates a fediverse account for you, copies your Nostr profile, assigns your NIP-05 name, and turns on DMs/notifications + cross-posting. Your top-level posts then appear on the Fediverse, and you can reply/like/repost fediverse posts from Nostr.</div>
-            ${(s.fedi_bridge_enabled && s.pleroma_has_access_token)
-              ? `<div class="us-ok">✓ Bridge access active${s.pleroma_instance_url?(' on '+enc(s.pleroma_instance_url)):''}.</div><button class="btn-secondary" id="us-bridge-off" style="color:#ff6b8b">Disable Bridge Access</button>`
-              : `<button class="btn-secondary" id="us-bridge-on">🌉 Enable Bridge Access</button>`}
-            <div class="us-stat muted small" id="us-bridge-stat"></div>
           </div>
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
