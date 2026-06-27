@@ -583,6 +583,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
         matrix_notif_enabled=current_user.matrix_notif_enabled if hasattr(current_user, 'matrix_notif_enabled') else False,
         fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
+        fedi_crosspost_enabled=current_user.fedi_crosspost_enabled if hasattr(current_user, 'fedi_crosspost_enabled') else False,
         nitter_feeds=nitter_feeds,
     )
 
@@ -715,6 +716,10 @@ def update_user_settings(
     # Nostr ↔ Fediverse bridge: opt in to personal DMs + notifications on the Nostr side
     if settings.fedi_bridge_enabled is not None:
         current_user.fedi_bridge_enabled = settings.fedi_bridge_enabled
+
+    # Cross-post my top-level Nostr notes to my linked Pleroma account
+    if settings.fedi_crosspost_enabled is not None:
+        current_user.fedi_crosspost_enabled = settings.fedi_crosspost_enabled
 
     try:
         # Flush changes to database before commit

@@ -159,6 +159,30 @@ async def _handle_dm_reply(db, ev: dict) -> None:
         logger.warning("[fedi-writeback] DM reply failed (ev %s): %s", eid, e)
 
 
+async def _crosspost(db, user, ev: dict) -> None:
+    """Federate a user's top-level Nostr note to their linked Pleroma account as a new public post.
+    Idempotent across restart/replay via a recorded FediBridgeDelivered row keyed on the note id."""
+    eid = ev.get("id")
+    if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
+        return
+    text = _strip_nostr_refs(ev.get("content", ""))
+    if not text:
+        return
+    try:
+        status = await pleroma_service.post_status(user.pleroma_instance_url, user.pleroma_access_token,
+                                                   text, visibility="public")
+        if isinstance(status, dict) and status.get("id"):
+            db.add(FediBridgeDelivered(
+                platform="pleroma", instance_url=user.pleroma_instance_url, note_id=status["id"],
+                note_uri=status.get("uri") or status.get("url"), author_acct=None,
+                nostr_event_id=eid, nostr_pubkey=ev.get("pubkey")))
+            db.commit()
+        logger.info("[fedi-writeback] cross-posted note by %s → fediverse", user.username)
+    except Exception as e:
+        db.rollback()
+        logger.warning("[fedi-writeback] cross-post failed (ev %s): %s", eid, e)
+
+
 async def _handle(db, ev: dict) -> None:
     eid = ev.get("id")
     if not eid or eid in _seen_events:
@@ -169,12 +193,18 @@ async def _handle(db, ev: dict) -> None:
     pk = ev.get("pubkey", "")
     if pk not in _local_nip05_pubkeys():
         return
-    row = _target_row(db, ev)
-    if not row:
-        return                       # not interacting with a bridged puppet note → ignore
     user = _user_for_pubkey(db, pk)
     if not user:
         return                       # not a local user with a linked Pleroma account → ignore
+    row = _target_row(db, ev)
+    if not row:
+        # Not interacting with a bridged note. Cross-post a TRUE top-level note (no e-tags, so not a
+        # reply to anyone) to the user's fediverse account, if they opted in. Replies to native Nostr
+        # users (which have e-tags but no bridged target) are left on Nostr.
+        if (int(ev.get("kind", 1)) == 1 and not _referenced_event_ids(ev)
+                and getattr(user, "fedi_crosspost_enabled", False)):
+            await _crosspost(db, user, ev)
+        return
     _seen_events.add(eid)
     if len(_seen_events) > _SEEN_CAP:
         _seen_events.clear()

@@ -92,6 +92,9 @@ class User(Base):
     fedi_bridge_enabled = Column(Boolean, default=False)
     fedi_bridge_dm_since = Column(Text, nullable=True)      # last-seen fedi direct-conversation id
     fedi_bridge_notif_since = Column(Text, nullable=True)   # last-seen fedi notification id
+    # Cross-post: when on, this user's top-level Nostr notes are federated to their linked Pleroma
+    # account as new public posts (replies/likes/reposts already federate via the write-back path).
+    fedi_crosspost_enabled = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

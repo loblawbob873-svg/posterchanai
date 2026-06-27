@@ -638,6 +638,8 @@ class UserSettingsUpdate(BaseModel):
     matrix_notif_enabled: Optional[bool] = None
     # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
     fedi_bridge_enabled: Optional[bool] = None
+    # Cross-post my top-level Nostr notes to my linked Pleroma account
+    fedi_crosspost_enabled: Optional[bool] = None
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
@@ -686,6 +688,8 @@ class UserSettingsResponse(BaseModel):
     matrix_notif_enabled: bool = False
     # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side
     fedi_bridge_enabled: bool = False
+    # Cross-post my top-level Nostr notes to my linked Pleroma account
+    fedi_crosspost_enabled: bool = False
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: str = ""
 
