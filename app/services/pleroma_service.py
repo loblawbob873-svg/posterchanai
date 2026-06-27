@@ -223,6 +223,10 @@ async def admin_create_user(instance_url: str, admin_token: str, nickname: str, 
     # Pleroma returns the nickname already-taken as an error string; treat as ok (user exists).
     if "already" in txt.lower() or "taken" in txt.lower() or resp.status_code == 409:
         return {"ok": True, "error": None}
+    if resp.status_code in (401, 403) or "staff" in txt.lower():
+        return {"ok": False, "error": "the configured admin token is NOT a Pleroma admin/moderator "
+                                      "(staff) account. Set 'Admin Token' in Admin → Services → "
+                                      "Nostr ↔ Fediverse Bridge to a staff account's token."}
     return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}"}
 
 
