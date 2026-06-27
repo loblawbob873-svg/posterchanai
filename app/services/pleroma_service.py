@@ -8,16 +8,18 @@ from app.services.proxy_utils import afallback_transport
 logger = logging.getLogger(__name__)
 
 
-async def register_app(instance_url: str, redirect_uri: str, app_name: str = "PosterChanAI") -> dict:
+async def register_app(instance_url: str, redirect_uri: str, app_name: str = "PosterChanAI",
+                       scopes: str = "read write") -> dict:
     """Register this app with the Pleroma/Mastodon instance.
 
-    Returns a dict containing at least ``client_id`` and ``client_secret``.
+    Returns a dict containing at least ``client_id`` and ``client_secret``. `scopes` lets the bridge
+    request admin scopes (admin:read admin:write) so an admin's token can call the admin API.
     """
     url = instance_url.rstrip("/") + "/api/v1/apps"
     payload = {
         "client_name": app_name,
         "redirect_uris": redirect_uri,
-        "scopes": "read write",
+        "scopes": scopes,
         "website": instance_url,
     }
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
@@ -97,7 +99,7 @@ async def password_grant(
     return token
 
 
-def build_auth_url(instance_url: str, client_id: str, redirect_uri: str) -> str:
+def build_auth_url(instance_url: str, client_id: str, redirect_uri: str, scopes: str = "read write") -> str:
     """Build the OAuth2 authorization URL to redirect the user to."""
     base = instance_url.rstrip("/")
     from urllib.parse import urlencode
@@ -105,7 +107,7 @@ def build_auth_url(instance_url: str, client_id: str, redirect_uri: str) -> str:
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "scope": "read write",
+        "scope": scopes,
     })
     return f"{base}/oauth/authorize?{params}"
 

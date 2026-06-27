@@ -56,8 +56,16 @@ async def start_oauth(
     base_url = str(request.base_url).rstrip("/")
     redirect_uri = f"{base_url}/api/pleroma/oauth/callback"
 
+    target = "bridge" if (data.target or "user").strip().lower() == "bridge" else "user"
+    if target == "bridge" and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    # The bridge read account doubles as the admin account used to create fediverse accounts for new
+    # bridge users, so request admin scopes — otherwise the token can't call the Pleroma admin API
+    # ("Insufficient permissions: admin:read:accounts"). A non-admin account just won't be granted them.
+    scopes = "read write follow admin:read admin:write" if target == "bridge" else "read write"
+
     try:
-        app_data = await register_app(instance_url, redirect_uri)
+        app_data = await register_app(instance_url, redirect_uri, scopes=scopes)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not register app with instance: {e}")
 
@@ -65,10 +73,6 @@ async def start_oauth(
     client_secret = app_data.get("client_secret")
     if not client_id or not client_secret:
         raise HTTPException(status_code=502, detail="Instance did not return client credentials")
-
-    target = "bridge" if (data.target or "user").strip().lower() == "bridge" else "user"
-    if target == "bridge" and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
 
     state = str(uuid.uuid4())
     _oauth_states[state] = {
@@ -81,7 +85,7 @@ async def start_oauth(
         "created_at": time.time(),
     }
 
-    auth_url = build_auth_url(instance_url, client_id, redirect_uri) + f"&state={state}"
+    auth_url = build_auth_url(instance_url, client_id, redirect_uri, scopes=scopes) + f"&state={state}"
     return PleromaOAuthStartResponse(auth_url=auth_url)
 
 
