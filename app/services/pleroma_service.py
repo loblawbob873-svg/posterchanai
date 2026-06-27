@@ -175,10 +175,13 @@ async def post_status(
     in_reply_to_id: str | None = None,
     media: list[tuple[bytes, str]] | None = None,
     content_type: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Post a status to a Pleroma or Mastodon instance. Uploads image_bytes if provided, or
     every (bytes, mime) in `media` when given. Pass in_reply_to_id to reply to a status.
-    `content_type` (e.g. "text/markdown") is a Pleroma extension; omit for the instance default."""
+    `content_type` (e.g. "text/markdown") is a Pleroma extension; omit for the instance default.
+    `idempotency_key` sets the Mastodon `Idempotency-Key` header so the SAME key never creates a
+    duplicate status (server-side dedup) — used by the bridge so a crash/replay can't double-post."""
     media_ids = []
     if media:
         for (m_bytes, m_mime) in media:
@@ -189,6 +192,8 @@ async def post_status(
 
     url = instance_url.rstrip("/") + "/api/v1/statuses"
     headers = {"Authorization": f"Bearer {access_token}"}
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     payload: dict = {"status": text, "visibility": visibility}
     if media_ids:
         payload["media_ids"] = media_ids
@@ -227,13 +232,17 @@ async def status_deleted(instance_url: str, access_token: str, status_id: str) -
         return False
 
 
-async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None, limit: int = 20) -> list[dict]:
-    """Fetch recent notifications (raw Mastodon/Pleroma objects). When since_id is given,
-    only notifications newer than it are returned (newest-first)."""
+async def fetch_notifications(instance_url: str, access_token: str, since_id: str | None = None,
+                              limit: int = 20, min_id: str | None = None) -> list[dict]:
+    """Fetch recent notifications (raw Mastodon/Pleroma objects). `since_id` returns the NEWEST after
+    the id (gap-prone). `min_id` returns those immediately after the id and paginates forward without
+    gaps — advance min_id to the newest returned id to drain a backlog (no dropped items)."""
     url = instance_url.rstrip("/") + "/api/v1/notifications"
     headers = {"Authorization": f"Bearer {access_token}"}
     params: dict = {"limit": limit}
-    if since_id:
+    if min_id:
+        params["min_id"] = min_id
+    elif since_id:
         params["since_id"] = since_id
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)
@@ -275,13 +284,16 @@ async def fetch_timeline(instance_url: str, access_token: str, timeline_type: st
 
 
 async def fetch_direct(instance_url: str, access_token: str, since_id: str | None = None,
-                       limit: int = 20) -> list[dict]:
-    """Direct-message timeline (visibility=direct statuses), newest-first. since_id returns only
-    those newer than it. Pleroma/Mastodon support /api/v1/timelines/direct."""
+                       limit: int = 20, min_id: str | None = None) -> list[dict]:
+    """Direct-message timeline (visibility=direct statuses). `since_id` returns the newest after the
+    id (gap-prone); `min_id` paginates forward without gaps (drain a backlog without dropping items).
+    Pleroma/Mastodon support /api/v1/timelines/direct."""
     url = instance_url.rstrip("/") + "/api/v1/timelines/direct"
     headers = {"Authorization": f"Bearer {access_token}"}
     params: dict = {"limit": limit}
-    if since_id:
+    if min_id:
+        params["min_id"] = min_id
+    elif since_id:
         params["since_id"] = since_id
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)

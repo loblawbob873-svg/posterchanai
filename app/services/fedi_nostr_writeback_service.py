@@ -34,6 +34,9 @@ _SEEN_CAP = 5000
 _LOOKBACK_SEC = 6 * 3600        # on (re)connect, replay this far back so interactions made while the
                                 # listener was down (e.g. during a restart) still federate — paired
                                 # with persistent idempotency so a replay can't double-post.
+_DM_LOOKBACK_SEC = 3 * 86400    # NIP-59 gift-wraps carry a RANDOMIZED created_at up to 2 days in the
+                                # PAST, and the relay enforces `since` on live fanout — so a 6h window
+                                # would silently drop ~most DM-reply wraps. Use >2d so they're matched.
 
 
 def _port() -> int:
@@ -204,7 +207,8 @@ async def _handle_dm_reply(db, ev: dict) -> None:
     try:
         await pleroma_service.post_status(user.pleroma_instance_url, user.pleroma_access_token, text,
                                           visibility="direct",
-                                          in_reply_to_id=(row.target_id if row else None))
+                                          in_reply_to_id=(row.target_id if row else None),
+                                          idempotency_key=eid)
         db.add(FediBridgeMap(user_id=user.id, nostr_event_id=eid, kind="dm-out", platform="pleroma",
                              instance_url=user.pleroma_instance_url, peer_pubkey=recipient,
                              target_id=(row.target_id if row else None), visibility="direct"))
@@ -227,7 +231,8 @@ async def _crosspost(db, user, ev: dict) -> None:
         return
     try:
         status = await pleroma_service.post_status(user.pleroma_instance_url, user.pleroma_access_token,
-                                                   text, visibility="public", media=media or None)
+                                                   text, visibility="public", media=media or None,
+                                                   idempotency_key=eid)
         if isinstance(status, dict) and status.get("id"):
             db.add(FediBridgeDelivered(
                 platform="pleroma", instance_url=user.pleroma_instance_url, note_id=status["id"],
@@ -262,9 +267,6 @@ async def _handle(db, ev: dict) -> None:
                 and getattr(user, "fedi_crosspost_enabled", False)):
             await _crosspost(db, user, ev)
         return
-    _seen_events.add(eid)
-    if len(_seen_events) > _SEEN_CAP:
-        _seen_events.clear()
 
     inst, token = user.pleroma_instance_url, user.pleroma_access_token
     kind = int(ev.get("kind", 1))
@@ -274,12 +276,11 @@ async def _handle(db, ev: dict) -> None:
             logger.debug("[fedi-writeback] could not resolve target for ev %s", eid)
             return
         if kind == 7:
-            await pleroma_service.favourite_status(inst, token, target_id)
+            await pleroma_service.favourite_status(inst, token, target_id)   # server-idempotent
         elif kind == 6:
-            await pleroma_service.reblog_status(inst, token, target_id)
+            await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
         elif kind == 1:
-            # Idempotency across restart/replay: if we already federated THIS reply event, skip
-            # (the recorded FediBridgeDelivered row is the durable marker).
+            # Durable idempotency across restart/replay: skip if this reply already federated.
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
                 return
             text = _strip_nostr_refs(ev.get("content", ""))
@@ -288,21 +289,24 @@ async def _handle(db, ev: dict) -> None:
                 return
             if row.author_acct and ("@" + row.author_acct) not in text:
                 text = f"@{row.author_acct} {text}".strip()
+            # Idempotency-Key = the Nostr event id → even a crash/replay double-send can't create a
+            # duplicate fediverse status (server dedups on the key).
             status = await pleroma_service.post_status(inst, token, text, in_reply_to_id=target_id,
-                                                       media=media or None)
-            # Record the resulting status so the global mirror won't re-publish the user's own reply
-            # as a puppet note when it federates back into the timeline.
+                                                       media=media or None, idempotency_key=eid)
+            # Record so the global mirror won't re-publish the user's own reply as a puppet note.
             if isinstance(status, dict) and status.get("id"):
                 db.add(FediBridgeDelivered(
                     platform="pleroma", instance_url=inst, note_id=status["id"],
                     note_uri=status.get("uri") or status.get("url"), author_acct=None,
                     nostr_event_id=eid, nostr_pubkey=pk))
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                db.commit()
+        # Mark seen only AFTER success — a transient failure stays un-seen so the next replay retries.
+        _seen_events.add(eid)
+        if len(_seen_events) > _SEEN_CAP:
+            _seen_events.clear()
         logger.info("[fedi-writeback] kind-%d by %s → fediverse (%s)", kind, user.username, target_id)
     except Exception as e:
+        db.rollback()
         logger.warning("[fedi-writeback] action failed (kind %d, ev %s): %s", kind, eid, e)
 
 
@@ -321,7 +325,8 @@ async def _listen_once() -> None:
     filters = []
     if locals_:
         filters.append({"kinds": [1, 6, 7], "authors": locals_, "since": since})
-    filters.append({"kinds": [1059], "since": since})
+    # DMs (1059) get the wider window for NIP-59's backdated created_at (see _DM_LOOKBACK_SEC).
+    filters.append({"kinds": [1059], "since": int(time.time()) - _DM_LOOKBACK_SEC})
     async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30) as ws:
         await ws.send(json.dumps(["REQ", sub, *filters]))
         logger.info("[fedi-writeback] subscribed (authors=%d, lookback=%dh) for write-back events",

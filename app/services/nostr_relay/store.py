@@ -133,7 +133,18 @@ CREATE TABLE IF NOT EXISTS bridge_nip05 (
     name   TEXT PRIMARY KEY,
     pubkey TEXT NOT NULL
 );
+
+-- Every fediverse-bridge puppet pubkey (independent of whether it got a NIP-05 name) so the relay's
+-- DM-to-puppet inbox set survives a restart even when no NIP-05 domain is configured.
+CREATE TABLE IF NOT EXISTS bridge_puppet (
+    pubkey TEXT PRIMARY KEY
+);
 """
+
+# Puppet-addressed DM gift-wraps/seals are transient (consumed by write-back, then federated). Prune
+# them on a short TTL so spamming derivable puppet npubs can't fill the disk (kind-1059 is otherwise
+# never pruned). Kept longer than the write-back listener's DM replay window so a restart still sees them.
+_BRIDGE_DM_TTL_DAYS = 4
 
 
 # The age-based auto-cleaner deletes ONLY high-volume, reconstructable FEED content — never
@@ -660,6 +671,21 @@ class RelayStore:
     async def bridge_nip05_all(self) -> dict:
         return await self._r(self._bridge_nip05_all_sync)
 
+    def _bridge_puppet_add_sync(self, pubkey: str) -> None:
+        conn = self._conn()
+        conn.execute("INSERT INTO bridge_puppet (pubkey) VALUES (?) ON CONFLICT(pubkey) DO NOTHING", (pubkey,))
+        conn.commit()
+
+    async def bridge_puppet_add(self, pubkey: str) -> None:
+        await self._w(self._bridge_puppet_add_sync, pubkey)
+
+    def _bridge_puppets_all_sync(self) -> set:
+        conn = self._conn()
+        return {r["pubkey"] for r in conn.execute("SELECT pubkey FROM bridge_puppet").fetchall()}
+
+    async def bridge_puppets_all(self) -> set:
+        return await self._r(self._bridge_puppets_all_sync)
+
     # --- WoT membership -----------------------------------------------------
 
     def _wot_replace_sync(self, members: list, extra: list | None = None) -> int:
@@ -775,6 +801,14 @@ class RelayStore:
                 f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
                 f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
             gone += [r["id"] for r in rows]; removed += len(rows)
+        # Puppet-addressed DM gift-wraps/seals (origin='bridge', kinds 13/1059) are transient and not
+        # in _PRUNABLE_KINDS, so without this an attacker spamming derivable puppet npubs grows the DB
+        # forever. Prune them unconditionally past a short TTL.
+        dmcut = int(time.time()) - _BRIDGE_DM_TTL_DAYS * 86400
+        rows = conn.execute(
+            "DELETE FROM events WHERE origin = 'bridge' AND kind IN (13, 1059) AND created_at < ? "
+            "RETURNING id", (dmcut,)).fetchall()
+        gone += [r["id"] for r in rows]; removed += len(rows)
         # Fediverse-bridge firehose: optionally age mirrored notes (origin='bridge') out FASTER than
         # the general WoT feed. Only touches reconstructable mirror content (prunable kinds, never
         # 'direct'/preserved, never puppet profiles which aren't a prunable kind) — same safety as the

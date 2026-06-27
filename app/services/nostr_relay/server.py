@@ -203,22 +203,29 @@ class RelayServer:
         return json.dumps(doc).encode("utf-8")
 
     def _register_bridge_nip05(self, ev: dict) -> None:
-        """Record a fediverse puppet's NIP-05 local-part → pubkey from its just-stored kind-0, in the
-        live map (served immediately) and the persistent table (warmed on the next start). The
-        local-part is the part of the profile's `nip05` before '@' (we only serve OUR domain)."""
+        """Track a just-stored puppet kind-0: ALWAYS add its pubkey to the DM-inbox set (so DM replies
+        to it are accepted even when no NIP-05 domain is configured) + persist it, and ADDITIONALLY
+        register its NIP-05 local-part → pubkey when the profile carries a `nip05` on our domain."""
+        pk = ev.get("pubkey", "")
+        if not pk:
+            return
+        # (a) DM-inbox membership — independent of NIP-05, so it never "fails closed" without a domain.
+        if pk not in self._bridge_pubkeys:
+            self._bridge_pubkeys.add(pk)
+            try:
+                asyncio.create_task(self.store.bridge_puppet_add(pk))
+            except Exception:
+                pass
+        # (b) NIP-05 name (only if the profile declares one on our domain).
         try:
             meta = json.loads(ev.get("content") or "{}")
         except (ValueError, TypeError):
             return
         nip05 = (meta.get("nip05") or "").strip().lower()
         local = nip05.split("@", 1)[0] if nip05 else ""
-        pk = ev.get("pubkey", "")
-        if not local or not pk:
-            return
-        if self._bridge_nip05.get(local) == pk:
+        if not local or self._bridge_nip05.get(local) == pk:
             return
         self._bridge_nip05[local] = pk
-        self._bridge_pubkeys.add(pk)
         try:
             asyncio.create_task(self.store.bridge_nip05_set(local, pk))   # persist off-loop
         except Exception:
@@ -231,7 +238,13 @@ class RelayServer:
         except Exception as e:
             logger.debug("[nostr-relay] bridge nip05 warm failed: %s", e)
             self._bridge_nip05 = {}
+        # DM-inbox set = named puppets + ALL tracked puppet pubkeys (the latter covers puppets that
+        # never got a NIP-05 name, so DM-to-puppet acceptance doesn't depend on a configured domain).
         self._bridge_pubkeys = set(self._bridge_nip05.values())
+        try:
+            self._bridge_pubkeys |= set(await self.store.bridge_puppets_all())
+        except Exception as e:
+            logger.debug("[nostr-relay] bridge puppet warm failed: %s", e)
         return len(self._bridge_nip05)
 
     def nip05_doc(self, raw_path: str) -> bytes:
@@ -521,7 +534,15 @@ class RelayServer:
         # like the synced feed, so the auto-prune ages it out (it is NOT a preserved local write),
         # and the outbox only re-broadcasts it when the operator opted into bridge broadcast (the
         # app omits the `nofederate` tag in that case; see _broadcastable).
-        _origin = "bridge" if _is_puppet else "direct"
+        if _is_puppet:
+            _origin = "bridge"
+        elif kind in (4, 13, 1059) and self._dm_for_puppet(ev) and not self._dm_for_operator(ev):
+            # A DM addressed ONLY to a fediverse puppet (a user replying to a bridged DM) is transient:
+            # write-back consumes it, then it's federated. origin='bridge' so it's pruned on a short
+            # TTL — otherwise (1059 isn't a prunable kind) spamming derivable puppet npubs fills disk.
+            _origin = "bridge"
+        else:
+            _origin = "direct"
         stored = await self.store.add_event(ev, origin=_origin)
         self._send(conn, ["OK", eid, True, ""])
         if stored:

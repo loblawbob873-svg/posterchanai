@@ -26,11 +26,15 @@ from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import nip17
 from app.services.fedi_timeline_service import _norm_pleroma
+from app.services.fedi_nostr_bridge_service import _blocked_domains, _domain_blocked, _host_of
 
 logger = logging.getLogger(__name__)
 
 _POLL_TIMEOUT = 90
-_MAX = 20   # items per user per poll
+_MAX = 20             # items per page
+_MAX_PAGES = 5        # bound the forward-drain per user per poll (≈100 items; rest drains next cycle)
+_self_acct_cache: dict = {}   # user_id -> own acct (stable; cached so a transient verify failure
+                              # can't disable the own-DM skip and echo your sent DMs back to you)
 
 
 def _get(key: str, default: str = "") -> str:
@@ -67,51 +71,87 @@ async def _wrap_dm(port: int, puppet: dict, recipient_hex: str, text: str) -> st
 
 
 async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -> None:
-    since = getattr(user, "fedi_bridge_dm_since", None)
-    try:
-        raw = await pleroma_service.fetch_direct(user.pleroma_instance_url, user.pleroma_access_token,
-                                                 since_id=since, limit=_MAX)
-    except Exception as e:
-        logger.debug("[fedi-personal] DM fetch failed for %s: %s", user.username, e)
-        return
     recipient = _user_pubkey(user)
     if not recipient:
         return
-    me = (await _self_acct(user)) or ""
-    for st in sorted(raw, key=lambda s: s.get("id") or ""):   # oldest-first
-        account = st.get("account") or {}
-        post = _norm_pleroma(st)
-        # Skip our own outgoing direct statuses.
-        if me and (account.get("acct") or "").lower() == me.lower():
-            user.fedi_bridge_dm_since = st.get("id") or user.fedi_bridge_dm_since
+    inst, token = user.pleroma_instance_url, user.pleroma_access_token
+    since = getattr(user, "fedi_bridge_dm_since", None)
+    # First poll: set the cursor to newest WITHOUT delivering, so opting in doesn't flood the inbox
+    # with a backlog (mirrors the global/social pollers' no-backfill-on-first-poll invariant).
+    if not since:
+        try:
+            raw = await pleroma_service.fetch_direct(inst, token, limit=_MAX)
+        except Exception as e:
+            logger.debug("[fedi-personal] DM first-poll failed for %s: %s", user.username, e)
+            return
+        newest = max((s.get("id") for s in raw if s.get("id")), default=None)
+        if newest:
+            user.fedi_bridge_dm_since = newest
             db.commit()
-            continue
-        puppet = await ident.ensure_puppet(db, port, account, instance_host)
-        if not puppet:
-            continue
-        body = (post.get("text") or "").strip()
-        for m in (post.get("media") or []):
-            if m.get("url"):
-                body += ("\n" if body else "") + m["url"]
-        wrap_id = await _wrap_dm(port, puppet, recipient, body or "​")
-        if wrap_id:
+        return
+    me = await _self_acct(user)
+    if me is None:      # can't determine our own handle (transient) → skip rather than echo our own DMs
+        return
+    blocked = _blocked_domains()
+    cursor = since
+    for _page in range(_MAX_PAGES):
+        try:
+            raw = await pleroma_service.fetch_direct(inst, token, min_id=cursor, limit=_MAX)
+        except Exception as e:
+            logger.debug("[fedi-personal] DM drain failed for %s: %s", user.username, e)
+            break
+        if not raw:
+            break
+        last, stop = None, False
+        for st in sorted(raw, key=lambda s: s.get("id") or ""):   # oldest-first (forward order)
+            account = st.get("account") or {}
+            acct = (account.get("acct") or "").lower()
+            host = _host_of(acct, instance_host)
+            if acct == me.lower() or _domain_blocked(host, blocked):
+                last = st.get("id") or last        # our own / a blocked-domain sender → skip (advance)
+                continue
+            puppet = await ident.ensure_puppet(db, port, account, instance_host)
+            if not puppet:
+                last = st.get("id") or last
+                continue
+            post = _norm_pleroma(st)
+            body = (post.get("text") or "").strip()
+            for m in (post.get("media") or []):
+                if m.get("url"):
+                    body += ("\n" if body else "") + m["url"]
+            wrap_id = await _wrap_dm(port, puppet, recipient, body or "​")
+            if not wrap_id:
+                stop = True            # publish failed → STOP; don't advance past it, retry next cycle
+                break
             db.add(FediBridgeMap(user_id=user.id, nostr_event_id=wrap_id, kind="dm",
-                                 platform="pleroma", instance_url=user.pleroma_instance_url,
+                                 platform="pleroma", instance_url=inst,
                                  peer_pubkey=puppet["pubkey_hex"], target_id=st.get("id"),
                                  visibility="direct"))
-        user.fedi_bridge_dm_since = st.get("id") or user.fedi_bridge_dm_since
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
+            last = st.get("id") or last
+        if last and last != cursor:
+            cursor = last
+            user.fedi_bridge_dm_since = cursor
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        if stop or len(raw) < _MAX:
+            break
 
 
 async def _self_acct(user: User) -> str | None:
+    """The user's own fediverse handle, cached per process (it's stable). Cached so a later transient
+    verify_credentials failure can't return None and disable the own-DM skip (echoing sent DMs back)."""
+    if user.id in _self_acct_cache:
+        return _self_acct_cache[user.id]
     try:
         me = await pleroma_service.verify_credentials(user.pleroma_instance_url, user.pleroma_access_token)
-        return (me or {}).get("acct") or (me or {}).get("username")
+        acct = (me or {}).get("acct") or (me or {}).get("username")
     except Exception:
         return None
+    if acct:
+        _self_acct_cache[user.id] = acct
+    return acct
 
 
 def _delivered_event_for(db: Session, instance_url: str, status: dict) -> str | None:
@@ -146,59 +186,95 @@ async def _ensure_status_event(db: Session, port: int, user: User, instance_host
         return None
 
 
-async def _deliver_notifications(db: Session, port: int, user: User, instance_host: str) -> None:
-    since = getattr(user, "fedi_bridge_notif_since", None)
+async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: str, n: dict,
+                             recipient: str, broadcast: bool, blocked: set) -> bool:
+    """Deliver ONE notification as the matching native Nostr event. Returns True when delivered OR
+    intentionally skipped (cursor may advance), False when a publish failed (cursor must NOT advance
+    so it retries next cycle). Honors the admin domain blocklist (the personal plane used to bypass it)."""
+    account = n.get("account") or {}
+    acct = (account.get("acct") or "").lower()
+    if _domain_blocked(_host_of(acct, instance_host), blocked):
+        return True                                  # blocked-domain actor → never mirror (advance)
+    puppet = await ident.ensure_puppet(db, port, account, instance_host)
+    if not puppet:
+        return True
+    ntype = (n.get("type") or "").lower()
+    status = n.get("status") or {}
     try:
-        raw = await pleroma_service.fetch_notifications(user.pleroma_instance_url,
-                                                        user.pleroma_access_token, since_id=since, limit=_MAX)
+        if ntype == "mention" and status:
+            # Properly threaded note (e/p + ancestor backfill from the user's instance) + p-tag the user.
+            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
+            post = _norm_pleroma(status)
+            uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
+            if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
+                r = await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
+                                   status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
+                return r is not None
+            return True
+        if ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
+            target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
+            tags = [["p", recipient]] + ([["e", target]] if target else [])
+            content = "+" if ntype == "favourite" else (n.get("emoji") or "+")
+            ok, _ = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags, broadcast=broadcast))
+            return ok
+        if ntype == "reblog" and status:
+            target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
+            tags = [["p", recipient]] + ([["e", target]] if target else [])
+            ok, _ = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
+            return ok
+        if ntype in ("follow", "follow_request"):
+            msg = ("➕ @%s followed you" if ntype == "follow" else "➕ @%s requested to follow you") % puppet["acct"]
+            return bool(await _wrap_dm(port, puppet, recipient, msg))
+        return True                                  # untracked type (poll/update/…) → skip (advance)
     except Exception as e:
-        logger.debug("[fedi-personal] notif fetch failed for %s: %s", user.username, e)
-        return
+        logger.debug("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
+        return True                                  # poison item → skip so the drain can't wedge
+
+
+async def _deliver_notifications(db: Session, port: int, user: User, instance_host: str) -> None:
     recipient = _user_pubkey(user)
     if not recipient:
         return
-    broadcast = str(_get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
-    for n in sorted(raw, key=lambda x: x.get("id") or ""):   # oldest-first
-        account = n.get("account") or {}
-        puppet = await ident.ensure_puppet(db, port, account, instance_host)
-        if puppet:
-            ntype = (n.get("type") or "").lower()
-            status = n.get("status") or {}
-            # Each fediverse notification → the matching NATIVE Nostr notification event (NOT a DM):
-            # mention → kind-1 reply, favourite/reaction → kind-7, boost → kind-6, follow → a brief
-            # mention note. All p-tag the user so they surface in the client's notifications tab.
-            if ntype == "mention" and status:
-                # Mirror the mention as a PROPERLY THREADED note (e/p tags + ancestor backfill from the
-                # USER's own instance), p-tagging the user so it surfaces as a notification AND the whole
-                # conversation is navigable — a bare p-tagged note left the thread broken (reported).
-                from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
-                post = _norm_pleroma(status)
-                uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
-                if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
-                    await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
-                                   status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
-            elif ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
-                target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
-                emoji = n.get("emoji") or "+"
-                tags = [["p", recipient]] + ([["e", target]] if target else [])
-                await ident.publish(port, ident.build_event(puppet, 7, ("+" if ntype == "favourite" else emoji),
-                                                            tags=tags, broadcast=broadcast))
-            elif ntype == "reblog" and status:
-                target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
-                tags = [["p", recipient]] + ([["e", target]] if target else [])
-                await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
-            elif ntype in ("follow", "follow_request"):
-                # A follow has no note to react to, and a kind-1 "followed you" would pollute the
-                # global feed (it isn't a real post). Deliver it as a private NIP-17 notice instead —
-                # follows are low-volume, so this won't flood DMs the way reactions did.
-                msg = ("➕ @%s followed you" if ntype == "follow" else "➕ @%s requested to follow you") % puppet["acct"]
-                await _wrap_dm(port, puppet, recipient, msg)
-            # other notification types (poll, update, …) are intentionally not bridged
-        user.fedi_bridge_notif_since = n.get("id") or user.fedi_bridge_notif_since
+    inst, token = user.pleroma_instance_url, user.pleroma_access_token
+    since = getattr(user, "fedi_bridge_notif_since", None)
+    # First poll: set the cursor to newest WITHOUT delivering (no backlog flood on opt-in).
+    if not since:
         try:
+            raw = await pleroma_service.fetch_notifications(inst, token, limit=_MAX)
+        except Exception as e:
+            logger.debug("[fedi-personal] notif first-poll failed for %s: %s", user.username, e)
+            return
+        newest = max((x.get("id") for x in raw if x.get("id")), default=None)
+        if newest:
+            user.fedi_bridge_notif_since = newest
             db.commit()
-        except Exception:
-            db.rollback()
+        return
+    broadcast = str(_get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
+    blocked = _blocked_domains()
+    cursor = since
+    for _page in range(_MAX_PAGES):       # min_id forward-drain (no dropped items on bursts >20)
+        try:
+            raw = await pleroma_service.fetch_notifications(inst, token, min_id=cursor, limit=_MAX)
+        except Exception as e:
+            logger.debug("[fedi-personal] notif drain failed for %s: %s", user.username, e)
+            break
+        if not raw:
+            break
+        last, stop = None, False
+        for n in sorted(raw, key=lambda x: x.get("id") or ""):   # oldest-first
+            if not await _deliver_one_notif(db, port, user, instance_host, n, recipient, broadcast, blocked):
+                stop = True               # publish failed → retry next cycle, don't advance past it
+                break
+            last = n.get("id") or last
+        if last and last != cursor:
+            cursor = last
+            user.fedi_bridge_notif_since = cursor
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+        if stop or len(raw) < _MAX:
+            break
 
 
 async def poll_once(db: Session) -> None:
