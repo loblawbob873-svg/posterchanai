@@ -192,9 +192,11 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
                 tags = [["p", recipient]] + ([["e", target]] if target else [])
                 await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
             elif ntype in ("follow", "follow_request"):
-                msg = "➕ followed you" if ntype == "follow" else "➕ requested to follow you"
-                await ident.publish(port, ident.build_event(puppet, 1, msg, tags=[["p", recipient]],
-                                                            broadcast=broadcast))
+                # A follow has no note to react to, and a kind-1 "followed you" would pollute the
+                # global feed (it isn't a real post). Deliver it as a private NIP-17 notice instead —
+                # follows are low-volume, so this won't flood DMs the way reactions did.
+                msg = ("➕ @%s followed you" if ntype == "follow" else "➕ @%s requested to follow you") % puppet["acct"]
+                await _wrap_dm(port, puppet, recipient, msg)
             # other notification types (poll, update, …) are intentionally not bridged
         user.fedi_bridge_notif_since = n.get("id") or user.fedi_bridge_notif_since
         try:
