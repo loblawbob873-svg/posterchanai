@@ -262,10 +262,13 @@ async def _handle(db, ev: dict) -> None:
         return                       # not a local user with a linked Pleroma account → ignore
     row = _target_row(db, ev)
     if not row:
-        # Not interacting with a bridged note. Cross-post a TRUE top-level note (no e-tags, so not a
-        # reply to anyone) to the user's fediverse account, if they opted in. Replies to native Nostr
-        # users (which have e-tags but no bridged target) are left on Nostr.
-        if (int(ev.get("kind", 1)) == 1 and not _referenced_event_ids(ev)
+        # Cross-post only a PURE top-level broadcast — kind-1 with NO e-tags (not a reply) AND NO
+        # p-tags (not a message/mention directed at a specific Nostr user). A note aimed at a Nostr
+        # user (reply or mention) must stay on Nostr, never get broadcast to the fediverse.
+        tags = ev.get("tags", [])
+        has_e = bool(_referenced_event_ids(ev))
+        has_p = any(t and len(t) >= 1 and t[0] == "p" for t in tags)
+        if (int(ev.get("kind", 1)) == 1 and not has_e and not has_p
                 and getattr(user, "fedi_crosspost_enabled", False)):
             await _crosspost(db, user, ev)
         return
