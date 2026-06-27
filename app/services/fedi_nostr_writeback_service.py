@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 _WRITEBACK_KINDS = [1, 6, 7, 1059]
 _seen_events: set = set()       # event ids already actioned this process (bounded below)
 _SEEN_CAP = 5000
+_LOOKBACK_SEC = 6 * 3600        # on (re)connect, replay this far back so interactions made while the
+                                # listener was down (e.g. during a restart) still federate — paired
+                                # with persistent idempotency so a replay can't double-post.
 
 
 def _port() -> int:
@@ -128,6 +131,11 @@ async def _handle_dm_reply(db, ev: dict) -> None:
     user = _user_for_pubkey(db, sender_hex)
     if not user:
         return
+    # Idempotency across restart/replay: a DM is NOT server-deduped, so guard on a durable marker
+    # (kind="dm-out") keyed on this wrap's id before sending.
+    if db.query(FediBridgeMap).filter(FediBridgeMap.nostr_event_id == eid,
+                                      FediBridgeMap.kind == "dm-out").first():
+        return
     _seen_events.add(eid)
     row = db.query(FediBridgeMap).filter(
         FediBridgeMap.user_id == user.id, FediBridgeMap.kind == "dm",
@@ -141,8 +149,13 @@ async def _handle_dm_reply(db, ev: dict) -> None:
         await pleroma_service.post_status(user.pleroma_instance_url, user.pleroma_access_token, text,
                                           visibility="direct",
                                           in_reply_to_id=(row.target_id if row else None))
+        db.add(FediBridgeMap(user_id=user.id, nostr_event_id=eid, kind="dm-out", platform="pleroma",
+                             instance_url=user.pleroma_instance_url, peer_pubkey=recipient,
+                             target_id=(row.target_id if row else None), visibility="direct"))
+        db.commit()
         logger.info("[fedi-writeback] DM reply by %s → fediverse DM to %s", user.username, puppet.acct)
     except Exception as e:
+        db.rollback()
         logger.warning("[fedi-writeback] DM reply failed (ev %s): %s", eid, e)
 
 
@@ -178,6 +191,10 @@ async def _handle(db, ev: dict) -> None:
         elif kind == 6:
             await pleroma_service.reblog_status(inst, token, target_id)
         elif kind == 1:
+            # Idempotency across restart/replay: if we already federated THIS reply event, skip
+            # (the recorded FediBridgeDelivered row is the durable marker).
+            if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
+                return
             text = _strip_nostr_refs(ev.get("content", ""))
             if not text:
                 return
@@ -206,24 +223,27 @@ async def _listen_once() -> None:
     from app.database import SessionLocal
     uri = f"ws://127.0.0.1:{_port()}/relay"
     sub = "fediwb" + os.urandom(4).hex()
-    since = int(time.time())
+    since = int(time.time()) - _LOOKBACK_SEC
+    # Scope the subscription SERVER-SIDE: public interactions (1/6/7) only from LOCAL NIP-05 users
+    # (so the relay never streams us the whole puppet firehose), plus gift-wraps (1059) addressed to a
+    # puppet — those carry an ephemeral author, so they can't be author-filtered and are handled by
+    # checking the p-tag. The lookback replays missed events; idempotency (below) prevents double-posts.
+    locals_ = list(_local_nip05_pubkeys())
+    filters = []
+    if locals_:
+        filters.append({"kinds": [1, 6, 7], "authors": locals_, "since": since})
+    filters.append({"kinds": [1059], "since": since})
     async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30) as ws:
-        await ws.send(json.dumps(["REQ", sub, {"kinds": _WRITEBACK_KINDS, "since": since}]))
-        logger.info("[fedi-writeback] subscribed to local relay for write-back events")
+        await ws.send(json.dumps(["REQ", sub, *filters]))
+        logger.info("[fedi-writeback] subscribed (authors=%d, lookback=%dh) for write-back events",
+                    len(locals_), _LOOKBACK_SEC // 3600)
         while True:
             msg = json.loads(await ws.recv())
             if msg[0] != "EVENT" or msg[1] != sub or not isinstance(msg[2], dict):
                 continue
-            ev = msg[2]
-            kind = int(ev.get("kind", 1))
-            # CHEAP pre-filter (no DB): the subscription also streams the whole mirror firehose
-            # (puppet kind-1/6/7). A public interaction matters ONLY when its author is a local NIP-05
-            # user — skip everything else without touching the DB. DMs (1059) are rare → handle those.
-            if kind != 1059 and ev.get("pubkey", "") not in _local_nip05_pubkeys():
-                continue
             db = SessionLocal()
             try:
-                await _handle(db, ev)
+                await _handle(db, msg[2])
             except Exception as e:
                 logger.debug("[fedi-writeback] handle error: %s", e)
             finally:
