@@ -446,6 +446,12 @@ class RelayServer:
         # original fedi note) and post mirrored content — they must skip the bridge/proxy denials
         # below, which exist to block OTHER instances' mirror accounts (mostr.pub etc.).
         _is_puppet = self.gate.is_puppet_event(ev)
+        # A blocked author stays blocked even when it's a bridge puppet: blocking a puppet npub on
+        # the relay (admin / web "Block author") must reject + (on purge) remove its events exactly
+        # like a native author — otherwise the puppet exemption below would let it right back in.
+        if _is_puppet and self.gate.is_blocked(ev.get("pubkey", "")):
+            self._send(conn, ["OK", eid, False, "blocked: author blocked"])
+            return
         _br = self.cfg.get("blocked_relays")
         if not _is_puppet and _br and reveals_blocked_bridge(ev, _br):
             if author_on_blocked_bridge(ev, _br):
