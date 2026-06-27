@@ -153,11 +153,12 @@ def _build_content(post: dict) -> str:
 
 
 async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
-                              instance_host: str, post: dict) -> None:
+                              instance_host: str, post: dict, token: str = "") -> None:
     """Mirror a reply's ancestor chain (toward the conversation root) so the reply threads under a
     real parent instead of appearing as an orphan with missing context. Ancestors come root-first,
-    so each is delivered before its child and never triggers a further backfill (recursion guard)."""
-    token = _get("fedi_bridge_access_token")
+    so each is delivered before its child and never triggers a further backfill (recursion guard).
+    `token` lets the personal plane backfill from the USER's instance (else the bridge read account)."""
+    token = token or _get("fedi_bridge_access_token")
     try:
         ctx = await pleroma_service.fetch_context(instance_url, token, post["id"])
         ancestors = ctx.get("ancestors") or []
@@ -177,13 +178,15 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
         if _domain_blocked(host, blocked) or _author_muted(acct, host, instance_host):
             continue
         try:
-            await _deliver(db, port, platform, instance_url, instance_host, raw, anc, backfill=False)
+            await _deliver(db, port, platform, instance_url, instance_host, raw, anc,
+                           backfill=False, token=token)
         except Exception as e:
             logger.debug("[fedi-bridge] ancestor deliver failed: %s", e)
 
 
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
-                   raw: dict, post: dict, backfill: bool = True) -> str | None:
+                   raw: dict, post: dict, backfill: bool = True, token: str = "",
+                   extra_ptags: list | None = None) -> str | None:
     account = raw.get("account") or {}
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
@@ -196,7 +199,7 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
     parent_id = post.get("in_reply_to_id")
     if parent_id:
         if backfill and not _parent_event(db, instance_url, parent_id):
-            await _backfill_ancestors(db, port, platform, instance_url, instance_host, post)
+            await _backfill_ancestors(db, port, platform, instance_url, instance_host, post, token=token)
         parent = _parent_event(db, instance_url, parent_id)
         if parent:
             tags.append(["e", parent.nostr_event_id, "", "reply"])
@@ -209,6 +212,11 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         qrow = _delivered_by_uri(db, quri)
         if qrow:
             tags.append(["q", qrow.nostr_event_id])
+    # Extra p-tags (personal plane: notify the local user about a mention so it surfaces as a
+    # notification AND threads in the conversation).
+    for pk in (extra_ptags or []):
+        if pk and not any(t[0] == "p" and t[1] == pk for t in tags if len(t) >= 2):
+            tags.append(["p", pk])
 
     ev = ident.build_event(p, 1, _build_content(post), tags=tags, object_uri=uri,
                            broadcast=_broadcast_on())

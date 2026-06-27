@@ -139,7 +139,8 @@ async def _ensure_status_event(db: Session, port: int, user: User, instance_host
     try:
         from app.services.fedi_nostr_bridge_service import _deliver
         post = _norm_pleroma(status)
-        return await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host, status, post)
+        return await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host, status,
+                              post, token=user.pleroma_access_token)
     except Exception as e:
         logger.debug("[fedi-personal] mirror-for-reaction failed: %s", e)
         return None
@@ -167,20 +168,15 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
             # mention → kind-1 reply, favourite/reaction → kind-7, boost → kind-6, follow → a brief
             # mention note. All p-tag the user so they surface in the client's notifications tab.
             if ntype == "mention" and status:
+                # Mirror the mention as a PROPERLY THREADED note (e/p tags + ancestor backfill from the
+                # USER's own instance), p-tagging the user so it surfaces as a notification AND the whole
+                # conversation is navigable — a bare p-tagged note left the thread broken (reported).
+                from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
                 post = _norm_pleroma(status)
-                content = (post.get("text") or "").strip()
-                for m in (post.get("media") or []):
-                    if m.get("url"):
-                        content += ("\n" if content else "") + m["url"]
-                uri = status.get("uri") or status.get("url")
-                ev = ident.build_event(puppet, 1, content or "​", tags=[["p", recipient]],
-                                       object_uri=uri, broadcast=broadcast)
-                ok, _ = await ident.publish(port, ev)
-                if ok and status.get("id"):
-                    db.add(FediBridgeDelivered(platform="pleroma", instance_url=user.pleroma_instance_url,
-                                               note_id=status["id"], note_uri=uri,
-                                               author_acct=puppet["acct"], nostr_event_id=ev["id"],
-                                               nostr_pubkey=puppet["pubkey_hex"]))
+                uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
+                if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
+                    await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
+                                   status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
             elif ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
                 target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
                 emoji = n.get("emoji") or "+"
