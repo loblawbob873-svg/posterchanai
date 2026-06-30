@@ -500,10 +500,11 @@ class RelayServer:
             # sharing your GPU is a deliberate per-npub grant, separate from the social web of trust.
             # The DVM worker re-checks the same allowlist (is_trusted) before running anything.
             pass
-        elif _is_puppet and kind in (0, 1, 5, 6, 7):
+        elif _is_puppet and kind in (0, 1, 3, 5, 6, 7):
             # Fediverse-bridge puppet: the app mirrors the global fediverse timeline through these
             # deterministic per-fedi-user keys. Gate-exempt for the mirrored content kinds only
-            # (profile / note / repost / reaction / NIP-09 deletion), and ONLY here on the loopback WS
+            # (profile / note / contact-list / repost / reaction / NIP-09 deletion), and ONLY here on
+            # the loopback WS
             # publish path — they are not WoT members, so the upstream sync/firehose never accept them.
             # A valid signature is still required (verify_event above) and the event must self-validate
             # as a puppet (fedibridge actor tag → derived pubkey == signer). A kind-5 deletes only the

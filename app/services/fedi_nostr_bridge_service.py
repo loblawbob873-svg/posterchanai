@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 from app.models import FediBridgeDelivered, FediPuppet
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
-from app.services.fedi_timeline_service import _norm, _canonical_uri   # reuse the proven normalizers
+from app.services.nostr import bech32
+from app.services.fedi_timeline_service import (   # reuse the proven normalizers + emoji parsing
+    _norm, _canonical_uri, _EMOJI_SHORTCODE_RE)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ _DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion p
 _last_deletion_check = 0.0
 _MAX_ANCESTORS = 8             # cap ancestors backfilled to anchor an orphan reply's thread
 _BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
+_MAX_QUOTE_DEPTH = 2           # cap quote-of-quote recursion when mirroring referenced notes
 
 
 # --- settings ---------------------------------------------------------------
@@ -133,9 +136,21 @@ def _delivered_by_uri(db: Session, uri: str):
     return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.note_uri == uri).first() if uri else None
 
 
-def _build_content(post: dict) -> str:
+def _existing_mirror(db: Session, instance_url: str, uri: str | None, note_id: str | None):
+    """The already-mirrored row for a note, by canonical URI (cross-instance) then same-instance id."""
+    return (_delivered_by_uri(db, uri) if uri else None) or \
+           (_parent_event(db, instance_url, note_id) if note_id else None)
+
+
+# Notes currently mid-delivery this cycle — breaks a same-cycle quote CYCLE (A quotes B, B quotes A)
+# from re-entering _deliver and double-publishing before the FediBridgeDelivered row commits.
+_inflight: set = set()
+
+
+def _build_content(post: dict, quote_bech: str | None = None) -> str:
     """The kind-1 note body: the post text plus any media URLs (Nostr clients render image/video
-    URLs inline) and an inline quote line when the post quotes another."""
+    URLs inline). When the post quotes another that we mirrored, append a `nostr:<note>` reference so
+    clients embed the quoted note's CONTENT (NIP-18); otherwise fall back to an inline text snippet."""
     parts = []
     text = (post.get("text") or "").strip()
     if text:
@@ -145,11 +160,39 @@ def _build_content(post: dict) -> str:
             parts.append(m["url"])
     q = post.get("quote")
     if q:
-        qacct = q.get("acct") or "?"
-        qtext = (q.get("text") or "").strip()
-        snippet = (qtext[:280] + "…") if len(qtext) > 280 else qtext
-        parts.append(f"\n↪ quoting @{qacct}: {snippet}".rstrip())
+        if quote_bech:
+            parts.append(f"\nnostr:{quote_bech}")
+        else:
+            qacct = q.get("acct") or "?"
+            qtext = (q.get("text") or "").strip()
+            snippet = (qtext[:280] + "…") if len(qtext) > 280 else qtext
+            parts.append(f"\n↪ quoting @{qacct}: {snippet}".rstrip())
     return "\n".join(parts).strip() or "​"   # never publish empty content
+
+
+def _emoji_tags(content: str, *emoji_maps: dict) -> list:
+    """NIP-30 custom-emoji tags for every :shortcode: that actually appears in `content` and has a
+    known URL in one of the supplied {shortcode: url} maps. Deduped; bounded so a spam note can't
+    publish hundreds of tags."""
+    if not content:
+        return []
+    merged: dict = {}
+    for m in emoji_maps:
+        if m:
+            merged.update(m)
+    if not merged:
+        return []
+    out, seen = [], set()
+    for sc in _EMOJI_SHORTCODE_RE.findall(content):
+        if sc in seen:
+            continue
+        url = merged.get(sc)
+        if url:
+            out.append(["emoji", sc, url])
+            seen.add(sc)
+        if len(out) >= 30:
+            break
+    return out
 
 
 async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
@@ -213,9 +256,48 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
     return content, ptags
 
 
+def _raw_quote_status(platform: str, raw: dict) -> dict | None:
+    """The full quoted status object embedded in `raw` (Pleroma `quote`, or a Misskey renote that
+    carries its own text), or None for a plain post/boost."""
+    if platform == "misskey":
+        rn = raw.get("renote")
+        return rn if (isinstance(rn, dict) and (raw.get("text") or "").strip()) else None
+    # Pleroma: a quote-post carries `quote`; a boost-with-comment carries `reblog` (+ own content,
+    # which is why it wasn't filtered as a pure boost). Mirror _norm_pleroma's quote selection.
+    sub = raw.get("quote") or raw.get("reblog")
+    return sub if isinstance(sub, dict) else None
+
+
+async def _resolve_quote(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
+                         raw: dict, token: str, depth: int) -> tuple:
+    """Ensure the note quoted by `raw` is mirrored on the relay, returning (event_id, puppet_pubkey)
+    or (None, None). Reuses an existing mirror; otherwise mirrors it (moderation-checked,
+    depth-bounded) so a Nostr client can embed the quoted post's content via the q tag / nostr ref."""
+    q_raw = _raw_quote_status(platform, raw)
+    if not q_raw or not q_raw.get("id"):
+        return None, None
+    qpost = _norm(platform, q_raw)
+    quri = _canonical_uri(platform, instance_url, qpost)
+    row = _existing_mirror(db, instance_url, quri, qpost.get("id"))
+    if row:
+        return row.nostr_event_id, row.nostr_pubkey
+    if depth >= _MAX_QUOTE_DEPTH:
+        return None, None
+    acct = qpost.get("author", {}).get("acct") or ""
+    host = _host_of(acct, instance_host)
+    if _domain_blocked(host, _blocked_domains()) or _author_muted(acct, host, instance_host):
+        return None, None
+    eid = await _deliver(db, port, platform, instance_url, instance_host, q_raw, qpost,
+                         backfill=False, token=token, _depth=depth + 1)
+    if not eid:
+        return None, None
+    row = _existing_mirror(db, instance_url, quri, qpost.get("id"))
+    return eid, (row.nostr_pubkey if row else None)
+
+
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
-                   extra_ptags: list | None = None) -> str | None:
+                   extra_ptags: list | None = None, _depth: int = 0) -> str | None:
     # NEVER mirror a non-public status as a PUBLIC Nostr note — a `direct` (DM) or `private`
     # (followers-only) status published as a public kind-1 leaks private content into the feed.
     if (raw.get("visibility") or "public").lower() in ("direct", "private"):
@@ -225,51 +307,74 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
     if not p:
         return None
     uri = _canonical_uri(platform, instance_url, post)
-
-    tags: list = []
-    # Threading (NIP-10): if the parent isn't mirrored yet, backfill the ancestor chain first so this
-    # reply threads under a real root (no missing-parent orphans); then tag the parent as the target.
-    parent_id = post.get("in_reply_to_id")
-    if parent_id:
-        if backfill and not _parent_event(db, instance_url, parent_id):
-            await _backfill_ancestors(db, port, platform, instance_url, instance_host, post, token=token)
-        parent = _parent_event(db, instance_url, parent_id)
-        if parent:
-            tags.append(["e", parent.nostr_event_id, "", "reply"])
-            if parent.nostr_pubkey:
-                tags.append(["p", parent.nostr_pubkey])
-    # Quote (NIP-18): reference the quoted note's Nostr event when we've mirrored it.
-    q = post.get("quote") or {}
-    quri = q.get("uri")
-    if quri:
-        qrow = _delivered_by_uri(db, quri)
-        if qrow:
-            tags.append(["q", qrow.nostr_event_id])
-    # Extra p-tags (personal plane: notify the local user about a mention so it surfaces as a
-    # notification AND threads in the conversation).
-    for pk in (extra_ptags or []):
-        if pk and not any(t[0] == "p" and t[1] == pk for t in tags if len(t) >= 2):
-            tags.append(["p", pk])
-
-    # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
-    content = _build_content(post)
-    content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content, raw.get("mentions") or [])
-    for t in mention_ptags:
-        if not any(x[0] == "p" and x[1] == t[1] for x in tags if len(x) >= 2):
-            tags.append(t)
-    ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
-    ok, msg = await ident.publish(port, ev)
-    if not ok:
-        logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
+    # Idempotency: already mirrored in a prior cycle → return its event id (never double-publish).
+    existing = _existing_mirror(db, instance_url, uri, post.get("id"))
+    if existing:
+        return existing.nostr_event_id
+    # Same-cycle quote-cycle guard: the row commits only at the end, so without this an A↔B mutual
+    # quote re-enters _deliver for a note still mid-flight and publishes it twice.
+    inflight_key = uri or f"{instance_url}|{post.get('id')}"
+    if inflight_key in _inflight:
         return None
-    db.add(FediBridgeDelivered(platform=platform, instance_url=instance_url, note_id=post["id"],
-                               note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
-                               nostr_pubkey=p["pubkey_hex"]))
+    _inflight.add(inflight_key)
     try:
-        db.commit()
-    except Exception:
-        db.rollback()
-    return ev["id"]
+        tags: list = []
+        # Threading (NIP-10): if the parent isn't mirrored yet, backfill the ancestor chain first so
+        # this reply threads under a real root (no missing-parent orphans); then tag the parent.
+        parent_id = post.get("in_reply_to_id")
+        if parent_id:
+            if backfill and not _parent_event(db, instance_url, parent_id):
+                await _backfill_ancestors(db, port, platform, instance_url, instance_host, post, token=token)
+            parent = _parent_event(db, instance_url, parent_id)
+            if parent:
+                tags.append(["e", parent.nostr_event_id, "", "reply"])
+                if parent.nostr_pubkey:
+                    tags.append(["p", parent.nostr_pubkey])
+        # Quote (NIP-18): mirror the quoted note (so it's on the relay) then reference it with a `q`
+        # tag AND a nostr:<note> in the content, so Nostr clients embed the quoted post's CONTENT —
+        # not a dangling link. Depth-bounded so a chain of quote-of-quote can't recurse without limit.
+        quote_bech = None
+        quoted_ev_id, quoted_pk = await _resolve_quote(db, port, platform, instance_url, instance_host,
+                                                       raw, token, _depth)
+        if quoted_ev_id:
+            qtag = ["q", quoted_ev_id]
+            if quoted_pk:
+                qtag += ["", quoted_pk]
+            tags.append(qtag)
+            try:
+                quote_bech = bech32.encode("note", bytes.fromhex(quoted_ev_id))
+            except Exception:
+                quote_bech = None
+        # Extra p-tags (personal plane: notify the local user about a mention so it surfaces as a
+        # notification AND threads in the conversation).
+        for pk in (extra_ptags or []):
+            if pk and not any(t[0] == "p" and t[1] == pk for t in tags if len(t) >= 2):
+                tags.append(["p", pk])
+
+        # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
+        content = _build_content(post, quote_bech)
+        content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content, raw.get("mentions") or [])
+        for t in mention_ptags:
+            if not any(x[0] == "p" and x[1] == t[1] for x in tags if len(x) >= 2):
+                tags.append(t)
+        # NIP-30 custom emoji: tag every :shortcode: still present in the content so clients render the
+        # actual emoji image instead of the raw shortcode text.
+        tags.extend(_emoji_tags(content, post.get("content_emojis")))
+        ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
+        ok, msg = await ident.publish(port, ev)
+        if not ok:
+            logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
+            return None
+        db.add(FediBridgeDelivered(platform=platform, instance_url=instance_url, note_id=post["id"],
+                                   note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
+                                   nostr_pubkey=p["pubkey_hex"]))
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        return ev["id"]
+    finally:
+        _inflight.discard(inflight_key)
 
 
 async def _process(db: Session, port: int, platform: str, instance_url: str, instance_host: str,

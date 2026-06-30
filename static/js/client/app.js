@@ -2570,6 +2570,27 @@
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
   }
+  // ---- NIP-30 custom emoji ----------------------------------------------------------------------
+  // Fediverse-bridged notes (and reactions) carry ["emoji", shortcode, url] tags; render the actual
+  // image in place of the bare ":shortcode:" text (otherwise it reads like inline code). Restricted
+  // to shortcodes the event actually declares, so it can't mangle an unrelated ":foo:" in a URL.
+  function emojiTagMap(ev){ const m={}; for(const t of ((ev&&ev.tags)||[])){ if(t[0]==='emoji'&&t[1]&&t[2]) m[t[1]]=t[2]; } return m; }
+  function applyEmojis(htmlStr, ev){
+    const map=emojiTagMap(ev); if(!Object.keys(map).length) return htmlStr;
+    // Alternate the regex so it CONSUMES whole HTML tags untouched, then matches a :shortcode: only in
+    // text — otherwise a shortcode that appears inside an <a href="…:x:…"> attribute would be replaced
+    // mid-tag and corrupt the markup. Shortcode charset allows a trailing @host (remote/federated
+    // custom emoji, e.g. :blobcat@host:) to match the server's NIP-30 tags.
+    return (htmlStr||'').replace(/<[^>]*>|:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
+      sc ? (map[sc] ? `<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">` : m) : m);
+  }
+  // Display form of a kind-7 reaction's emoji: an <img> for a NIP-30 custom emoji, else escaped text.
+  function reactDisp(e){
+    let c=(e&&e.content)||''; if(c==='+'||c==='') return '❤️'; if(c==='-') return '👎';
+    if(/^:[^:\s]+:$/.test(c)){ const nm=c.slice(1,-1); const t=((e.tags)||[]).find(x=>x[0]==='emoji'&&x[1]===nm&&x[2]);
+      if(t) return `<img class="emoji-inline" src="${enc(t[2])}" alt="${enc(c)}" title="${enc(c)}" loading="lazy">`; }
+    return enc(c);
+  }
   // Inner HTML of the NIP-36 content-warning reveal overlay (used by noteCard's blurred template).
   function _cwRevealInner(reason){ return `🔞 Sensitive content${reason?' — '+enc(reason):''}<span class="cw-show">Show</span>`; }
   // Mark one of YOUR OWN posts NSFW after the fact. Nostr events are immutable, so the only way to
@@ -2616,7 +2637,7 @@
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
-        <div class="txt${longTxt?' clamp':''}">${linkify(bodyTxt)}</div>
+        <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
@@ -2670,7 +2691,7 @@
     const mp = mediaParts(o.content);
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
-      <div class="txt">${linkify(stripQuoteRef(mp.text, o))}</div>
+      <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
       ${mp.gallery}</div>`; }
   // NIP-10 parent of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
   function replyParentId(ev){
@@ -4852,7 +4873,7 @@
   function notifHtml(e){
     if(e.type==='group'){
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
-      const verb = e.kind===6?'reposted your note':`reacted ${enc((first.content==='+'||first.content==='')?'❤️':first.content)} to your post`;
+      const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
       const who = (p.name||p.display_name||'someone')+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
       return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
     }
@@ -4869,12 +4890,12 @@
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
     else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc((e.content||'').slice(0,80)):''}`;}
-    else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${enc(e.content==='+'?'❤️':e.content)} to your post`;}
+    else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${reactDisp(e)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
-    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+enc((e.content||'').slice(0,80));}
-    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+enc((e.content||'').slice(0,80));}
-    else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+enc((e.content||'').slice(0,80));}
-    else {cls='mention';ic='@';txt='mentioned you: '+enc((e.content||'').slice(0,80));}
+    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
+    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
+    else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
+    else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
     return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
@@ -5169,7 +5190,10 @@
       try{ await sendDm(pk, t); }catch(e){ toast('dm failed: '+e.message);} };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
-    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight; }
+    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
+      // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
+      // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
+      m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
     _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
   }
 

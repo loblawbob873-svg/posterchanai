@@ -223,7 +223,16 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
         if ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
             tags = [["p", recipient]] + ([["e", target]] if target else [])
-            content = "+" if ntype == "favourite" else (n.get("emoji") or "+")
+            if ntype == "favourite":
+                content = "+"
+            else:
+                content = n.get("emoji") or "+"
+                # Custom (non-unicode) emoji reaction → NIP-30: content is :shortcode:, tag carries url.
+                emoji_url = n.get("emoji_url") or n.get("url")
+                if emoji_url:
+                    sc = content.strip(":")
+                    content = f":{sc}:"
+                    tags.append(["emoji", sc, emoji_url])
             ok, _ = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags, broadcast=broadcast))
             return ok
         if ntype == "reblog" and status:
@@ -231,13 +240,53 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             tags = [["p", recipient]] + ([["e", target]] if target else [])
             ok, _ = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
             return ok
-        # Follow / follow-request / follow-accepted are intentionally NOT bridged: a feed post leaks
-        # into the timeline and a DM is noise, and Nostr has no clean "new follower" notification
-        # primitive (a kind-3 would overwrite the puppet's whole follow list). So we just skip them.
-        return True                                  # follow* + untracked types (poll/update/…) → skip
+        if ntype in ("follow", "follow_request"):
+            # A fediverse user followed this bridge user → reflect it on Nostr by adding the bridge
+            # user to the FOLLOWER puppet's kind-3 contact list, so they appear in the user's Nostr
+            # follower list. Maintained INCREMENTALLY (read current list, append) so it never wipes
+            # the puppet's existing follows. BEST-EFFORT: a follow failure must NOT block the rest of
+            # the drain (always advance the cursor) — losing a single follow on a transient relay
+            # hiccup is far better than head-of-line-stalling every later notification.
+            await _bridge_follow(db, port, puppet, recipient, broadcast)
+            return True
+        return True                                  # follow-accepted + untracked types (poll/update/…) → skip
     except Exception as e:
         logger.debug("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
         return True                                  # poison item → skip so the drain can't wedge
+
+
+_puppet_follows: dict = {}      # follower puppet pubkey -> set of followed pubkeys we've published
+                                # (so a momentary empty relay read can never SHRINK the list)
+
+
+async def _bridge_follow(db: Session, port: int, follower_puppet: dict, followed_pk: str,
+                         broadcast: bool) -> bool:
+    """Add `followed_pk` to the follower puppet's kind-3 contact list (incrementally — read, union,
+    republish) so a fediverse follow shows up in the followed Nostr user's follower list. The union
+    of (relay read ∪ what we've published this process) guarantees a SUCCESSFUL-but-empty read can't
+    wipe an existing list (the replaceable-list-wipe class). Returns False only on read/publish
+    failure — the caller treats follows as best-effort and advances regardless."""
+    fpk = follower_puppet["pubkey_hex"]
+    ok, cur = await ident.query_one(port, {"authors": [fpk], "kinds": [3], "limit": 1})
+    if not ok:
+        return False        # couldn't read current list → don't risk wiping it; retry next cycle
+    existing = set(_puppet_follows.get(fpk, set()))
+    content = ""
+    if cur:
+        content = cur.get("content", "") or ""
+        for t in cur.get("tags", []):
+            if t and len(t) >= 2 and t[0] == "p" and t[1]:
+                existing.add(t[1])
+    if followed_pk in existing:
+        _puppet_follows[fpk] = existing
+        return True          # already following → nothing to publish
+    existing.add(followed_pk)
+    ev = ident.build_event(follower_puppet, 3, content, tags=[["p", x] for x in sorted(existing)],
+                           broadcast=broadcast)
+    pubok, _ = await ident.publish(port, ev)
+    if pubok:
+        _puppet_follows[fpk] = existing
+    return pubok
 
 
 async def _deliver_notifications(db: Session, port: int, user: User, instance_host: str) -> None:

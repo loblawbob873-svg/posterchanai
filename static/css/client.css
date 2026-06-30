@@ -632,6 +632,8 @@ a.btn.full{display:block}
 .chat-react.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
 .chat-react .n{opacity:.8;font-weight:700}
 .chat-react-img{width:17px;height:17px;object-fit:contain;vertical-align:middle;display:inline-block}
+/* NIP-30 custom emoji rendered inline in note text, names and notifications (sized to the line). */
+.emoji-inline{height:1.4em;width:auto;max-width:none;vertical-align:-0.28em;display:inline-block;margin:0 1px}
 /* public read-only (guest) mode: a slim login banner + no write affordances */
 #guest-bar{position:fixed;left:0;right:0;bottom:0;z-index:200;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
   padding:10px 14px;background:var(--panel);border-top:1px solid var(--neon);box-shadow:0 -4px 18px rgba(0,0,0,.4);color:var(--text);font-size:13.5px}
@@ -870,7 +872,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .bubble.me{align-self:flex-end;background:rgba(0,255,255,.12);border:1px solid var(--neon);color:var(--text);border-bottom-right-radius:4px;box-shadow:0 0 10px rgba(0,255,255,.16)}
 .bubble.them{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-bottom-left-radius:4px}
 /* keep media + long links INSIDE the bubble so they can't overflow / clip on mobile */
-.bubble img,.bubble video,.bubble .m{max-width:100%;height:auto;border-radius:10px;display:block;margin-top:4px}
+.bubble img,.bubble video,.bubble .m{max-width:100%;max-height:340px;height:auto;border-radius:10px;display:block;margin-top:4px}
+.bubble img{cursor:zoom-in}
 .bubble a{overflow-wrap:anywhere;word-break:break-all}
 .dm-compose{display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1px solid var(--line)}
 .dm-compose .input{margin:0;width:100%;font-size:16.5px;padding:12px 14px;min-height:54px;resize:vertical;font-family:inherit}

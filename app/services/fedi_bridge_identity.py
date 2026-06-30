@@ -206,6 +206,31 @@ async def publish(port: int, ev: dict, timeout: float = 8.0) -> tuple[bool, str]
     return False, "unreachable"
 
 
+async def query_one(port: int, filt: dict, timeout: float = 8.0) -> tuple[bool, dict | None]:
+    """Fetch the single most-recent event matching `filt` from the local relay over a short-lived
+    connection (NOT the shared publish socket). Returns (ok, event|None); ok=False means the query
+    itself failed — the caller must NOT treat that as 'no such event' (avoids the replaceable-list
+    wipe bug where an empty read overwrites a real list)."""
+    import os
+    import websockets
+    sub = "q" + os.urandom(4).hex()
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}/relay", open_timeout=10,
+                                      close_timeout=2, ping_interval=30) as ws:
+            await ws.send(json.dumps(["REQ", sub, filt]))
+            got = None
+            while True:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+                if msg[0] == "EVENT" and msg[1] == sub and isinstance(msg[2], dict):
+                    if got is None or (msg[2].get("created_at", 0) > got.get("created_at", 0)):
+                        got = msg[2]
+                elif msg[0] == "EOSE" and msg[1] == sub:
+                    return True, got
+    except Exception as e:
+        logger.debug("[fedi-bridge] query_one failed: %s", e)
+        return False, None
+
+
 async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -> dict | None:
     """Provision (or refresh) a fediverse account's puppet: upsert the registry row, and (re)publish
     its kind-0 profile when first seen or when the display name/avatar/bio/domain changed. Returns
@@ -214,15 +239,26 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
     actor_uri = actor_uri_of(account)
     if not actor_uri:
         return None
-    sig = _account_profile_sig(account)
-    # Fast path: already provisioned this run with an unchanged profile → no key derivation, no DB.
+    raw_sig = _account_profile_sig(account)
+    # Fast path: already provisioned this run with an unchanged raw account → no key derivation, no DB.
+    # Keyed on the RAW account sig (cheap) so an avatar-less mention sighting of a known user still
+    # hits the cache and we don't redo work every note.
     cached = _PUPPET_CACHE.get(actor_uri)
-    if cached is not None and cached["sig"] == sig:
+    if cached is not None and cached["raw_sig"] == raw_sig:
         _PUPPET_CACHE.move_to_end(actor_uri)
         return cached["p"]
 
     p = puppet_for(account, instance_host)
     row = db.query(FediPuppet).filter(FediPuppet.actor_uri == p["actor_uri"]).first()
+    # Don't DOWNGRADE a known avatar: mentions provide an avatar-less account object, so an existing
+    # good avatar must survive a mention-only sighting (the reported "profile shows the default
+    # posterchan avatar" bug). The kind-0's `picture` is what the client renders in both timeline and
+    # profile view, so a blank republish leaves the stored-latest profile pictureless.
+    if row is not None and not p["avatar_url"] and row.avatar_url:
+        p["avatar_url"] = row.avatar_url
+    # Profile signature from the EFFECTIVE (post-merge) profile, so change-detection and the no-op
+    # check both account for the preserved avatar.
+    sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"])
     now = datetime.utcnow()
     need_profile = False
     if row is None:
@@ -263,7 +299,7 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
             logger.debug("[fedi-bridge] profile publish failed for %s: %s", p["acct"], msg)
             return p   # don't cache as 'done' until the profile actually published
 
-    _PUPPET_CACHE[actor_uri] = {"p": p, "sig": sig}
+    _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
     _PUPPET_CACHE.move_to_end(actor_uri)
     while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
         _PUPPET_CACHE.popitem(last=False)

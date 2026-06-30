@@ -47,46 +47,75 @@ def _port() -> int:
         return 3052
 
 
-_allowed_cache: dict = {"at": 0.0, "set": frozenset()}
+_allowed_cache: dict = {"at": 0.0, "set": frozenset(), "uid": {}, "all_uid": {}}
+
+
+def _refresh_allowed() -> None:
+    """Refresh (≤30s) in ONE DB pass: the write-back WHITELIST (`set`) + its pubkey→uid map (`uid`,
+    for action gating), and a BROADER pubkey→uid map of ALL linked-Pleroma users (`all_uid`, for
+    mention translation — a mentioned user may have a fedi account without bridge/crosspost on). So
+    every per-event lookup is O(1), no full-table scan."""
+    now = time.monotonic()
+    if now - _allowed_cache["at"] <= 30:
+        return
+    from app.database import SessionLocal
+    from app.models import User
+    db = SessionLocal()
+    out, uid, all_uid = set(), {}, {}
+    try:
+        for u in db.query(User).filter(User.pleroma_enabled == True).all():   # noqa: E712
+            npub = getattr(u, "nostr_npub", None)
+            h = nostr_service.to_pubkey_hex(npub) if npub else None
+            if not (h and u.pleroma_instance_url and u.pleroma_access_token):
+                continue
+            all_uid[h] = u.id
+            if getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False):
+                out.add(h)
+                uid[h] = u.id
+    except Exception as e:
+        logger.debug("[fedi-writeback] allowed-pubkey refresh failed: %s", e)
+        # Still advance the throttle so a transient DB error doesn't turn every incoming relay event
+        # into a fresh full-table scan (keep the previous cached maps in place).
+        _allowed_cache["at"] = now
+        return
+    finally:
+        db.close()
+    _allowed_cache["set"] = frozenset(out)
+    _allowed_cache["uid"] = uid
+    _allowed_cache["all_uid"] = all_uid
+    _allowed_cache["at"] = now
 
 
 def _bridge_allowed_pubkeys() -> frozenset:
-    """The write-back WHITELIST: pubkeys of users the operator (or the user themselves) opted into the
-    bridge — i.e. a linked Pleroma account AND fedi_bridge_enabled or fedi_crosspost_enabled. NO local
-    NIP-05 requirement, so the admin can whitelist anyone (any domain / no nip05). Cached 30s so the
-    per-event relay-stream filter is a cheap set lookup."""
-    now = time.monotonic()
-    if now - _allowed_cache["at"] > 30:
-        from app.database import SessionLocal
-        from app.models import User
-        db = SessionLocal()
-        out = set()
-        try:
-            for u in db.query(User).filter(User.pleroma_enabled == True).all():   # noqa: E712
-                if not (getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False)):
-                    continue
-                npub = getattr(u, "nostr_npub", None)
-                h = nostr_service.to_pubkey_hex(npub) if npub else None
-                if h:
-                    out.add(h)
-        except Exception as e:
-            logger.debug("[fedi-writeback] allowed-pubkey refresh failed: %s", e)
-        finally:
-            db.close()
-        _allowed_cache["set"] = frozenset(out)
-        _allowed_cache["at"] = now
+    """The write-back WHITELIST: pubkeys of users opted into the bridge (linked Pleroma + bridge or
+    cross-post enabled). NO local NIP-05 requirement. Cached so the per-event filter is a set lookup."""
+    _refresh_allowed()
     return _allowed_cache["set"]
 
 
 def _user_for_pubkey(db, pk: str):
-    """The PosterChan user whose linked Nostr identity is `pk` AND who has a linked Pleroma account."""
+    """A WHITELISTED PosterChan user (bridge/crosspost enabled) whose linked Nostr identity is `pk`.
+    Used to gate write-back ACTIONS, so it intentionally uses the narrow whitelist map."""
     from app.models import User
-    for u in db.query(User).filter(User.pleroma_enabled == True).all():   # noqa: E712
-        npub = getattr(u, "nostr_npub", None)
-        if npub and nostr_service.to_pubkey_hex(npub) == pk:
-            if u.pleroma_instance_url and u.pleroma_access_token:
-                return u
-    return None
+    _refresh_allowed()
+    uid = _allowed_cache["uid"].get(pk)
+    if uid is None:
+        return None
+    u = db.get(User, uid)
+    return u if (u and u.pleroma_instance_url and u.pleroma_access_token) else None
+
+
+def _any_user_for_pubkey(db, pk: str):
+    """ANY PosterChan user with a linked Pleroma account whose Nostr identity is `pk` (regardless of
+    bridge/crosspost toggle) — for mention translation, where we want the fedi handle of anyone who
+    has one, not only whitelisted users."""
+    from app.models import User
+    _refresh_allowed()
+    uid = _allowed_cache["all_uid"].get(pk)
+    if uid is None:
+        return None
+    u = db.get(User, uid)
+    return u if (u and u.pleroma_instance_url and u.pleroma_access_token) else None
 
 
 def _referenced_event_ids(ev: dict) -> list:
@@ -132,6 +161,67 @@ def _target_row(db, ev: dict):
 def _strip_nostr_refs(text: str) -> str:
     import re
     return re.sub(r"\bnostr:[a-z0-9]+\b", "", text or "").strip()
+
+
+_handle_cache: dict = {}        # pubkey_hex -> "@user@host" (positive; handles are stable → cached forever)
+_handle_neg: dict = {}          # pubkey_hex -> monotonic time of last "no identity" miss (TTL-rechecked)
+_HANDLE_NEG_TTL = 300           # re-resolve a "no fedi identity" pubkey after this (user may link later)
+_HANDLE_RE = _re.compile(r"nostr:((?:npub1|nprofile1)[0-9a-z]{20,})", _re.I)
+
+
+async def _fedi_handle_for_pubkey(db, pk_hex: str) -> str | None:
+    """Map a Nostr pubkey to its fediverse `@user@host` handle when one exists: a bridge PUPPET
+    (cheap DB lookup) or ANY local user with a linked account (resolved once via verify_credentials).
+    Positives are cached forever (stable); negatives only for _HANDLE_NEG_TTL so a user who links a
+    fedi account later still gets their mentions translated without a restart."""
+    if pk_hex in _handle_cache:
+        return _handle_cache[pk_hex]
+    if pk_hex in _handle_neg and (time.monotonic() - _handle_neg[pk_hex]) < _HANDLE_NEG_TTL:
+        return None
+    pup = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pk_hex).first()
+    if pup and pup.acct:
+        _handle_cache[pk_hex] = "@" + pup.acct
+        _handle_neg.pop(pk_hex, None)
+        return _handle_cache[pk_hex]
+    user = _any_user_for_pubkey(db, pk_hex)
+    handle = None
+    if user:
+        try:
+            me = await pleroma_service.verify_credentials(user.pleroma_instance_url, user.pleroma_access_token)
+            acct = (me or {}).get("acct") or (me or {}).get("username")
+        except Exception:
+            acct = None
+        if acct:
+            host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
+            handle = "@" + (acct if "@" in acct else f"{acct}@{host}")
+    if handle:
+        _handle_cache[pk_hex] = handle
+        _handle_neg.pop(pk_hex, None)
+    else:
+        _handle_neg[pk_hex] = time.monotonic()
+    return handle
+
+
+async def _translate_mentions(db, text: str) -> str:
+    """Rewrite `nostr:npub…`/`nostr:nprofile…` references that point at a fediverse identity into the
+    matching `@user@host` so the cross-posted note actually mentions/notifies them on the fediverse.
+    Unresolvable refs are left for _strip_nostr_refs to remove."""
+    if not text:
+        return text
+    out = text
+    for m in set(_HANDLE_RE.findall(text)):
+        try:
+            from app.services.nostr import bech32
+            raw = bech32.decode_any(m)
+            pk = raw.hex() if raw else None
+        except Exception:
+            pk = None
+        if not pk:
+            continue
+        handle = await _fedi_handle_for_pubkey(db, pk)
+        if handle:
+            out = out.replace("nostr:" + m, handle)
+    return out
 
 
 import re as _re
@@ -242,7 +332,7 @@ async def _crosspost(db, user, ev: dict) -> None:
     eid = ev.get("id")
     if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
         return
-    text = _strip_nostr_refs(ev.get("content", ""))
+    text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
     text, media = await _extract_media(text)
     if not text and not media:
         return
@@ -277,14 +367,11 @@ async def _handle(db, ev: dict) -> None:
         return                       # not a local user with a linked Pleroma account → ignore
     row = _target_row(db, ev)
     if not row:
-        # Cross-post only a PURE top-level broadcast — kind-1 with NO e-tags (not a reply) AND NO
-        # p-tags (not a message/mention directed at a specific Nostr user). A note aimed at a Nostr
-        # user (reply or mention) must stay on Nostr, never get broadcast to the fediverse.
-        tags = ev.get("tags", [])
-        has_e = bool(_referenced_event_ids(ev))
-        has_p = any(t and len(t) >= 1 and t[0] == "p" for t in tags)
-        if (int(ev.get("kind", 1)) == 1 and not has_e and not has_p
-                and getattr(user, "fedi_crosspost_enabled", False)):
+        # No bridged parent to thread under. Per operator policy, cross-post ALL of the user's own
+        # kind-1 notes — including replies/mentions aimed at native Nostr users — as standalone public
+        # fediverse posts. (A reply whose parent IS bridged/cross-posted is threaded by the row branch
+        # below instead.) Idempotent + round-trip-dedup'd (FediBridgeDelivered) so it can't loop.
+        if int(ev.get("kind", 1)) == 1 and getattr(user, "fedi_crosspost_enabled", False):
             await _crosspost(db, user, ev)
         return
 
@@ -303,7 +390,7 @@ async def _handle(db, ev: dict) -> None:
             # Durable idempotency across restart/replay: skip if this reply already federated.
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
                 return
-            text = _strip_nostr_refs(ev.get("content", ""))
+            text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
             text, media = await _extract_media(text)
             if not text and not media:
                 return
@@ -331,40 +418,61 @@ async def _handle(db, ev: dict) -> None:
 
 
 async def _listen_once() -> None:
-    """One connection lifetime: subscribe to live write-back-kind events and dispatch each."""
+    """One connection lifetime: subscribe to live write-back-kind events and dispatch each.
+
+    Two SEPARATE subscriptions on the one socket so the periodic author refresh is cheap:
+      - sub_dm (1059 gift-wraps): established ONCE with the wide backdated lookback. Gift-wraps carry
+        an ephemeral author (can't be author-filtered), so this is a firehose — but we keep it alive
+        and NEVER re-REQ it, so we don't replay days of DMs every few minutes (the old CPU spike).
+      - sub_pub (1/6/7): author-scoped to whitelisted users. Re-REQ'd every _RESUBSCRIBE_SEC (CLOSE +
+        REQ, NOT a socket teardown) so a newly-whitelisted user is picked up — replaying only a small
+        recent window, not the full lookback. Idempotency below prevents any double-post."""
     import websockets
     from app.database import SessionLocal
     uri = f"ws://127.0.0.1:{_port()}/relay"
-    sub = "fediwb" + os.urandom(4).hex()
-    since = int(time.time()) - _LOOKBACK_SEC
-    # Scope the subscription SERVER-SIDE: public interactions (1/6/7) only from LOCAL NIP-05 users
-    # (so the relay never streams us the whole puppet firehose), plus gift-wraps (1059) addressed to a
-    # puppet — those carry an ephemeral author, so they can't be author-filtered and are handled by
-    # checking the p-tag. The lookback replays missed events; idempotency (below) prevents double-posts.
-    locals_ = list(_bridge_allowed_pubkeys())
-    filters = []
-    if locals_:
-        filters.append({"kinds": [1, 6, 7], "authors": locals_, "since": since})
-    # DMs (1059) get the wider window for NIP-59's backdated created_at (see _DM_LOOKBACK_SEC).
-    filters.append({"kinds": [1059], "since": int(time.time()) - _DM_LOOKBACK_SEC})
+    sub_pub = "fediwb" + os.urandom(4).hex()
+    sub_dm = "fediwd" + os.urandom(4).hex()
+
+    async def _send_pub_req(ws, first: bool):
+        authors = list(_bridge_allowed_pubkeys())
+        if not authors:
+            return 0
+        since = int(time.time()) - (_LOOKBACK_SEC if first else (_RESUBSCRIBE_SEC + 60))
+        await ws.send(json.dumps(["REQ", sub_pub, {"kinds": [1, 6, 7], "authors": authors, "since": since}]))
+        return len(authors)
+
     async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30) as ws:
-        await ws.send(json.dumps(["REQ", sub, *filters]))
+        # DM firehose: one-time REQ with the wide window for NIP-59's backdated created_at.
+        await ws.send(json.dumps(["REQ", sub_dm, {"kinds": [1059],
+                                                  "since": int(time.time()) - _DM_LOOKBACK_SEC}]))
+        n = await _send_pub_req(ws, first=True)
         logger.info("[fedi-writeback] subscribed (authors=%d, lookback=%dh) for write-back events",
-                    len(locals_), _LOOKBACK_SEC // 3600)
-        # Re-subscribe periodically so a NEWLY NIP-05'd user (e.g. just enabled Bridge Access) is
-        # picked up into the author-scoped filter without needing a restart. Closing the socket after
-        # the interval makes _run reconnect with a fresh author list.
+                    n, _LOOKBACK_SEC // 3600)
+
         async def _cycle():
-            await asyncio.sleep(_RESUBSCRIBE_SEC)
-            try:
-                await ws.close()
-            except Exception:
-                pass
+            # Refresh ONLY the author-scoped public sub; leave the DM sub untouched (no replay). Also
+            # re-check the kill-switch here — the socket now stays alive across refreshes, so this is
+            # the only place that can notice fedi_bridge_enabled flipping off and tear down (which
+            # makes recv() raise → _listen_once returns → _run idles instead of federating).
+            while True:
+                await asyncio.sleep(_RESUBSCRIBE_SEC)
+                if str(settings_store.get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    return
+                try:
+                    await ws.send(json.dumps(["CLOSE", sub_pub]))
+                    await _send_pub_req(ws, first=False)
+                except Exception:
+                    break
+
         cycle = asyncio.ensure_future(_cycle())
         try:
             while True:
                 msg = json.loads(await ws.recv())
-                if msg[0] != "EVENT" or msg[1] != sub or not isinstance(msg[2], dict):
+                if msg[0] != "EVENT" or msg[1] not in (sub_pub, sub_dm) or not isinstance(msg[2], dict):
                     continue
                 db = SessionLocal()
                 try:
