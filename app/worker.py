@@ -41,6 +41,33 @@ _SCHEDULERS = [
 _worker_process: Optional[subprocess.Popen] = None
 
 
+async def _wait_for_relay(timeout: float = 60.0) -> None:
+    """Block until the local Nostr relay is accepting TCP connections, before starting the
+    relay-dependent schedulers. Otherwise the bridge/stats pollers race the relay subprocess boot and
+    every publish/query fails 'connection refused' for ~a minute (log-noise + wasted dials on every
+    restart). Bounded — on timeout we start anyway and let the components' own retries take over."""
+    import time as _t
+    from app.services import settings_store
+    try:
+        port = int(settings_store.get("nostr_relay_port", 3052) or 3052)
+    except (ValueError, TypeError):
+        port = 3052
+    deadline = _t.monotonic() + timeout
+    while _t.monotonic() < deadline:
+        try:
+            _, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), timeout=2)
+            w.close()
+            try:
+                await w.wait_closed()
+            except Exception:
+                pass
+            logger.info("[worker] local relay listening on :%d — starting schedulers", port)
+            return
+        except Exception:
+            await asyncio.sleep(1.0)
+    logger.warning("[worker] local relay not up after %ds — starting schedulers anyway", int(timeout))
+
+
 async def _run():
     # This is a SEPARATE process with its OWN settings_store cache (the relay is the authoritative
     # store). Hydrate it BEFORE starting the schedulers — otherwise setting-gated schedulers read their
@@ -62,6 +89,9 @@ async def _run():
             db.close()
     except Exception as e:
         logger.error(f"[worker] settings hydrate failed — schedulers may use defaults: {e}", exc_info=True)
+    # Wait for the local relay to be up before starting the relay-dependent schedulers (avoids the
+    # ~60s of 'connection refused' noise while the relay subprocess is still booting).
+    await _wait_for_relay()
     started = 0
     for name, module, fn in _SCHEDULERS:
         try:
