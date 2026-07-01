@@ -421,6 +421,36 @@ def _collect_operator_pubkeys(db) -> list:
     return list(out)
 
 
+async def _refresh_preserve(store) -> None:
+    """UNION the current operators (registered users/bots/keys) + persisted PINNED authors (explicitly
+    backfilled histories, in relay kv) into the store's preserve set, right before a prune/purge.
+
+    Grow-only (extend, never replace) so a partial/failed operator re-collection can't SHRINK the set
+    and expose a user to deletion. Runs the DB collection in an executor so it doesn't block the relay
+    event loop. Deliberately does NOT touch the publish gate — preserving someone's notes must not
+    grant them publish/WoT/DM privileges (pin != operator)."""
+    def _collect():
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            return set(_collect_operator_pubkeys(db))
+        finally:
+            db.close()
+    try:
+        pks = await asyncio.get_event_loop().run_in_executor(None, _collect)
+    except Exception as e:
+        logger.debug("[nostr-relay] preserve operator re-collect failed: %s", e)
+        pks = set()
+    try:
+        pinned = await store.kv_get("pinned_pubkeys")
+        if pinned:
+            pks |= {p for p in pinned.split() if len(p) == 64}
+    except Exception:
+        pass
+    if pks:
+        store.extend_preserve_pubkeys(pks)
+
+
 # --- async main -------------------------------------------------------------
 
 async def _main(cfg: dict) -> None:
@@ -439,6 +469,12 @@ async def _main(cfg: dict) -> None:
     gate.set_blocked(cfg["blocked_pubkeys"])
     gate.set_bridge_secret(cfg.get("bridge_secret"))   # validate fediverse puppet events
     store.set_preserve_pubkeys(cfg["operator"])   # local users' notes are never pruned
+    try:                                            # + persisted PINNED authors (backfilled histories)
+        _pinned = await store.kv_get("pinned_pubkeys")
+        if _pinned:
+            store.extend_preserve_pubkeys([p for p in _pinned.split() if len(p) == 64])
+    except Exception:
+        pass
     await gate.load_from_store(store)              # warm from snapshot for immediate gating
     # Moderation is ON THE FLY at ingest (server._on_event + the sync sweep): every post is checked
     # BEFORE it is written — WoT membership first, then blocked npubs + words + languages + bridges —
@@ -580,16 +616,12 @@ async def _main(cfg: dict) -> None:
         """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
         number of events removed. Re-reads config so it always reflects the current Relay settings."""
         fresh = _read_config()
-        # Refresh the PRESERVE set before the deletes: delete_by_words/langs/proxy spare preserved
-        # (registered) users via store.preserve_pubkeys, but that set was only built at startup/reload —
-        # so a user who linked their npub since (h@…) wasn't spared and their blocked-language notes got
-        # purged, reappearing only until the next purge (the "synced notes keep disappearing" bug, even
-        # with retention=0 since the block-purge runs independently of retention).
-        try:
-            store.set_preserve_pubkeys(fresh["operator"])
-            gate.set_operator(fresh["operator"])
-        except Exception as e:
-            logger.debug("[nostr-relay] preserve refresh before block-purge failed: %s", e)
+        # Refresh the PRESERVE set (grow-only, no gate) before the deletes: delete_by_words/langs/proxy
+        # spare preserved users via store.preserve_pubkeys, but that set was only built at startup/reload
+        # — so a user who linked their npub since (h@…) wasn't spared and their blocked-language notes
+        # got purged, reappearing only until the next purge. Union-only so a partial re-collect can't
+        # SHRINK preserve and delete a registered user's local-first notes.
+        await _refresh_preserve(store)
         by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0) if fresh["blocked_pubkeys"] else 0
         by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
         by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
@@ -678,18 +710,10 @@ async def _main(cfg: dict) -> None:
         _spawn_firehose(stagger_span=2.0)
 
     async def _prune_fresh():
-        # Refresh the preserve set from the DB right before pruning, so a user who linked their npub
-        # (or was synced) since the last startup/reload is protected — otherwise the prune runs with a
-        # STALE preserve set and deletes a registered user's synced notes, which reappear only until
-        # the next prune (the recurring "synced notes keep disappearing" bug). Union with the in-memory
-        # operator set so backfill-added authors aren't dropped.
-        try:
-            ops = set(_read_config().get("operator") or []) | set(cfg.get("operator") or [])
-            cfg["operator"] = list(ops)
-            gate.set_operator(cfg["operator"])
-            store.set_preserve_pubkeys(cfg["operator"])
-        except Exception as e:
-            logger.debug("[nostr-relay] preserve refresh before prune failed: %s", e)
+        # Refresh (grow-only) the preserve set right before pruning, so a user who linked their npub or
+        # was backfilled since startup/reload is protected — otherwise the prune runs with a STALE
+        # preserve set and deletes their synced notes (the recurring "synced notes disappear" bug).
+        await _refresh_preserve(store)
         return await store.prune()
 
     # prune is the only LOCAL maintenance task — always runs. Everything else below is cross-node /
@@ -809,8 +833,8 @@ async def _main(cfg: dict) -> None:
                             cfg["block_bridged"] = fresh.get("block_bridged", False)   # proxy-tag filter, live
                             cfg["operator"] = fresh["operator"]
                             gate.set_blocked(cfg["blocked_pubkeys"])
-                            gate.set_operator(cfg["operator"])
-                            store.set_preserve_pubkeys(cfg["operator"])
+                            gate.set_operator(cfg["operator"])              # gate CAN shrink (revoke removed operators)
+                            store.extend_preserve_pubkeys(cfg["operator"])  # preserve is grow-only (keeps pinned)
                             # Re-mark bridged accounts in the live gate (load_from_store doesn't keep them).
                             if cfg["blocked_relays"]:
                                 asyncio.create_task(_safe(_mark_blocked_relays(store, gate, cfg["blocked_relays"])))
@@ -882,21 +906,19 @@ async def _main(cfg: dict) -> None:
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
                         pk = cmd["pubkey"]
                         logger.info("[nostr-relay] control: backfill %s", pk[:12])
-                        # PRESERVE the synced author before backfilling: the operator explicitly wants
-                        # this user's history kept, but synced notes are origin='wot' and the age-prune
-                        # deletes those unless the pubkey is in the live preserve set — which is only
-                        # refreshed at startup/reload, so a just-registered/just-synced user's notes got
-                        # pruned right back out (the "synced many times, keeps disappearing" bug).
-                        # Re-collect operators (picks up newly-registered users) + union this pubkey, and
-                        # push into the gate + preserve set so the next prune can't touch what we sync.
+                        # PIN the synced author so their history is preserved from prune/purge — but do
+                        # NOT add them to the operator/gate set (that would grant an arbitrary pubkey
+                        # publish/WoT/DM privileges). Persist the pin to relay kv so it survives restart;
+                        # extend (never replace) the live preserve set so the next prune can't delete
+                        # what we're about to sync.
                         try:
-                            ops = set(_read_config().get("operator") or [])
-                        except Exception:
-                            ops = set(cfg.get("operator") or [])
-                        ops.add(pk)
-                        cfg["operator"] = list(ops)
-                        gate.set_operator(cfg["operator"])
-                        store.set_preserve_pubkeys(cfg["operator"])
+                            pinned = set((await store.kv_get("pinned_pubkeys") or "").split())
+                            if pk not in pinned:
+                                pinned.add(pk)
+                                await store.kv_set("pinned_pubkeys", " ".join(sorted(pinned)))
+                        except Exception as e:
+                            logger.debug("[nostr-relay] pin persist failed: %s", e)
+                        store.extend_preserve_pubkeys({pk})
                         from . import ingest as _ingest
                         asyncio.create_task(_safe(_ingest.backfill_author(
                             store, server, cfg["upstream"], pk,

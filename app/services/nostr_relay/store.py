@@ -767,6 +767,14 @@ class RelayStore:
         """Authors whose notes are NEVER pruned (local users / operators)."""
         self.preserve_pubkeys = frozenset(p for p in (pubkeys or []) if p)
 
+    def extend_preserve_pubkeys(self, pubkeys) -> None:
+        """UNION more authors into the preserve set — never removes any. Used by the prune/purge
+        refresh so a partial/failed operator re-collection can't SHRINK the set and expose a user to
+        deletion (preserve is deliberately grow-only; the publish gate is what tracks removals)."""
+        add = frozenset(p for p in (pubkeys or []) if p)
+        if add - self.preserve_pubkeys:
+            self.preserve_pubkeys = self.preserve_pubkeys | add
+
     def _preserve_clause(self) -> str:
         """Extra SQL: exclude direct-write events (data entrusted to this relay) and local
         users' events from a prune DELETE. Pubkeys are our own 64-hex config values (safe to
