@@ -1512,7 +1512,7 @@
       db.innerHTML = dd.length ? '<div class="search-section-title">📝 Drafts</div>'+dd.map(d=>{
         const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
         const slug=(d.tags.find(x=>x[0]==='d')||[])[1]||'';
-        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc(slug)}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:#ff6b8b">✕</button></div>`;
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc(slug)}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)">✕</button></div>`;
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderArticleEditor(e); };
@@ -1552,7 +1552,7 @@
         <button class="act actb ${BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark">🔖</button>
         <button class="act actz" id="av-zap" title="zap">⚡</button>
         ${mine?`<button class="act" id="av-edit" title="edit">✏</button>`:''}
-        ${mine?`<button class="act" id="av-del" title="delete" style="color:#ff6b8b">🗑</button>`:''}
+        ${mine?`<button class="act" id="av-del" title="delete" style="color:var(--danger)">🗑</button>`:''}
         <button class="act" id="av-copy" title="copy link">🔗</button>
       </div>
       <div class="markdown av-body">${mdToHtml(e.content)}</div>
@@ -1695,7 +1695,7 @@
       const dd=_dedupAddr(drafts).sort((a,b)=>(b.created_at||0)-(a.created_at||0));
       db.innerHTML = dd.length ? '<div class="search-section-title">📝 Draft listings</div>'+dd.map(d=>{
         const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
-        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:#ff6b8b">✕</button></div>`;
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)">✕</button></div>`;
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderListingEditor(e); };
@@ -1763,7 +1763,7 @@
         ${!mine?`<button class="btn btn-ghost" id="li-zap">⚡ Pay / Zap</button>`:''}
         ${mine?`<button class="btn btn-ghost" id="li-sold">${sold?'↩ Mark available':'✅ Mark sold'}</button>`:''}
         ${mine?`<button class="btn btn-ghost" id="li-edit">✏ Edit</button>`:''}
-        ${mine?`<button class="btn btn-ghost" id="li-del" style="color:#ff6b8b">🗑 Delete</button>`:''}
+        ${mine?`<button class="btn btn-ghost" id="li-del" style="color:var(--danger)">🗑 Delete</button>`:''}
         <button class="btn btn-ghost" id="li-copy">🔗 Share</button>
       </div>
       <div class="markdown li-body">${mdToHtml(e.content)}</div>
@@ -3536,7 +3536,7 @@
         <div class="draft-foot"><span class="muted small">${ctx} saved ${timeAgo(d.ts)}</span>
           <span class="spacer"></span>
           <button class="btn btn-ghost small" data-act="edit">✏ Edit</button>
-          <button class="btn btn-ghost small" data-act="del" style="color:#ff6b8b">🗑 Delete</button>
+          <button class="btn btn-ghost small" data-act="del" style="color:var(--danger)">🗑 Delete</button>
           <button class="btn btn-neon small" data-act="send">Send ▶</button></div></div>`;
     }).join('') : '<div class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
     feed.querySelectorAll('.draft-card').forEach(card=>{
@@ -6354,7 +6354,7 @@
             ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
-            <button class="btn btn-ghost small" id="set-del-account" style="color:#ff6b8b">🗑️ Delete my account</button>
+            <button class="btn btn-ghost small" id="set-del-account" style="color:var(--danger)">🗑️ Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
         </div>
@@ -6476,7 +6476,7 @@
           <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'⚠ Not linked — generate a key below and send it to your bot.'}</div>
           <div class="set-actions">
             <button class="btn btn-ghost small" id="us-tg-key">Generate link key</button>
-            ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:#ff6b8b">Unlink Telegram</button>':''}
+            ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:var(--danger)">Unlink Telegram</button>':''}
           </div>
           <div id="us-tg-keybox" class="muted small"></div>
           <label class="fld">Notify me about <span class="muted small">(comma list: news,downloads,mentions,inbox)</span><input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}"></label>
@@ -6487,7 +6487,7 @@
           <div class="us-conn"><div class="set-title small">Matrix</div>
             <label class="fld">Homeserver<input class="input" id="us-mx-hs" value="${enc(s.matrix_homeserver||'')}" placeholder="https://matrix.org"></label>
             ${s.matrix_has_access_token
-              ? `<div class="muted small">✓ Connected as ${enc(s.matrix_user_id||'')}</div><button class="btn btn-ghost small" id="us-mx-disc" style="color:#ff6b8b">Disconnect</button>`
+              ? `<div class="muted small">✓ Connected as ${enc(s.matrix_user_id||'')}</div><button class="btn btn-ghost small" id="us-mx-disc" style="color:var(--danger)">Disconnect</button>`
               : `<label class="fld">Username<input class="input" id="us-mx-user" placeholder="@you:matrix.org"></label>
                  <label class="fld">Password<input class="input" id="us-mx-pass" type="password"></label>
                  <button class="btn btn-ghost small" id="us-mx-conn">Connect</button>`}
@@ -6498,7 +6498,7 @@
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
             ${s.pleroma_has_access_token
-              ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:#ff6b8b">Disconnect</button>`
+              ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:var(--danger)">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
@@ -6509,7 +6509,7 @@
           <div class="us-conn"><div class="set-title small">Misskey</div>
             <label class="fld">Instance URL<input class="input" id="us-mk-url" value="${enc(s.misskey_instance_url||'')}" placeholder="https://misskey.example"></label>
             ${s.misskey_has_api_token
-              ? `<div class="muted small">✓ Connected to ${enc(s.misskey_instance_url||'')}</div><button class="btn btn-ghost small" id="us-mk-disc" style="color:#ff6b8b">Disconnect</button>`
+              ? `<div class="muted small">✓ Connected to ${enc(s.misskey_instance_url||'')}</div><button class="btn btn-ghost small" id="us-mk-disc" style="color:var(--danger)">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-mk-conn">Connect with MiAuth</button>`}
             <div class="us-stat muted small" id="us-mk-stat"></div>
           </div>
@@ -6518,7 +6518,7 @@
           <div class="muted small">Budget Manager API key — drives <code>budget</code>, <code>bills</code>, <code>pay</code>, <code>addbill</code>.</div>
           <div class="${s.finance_has_api_key?'us-ok':'muted'}">${s.finance_has_api_key?'✓ Connected — an API key is set.':'⚠ Not connected — paste your Budget Manager API key below.'}</div>
           <label class="fld">API key${s.finance_has_api_key?' <span class="muted small">(leave blank to keep the current one)</span>':''}<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'•••••••• (set)':'X-API-Key'}"></label>
-          ${s.finance_has_api_key?'<button class="btn btn-ghost small" id="us-fin-clear" style="color:#ff6b8b">Remove key</button>':''}
+          ${s.finance_has_api_key?'<button class="btn btn-ghost small" id="us-fin-clear" style="color:var(--danger)">Remove key</button>':''}
         </div>
         <div class="us-pane" data-pane="keys">
           <div class="muted small">API keys let external apps use the AI API as you.</div>
@@ -6737,7 +6737,7 @@
     const wrap=$('#us-key-list'); if(!wrap) return;
     let keys=[]; try{ keys=await fetch('/api/auth/api-keys').then(r=>r.json()); }catch(_){}
     wrap.innerHTML=(keys||[]).map(k=>`<div class="us-key"><div><b>${enc(k.name||'Default')}</b> <span class="muted small">${k.is_active?'active':'disabled'}</span></div>
-      <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:#ff6b8b">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
+      <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:var(--danger)">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
     $$('[data-tog]',wrap).forEach(b=> b.onclick=async()=>{ await fetch('/api/auth/api-keys/'+b.dataset.tog+'/toggle',{method:'PUT'}); usLoadKeys(); });
     $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!confirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });
   }

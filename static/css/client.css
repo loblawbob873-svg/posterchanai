@@ -6,6 +6,7 @@
 :root{
   --bg:#0a0a0f; --bg2:#12121a; --panel:rgba(18,18,28,.72); --panel2:rgba(26,26,42,.85);
   --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b;
+  --danger:#ff6b8b;   /* delete/danger action color; overridden per-theme so it stays readable */
   --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
   --glow:0 0 12px rgba(0,255,255,.5); --glow-cy:0 0 12px rgba(0,255,255,.45);
   --r:14px;
@@ -20,7 +21,7 @@
 /* Cherry Blossom — soft sakura light theme */
 :root[data-theme="cherryblossom"]{
   --bg:#fff5f8; --bg2:#ffe9f0; --panel:rgba(255,255,255,.74); --panel2:rgba(255,231,240,.9);
-  --neon:#ff6fa5; --neon2:#c77dff; --cyan:#ff8fb0; --green:#3fae7e; --amber:#e08a2e;
+  --neon:#ff6fa5; --neon2:#c77dff; --cyan:#ff8fb0; --green:#3fae7e; --amber:#e08a2e; --danger:#d61f4e;
   --text:#4a2b38; --muted:#7a5260; --line:rgba(255,111,165,.30);
   --glow:0 0 10px rgba(255,111,165,.35); --glow-cy:0 0 10px rgba(255,143,176,.3);
   --r:16px; --amb1:rgba(255,143,176,.16); --amb2:rgba(199,125,255,.10);
@@ -29,7 +30,7 @@
 /* Professional Modern — clean neutral business light theme (no neon glow) */
 :root[data-theme="professional"]{
   --bg:#f5f7fa; --bg2:#eaeef3; --panel:rgba(255,255,255,.92); --panel2:#ffffff;
-  --neon:#2563eb; --neon2:#4f46e5; --cyan:#0891b2; --green:#16a34a; --amber:#d97706;
+  --neon:#2563eb; --neon2:#4f46e5; --cyan:#0891b2; --green:#16a34a; --amber:#d97706; --danger:#dc2645;
   --text:#1f2937; --muted:#6b7280; --line:rgba(15,23,42,.12);
   --glow:0 1px 3px rgba(15,23,42,.12); --glow-cy:0 1px 3px rgba(15,23,42,.12);
   /* soft blue/indigo corner washes so the login + app don't read as flat white */
@@ -40,7 +41,7 @@
    (not the teal desktop) so the feed's black text stays readable — the feed sits directly on --bg. */
 :root[data-theme="win98"]{
   --bg:#c0c0c0; --bg2:#b8b8b0; --panel:#c0c0c0; --panel2:#d4d0c8;
-  --neon:#000080; --neon2:#1084d0; --cyan:#000080; --green:#008000; --amber:#808000;
+  --neon:#000080; --neon2:#1084d0; --cyan:#000080; --green:#008000; --amber:#808000; --danger:#c00000;
   --text:#000000; --muted:#404040; --line:#808080;
   --glow:none; --glow-cy:none; --r:0; --amb1:transparent; --amb2:transparent;
 }
@@ -49,7 +50,7 @@
    light enough for the dark navy text; the saturated XP blue lives in the accents + ambient glow). */
 :root[data-theme="winxp"]{
   --bg:#eaf1fb; --bg2:#d6e4f7; --panel:rgba(255,255,255,.93); --panel2:#ece9d8;
-  --neon:#0a5bc4; --neon2:#2f8f2f; --cyan:#1c7fd6; --green:#2f8f2f; --amber:#f0a000;
+  --neon:#0a5bc4; --neon2:#2f8f2f; --cyan:#1c7fd6; --green:#2f8f2f; --amber:#f0a000; --danger:#c81e3a;
   --text:#0a1a3a; --muted:#5a6a8a; --line:rgba(10,91,196,.30);
   --glow:0 0 8px rgba(10,91,196,.22); --glow-cy:0 0 8px rgba(10,91,196,.22);
   --r:8px; --amb1:rgba(255,255,255,.10); --amb2:rgba(10,91,196,.06);
@@ -57,7 +58,7 @@
 /* Anime Girl — kawaii pastel: lavender + bubblegum pink + mint, extra-round corners, soft glow */
 :root[data-theme="animegirl"]{
   --bg:#fbf0ff; --bg2:#f3e3ff; --panel:rgba(255,255,255,.78); --panel2:rgba(247,227,255,.9);
-  --neon:#ff7ec8; --neon2:#9d7bff; --cyan:#3fb6c8; --green:#3fbf9c; --amber:#f0a43a;
+  --neon:#ff7ec8; --neon2:#9d7bff; --cyan:#3fb6c8; --green:#3fbf9c; --amber:#f0a43a; --danger:#d61f4e;
   --text:#5a3a6e; --muted:#a888bd; --line:rgba(157,123,255,.30);
   --glow:0 0 10px rgba(255,126,200,.40); --glow-cy:0 0 10px rgba(157,123,255,.30);
   --r:18px; --amb1:rgba(255,126,200,.16); --amb2:rgba(157,123,255,.12);
@@ -888,7 +889,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:140px;gap:6px;font-size:42px;background:#120c24}
 .file-icon span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
-.file-card .del{position:absolute;top:6px;right:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:#ff6b8b;cursor:pointer;padding:2px 7px}
+.file-card .del{position:absolute;top:6px;right:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--danger);cursor:pointer;padding:2px 7px}
 .file-card .copy{position:absolute;top:6px;right:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 7px;font-size:13px}
 .file-card .copy:hover{border-color:var(--cyan,#5ff)}
 .file-card.enc{border-color:rgba(255,210,90,.45)}
@@ -923,7 +924,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 #upload-badge .upbadge-x{cursor:pointer;color:#ff6b8b;font-weight:700;margin-left:2px}
 @media(max-width:820px){#upload-badge.upbadge{left:8px;bottom:76px}}
 .file-card[draggable]{cursor:grab}.file-card .movebtn{position:absolute;top:6px;right:70px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 7px}.file-card .movebtn:hover{color:var(--cyan);border-color:var(--cyan)}
-.folder-chip.delfolder{color:#ff6b8b;border-color:rgba(255,107,139,.5)}.folder-chip.delfolder:hover{background:rgba(255,107,139,.14);border-color:#ff6b8b}
+.folder-chip.delfolder{color:var(--danger);border-color:rgba(255,107,139,.5)}.folder-chip.delfolder:hover{background:rgba(255,107,139,.14);border-color:var(--danger)}
 /* Music folder: encrypted track list (cyberpunk) */
 .music-list{display:flex;flex-direction:column;gap:8px;padding:16px}
 .track{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:13px;background:linear-gradient(180deg,#160a28,#100420);border:1px solid rgba(0,240,255,.3);transition:.12s}
@@ -932,7 +933,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .track-play:hover{background:var(--cyan);color:#04121a;box-shadow:0 0 14px rgba(0,240,255,.5)}
 .track-name{flex:1;min-width:0;color:#eaf0ff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .track-meta{flex:none;color:var(--muted);font-size:12px}
-.track-del{flex:none;background:none;border:none;color:#ff6b8b;cursor:pointer;font-size:14px;padding:2px 6px;opacity:.7}.track-del:hover{opacity:1}
+.track-del{flex:none;background:none;border:none;color:var(--danger);cursor:pointer;font-size:14px;padding:2px 6px;opacity:.7}.track-del:hover{opacity:1}
 /* ── Floating cyberpunk music player (hovers over every view; minimizable; draggable) ── */
 #music-player.hidden{display:none}
 #music-player.mp{position:fixed;right:18px;bottom:88px;width:338px;z-index:120;background:linear-gradient(160deg,#1a0c36,#0a0418);border:1.5px solid var(--cyan,#0ff);border-radius:18px;box-shadow:0 0 32px rgba(0,240,255,.35),inset 0 0 38px rgba(255,0,255,.07);overflow:hidden;font-size:13px;-webkit-user-select:none;user-select:none}
@@ -1292,8 +1293,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .menu-pop button{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--text);
   cursor:pointer;font-size:15.5px;padding:11px 13px;border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
 .menu-pop button:hover{background:rgba(0,255,255,.16);color:var(--cyan)}
-.menu-pop button.danger{color:#ff6b8b}
-.menu-pop button.danger:hover{background:rgba(255,77,109,.16);color:#ff6b8b}
+.menu-pop button.danger{color:var(--danger)}
+.menu-pop button.danger:hover{background:rgba(255,77,109,.16);color:var(--danger)}
 
 /* Popover menus become a full-width bottom action-sheet on phones (always attached + readable,
    never floating off to the side of a tiny right-edge button) with a dim backdrop; the anchored
