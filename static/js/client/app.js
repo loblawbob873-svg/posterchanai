@@ -1080,6 +1080,13 @@
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
       const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
     }});
+    // DM list rows + open-thread header: fill name (name → display_name → nip05) + avatar once the
+    // peer's kind-0 arrives, so they don't stay stuck on the raw npub.
+    $$('.dm-peer[data-peer]').forEach(n=>{ const p=Store.profile(n.dataset.peer); if(p){
+      const a=n.querySelector('.dmav'); if(p.picture && a) a.src=p.picture;
+      const b=n.querySelector('b'); if(b){ const nm=p.name||p.display_name||niceNip05(p.nip05); if(nm) b.textContent=nm; }
+    }});
+    $$('.dm-peer-name[data-prof]').forEach(nm=>{ const p=Store.profile(nm.dataset.prof); if(p){ const t=p.name||p.display_name||niceNip05(p.nip05); if(t) nm.textContent=t; }});
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
     $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
       const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
@@ -5128,9 +5135,10 @@
     const hidePrev = ClientSettings.get('hideDmPreview', false);
     const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">+</span><b>New message</b></div>` + peers.map(pk=>{
-      const p=profOf(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
+      const p=profOf(pk); needProfile(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
       const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …');
-      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
+      const nm = p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
+      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(nm)}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
     $('#dm-new').onclick=newDmModal;
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
@@ -5208,7 +5216,7 @@
           if(added) _scheduleDmRefresh(); })   // re-render only if new msgs arrived (no loop: _dmFull set)
         .catch(()=>{});
     }
-    const p=profOf(pk); const all=dmPeers.get(pk)||[];
+    const p=profOf(pk); needProfile(pk); const all=dmPeers.get(pk)||[];
     // PAGINATION: render only the last N messages (3 on open) so a long thread opens instantly on mobile;
     // "Load older" reveals 20 more each tap. Decrypt ONLY the visible slice — decryption (ECDH+AES per
     // message) is the slow/glitchy part, so decrypting a whole history on open is what lagged.
@@ -5221,7 +5229,7 @@
     // yank them back down when a background message lands (part of "the window keeps moving").
     const _prev=$('#dm-msgs'); const _atBottom = !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
     const older = start>0 ? `<button class="dm-older" id="dm-older">⬆ Load older (${start})</button>` : '';
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||NT().nip19.npubEncode(pk).slice(0,14))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
       <div class="dm-compose">
         <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
