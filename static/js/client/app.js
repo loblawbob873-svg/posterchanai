@@ -1153,8 +1153,11 @@
     // are self-contained cards (articleCard) that open in the reader. NIP-22 comments (1111) and
     // channel chat (40/42) are intentionally excluded — they're reply fragments / high-volume and
     // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
-    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:80 }];
-    return [{ kinds:[1,6,1068,5,30023], limit:120 }];
+    // + articles (30023), and NEW communities (34550) / channels (40) so people discover them in the
+    // feed instead of having to visit the Communities/Chat tabs (both are low-volume creation events,
+    // so they surface without flooding). Channel chat MESSAGES (42) stay out — those would flood.
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023,34550,40], authors:[...FOLLOWS], limit:80 }];
+    return [{ kinds:[1,6,1068,5,30023,34550,40], limit:120 }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
@@ -1217,7 +1220,7 @@
       onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
         // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
         // created_at (those would otherwise jump to the top as if new). A small grace covers skew.
-        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068||ev.kind===30023) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
+        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068||ev.kind===30023||ev.kind===34550||ev.kind===40) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
       // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect/re-sync; redrawing then would
       // wipe + rebuild the feed under the user (the "disappears with the timeline update" bug).
       onEose: ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } }
@@ -1385,8 +1388,8 @@
     if(_tl.loading || _tl.done || !_tl.oldest) return;
     _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
     const until=_tl.oldest;
-    const filt = view==='home' ? [{ kinds:[1,6,1068,30023], authors:[...FOLLOWS], until:until-1, limit:50 }]
-                               : [{ kinds:[1,6,1068,30023], until:until-1, limit:60 }];
+    const filt = view==='home' ? [{ kinds:[1,6,1068,30023,34550,40], authors:[...FOLLOWS], until:until-1, limit:50 }]
+                               : [{ kinds:[1,6,1068,30023,34550,40], until:until-1, limit:60 }];
     let evs=[]; try{ evs=await Relay.query(filt); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
@@ -2514,6 +2517,8 @@
     }
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
+    if (ev.kind===34550) return communityCard(ev);  // NIP-72 community → discovery card in the feed
+    if (ev.kind===40) return channelCard(ev);        // NIP-28 channel → discovery card in the feed
     return noteCard(ev);
   }
   // ---------- NIP-88 polls: kind-1068 poll, kind-1018 responses ----------
@@ -2821,6 +2826,8 @@
       // profile when the name is tapped). Mirrors the Articles-list handler; the .note path below
       // doesn't match them.
       const artc=e.target.closest('.article-card'); if(artc){ if(e.target.closest('[data-prof]')){ renderProfileView(artc.dataset.pk); return; } const a=Store.get(artc.dataset.id); if(a) openArticle(a); return; }
+      // Community / channel discovery cards surfaced in the feed → open the community / channel.
+      const cc=e.target.closest('.community-card,.channel-card'); if(cc){ if(e.target.closest('[data-prof]')){ renderProfileView(cc.dataset.pk); return; } const x=Store.get(cc.dataset.id); if(x){ cc.classList.contains('community-card')?openCommunity(x):openChannel(x); } return; }
       const btn=e.target.closest('.act');
       const art=e.target.closest('.note');
       // Click anywhere else on the card body opens the post's thread, so the user doesn't have to
