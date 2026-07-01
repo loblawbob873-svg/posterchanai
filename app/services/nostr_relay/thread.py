@@ -667,12 +667,27 @@ async def _main(cfg: dict) -> None:
             await asyncio.gather(*old_tasks, return_exceptions=True)
         _spawn_firehose(stagger_span=2.0)
 
+    async def _prune_fresh():
+        # Refresh the preserve set from the DB right before pruning, so a user who linked their npub
+        # (or was synced) since the last startup/reload is protected — otherwise the prune runs with a
+        # STALE preserve set and deletes a registered user's synced notes, which reappear only until
+        # the next prune (the recurring "synced notes keep disappearing" bug). Union with the in-memory
+        # operator set so backfill-added authors aren't dropped.
+        try:
+            ops = set(_read_config().get("operator") or []) | set(cfg.get("operator") or [])
+            cfg["operator"] = list(ops)
+            gate.set_operator(cfg["operator"])
+            store.set_preserve_pubkeys(cfg["operator"])
+        except Exception as e:
+            logger.debug("[nostr-relay] preserve refresh before prune failed: %s", e)
+        return await store.prune()
+
     # prune is the only LOCAL maintenance task — always runs. Everything else below is cross-node /
     # trust-graph work, gated on wot_enabled: with WoT OFF (a processing node) the relay is a pure
     # local store — no WoT rebuild, metadata backfill, sync sweep, or firehose. (NIP-05 serving is
     # also forced off when WoT is off — see the nip05 cfg.)
     tasks = [
-        asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], store.prune, "prune")),
+        asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], _prune_fresh, "prune")),
         # Nightly block-purge: checked hourly, fires once in the small hours (see _maybe_purge_blocks).
         asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_purge_blocks, "block-purge")),
     ]
@@ -855,10 +870,26 @@ async def _main(cfg: dict) -> None:
                         except Exception as e:
                             logger.warning("[nostr-relay] reload-store-config failed: %s", e)
                     elif cmd.get("cmd") == "backfill" and cmd.get("pubkey"):
-                        logger.info("[nostr-relay] control: backfill %s", cmd["pubkey"][:12])
+                        pk = cmd["pubkey"]
+                        logger.info("[nostr-relay] control: backfill %s", pk[:12])
+                        # PRESERVE the synced author before backfilling: the operator explicitly wants
+                        # this user's history kept, but synced notes are origin='wot' and the age-prune
+                        # deletes those unless the pubkey is in the live preserve set — which is only
+                        # refreshed at startup/reload, so a just-registered/just-synced user's notes got
+                        # pruned right back out (the "synced many times, keeps disappearing" bug).
+                        # Re-collect operators (picks up newly-registered users) + union this pubkey, and
+                        # push into the gate + preserve set so the next prune can't touch what we sync.
+                        try:
+                            ops = set(_read_config().get("operator") or [])
+                        except Exception:
+                            ops = set(cfg.get("operator") or [])
+                        ops.add(pk)
+                        cfg["operator"] = list(ops)
+                        gate.set_operator(cfg["operator"])
+                        store.set_preserve_pubkeys(cfg["operator"])
                         from . import ingest as _ingest
                         asyncio.create_task(_safe(_ingest.backfill_author(
-                            store, server, cfg["upstream"], cmd["pubkey"],
+                            store, server, cfg["upstream"], pk,
                             direct=cfg["direct"], pace=cfg["request_pace_sec"])))
             except Exception as e:
                 logger.debug("[nostr-relay] control poll error: %s", e)
