@@ -402,11 +402,13 @@ a.btn.full{display:block}
 /* filled "danger/negative" action (e.g. Hold'em Fold) — red reads as stop across all themes, so it's
    intentionally a fixed red gradient like the admin's btn-danger, not theme vars. */
 .btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
-/* was transparent → ghost buttons (e.g. AI-chat "Copy link", compose tools) looked colourless/plain
-   next to filled btn-neon/btn-cyan siblings. Give them the base panel fill (theme-safe) so every
-   button reads as an intentional, consistent button. */
-.btn-ghost{background:var(--panel2)}
-.btn-ghost:hover{border-color:var(--neon);color:var(--neon)}
+/* Secondary buttons: FILLED with the theme's accent colour (a tint of --neon over the panel) with a
+   matching accent border + label, so they read as real coloured buttons next to the solid
+   btn-neon/btn-cyan primaries instead of looking empty/plain. Theme-safe (all via --neon/--panel2);
+   the plain-panel line is a fallback for browsers without color-mix. */
+.btn-ghost{background:var(--panel2);color:var(--neon)}
+.btn-ghost{background:color-mix(in srgb, var(--neon) 15%, var(--panel2));border-color:var(--neon);color:var(--neon)}
+.btn-ghost:hover{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon);color:var(--neon)}
 .input,textarea{width:100%;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:11px;
   color:var(--text);padding:12px 14px;font-size:15.5px;outline:none;margin:6px 0;font-family:inherit}
 .input:focus,textarea:focus{border-color:var(--cyan);box-shadow:var(--glow-cy)}
