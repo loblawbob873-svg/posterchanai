@@ -841,8 +841,31 @@ def _reconcile():
             logger.error("[BOTS] reconcile error: %s", e, exc_info=True)
 
 
+def _wait_for_relay(timeout: float = 60.0) -> None:
+    """Block until the local Nostr relay accepts connections before spawning bots. The bots publish to
+    ws://127.0.0.1:3052 the moment they start, so spawning them while the relay subprocess is still
+    booting wastes ~a minute of 'connection refused' retries PER bot on every restart. Bounded; on
+    timeout we spawn anyway and let the bots' own reconnect handle it."""
+    import socket
+    import time as _t
+    try:
+        port = int((settings_store.get("nostr_relay_port", "3052") or "3052").strip())
+    except (ValueError, TypeError):
+        port = 3052
+    deadline = _t.monotonic() + timeout
+    while _t.monotonic() < deadline and not _stop_event.is_set():
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                logger.info("[BOTS] local relay up on :%d — starting bots", port)
+                return
+        except OSError:
+            _stop_event.wait(1.0)
+    logger.warning("[BOTS] local relay not up after %ds — starting bots anyway", int(timeout))
+
+
 def _monitor_loop():
     logger.info("[BOTS] manager monitor started (host=%s)", get_hostname())
+    _wait_for_relay()   # don't spawn bots into a not-yet-listening relay (startup-race noise)
     while not _stop_event.is_set():
         _reconcile()
         _stop_event.wait(RECONCILE_INTERVAL)
