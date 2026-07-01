@@ -50,6 +50,10 @@ async def _run():
     try:
         from app.database import SessionLocal
         from app.services import settings_store
+        # Load LOCAL-ONLY keys (plumbing + per-node runtime cursors like fedi_bridge_global_since) from
+        # local_settings.json FIRST — the relay hydrate below skips these, so without this the worker
+        # starts every restart with no cursor ("cursor lost — resuming…") and re-derives it each boot.
+        settings_store.load_local()
         db = SessionLocal()
         try:
             n = settings_store.hydrate_from_db(db)
