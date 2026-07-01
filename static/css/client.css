@@ -922,7 +922,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 #upload-badge .upbadge-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #upload-badge .upbadge-x{cursor:pointer;color:#ff6b8b;font-weight:700;margin-left:2px}
 @media(max-width:820px){#upload-badge.upbadge{left:8px;bottom:76px}}
-.file-card[draggable]{cursor:grab}.file-card .movebtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px}.file-card .movebtn:hover{color:var(--cyan)}
+.file-card[draggable]{cursor:grab}.file-card .movebtn{position:absolute;top:6px;right:70px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 7px}.file-card .movebtn:hover{color:var(--cyan);border-color:var(--cyan)}
 .folder-chip.delfolder{color:#ff6b8b;border-color:rgba(255,107,139,.5)}.folder-chip.delfolder:hover{background:rgba(255,107,139,.14);border-color:#ff6b8b}
 /* Music folder: encrypted track list (cyberpunk) */
 .music-list{display:flex;flex-direction:column;gap:8px;padding:16px}
@@ -1482,9 +1482,16 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .ai-pin-q{margin-bottom:8px;font-size:15px}
 .ai-pin-btns{display:flex;gap:8px;flex-wrap:wrap}
 /* Interactive budget card buttons (Telegram-parity): wrap nicely on mobile. */
+/* Profile → Relays modal: one relay per row, theme-safe. (Distinct class from Settings' .relay-row
+   input rows so the two don't collide.) */
+.prof-relays{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.prof-relay{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+.prof-relay code{word-break:break-all}
 .ai-budget-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .ai-addbill{display:inline-block;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
-.ai-addbill:hover{background:var(--neon);color:#04020c}
+/* hover keeps neon TEXT on the panel fill (not a dark label on the accent) so it stays readable on
+   themes where --neon is dark (Professional/Win98/Dark) — same approach as .btn-ghost:hover. */
+.ai-addbill:hover{border-color:var(--neon);color:var(--neon)}
 .us-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 14px}
 .us-tab{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:15px;font-weight:600}
 .us-tab.active{background:var(--neon);color:#04020c;border-color:var(--neon)}

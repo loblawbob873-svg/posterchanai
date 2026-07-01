@@ -5305,7 +5305,7 @@
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button></div>
       <div id="prof-list"></div>`;
     let pinnedHtml = '';   // filled by the deferred pinned query below; listFor() reads it live
     const listFor=(tab)=>{
@@ -5317,6 +5317,8 @@
         // gallery only — pull each post's media tags out of its mediaParts() gallery and grid them
         const items=m.map(e=>mediaParts(e.content).gallery.replace(/^<div class="media-row">/,'').replace(/<\/div>$/,'')).join('');
         return `<div class="media-grid">${items}</div>`; }
+      if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
+        return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
@@ -5328,7 +5330,12 @@
     fillList('notes');
     hydrate(feed);
     decorateVerified($('#prof-vchk'), pk, p.nip05);
-    $$('.prof-tab',feed).forEach(t=> t.onclick=()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); _prof.tab=t.dataset.tab; fillList(t.dataset.tab); hydrate(feed); });
+    $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
+      // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
+      if(tab==='articles' && !_prof.artLoaded){ _prof.artLoaded=true;
+        try{ const a=await Relay.query([{authors:[pk],kinds:[30023],limit:40}]); for(const e of (a||[])) Store.saveEvent(e); }catch(_){}
+        if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='articles'){ fillList('articles'); hydrate(feed); } }
+    });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
@@ -5377,6 +5384,7 @@
       ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
       ['reports','🚩 Reports received'],
     ];
+    items.push(['relays','🖧 Relays']);   // view the relays this user publishes to (NIP-65)
     if(IS_ADMIN){
       // admin extras: one consolidated permissions panel (AI, Blossom, image/music/video/torrent)
       // + relay block. State is fetched inside openPermissions so the menu opens instantly.
@@ -5390,6 +5398,7 @@
       if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='reports') return showReports(pk);
+      if(a==='relays') return showRelays(pk);
       if(a==='caps') return openPermissions(pk);
       if(a==='relay-sync') return doRelaySync(pk);
       if(a==='purge-blossom') return doPurgeBlossom(pk);
@@ -5588,6 +5597,20 @@
         delete meta.monero; delete meta.monero_address;   // `xmr` is canonical — drop legacy aliases so clearing the field actually removes the address (xmrOf reads them too)
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
+  }
+  // Show the relays a user publishes to (NIP-65 kind-10002), with read/write markers.
+  async function showRelays(pk){
+    modal(`<h3>🖧 Relays</h3><div id="rl-body" class="muted small">Loading…</div>`);
+    let evs=[]; try{ evs=await Relay.query([{authors:[pk],kinds:[10002],limit:1}]); }catch(_){}
+    const ev=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0];
+    const body=$('#rl-body'); if(!body) return;
+    const rs=ev ? (ev.tags||[]).filter(t=>t[0]==='r'&&t[1]) : [];
+    if(!rs.length){ body.textContent='This user hasn’t published a relay list (NIP-65).'; return; }
+    body.classList.remove('muted','small');
+    body.innerHTML='<div class="prof-relays">'+rs.map(t=>{
+      const mode = t[2] ? enc(t[2]) : 'read/write';
+      return `<div class="prof-relay"><code>${enc(t[1])}</code><span class="muted small">${mode}</span></div>`;
+    }).join('')+'</div>';
   }
   async function peopleModal(title, pks){
     modal(`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h3 style="margin:0">${enc(title)} (${pks.length})</h3><button id="follow-all-back" class="btn btn-cyan small" style="display:none">Follow all back</button></div><div id="people-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
