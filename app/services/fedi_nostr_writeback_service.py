@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import re as _re
 import time
 from urllib.parse import urlparse
 
@@ -224,7 +225,6 @@ async def _translate_mentions(db, text: str) -> str:
     return out
 
 
-import re as _re
 _URL_RE = _re.compile(r"https?://[^\s]+")
 _MEDIA_EXT = _re.compile(r"\.(gif|jpe?g|png|webp|apng|bmp|mp4|webm|mov|m4v)(?:[?#]|$)", _re.I)
 _MIME = {"gif": "image/gif", "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
