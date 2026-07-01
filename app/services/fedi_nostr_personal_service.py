@@ -17,6 +17,7 @@ item so a mid-batch failure can't reflood. Reuses fedi_bridge_identity for puppe
 """
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -289,6 +290,110 @@ async def _bridge_follow(db: Session, port: int, follower_puppet: dict, followed
     return pubok
 
 
+_backfill_inflight: set = set()   # user_ids whose one-time follower backfill is running
+_backfill_tasks: set = set()      # strong refs so a fire-and-forget task isn't GC'd mid-run
+_BACKFILL_RETRY_SEC = 3600        # after a fetch failure, don't re-attempt for this long (no every-cycle re-scan)
+
+
+def _user_flag(db: Session, user_id: int, key: str) -> str | None:
+    from app.models import UserSetting
+    row = db.query(UserSetting).filter(UserSetting.user_id == user_id, UserSetting.key == key).first()
+    return row.value if row else None
+
+
+def _set_user_flag(db: Session, user_id: int, key: str, value: str) -> None:
+    from app.models import UserSetting
+    row = db.query(UserSetting).filter(UserSetting.user_id == user_id, UserSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(UserSetting(user_id=user_id, key=key, value=value))
+    db.commit()
+
+
+def _backfill_due(db: Session, user_id: int) -> bool:
+    """Whether the one-time follower backfill should run for this user: not yet done AND not inside a
+    post-failure retry cooldown."""
+    if _user_flag(db, user_id, "fedi_followers_backfilled") == "1":
+        return False
+    after = _user_flag(db, user_id, "fedi_followers_backfill_after")
+    if after:
+        try:
+            if time.time() < float(after):
+                return False
+        except (TypeError, ValueError):
+            pass
+    return True
+
+
+async def _backfill_followers(db: Session, port: int, user: User, instance_host: str) -> None:
+    """ONE-TIME: mirror the user's EXISTING fediverse followers onto Nostr as puppet kind-3 follows,
+    so their real follower count shows (the notification-driven path only catches NEW follows, and the
+    first poll sets its cursor without replaying the backlog). Paced + idempotent (_bridge_follow
+    unions). The done flag is set ONLY on a real success; a fetch failure schedules a retry cooldown
+    instead so we neither re-scan every cycle nor burn the flag on a transient error."""
+    recipient = _user_pubkey(user)
+    if not recipient:
+        return
+    inst, token = user.pleroma_instance_url, user.pleroma_access_token
+    try:
+        me = await pleroma_service.verify_credentials(inst, token)
+        acct_id = (me or {}).get("id")
+        expected = int((me or {}).get("followers_count") or 0)
+        followers = await pleroma_service.fetch_followers(inst, token, acct_id) if acct_id else []
+    except Exception as e:
+        logger.warning("[fedi-personal] follower-backfill fetch failed for %s: %s — retrying in %dm",
+                       user.username, e, _BACKFILL_RETRY_SEC // 60)
+        _set_user_flag(db, user.id, "fedi_followers_backfill_after", str(int(time.time()) + _BACKFILL_RETRY_SEC))
+        return
+    # The instance says we HAVE followers but we fetched none → transient failure (fetch_followers
+    # swallows non-200s), so don't mark done — back off and retry.
+    if expected > 0 and not followers:
+        logger.warning("[fedi-personal] follower-backfill got 0/%d for %s (transient?) — retrying in %dm",
+                       expected, user.username, _BACKFILL_RETRY_SEC // 60)
+        _set_user_flag(db, user.id, "fedi_followers_backfill_after", str(int(time.time()) + _BACKFILL_RETRY_SEC))
+        return
+    broadcast = str(_get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
+    blocked = _blocked_domains()
+    done = 0
+    for i, account in enumerate(followers):
+        acct = (account.get("acct") or "").lower()
+        if _domain_blocked(_host_of(acct, instance_host), blocked):
+            continue
+        try:
+            puppet = await ident.ensure_puppet(db, port, account, instance_host)
+            if puppet and await _bridge_follow(db, port, puppet, recipient, broadcast):
+                done += 1
+        except Exception as e:
+            logger.debug("[fedi-personal] follower-backfill entry failed: %s", e)
+        if i % 10 == 9:
+            await asyncio.sleep(1)   # pace: don't blast the relay with one big burst
+    _set_user_flag(db, user.id, "fedi_followers_backfilled", "1")
+    logger.info("[fedi-personal] backfilled %d/%d fediverse follower(s) → Nostr for %s",
+                done, len(followers), user.username)
+
+
+async def _run_follower_backfill(user_id: int) -> None:
+    """Background one-shot (own session) so the potentially-slow backfill never blocks the poll. The
+    in-flight guard is released in an OUTER finally so even a SessionLocal() failure can't leak it."""
+    from app.database import SessionLocal
+    from urllib.parse import urlparse
+    try:
+        db = SessionLocal()
+        try:
+            user = db.get(User, user_id)
+            if user and user.pleroma_instance_url:
+                host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
+                await _backfill_followers(db, _port(), user, host)
+        except Exception as e:
+            logger.warning("[fedi-personal] follower-backfill task failed for user %s: %s", user_id, e)
+            db.rollback()
+        finally:
+            db.close()
+    finally:
+        _backfill_inflight.discard(user_id)
+
+
 async def _deliver_notifications(db: Session, port: int, user: User, instance_host: str) -> None:
     recipient = _user_pubkey(user)
     if not recipient:
@@ -346,6 +451,15 @@ async def poll_once(db: Session) -> None:
             continue
         from urllib.parse import urlparse
         instance_host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
+        # One-time: backfill the user's EXISTING fediverse followers as puppet kind-3 follows. Runs in
+        # the background (won't stall the poll), SERIALIZED to one user at a time (`not _backfill_inflight`)
+        # so several opted-in users can't burst the relay at once, and gated by _backfill_due (done flag +
+        # post-failure cooldown). A strong task ref is kept so it isn't GC'd mid-run.
+        if not _backfill_inflight and _backfill_due(db, user.id):
+            _backfill_inflight.add(user.id)
+            t = asyncio.ensure_future(_run_follower_backfill(user.id))
+            _backfill_tasks.add(t)
+            t.add_done_callback(_backfill_tasks.discard)
         try:
             await _deliver_dms(db, port, user, instance_host)
             await _deliver_notifications(db, port, user, instance_host)

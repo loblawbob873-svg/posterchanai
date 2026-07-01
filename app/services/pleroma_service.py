@@ -1,6 +1,8 @@
 """Pleroma/Mastodon API client — OAuth2 app registration, token exchange, and posting."""
 
 import logging
+import re
+
 import httpx
 
 from app.services.proxy_utils import afallback_transport
@@ -424,15 +426,28 @@ async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict
     return statuses[0] if statuses else None
 
 
+def _link_next(link_header: str | None) -> str | None:
+    """Extract the rel="next" URL from a Mastodon/Pleroma Link header, or None."""
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        m = re.search(r'<([^>]+)>\s*;\s*rel="next"', part)
+        if m:
+            return m.group(1)
+    return None
+
+
 async def _fetch_account_list(instance_url: str, access_token: str, path: str, limit: int = 80) -> list[dict]:
-    """Page through an account-list endpoint (/api/v1/blocks, /api/v1/mutes), following the
-    Link: rel="next" max_id pagination, returning all raw account objects (bounded)."""
+    """Page through an account-list endpoint (/api/v1/blocks, /api/v1/mutes, /followers), returning all
+    raw account objects (bounded). Followers/following paginate on an internal RELATIONSHIP id carried
+    in the `Link: rel="next"` header — NOT the account id — so follow that header; fall back to max_id
+    (account id) only when no Link header is present (older servers)."""
     out: list[dict] = []
     headers = {"Authorization": f"Bearer {access_token}"}
     url = instance_url.rstrip("/") + path
     params: dict = {"limit": limit}
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
-        for _ in range(20):   # hard page cap so a huge list can't run unbounded
+        for _ in range(30):   # hard page cap so a huge list can't run unbounded (~2400 @ limit 80)
             resp = await client.get(url, headers=headers, params=params)
             if resp.status_code != 200:
                 break
@@ -440,11 +455,16 @@ async def _fetch_account_list(instance_url: str, access_token: str, path: str, l
             if not isinstance(batch, list) or not batch:
                 break
             out.extend(batch)
-            # Mastodon/Pleroma paginate these via max_id of the LAST row (Link header has the URL too).
-            last = batch[-1].get("id") if isinstance(batch[-1], dict) else None
-            if not last or len(batch) < limit:
+            if len(batch) < limit:
                 break
-            params = {"limit": limit, "max_id": last}
+            nxt = _link_next(resp.headers.get("link") or resp.headers.get("Link"))
+            if nxt:
+                url, params = nxt, {}   # the next URL already carries the correct cursor
+            else:
+                last = batch[-1].get("id") if isinstance(batch[-1], dict) else None
+                if not last:
+                    break
+                params = {"limit": limit, "max_id": last}
     return out
 
 
@@ -456,6 +476,11 @@ async def fetch_blocks(instance_url: str, access_token: str) -> list[dict]:
 async def fetch_mutes(instance_url: str, access_token: str) -> list[dict]:
     """Accounts this account has muted (raw account objects)."""
     return await _fetch_account_list(instance_url, access_token, "/api/v1/mutes")
+
+
+async def fetch_followers(instance_url: str, access_token: str, account_id: str) -> list[dict]:
+    """Accounts that FOLLOW `account_id` (raw account objects, paginated + bounded)."""
+    return await _fetch_account_list(instance_url, access_token, f"/api/v1/accounts/{account_id}/followers")
 
 
 async def verify_credentials(instance_url: str, access_token: str) -> dict:
