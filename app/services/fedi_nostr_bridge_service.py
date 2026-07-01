@@ -38,9 +38,9 @@ _PAGE = 20
 _MAX_PAGES = 8
 _MODERATION_TTL = 600          # seconds to cache the read account's block/mute lists
 _mod_cache: dict = {"at": 0.0, "blocked_accts": set()}
-_DELETION_INTERVAL = 300       # min seconds between deletion re-checks (deletions are rare)
+_DELETION_INTERVAL = 300       # how often the (separate) deletion job runs — deletions are rare
 _DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion per cycle
-_last_deletion_check = 0.0
+_DELETION_CONCURRENCY = 6      # parallel status checks (was a 25-deep serial loop inside the poll)
 _MAX_ANCESTORS = 8             # cap ancestors backfilled to anchor an orphan reply's thread
 _BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
 _MAX_QUOTE_DEPTH = 2           # cap quote-of-quote recursion when mirroring referenced notes
@@ -405,18 +405,27 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
     404/410), publish a NIP-09 deletion from its puppet (which removes it on the relay and federates
     upstream iff broadcasting), then drop the bookkeeping row. Bounded + throttled — deletions are
     rare and per-status checks cost a request each."""
-    global _last_deletion_check
-    now = time.monotonic()
-    if now - _last_deletion_check < _DELETION_INTERVAL:
-        return
-    _last_deletion_check = now
     rows = (db.query(FediBridgeDelivered)
             .filter(FediBridgeDelivered.instance_url == instance_url)
             .order_by(FediBridgeDelivered.id.desc()).limit(_DELETION_BATCH).all())
-    for row in rows:
+    if not rows:
+        return
+    # The status checks are read-only + independent, so run them CONCURRENTLY (bounded) instead of 25
+    # sequential HTTP round-trips — that serial loop was the tail that pushed the poll past its budget.
+    sem = asyncio.Semaphore(_DELETION_CONCURRENCY)
+
+    async def _is_deleted(row):
+        async with sem:
+            try:
+                return row, await pleroma_service.status_deleted(instance_url, token, row.note_id)
+            except Exception as e:
+                logger.debug("[fedi-bridge] deletion check failed for %s: %s", row.note_id, e)
+                return row, False
+
+    for row, deleted in await asyncio.gather(*[_is_deleted(r) for r in rows]):
+        if not deleted:
+            continue
         try:
-            if not await pleroma_service.status_deleted(instance_url, token, row.note_id):
-                continue
             actor_uri = None
             if row.nostr_pubkey:
                 pup = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == row.nostr_pubkey).first()
@@ -428,7 +437,7 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
             logger.info("[fedi-bridge] mirrored note %s deleted on source → NIP-09 delete published", row.note_id)
         except Exception as e:
             db.rollback()
-            logger.debug("[fedi-bridge] deletion check failed for %s: %s", row.note_id, e)
+            logger.debug("[fedi-bridge] deletion publish failed for %s: %s", row.note_id, e)
 
 
 async def _backfill_recent(db: Session, port: int, platform: str, instance_url: str,
@@ -533,9 +542,8 @@ async def poll_once(db: Session) -> None:
             settings_store.put("fedi_bridge_global_since", cursor)
         if transient or len(raw_posts) < _PAGE:
             break
-
-    # Propagate fediverse deletions → NIP-09 (throttled). Federates upstream iff broadcasting is on.
-    await _check_deletions(db, port, instance_url, token, _broadcast_on())
+    # NOTE: deletion propagation used to run here — it's now a SEPARATE scheduled job so its HTTP
+    # status checks can't eat this poll's time budget (the "poll exceeded 90s" cause).
 
 
 # --- maintenance ------------------------------------------------------------
@@ -594,8 +602,31 @@ def start_fedi_bridge_scheduler() -> None:
     async def _cleanup():
         await asyncio.get_event_loop().run_in_executor(None, cleanup_state)
 
+    async def _deljob():
+        # Deletion propagation on its OWN cadence, decoupled from the mirror poll so its HTTP status
+        # checks never eat the poll's budget. Own timeout guard, own session.
+        if str(_get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+            return
+        instance_url, token = _get("fedi_bridge_instance_url"), _get("fedi_bridge_access_token")
+        if not (instance_url and token):
+            return
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            await asyncio.wait_for(
+                _check_deletions(db, _port(), instance_url, token, _broadcast_on()), timeout=80)
+        except asyncio.TimeoutError:
+            logger.warning("[fedi-bridge] deletion check exceeded 80s; retrying next cycle")
+            db.rollback()
+        except Exception as e:
+            logger.warning("[fedi-bridge] deletion job error: %s", e)
+            db.rollback()
+        finally:
+            db.close()
+
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(_job, "interval", seconds=secs, id="fedi_bridge_poll", max_instances=1, coalesce=True)
+    _scheduler.add_job(_deljob, "interval", seconds=_DELETION_INTERVAL, id="fedi_bridge_deletions", max_instances=1, coalesce=True)
     _scheduler.add_job(_cleanup, "interval", hours=24, id="fedi_bridge_cleanup", max_instances=1, coalesce=True)
     _scheduler.start()
     logger.info("[fedi-bridge] global-timeline → Nostr mirror poller started (every %ss)", secs)
