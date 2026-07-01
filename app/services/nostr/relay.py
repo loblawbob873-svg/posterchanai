@@ -38,6 +38,7 @@ _PUBLISH_TIMEOUT = 10
 # slow every sync. A single successful connect clears the streak.
 _RELAY_FAIL_THRESHOLD = 3
 _RELAY_PAUSE_SEC = 600   # 10 minutes
+_RELAY_429_PAUSE_SEC = 900   # a 429 is an EXPLICIT rate-limit — pause 15m immediately (no ramp-up)
 _FAIL_DEBOUNCE = 30      # count at most ONE failure per relay per this many seconds (ignore bursts:
                          # a backfill pages many queries, so a brief blip shouldn't pause a relay)
 _relay_fail: dict = {}            # relay -> failure count (spaced >= _FAIL_DEBOUNCE apart)
@@ -53,6 +54,29 @@ def _note_relay_ok(relay: str) -> None:
     """A successful connect clears the relay's failure streak / pause."""
     _relay_fail.pop(relay, None)
     _relay_paused_until.pop(relay, None)
+    _relay_last_fail.pop(relay, None)
+
+
+def _is_429(e) -> bool:
+    """True if a connect exception is an HTTP 429 (rate limited). websockets surfaces it as an
+    InvalidStatus with a .response.status_code, and its str() carries 'HTTP 429'."""
+    try:
+        if getattr(getattr(e, "response", None), "status_code", None) == 429:
+            return True
+    except Exception:
+        pass
+    return "429" in str(e)
+
+
+def _note_relay_429(relay: str) -> None:
+    """A relay explicitly rate-limited us (HTTP 429). Honor it IMMEDIATELY — pause sends rather than
+    grinding through the 3-fails-over-90s ramp (which lets a 429 storm through while it counts up).
+    Logged once on the transition; while paused _publish_one/_sync short-circuit so we stop dialing it."""
+    if not _relay_paused(relay):
+        logger.warning("[nostr] %s rate-limited us (HTTP 429) — pausing sends for %dm",
+                       relay, _RELAY_429_PAUSE_SEC // 60)
+    _relay_paused_until[relay] = time.time() + _RELAY_429_PAUSE_SEC
+    _relay_fail.pop(relay, None)
     _relay_last_fail.pop(relay, None)
 
 
@@ -128,9 +152,14 @@ async def _connect(relay: str, direct: bool, **kw):
                 logger.info("[nostr] %s connected DIRECT (Tor proxy unavailable)", relay)
             else:
                 raise
-    except Exception:
+    except Exception as e:
         if not _is_local(relay):
-            _note_relay_fail(relay)   # both Tor + direct failed (never circuit-break the local relay)
+            # A 429 is an explicit rate-limit → pause immediately; any other failure counts toward the
+            # debounced 3-strikes breaker. (Never circuit-break the local relay.)
+            if _is_429(e):
+                _note_relay_429(relay)
+            else:
+                _note_relay_fail(relay)   # both Tor + direct failed
         raise
     if not _is_local(relay):
         _note_relay_ok(relay)         # connected → clear the failure streak / pause
