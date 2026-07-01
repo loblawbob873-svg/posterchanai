@@ -149,7 +149,11 @@
                 <div class="form-group">
                     <label for="bot_f_nostr_nsec">Secret key <span class="bots-dim">(nsec1… or 64-char hex — filled by Generate, or paste your own)</span></label>
                     <input type="password" id="bot_f_nostr_nsec" autocomplete="new-password" placeholder="nsec1…">
-                    <button type="button" class="btn-small" onclick="provisionBot()" style="margin-top:.4rem">✨ Generate identity (nsec + Blossom + WoT)</button>
+                    <div style="margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.4rem">
+                        <button type="button" class="btn-small" id="bot_nsec_toggle" onclick="toggleBotNsec()">👁 Reveal</button>
+                        <button type="button" class="btn-small" onclick="copyBotNsec()">📋 Copy nsec</button>
+                        <button type="button" class="btn-small" onclick="provisionBot()">✨ Generate identity (nsec + Blossom + WoT)</button>
+                    </div>
                     <div id="bot_provision_status" class="bots-dim"></div>
                 </div>
                 <!-- Profile (stored in config; published by the bot on startup so its avatar/nip05/name

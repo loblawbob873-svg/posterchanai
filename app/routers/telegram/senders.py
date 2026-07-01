@@ -461,7 +461,7 @@ async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
     # Live timestamp footer so each Refresh visibly changes the message — otherwise
     # tapping Refresh with unchanged data makes Telegram reject the edit with
     # "message is not modified" (400) and the button appears to do nothing.
-    text = finance_service.format_summary(summary) + f"\n🕒 {datetime.now():%H:%M:%S}"
+    text = finance_service.format_summary(summary, unpaid_count=len(payable)) + f"\n🕒 {datetime.now():%H:%M:%S}"
     rows = [
         [{"text": f"✅ {b['name'][:24]} ${abs(b.get('amount', 0)):,.0f}",
           "callback_data": f"fin:pay:{b['id']}"}]

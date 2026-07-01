@@ -94,12 +94,16 @@ async def pay_bill(base_url: str, api_key: str, name: str) -> dict:
 
 # --- formatting (plain text for web UI + Matrix) ----------------------------
 
-def format_summary(s: dict) -> str:
+def format_summary(s: dict, unpaid_count: int | None = None) -> str:
+    # `bills_count` from the API counts ALL bills, not just unpaid ones — so the "(N)" beside Unpaid
+    # bills was wrong (e.g. showed 8 when only 4 were unpaid). When the caller passes the real unpaid
+    # count (derived from the unpaid-bills list), use it; else fall back to the API field.
+    count = unpaid_count if unpaid_count is not None else s.get('bills_count', 0)
     return (
         f"💰 Budget — {s.get('month', '')}\n"
         f"━━━━━━━━━━━━━━\n"
         f"Income:        ${s.get('total_income', 0):,.2f}\n"
-        f"Unpaid bills:  ${s.get('unpaid_bills', 0):,.2f} ({s.get('bills_count', 0)})\n"
+        f"Unpaid bills:  ${s.get('unpaid_bills', 0):,.2f} ({count})\n"
         f"Remaining:     ${s.get('remaining', 0):,.2f}"
     )
 

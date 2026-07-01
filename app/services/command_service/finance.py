@@ -9,7 +9,20 @@ class _FinanceMixin:
             summary = await finance_service.get_summary(base, key)
         except finance_service.FinanceError as e:
             return {"type": "text", "content": f"💰 {e}"}
-        return {"type": "text", "content": finance_service.format_summary(summary)}
+        # The unpaid-bills list gives the REAL count (the API's bills_count is the TOTAL, which made
+        # the "(N)" beside Unpaid bills wrong) + the Pay buttons. But a /bills failure must NOT sink
+        # the whole budget — fall back to the summary alone (with the API's count) if it errors.
+        unpaid, count = [], None
+        try:
+            unpaid = [b for b in await finance_service.get_bills(base, key, status="unpaid")
+                      if not b.get("is_income")]
+            count = len(unpaid)
+        except finance_service.FinanceError:
+            pass
+        return {"type": "budget",
+                "content": finance_service.format_summary(summary, unpaid_count=count),
+                "bills": [{"id": b.get("id"), "name": b.get("name", "?"),
+                           "amount": abs(b.get("amount", 0))} for b in unpaid]}
 
     async def _bills_command(self, arg: str) -> dict:
         from app.services import finance_service

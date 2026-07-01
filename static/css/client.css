@@ -1481,6 +1481,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .ai-pin{border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:var(--panel)}
 .ai-pin-q{margin-bottom:8px;font-size:15px}
 .ai-pin-btns{display:flex;gap:8px;flex-wrap:wrap}
+/* Interactive budget card buttons (Telegram-parity): wrap nicely on mobile. */
+.ai-budget-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ai-addbill{display:inline-block;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+.ai-addbill:hover{background:var(--neon);color:#04020c}
 .us-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 14px}
 .us-tab{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;font-size:15px;font-weight:600}
 .us-tab.active{background:var(--neon);color:#04020c;border-color:var(--neon)}

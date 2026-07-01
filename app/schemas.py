@@ -91,6 +91,10 @@ class SettingsResponse(BaseModel):
     # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "professional"
     # if unknown. Stored in the relay like every other setting (restorable via the datastore backup).
     client_default_theme: str = "professional"
+    # Custom branding: URL of an image to replace the built-in PosterChan logo in the web client's
+    # favicon, login splash and header (Admin → Site Settings). Blank → the default logo. Stored in
+    # the relay like every other setting.
+    site_logo_url: str = ""
     # Native image generation (diffusers / torch-XPU). image_timeout also bounds the
     # image load-balancer request when chat_server_urls is configured.
     image_timeout: str = "300000"  # image request timeout in ms

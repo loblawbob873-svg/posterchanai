@@ -5,7 +5,7 @@
   const $ = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
   const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const LOGO = '/static/posterchan-relay.png';
+  let LOGO = '/static/posterchan-relay.png';   // overridden by CFG.logo_url (Admin → custom logo)
   // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
   // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
   const RT_ICON = '<svg class="rt-ico" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M23.77 15.67a.75.75 0 00-1.06 0l-2.22 2.22V7.65a3.75 3.75 0 00-3.75-3.75h-5.85a.75.75 0 000 1.5h5.85c1.24 0 2.25 1.01 2.25 2.25v10.24l-2.22-2.22a.75.75 0 10-1.06 1.06l3.5 3.5c.147.147.34.22.53.22s.384-.073.53-.22l3.5-3.5a.75.75 0 000-1.06zm-10.66 3.28H7.26c-1.24 0-2.25-1.01-2.25-2.25V6.46l2.22 2.22a.75.75 0 101.06-1.06l-3.5-3.5a.75.75 0 00-1.06 0l-3.5 3.5a.75.75 0 101.06 1.06l2.22-2.22V16.7a3.75 3.75 0 003.75 3.75h5.85a.75.75 0 000-1.5z"/></svg>';
@@ -506,6 +506,15 @@
 
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
+    // Custom branding (Admin → Site Settings): override the logo used as the avatar fallback + brand
+    // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
+    if (CFG.logo_url){
+      LOGO = CFG.logo_url;
+      try{
+        document.querySelectorAll('link[rel="icon"],link[rel="shortcut icon"],link[rel="apple-touch-icon"]').forEach(l=>l.href=CFG.logo_url);
+        document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
+      }catch(_){}
+    }
     updateUserCount(); setInterval(()=>updateUserCount(true), 15000);   // WoT size: boot+login only; online: every 15s (onlineOnly → doesn't touch the frozen users count)
     await Store.init();
     if ('serviceWorker' in navigator){
@@ -1140,8 +1149,12 @@
   function timelineFilter(){
     // include kind 5 (NIP-09 deletions) so the feed drops posts the author deleted instead of
     // showing stale cached copies.
-    if (VIEW==='home') return [{ kinds:[1,6,1068,5], authors:[...FOLLOWS], limit:80 }];
-    return [{ kinds:[1,6,1068,5], limit:120 }];
+    // Also surface long-form articles (30023) so the Nostrverse timeline isn't notes-only. Articles
+    // are self-contained cards (articleCard) that open in the reader. NIP-22 comments (1111) and
+    // channel chat (40/42) are intentionally excluded — they're reply fragments / high-volume and
+    // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:80 }];
+    return [{ kinds:[1,6,1068,5,30023], limit:120 }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
@@ -1204,7 +1217,7 @@
       onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
         // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
         // created_at (those would otherwise jump to the top as if new). A small grace covers skew.
-        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
+        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068||ev.kind===30023) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
       // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect/re-sync; redrawing then would
       // wipe + rebuild the feed under the user (the "disappears with the timeline update" bug).
       onEose: ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } }
@@ -1372,8 +1385,8 @@
     if(_tl.loading || _tl.done || !_tl.oldest) return;
     _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
     const until=_tl.oldest;
-    const filt = view==='home' ? [{ kinds:[1,6,1068], authors:[...FOLLOWS], until:until-1, limit:50 }]
-                               : [{ kinds:[1,6,1068], until:until-1, limit:60 }];
+    const filt = view==='home' ? [{ kinds:[1,6,1068,30023], authors:[...FOLLOWS], until:until-1, limit:50 }]
+                               : [{ kinds:[1,6,1068,30023], until:until-1, limit:60 }];
     let evs=[]; try{ evs=await Relay.query(filt); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
@@ -2270,7 +2283,7 @@
         body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); node.style.opacity=''; return; }
-      if(j.text.trim()===src.trim()){ node.style.opacity=''; toast('nothing to translate — already in your language (or just sounds/emoji)'); return; }
+      if(j.text.trim()===src.trim()){ node.style.opacity=''; toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
       node.style.opacity=''; node.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>';
     }catch(_){ toast('translate failed'); node.style.opacity=''; }
   }
@@ -2500,6 +2513,7 @@
       return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
     }
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
+    if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
     return noteCard(ev);
   }
   // ---------- NIP-88 polls: kind-1068 poll, kind-1018 responses ----------
@@ -2803,6 +2817,10 @@
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
+      // Article cards (kind-30023) that appear inline in the timeline: open the reader (or the author's
+      // profile when the name is tapped). Mirrors the Articles-list handler; the .note path below
+      // doesn't match them.
+      const artc=e.target.closest('.article-card'); if(artc){ if(e.target.closest('[data-prof]')){ renderProfileView(artc.dataset.pk); return; } const a=Store.get(artc.dataset.id); if(a) openArticle(a); return; }
       const btn=e.target.closest('.act');
       const art=e.target.closest('.note');
       // Click anywhere else on the card body opens the post's thread, so the user doesn't have to
@@ -3128,7 +3146,7 @@
   function openPostMenu(id, pk, art, anchorBtn){
     const mine = pk===ME.pubkey;
     const items=[['bookmark', BOOKMARKS.has(id)?'🔖 Remove bookmark':'🔖 Bookmark'], ['copyid','🔗 Copy link']];
-    if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post
+    if(mine) items.push(['delete','🗑️ Delete','danger']);   // near the top so it's reachable on a crowded menu
     if(!window.PC_NOSTR_ONLY) items.push(['translate','🌐 Translate']);   // uses the node's AI backend
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
@@ -3138,7 +3156,7 @@
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
       if(!tagged) items.push(['nsfw','🔞 Re-post with NSFW warning']); }
-    if(mine) items.push(['delete','🗑️ Delete','danger']);
+    if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post (moved down)
     if(!mine) items.push(['mute', MUTED.has(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
@@ -3229,7 +3247,7 @@
         body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); nodes.forEach(n=>n.style.opacity=''); return; }
-      if(j.text.trim()===src.trim()){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — already in your language (or just sounds/emoji)'); return; }
+      if(j.text.trim()===src.trim()){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
       nodes.forEach(n=>{ n.style.opacity='';
         n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }
@@ -3832,8 +3850,35 @@
     }catch(_){}
     return '';
   }
+  // Downscale + re-encode large images BEFORE they're uploaded or sent — keeps Blossom storage small
+  // and, crucially, keeps base64 chat attachments under the size that made multi-image / big-image
+  // sends hang. Skips animated/vector (gif/svg) and anything already small; never upsizes. Pure
+  // browser canvas work, so it's cheap and offloads the server.
+  async function compressImage(file, opts){
+    const o = opts || {}; const maxDim = o.maxDim || 3072, quality = o.quality || 0.9, maxBytes = o.maxBytes || 900*1024;
+    try{
+      const t=(file.type||'').toLowerCase();
+      if(!/^image\//.test(t) || /gif|svg/.test(t)) return file;     // keep animation/vector intact
+      // PNG keeps its format (lossless, ALPHA preserved) so transparent avatars/logos/screenshots
+      // aren't flattened onto a black background; everything else re-encodes to JPEG. imageOrientation
+      // bakes EXIF rotation into the pixels so a portrait phone photo isn't uploaded sideways.
+      const isPng = /png/.test(t);
+      const bmp=await createImageBitmap(file, {imageOrientation:'from-image'});
+      let w=bmp.width, h=bmp.height; const scale=Math.min(1, maxDim/Math.max(w,h));
+      if(scale>=1 && file.size<=maxBytes){ if(bmp.close) bmp.close(); return file; }   // already small + upright-enough
+      w=Math.round(w*scale); h=Math.round(h*scale);
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(bmp,0,0,w,h); if(bmp.close) bmp.close();
+      const outType = isPng ? 'image/png' : 'image/jpeg';
+      const blob=await new Promise(r=> cv.toBlob(r, outType, quality));
+      if(!blob || blob.size>=file.size) return file;                // never make it bigger
+      const ext = isPng ? 'png' : 'jpg';
+      return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
+    }catch(_){ return file; }
+  }
   async function uploadBlob(file, opts){
     const server=mediaServer(); if(!server) throw new Error('no media server set');
+    file=await compressImage(file);   // auto-compress images (no-op for video/gif/already-small)
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     const auth=await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
@@ -5072,17 +5117,22 @@
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
     feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
+    // Optional privacy: don't reveal message previews in the list until you open the conversation.
+    const hidePrev = ClientSettings.get('hideDmPreview', false);
     const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">+</span><b>New message</b></div>` + peers.map(pk=>{
       const p=profOf(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
-      const prev = last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …';
-      return `<div class="dm-peer" data-peer="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
+      const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …');
+      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||NT().nip19.npubEncode(pk).slice(0,12))}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
     $('#dm-new').onclick=newDmModal;
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
-    // lazily decrypt ONLY the last message of each peer for the preview (not every message)
-    const need=peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
+    // Tapping the AVATAR opens the sender's profile instead of the conversation.
+    $$('.dmav',list).forEach(av=> av.onclick=e=>{ e.stopPropagation(); renderProfileView(av.dataset.prof); });
+    // lazily decrypt ONLY the last message of each peer for the preview (not every message). When
+    // previews are hidden, skip decryption entirely (privacy + a CPU saving on every list render).
+    const need=hidePrev ? [] : peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
     if(need.length) Promise.all(need.map(pk=>decryptMsg(pk, dmPeers.get(pk).slice(-1)[0]))).then(()=>{ if(VIEW==='messages' && !dmActive) renderMessages(); });
     // Preserve an OPEN conversation across re-renders: re-apply `has-active` to the rebuilt list (it's
     // what shows the thread as a full-screen overlay on mobile) — without this, any renderMessages()
@@ -5710,6 +5760,10 @@
     $('#ai-msgs').addEventListener('click',e=>{
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
+      const ab=e.target.closest('.ai-addbill'); if(ab){ e.preventDefault();
+        const income=ab.dataset.income==='1';
+        const v=prompt(income?'Add income — name and amount, e.g. "Paycheck 2000"':'Add bill — name and amount, e.g. "Rent 1200"');
+        if(v && v.trim()){ const ta=$('#ai-input'); if(ta){ ta.value='addbill '+v.trim()+(income?' income':''); aiSend(); } } return; }
       const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
         const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxSetEffect(ta, fxc.dataset.cmd); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → set base effect (keeps motion/caption)
@@ -6119,6 +6173,17 @@
       _ai.decks[id]={ cards:d.cards, idx:0, answered:new Array(d.cards.length).fill(null), score:0, title:d.title };
       return `<div class="flashcard-deck" id="${id}">${_fcRender(id)}</div>`;
     }
+    if(d.type==='budget'){
+      // Telegram-parity interactive budget: summary text + a Pay button per unpaid bill, Refresh, and
+      // Add bill / income. Pay/Refresh reuse the .ai-cmd run-a-command path; Add prompts then sends.
+      const bills=Array.isArray(d.bills)?d.bills:[];
+      const pays=bills.map(b=>`<button class="ai-cmd" data-cmd="pay ${enc(b.name)}" title="Pay ${enc(b.name)}">✅ ${enc(b.name)} $${(Number(b.amount)||0).toFixed(0)}</button>`).join('');
+      return head
+        +`<div class="ai-budget-btns">${pays||'<span class="muted small">No unpaid bills 🎉</span>'}</div>`
+        +`<div class="ai-budget-btns"><button class="ai-cmd" data-cmd="budget">🔄 Refresh</button>`
+        +`<button class="ai-addbill">➕ Add bill</button>`
+        +`<button class="ai-addbill" data-income="1">💵 Add income</button></div>`;
+    }
     if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4');
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
@@ -6158,7 +6223,14 @@
                  : /^text\/|json|xml|csv|^$/.test(f.type)?'text' : 'doc';
       try{
         if(kind==='text'){ _ai.attach.push({kind, name:f.name, text:await f.text()}); }
-        else { const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]||''); r.onerror=rej; r.readAsDataURL(f); }); _ai.attach.push({kind, name:f.name, ext, b64}); }
+        else {
+          // Compress images before base64-encoding them into the chat payload — a 17MB photo (or six
+          // at once) otherwise produced a multi-MB base64 blob that stalled the send. No-op for
+          // video/gif/already-small files.
+          const src = kind==='image' ? await compressImage(f) : f;
+          const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]||''); r.onerror=rej; r.readAsDataURL(src); });
+          _ai.attach.push({kind, name:f.name, ext, b64});
+        }
       }catch(_){}
     }
     aiRenderAttach();
@@ -6467,6 +6539,8 @@
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
           <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
           <textarea class="input" id="set-muted-words" rows="4" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
           <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
@@ -6520,6 +6594,12 @@
         BLUR_NSFW = bn.checked; ClientSettings.set('blurNsfw', BLUR_NSFW);
         toast(BLUR_NSFW?'sensitive posts blurred':'sensitive posts shown');
         if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }; }
+    // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
+    { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{
+        ClientSettings.set('hideDmPreview', hd.checked);
+        toast(hd.checked?'DM previews hidden':'DM previews shown');
+        if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} }
       }; }
     { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
         const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);

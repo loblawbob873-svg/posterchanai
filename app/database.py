@@ -172,6 +172,7 @@ def init_db():
         default_settings = {
             # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
             "client_default_theme": "professional",
+            "site_logo_url": "",
             # Nostr ↔ Fediverse bridge — non-secret defaults (instance_url/token/blocked_domains are
             # deployment-specific, left to the schema defaults). Master switch OFF so deploying the
             # code is inert until an admin configures a read account in Admin → Services.

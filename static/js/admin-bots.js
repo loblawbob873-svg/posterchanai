@@ -320,6 +320,22 @@ function _showAvatarPreview(url) {
     if (pv) { pv.src = url; pv.style.display = ''; }
 }
 
+// Reveal/hide the bot's nsec (it's loaded into the masked field on Edit) so the operator can read it.
+function toggleBotNsec() {
+    const f = _g('bot_f_nostr_nsec'), btn = _g('bot_nsec_toggle');
+    if (!f) return;
+    const show = f.type === 'password';
+    f.type = show ? 'text' : 'password';
+    if (btn) btn.textContent = show ? '🙈 Hide' : '👁 Reveal';
+}
+async function copyBotNsec() {
+    const f = _g('bot_f_nostr_nsec'); const st = _g('bot_provision_status');
+    const v = f ? f.value.trim() : '';
+    if (!v) { if (st) st.textContent = 'No secret key set for this bot yet.'; return; }
+    try { await navigator.clipboard.writeText(v); if (st) st.textContent = '📋 nsec copied to clipboard.'; }
+    catch (_) { if (st) st.textContent = 'Copy failed — reveal it and copy manually.'; }
+}
+
 async function provisionBot() {
     const st = _g('bot_provision_status');
     const name = _val('bot_f_name') || 'ChessBot';

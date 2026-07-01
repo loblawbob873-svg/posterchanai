@@ -148,6 +148,8 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
         "name": _setting(db, "site_name", "PosterChan"),
+        # Custom logo URL (Admin → Site Settings); blank → the client keeps its built-in logo.
+        "logo_url": _setting(db, "site_logo_url", ""),
         # Default UI theme for visitors/devices without their own saved pick (Admin → Site Settings).
         "default_theme": _default_theme(db),
         # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
@@ -288,6 +290,22 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
+        # Detect the source language FIRST. This avoids two opposite failures: (a) a foreign post being
+        # echoed and shown as "already in your language" (the reported French bug), and (b) fabricating
+        # a bogus translation for a post that genuinely already is the target language. We only run the
+        # translation when the detected language differs from the target.
+        try:
+            det = await svc.chat_completion(
+                [{"role": "system", "content": "Identify the language of the user's message. Reply with "
+                  "ONLY its ISO 639-1 code (e.g. en, fr, es, ja, de). No other text."},
+                 {"role": "user", "content": text[:600]}], max_tokens=4, temperature=0.0)
+            src_lang = (det.get("choices") or [{}])[0].get("message", {}).get("content", "").strip().lower()[:2]
+        except Exception:
+            src_lang = ""
+        if src_lang and src_lang == to.strip().lower()[:2]:
+            # Genuinely already the target language → return unchanged; the client shows the honest
+            # "already in your language" notice (it compares the result to the source).
+            return JSONResponse({"text": text})
         msgs = [{"role": "system", "content": f"You are a translation engine. Translate the user's "
               f"message into {to}. The message is often colloquial, run-on, code-switched and "
               f"unpunctuated. Translate the ENTIRE message into natural {to} — EVERY word or phrase "

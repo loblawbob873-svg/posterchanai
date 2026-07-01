@@ -259,7 +259,7 @@ async def get_conversation(
             # tens of seconds. A freshly-finished reply (slow effect/video render) is therefore missing here
             # for that whole window — which is EXACTLY when the client polls this endpoint to recover a lost
             # live WS frame, so the result appeared to "never update until refresh". If Postgres already has
-            # more messages, it's fresher → fall through to the sqlite rows so recovery sees the reply now.
+            # more messages, it's fresher → fall through to the DB rows so recovery sees the reply now.
             if len(rel) >= len(conversation.messages):
                 msgs = [{"id": i + 1, "role": m.get("role", ""), "content": m.get("content", ""),
                          "image_path": _img_url(m.get("image_path")),
@@ -268,11 +268,11 @@ async def get_conversation(
                 return {"id": conversation.id, "title": conversation.title,
                         "created_at": conversation.created_at, "updated_at": conversation.updated_at,
                         "messages": msgs}
-            logger.info("[CHAT] conv %s: relay mirror behind (%d < %d) — serving fresh sqlite so recovery isn't blocked",
+            logger.info("[CHAT] conv %s: relay mirror behind (%d < %d) — serving fresh DB rows so recovery isn't blocked",
                         conversation_id, len(rel), len(conversation.messages))
     except Exception as e:
-        logger.warning("[CHAT] relay history load failed, falling back to sqlite: %s", e)
-    # SQLite path: map each message's stored image_path to a served URL too (so the in-client AI
+        logger.warning("[CHAT] relay history load failed, falling back to DB: %s", e)
+    # DB path: map each message's stored image_path to a served URL too (so the in-client AI
     # view can render generated/uploaded images on reload).
     return {"id": conversation.id, "title": conversation.title,
             "created_at": conversation.created_at, "updated_at": conversation.updated_at,
