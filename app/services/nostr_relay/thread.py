@@ -580,6 +580,16 @@ async def _main(cfg: dict) -> None:
         """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
         number of events removed. Re-reads config so it always reflects the current Relay settings."""
         fresh = _read_config()
+        # Refresh the PRESERVE set before the deletes: delete_by_words/langs/proxy spare preserved
+        # (registered) users via store.preserve_pubkeys, but that set was only built at startup/reload —
+        # so a user who linked their npub since (h@…) wasn't spared and their blocked-language notes got
+        # purged, reappearing only until the next purge (the "synced notes keep disappearing" bug, even
+        # with retention=0 since the block-purge runs independently of retention).
+        try:
+            store.set_preserve_pubkeys(fresh["operator"])
+            gate.set_operator(fresh["operator"])
+        except Exception as e:
+            logger.debug("[nostr-relay] preserve refresh before block-purge failed: %s", e)
         by_pk = (await store.delete_pubkeys(fresh["blocked_pubkeys"]) or 0) if fresh["blocked_pubkeys"] else 0
         by_word = (await store.delete_by_words(fresh["blocked_words"]) or 0) if fresh["blocked_words"] else 0
         by_lang = (await store.delete_by_langs(fresh["blocked_langs"]) or 0) if fresh["blocked_langs"] else 0
