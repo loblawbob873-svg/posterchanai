@@ -147,7 +147,11 @@ def _reply_parent_id(ev: dict) -> str | None:
         return marked["reply"]
     if "root" in marked:          # only a root marker → this IS a direct reply to the root
         return marked["root"]
-    return etags[-1][1]           # deprecated positional NIP-10: the last e-tag is the reply target
+    # Deprecated positional NIP-10: the reply target is the last UNMARKED e-tag. A 'mention'-marked
+    # e-tag is a QUOTE/embed reference, NOT a reply parent — so skip it. Otherwise quoting a bridged
+    # note would resolve to that note as a reply target and mis-federate the quote as a fedi reply.
+    unmarked = [t[1] for t in etags if not (len(t) >= 4 and t[3])]
+    return unmarked[-1] if unmarked else None
 
 
 def _is_reply(ev: dict) -> bool:
