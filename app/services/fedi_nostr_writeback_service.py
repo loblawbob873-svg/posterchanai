@@ -150,6 +150,16 @@ def _reply_parent_id(ev: dict) -> str | None:
     return etags[-1][1]           # deprecated positional NIP-10: the last e-tag is the reply target
 
 
+def _is_reply(ev: dict) -> bool:
+    """A NIP-10 REPLY: has an e-tag explicitly marked 'reply' or 'root'. Quote-posts (NIP-18 `q` tag,
+    or a 'mention'-marked e-tag) are NOT replies, so they may still cross-post as top-level posts. This
+    app's client always marks reply e-tags (see replyTags), so marker-based detection catches replies
+    to native Nostr users WITHOUT the false-positive over-block that treating *any* e-tag as a reply
+    caused (which silently dropped legitimate quote-posts)."""
+    return any(len(t) >= 4 and t[0] == "e" and t[1] and t[3] in ("reply", "root")
+               for t in ev.get("tags", []))
+
+
 def _target_row(db, ev: dict):
     """The bridged note this event DIRECTLY interacts with (its immediate reply parent), or None.
     Reactions/reposts e-tag exactly the target; replies use the direct parent (never the root)."""
@@ -367,11 +377,13 @@ async def _handle(db, ev: dict) -> None:
         return                       # not a local user with a linked Pleroma account → ignore
     row = _target_row(db, ev)
     if not row:
-        # No bridged parent to thread under. Per operator policy, cross-post ALL of the user's own
-        # kind-1 notes — including replies/mentions aimed at native Nostr users — as standalone public
-        # fediverse posts. (A reply whose parent IS bridged/cross-posted is threaded by the row branch
-        # below instead.) Idempotent + round-trip-dedup'd (FediBridgeDelivered) so it can't loop.
-        if int(ev.get("kind", 1)) == 1 and getattr(user, "fedi_crosspost_enabled", False):
+        # No bridged parent to thread under. Cross-post ONLY a genuine TOP-LEVEL note — never a NIP-10
+        # REPLY aimed at a native Nostr user, which would leak the Nostr-side conversation to the
+        # fediverse as an out-of-context standalone post (the reported bug). Quote-posts (q-tag /
+        # 'mention'-marked e-tag) and notes that only @mention a fedi user DO still cross-post (mentions
+        # are translated to @handles). Replies whose parent IS bridged/cross-posted are threaded below.
+        if (int(ev.get("kind", 1)) == 1 and getattr(user, "fedi_crosspost_enabled", False)
+                and not _is_reply(ev)):
             await _crosspost(db, user, ev)
         return
 
