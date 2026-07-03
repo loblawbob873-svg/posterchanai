@@ -3570,7 +3570,7 @@
     const d=Drafts.get(id); if(!d || !(d.text||'').trim()) return;
     let tags=[];
     if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
-    if(d.quote){ tags.push(['q',d.quote]); const o=Store.get(d.quote); if(o)tags.push(['p',o.pubkey]); }
+    if(d.quote){ const o=Store.get(d.quote); tags.push(['q', d.quote, CFG.relay_url||'', (o&&o.pubkey)||'']); if(o)tags.push(['p',o.pubkey]); }
     mentionTags(d.text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     if(d.cw) tags.push(['content-warning', d.cwReason||'']);   // honour a draft's 🔞 flag on direct send too
     try{ await publish(1, d.text, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
@@ -3733,7 +3733,7 @@
         }
         let tags=[];
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
-        if(quote){ tags.push(['q',quote]); const o=Store.get(quote); if(o)tags.push(['p',o.pubkey]); }
+        if(quote){ const o=Store.get(quote); tags.push(['q', quote, CFG.relay_url||'', (o&&o.pubkey)||'']); if(o)tags.push(['p',o.pubkey]); }
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
         imetaTagsFor(text).forEach(t=>tags.push(t));
         _applyCw(tags);
