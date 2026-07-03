@@ -525,6 +525,8 @@ a.btn.full{display:block}
 .usercount .relay-ico{width:15px;height:15px;color:var(--green);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,136,.6))}
 /* the 'on relay' glyph in the mobile More-sheet stats line (inherits more-stats muted colour). */
 .more-stats .relay-ico{width:13px;height:13px;color:var(--green);vertical-align:-2px;margin-right:2px}
+/* media-server quick-pick preset chips (Settings → Media) — wrap on narrow screens. */
+.media-presets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:7px 0 2px}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}

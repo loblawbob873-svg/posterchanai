@@ -718,6 +718,7 @@
     // ?embed=1 → chrome-less single-note view (for clean screenshots / link-preview captures)
     if(/[?&]embed\b/.test(location.search)) document.body.classList.add('embed');
     updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
+    if(!GUEST){ checkBlossomAccess(); restoreMediaServer(); }   // learn Blossom permission (→ nostr.build if none) + restore synced server
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
@@ -3846,6 +3847,60 @@
     // not for the API call — so cross-origin CORS can never block an upload again.
     return (self.location && self.location.origin ? self.location.origin : '') + '/blossom';
   }
+  const NOSTR_BUILD='https://nostr.build';   // NIP-96 fallback host (not Blossom — uploads via uploadNip96)
+  let _blossomOK=null;   // built-in Blossom upload permission for ME: true/false once checked, null=unknown
+  // The effective UPLOAD target as {url, proto}. proto is 'blossom' (BUD-02 PUT /upload + kind-24242) or
+  // 'nip96' (POST multipart + NIP-98). Priority: the user's own enabled server (proto inferred/stored) →
+  // else, if this user has NO built-in Blossom permission, default to nostr.build (NIP-96) so a brand-new
+  // user can still upload out of the box → else the built-in /blossom.
+  function _blossomBuiltin(){ return { url:(self.location&&self.location.origin?self.location.origin:'')+'/blossom', proto:'blossom' }; }
+  function uploadTarget(){
+    if(ClientSettings.get('blossomEnabled')){
+      let s=(ClientSettings.get('mediaServer')||'').trim();
+      if(s){ if(!/^https?:\/\//i.test(s)) s='https://'+s; s=s.replace(/\/+$/,'');
+        // nostr.build is ALWAYS NIP-96 — the hostname wins over any stored/legacy proto (a legacy
+        // kind-10063 record would otherwise mis-restore it as 'blossom' and fail the PUT). Other
+        // hosts use the proto detected (by capability) at save time; default blossom.
+        const proto=/(^|\.)nostr\.build$/i.test((()=>{try{return new URL(s).hostname;}catch(_){return '';}})())
+          ? 'nip96' : (ClientSettings.get('mediaProto','')||'blossom');
+        return { url:s, proto }; }
+    }
+    if(_blossomOK===false) return { url:NOSTR_BUILD, proto:'nip96' };
+    return _blossomBuiltin();
+  }
+  // Detect a media server's protocol by CAPABILITY (does it publish a NIP-96 well-known?) rather than
+  // by hostname — so any NIP-96 host works, not just nostr.build. Falls back to a hostname guess if the
+  // probe is blocked (CORS) or unreachable.
+  async function detectProto(url){
+    const base=url.replace(/\/+$/,'');
+    try{ const r=await fetch(base+'/.well-known/nostr/nip96.json'); if(r.ok && await r.json().catch(()=>null)) return 'nip96'; }catch(_){}
+    return /(^|\.)nostr\.build$/i.test((()=>{try{return new URL(base).hostname;}catch(_){return '';}})())?'nip96':'blossom';
+  }
+  // Query whether ME has built-in Blossom upload permission (whitelist). Sets _blossomOK so uploadTarget
+  // can fall back to nostr.build for users who don't. Cheap, cached; called on login.
+  async function checkBlossomAccess(){
+    try{
+      if(!ME||!ME.pubkey){ _blossomOK=null; return; }
+      if(!CFG.blossom_enabled){ _blossomOK=false; return; }   // built-in server off → nobody can use it
+      const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(ME.pubkey)).then(r=>r.json());
+      _blossomOK=!!(r&&r.whitelisted);
+    }catch(_){ _blossomOK=null; }   // unknown → keep built-in default (don't wrongly divert to nostr.build)
+  }
+  // Boot-time RESTORE of the synced media server (kind-10063 Blossom / kind-10096 NIP-96) so a fresh
+  // device uploads to the user's chosen server without first opening Settings. DOM-free (safe on boot);
+  // the Settings modal reads the same ClientSettings when it renders. No-op if this device already has one.
+  async function restoreMediaServer(){
+    try{
+      if(ClientSettings.get('mediaServer','') || !ME || !ME.pubkey) return;
+      const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10063,10096], limit:4 }]);
+      const rMedia=evs.filter(e=>e.kind===10063||e.kind===10096).sort((a,b)=>b.created_at-a.created_at)[0];
+      const srv=rMedia && (rMedia.tags.find(t=>t[0]==='server')||[])[1];
+      if(!srv) return;
+      ClientSettings.set('mediaServer', srv);
+      ClientSettings.set('mediaProto', rMedia.kind===10096?'nip96':'blossom');
+      ClientSettings.set('blossomEnabled', true);
+    }catch(_){}
+  }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
@@ -3895,9 +3950,39 @@
       return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
     }catch(_){ return file; }
   }
+  // NIP-96 upload (nostr.build et al.): discover the endpoint from /.well-known/nostr/nip96.json,
+  // POST multipart with a NIP-98 (kind-27235) Authorization header, and read the file URL out of the
+  // returned nip94_event tags. Used when the target proto is 'nip96' (Blossom uploadBlob can't talk to it).
+  async function uploadNip96(file, server){
+    const base=server.replace(/\/+$/,'');
+    let api=base+'/api/v2/nip96/upload';
+    try{ const wk=await fetch(base+'/.well-known/nostr/nip96.json').then(r=>r.ok?r.json():null);
+      if(wk&&wk.api_url) api=new URL(wk.api_url, base+'/').href; }catch(_){}   // resolve a relative api_url against the host
+    const auth=await sign(27235,'',[['u',api],['method','POST']]);   // NIP-98 HTTP-auth event
+    const fd=new FormData(); fd.append('file', file, file.name||('upload.'+(extFor(file)||'bin')));
+    let res;
+    try{ res=await fetch(api,{ method:'POST', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)) }, body:fd }); }
+    catch(e){ throw new Error(`couldn't reach ${server} — check the URL, and that it allows cross-origin (CORS) uploads`); }
+    if(!res.ok){ const t=await res.text().catch(()=>String(res.status)); throw new Error(res.headers.get('x-reason')||('upload failed: '+t)); }
+    const d=await res.json();
+    const tags=(d&&d.nip94_event&&d.nip94_event.tags)||[];
+    const url=(tags.find(t=>t[0]==='url')||[])[1] || (d&&d.url) || '';
+    if(!url) throw new Error('nostr.build: no URL in the upload response');
+    try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ const x=(tags.find(t=>t[0]==='x')||[])[1]; _MEDIA_META.set(url,{ m:t, x:x||undefined, dim:await _mediaDim(file) }); } }catch(_){}
+    return url;
+  }
   async function uploadBlob(file, opts){
-    const server=mediaServer(); if(!server) throw new Error('no media server set');
+    // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
+    // after login, before the async check resolves) still diverts to nostr.build instead of 403ing
+    // the built-in server. Only matters when they haven't set their own server.
+    if(_blossomOK===null && !ClientSettings.get('blossomEnabled')){ try{ await checkBlossomAccess(); }catch(_){} }
+    let tgt=uploadTarget();
+    // Private / no-mirror content (encrypted vault blobs) must NEVER land on the public nostr.build
+    // auto-fallback — keep it on the built-in server even if that surfaces a permission error.
+    if(opts&&opts.noMirror && tgt.proto==='nip96' && !ClientSettings.get('blossomEnabled')) tgt=_blossomBuiltin();
+    const server=tgt.url; if(!server) throw new Error('no media server set');
     file=await compressImage(file);   // auto-compress images (no-op for video/gif/already-small)
+    if(tgt.proto==='nip96') return await uploadNip96(file, server);
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     const auth=await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
@@ -6432,18 +6517,19 @@
   // UI when this device hasn't set them locally — so a fresh device inherits your synced choices.
   async function loadNostrPrefs(){
     try{
-      const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10002,10063], limit:4 }]);
+      const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10002], limit:2 }]);
       const r10002=evs.filter(e=>e.kind===10002).sort((a,b)=>b.created_at-a.created_at)[0];
-      const r10063=evs.filter(e=>e.kind===10063).sort((a,b)=>b.created_at-a.created_at)[0];
       if(r10002 && !userRelays().length){
         const urls=r10002.tags.filter(t=>t[0]==='r'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean);
         if(urls.length){ _setRelays=urls; drawRelayRows(); }
       }
-      if(r10063 && !ClientSettings.get('mediaServer','')){
-        const srv=(r10063.tags.find(t=>t[0]==='server')||[])[1]; const mi=$('#set-media');
-        if(srv && mi) mi.value=srv;
-      }
     }catch(_){}
+    // Media server restore is the SINGLE source of truth (restoreMediaServer, also run at login); here we
+    // just apply it (no-op if already set) then reflect the current choice into the settings inputs.
+    await restoreMediaServer();
+    const srv=ClientSettings.get('mediaServer','');
+    if(srv){ const mi=$('#set-media'); if(mi && !mi.value) mi.value=srv;
+      const on=$('#set-blossom-on'); if(on){ on.checked=true; const body=$('#set-blossom-body'); if(body) body.classList.remove('disabled'); } }
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link, Matrix login,
@@ -6567,6 +6653,11 @@
           <div class="muted small">Where your uploaded images &amp; files are stored. Turn this on to use your own Blossom server instead of the built-in one.</div>
           <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
             <input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}">
+            <div class="media-presets"><span class="muted small">Quick pick:</span>
+              <button type="button" class="btn btn-ghost small mp-preset" data-url="https://nostr.build">nostr.build</button>
+              <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.primal.net">Primal</button>
+              <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.band">blossom.band</button>
+            </div>
             <div class="muted small">Must be an <code>https://</code> server that allows cross-origin (CORS) uploads. Default built-in: <code>${enc(CFG.blossom_url||'none')}</code></div>
           </div>
           <div class="set-actions"><button class="btn btn-neon small" id="set-media-save">Save &amp; reload</button></div>
@@ -6606,6 +6697,10 @@
     const syncRelays=()=>{ _setRelays=$$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
     { const t=$('#set-relays-on'); if(t) t.onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked); }
     { const t=$('#set-blossom-on'); if(t) t.onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked); }
+    // Media-server quick-pick presets (nostr.build / Primal / blossom.band): fill the field + turn the
+    // override on so the user can Save. They still need to tap Save & reload to apply.
+    $$('.mp-preset').forEach(b=> b.onclick=()=>{ const mi=$('#set-media'); if(mi) mi.value=b.dataset.url;
+      const on=$('#set-blossom-on'); if(on){ on.checked=true; } $('#set-blossom-body').classList.remove('disabled'); });
     { const b=$('#set-relay-add'); if(b) b.onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); }; }
     { const b=$('#set-relay-ext'); if(b) b.onclick=async()=>{ syncRelays(); await importExtensionRelays(); }; }
     { const b=$('#set-relay-nip05'); if(b) b.onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); }; }
@@ -6619,9 +6714,24 @@
       }; }
     { const b=$('#set-media-save'); if(b) b.onclick=async()=>{
         const media=$('#set-media').value.trim();
-        ClientSettings.set('blossomEnabled', $('#set-blossom-on').checked);
-        ClientSettings.set('mediaServer', media);
-        try{ if(media) await publish(10063,'',[['server',media]]); }catch(_){}
+        const on=$('#set-blossom-on').checked;
+        if(on && media){
+          const proto=await detectProto(media);   // capability probe (NIP-96 well-known) — works for any host
+          ClientSettings.set('blossomEnabled', true);
+          ClientSettings.set('mediaServer', media);
+          ClientSettings.set('mediaProto', proto);
+          // Persist to Nostr so a fresh device restores it: kind-10063 (BUD-03 Blossom) or kind-10096
+          // (NIP-96 file-storage server list). Newest of the two wins on restore.
+          try{ await publish(proto==='nip96'?10096:10063,'',[['server',media]]); }catch(_){}
+        } else {
+          // Reverting to the built-in server: clear locally AND publish EMPTY replaceable lists to both
+          // kinds, so no other device re-restores a now-abandoned server (the stale-restore bug).
+          ClientSettings.set('blossomEnabled', false);
+          ClientSettings.set('mediaServer', '');
+          ClientSettings.set('mediaProto', '');
+          try{ await publish(10063,'',[]); }catch(_){}
+          try{ await publish(10096,'',[]); }catch(_){}
+        }
         toast('media server saved — reloading'); setTimeout(()=>location.reload(),600);
       }; }
     { const we=$('#set-webln'); if(we) we.onclick=async()=>{ const st=$('#set-nwc-status');
