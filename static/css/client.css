@@ -523,18 +523,8 @@ a.btn.full{display:block}
 /* each stat on its own line (was <br>-joined); nowrap keeps the icon+number together. */
 .usercount .uc-stat{display:block;white-space:nowrap}
 .usercount .relay-ico{width:15px;height:15px;color:var(--green);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,136,.6))}
-/* Mobile-only compact stats strip below the topbar (desktop uses the sidebar #user-count). */
-.mobstats{display:none}
-.mobstats .uc-stat{display:inline-flex;align-items:center;white-space:nowrap;gap:3px}
-.mobstats .wot-ico{width:14px;height:14px}
-.mobstats .live-ico{width:12px;height:12px;color:var(--neon2);animation:conn-pulse 1.6s ease-in-out infinite}
-.mobstats .relay-ico{width:14px;height:14px;color:var(--green)}
-@media(max-width:820px){
-  /* show the strip on phones (desktop keeps the sidebar copy). :not(.hidden) so an empty poll hides it */
-  .mobstats:not(.hidden){display:flex;justify-content:center;align-items:center;gap:16px;flex-wrap:wrap;
-    padding:7px 12px;font-size:13px;font-weight:700;letter-spacing:.3px;color:#bdfcff;
-    border-bottom:1px solid var(--line);background:var(--panel)}
-}
+/* the 'on relay' glyph in the mobile More-sheet stats line (inherits more-stats muted colour). */
+.more-stats .relay-ico{width:13px;height:13px;color:var(--green);vertical-align:-2px;margin-right:2px}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}

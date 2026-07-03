@@ -883,7 +883,7 @@
       return a;
     }catch(_){ return ''; }
   }
-  let _lastOnline=0;   // cached for the mobile More sheet (which is built synchronously)
+  let _lastOnline=0, _lastRelay=0;   // cached for the mobile More sheet (which is built synchronously)
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
     let online=0, users=Number(CFG.users)||0, relay=0;
@@ -896,21 +896,12 @@
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
       if(!onlineOnly && Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
     }catch(_){}
-    // Sidebar (desktop): stacked lines. Mobile strip (#user-count-m): a compact one-line row with
-    // abbreviated numbers so it fits a narrow header. Created in JS (no template change) and inserted
-    // just under the topbar; CSS shows it only ≤820px. Both fed from the same poll.
-    let ucm=$('#user-count-m');
-    if(!ucm){ const tb=$('.topbar'); if(tb){ ucm=document.createElement('div'); ucm.id='user-count-m'; ucm.className='mobstats hidden'; tb.insertAdjacentElement('afterend', ucm); } }
-    const kf=n=> n>=1000 ? (n/1000).toFixed(n>=10000?0:1).replace(/\.0$/,'')+'k' : String(n);
-    const parts=[], mparts=[];
-    if(users>0){ parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
-                 mparts.push(`<span class="uc-stat" title="Web-of-trust network size">${WOT_ICON} ${kf(users)}</span>`); }
-    if(online>0){ parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
-                  mparts.push(`<span class="uc-stat" title="People with the site open now">${LIVE_ICON} ${kf(online)}</span>`); }
-    if(relay>0){ parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
-                 mparts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${kf(relay)}</span>`); }
-    if(ucm){ if(mparts.length){ ucm.innerHTML=mparts.join(''); ucm.classList.remove('hidden'); } else ucm.classList.add('hidden'); }
-    if(!uc) return;   // sidebar element absent (e.g. mobile DOM variants) — _lastOnline is still cached above
+    if(relay>0) _lastRelay=relay;   // cached for the mobile More sheet (built synchronously)
+    if(!uc) return;   // sidebar element absent (mobile) — _lastOnline/_lastRelay cached above for the More sheet
+    const parts=[];
+    if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
+    if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
+    if(relay>0) parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
     if(parts.length){ uc.innerHTML=parts.join(''); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
@@ -3532,8 +3523,8 @@
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
     const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
-    const _wot=Number(CFG.users)||0;   // WoT network size + live online count (same stats as the desktop sidebar)
-    const _stat=(_wot||_lastOnline)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}</div>`:'';
+    const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
+    const _stat=(_wot||_lastOnline||_lastRelay)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}</div>`:'';
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
