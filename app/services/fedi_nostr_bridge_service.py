@@ -57,6 +57,19 @@ def _broadcast_on() -> bool:
     return str(_get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
 
 
+def _relay_hint() -> str:
+    """Public relay URL for the NIP-18 q-tag relay hint, so other clients can locate the quoted note
+    and render the embed. Prefer an explicit, WELL-FORMED client_relay_url (ws/wss only — a
+    misconfigured value must not become a bad advisory hint); else derive wss://<nip05-domain>/relay
+    (ident.nip05_domain does the shared lowercase normalization). Empty when neither is usable, which
+    degrades to the old always-empty slot (clients resolve the quote from their own relays)."""
+    url = _get("client_relay_url").strip()
+    if url.startswith(("ws://", "wss://")):
+        return url
+    domain = ident.nip05_domain()
+    return f"wss://{domain}/relay" if domain else ""
+
+
 def _port() -> int:
     try:
         return int(_get("nostr_relay_port", "3052") or "3052")
@@ -337,10 +350,9 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         quoted_ev_id, quoted_pk = await _resolve_quote(db, port, platform, instance_url, instance_host,
                                                        raw, token, _depth)
         if quoted_ev_id:
-            qtag = ["q", quoted_ev_id]
-            if quoted_pk:
-                qtag += ["", quoted_pk]
-            tags.append(qtag)
+            # NIP-18 q tag: ['q', <id>, <relay-url>, <pubkey>] — include the relay hint so other
+            # clients can locate the quoted note and render the embed (was emitted with an empty slot).
+            tags.append(["q", quoted_ev_id, _relay_hint(), quoted_pk or ""])
             try:
                 quote_bech = bech32.encode("note", bytes.fromhex(quoted_ev_id))
             except Exception:
