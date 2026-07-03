@@ -896,11 +896,21 @@
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
       if(!onlineOnly && Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
     }catch(_){}
+    // Sidebar (desktop): stacked lines. Mobile strip (#user-count-m): a compact one-line row with
+    // abbreviated numbers so it fits a narrow header. Created in JS (no template change) and inserted
+    // just under the topbar; CSS shows it only ≤820px. Both fed from the same poll.
+    let ucm=$('#user-count-m');
+    if(!ucm){ const tb=$('.topbar'); if(tb){ ucm=document.createElement('div'); ucm.id='user-count-m'; ucm.className='mobstats hidden'; tb.insertAdjacentElement('afterend', ucm); } }
+    const kf=n=> n>=1000 ? (n/1000).toFixed(n>=10000?0:1).replace(/\.0$/,'')+'k' : String(n);
+    const parts=[], mparts=[];
+    if(users>0){ parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
+                 mparts.push(`<span class="uc-stat" title="Web-of-trust network size">${WOT_ICON} ${kf(users)}</span>`); }
+    if(online>0){ parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
+                  mparts.push(`<span class="uc-stat" title="People with the site open now">${LIVE_ICON} ${kf(online)}</span>`); }
+    if(relay>0){ parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
+                 mparts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${kf(relay)}</span>`); }
+    if(ucm){ if(mparts.length){ ucm.innerHTML=mparts.join(''); ucm.classList.remove('hidden'); } else ucm.classList.add('hidden'); }
     if(!uc) return;   // sidebar element absent (e.g. mobile DOM variants) — _lastOnline is still cached above
-    const parts=[];
-    if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
-    if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
-    if(relay>0) parts.push(`<span class="uc-stat" title="Clients connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
     if(parts.length){ uc.innerHTML=parts.join(''); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
