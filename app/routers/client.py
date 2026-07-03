@@ -249,7 +249,9 @@ async def client_stats(request: Request, v: str = ""):
         from app.services.nostr_relay.thread import relay_status
         st = relay_status()
         members = int(st.get("members", 0) or 0)
-        relay_conns = int(st.get("conns", 0) or 0)   # raw live sockets connected to the relay right now
+        # Deduped-by-IP count = distinct PEOPLE connected to the relay right now (not raw sockets, which
+        # also count multi-tab/federation/scrapers). Falls back to raw conns if the relay didn't dedup.
+        relay_conns = int(st.get("online", st.get("conns", 0)) or 0)
     except Exception:
         pass
     return JSONResponse({"users": members, "online": online, "relay": relay_conns})
