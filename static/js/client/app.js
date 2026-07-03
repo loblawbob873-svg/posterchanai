@@ -3567,14 +3567,25 @@
     });
     hydrate(feed);
   }
+  // Append a quoted note as an inline `nostr:nevent` (WITH relay hint + author) to the post content.
+  // A NIP-18 quote needs BOTH the `q` tag AND the inline nevent: many clients (Damus/Amethyst/Primal)
+  // render the quote from the CONTENT nevent, not the q-tag, so a q-tag-only quote shows as bare text
+  // there. No-op if the content already carries an nevent/note reference (user pasted one).
+  function _appendQuoteNevent(content, id, pk){
+    try{
+      if(/nostr:(nevent1|note1)/i.test(content||'')) return content;
+      const nev='nostr:'+NT().nip19.neventEncode({ id, relays:[CFG.relay_url].filter(Boolean), author:pk||undefined });
+      return (content && content.trim() ? content.trim()+'\n\n' : '')+nev;
+    }catch(_){ return content; }
+  }
   async function sendDraft(id){
     const d=Drafts.get(id); if(!d || !(d.text||'').trim()) return;
-    let tags=[];
+    let tags=[]; let content=d.text;
     if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
-    if(d.quote){ const o=Store.get(d.quote); tags.push(['q', d.quote, CFG.relay_url||'', (o&&o.pubkey)||'']); if(o)tags.push(['p',o.pubkey]); }
+    if(d.quote){ const o=Store.get(d.quote); const qpk=(o&&o.pubkey)||''; tags.push(['q', d.quote, CFG.relay_url||'', qpk]); if(qpk)tags.push(['p',qpk]); content=_appendQuoteNevent(content, d.quote, qpk); }
     mentionTags(d.text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     if(d.cw) tags.push(['content-warning', d.cwReason||'']);   // honour a draft's 🔞 flag on direct send too
-    try{ await publish(1, d.text, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
+    try{ await publish(1, content, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
     catch(e){ toast('post failed: '+e.message); }
   }
   // Tags for a top-level community post (NIP-72 + NIP-22 comment, kind 1111). Uppercase A/K/P =
@@ -3708,7 +3719,7 @@
       const _cwState=()=>{ const cb=$('#cmp-cw-btn',root); return cb && cb.classList.contains('on') ? { cw:true, cwReason:(($('#cmp-cw-reason',root)||{}).value||'').trim() } : { cw:false, cwReason:'' }; };
       const _applyCw=(tags)=>{ const s=_cwState(); if(s.cw) tags.push(['content-warning', s.cwReason]); };
       $('#cmp-send',root).onclick=async()=>{
-        const text=ta.value.trim(); if(!text)return;
+        const text=ta.value.trim(); if(!text && !quote)return;   // a quote-repost may have no comment
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
         // 📊 Poll (NIP-88 kind-1068) — only for top-level posts; question = text, options from the builder.
         { const pbox=$('#cmp-pollbox',root); if(pbox && !pbox.classList.contains('hidden')){
@@ -3732,13 +3743,13 @@
           closeModal(); try{ await publish(1111, text, tags); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
           catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
-        let tags=[];
+        let tags=[]; let content=text;
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
-        if(quote){ const o=Store.get(quote); tags.push(['q', quote, CFG.relay_url||'', (o&&o.pubkey)||'']); if(o)tags.push(['p',o.pubkey]); }
+        if(quote){ const o=Store.get(quote); const qpk=(o&&o.pubkey)||''; tags.push(['q', quote, CFG.relay_url||'', qpk]); if(qpk)tags.push(['p',qpk]); content=_appendQuoteNevent(content, quote, qpk); }
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
         imetaTagsFor(text).forEach(t=>tags.push(t));
         _applyCw(tags);
-        closeModal(); await publish(1, text, tags); if(draftId) Drafts.remove(draftId);
+        closeModal(); await publish(1, content, tags); if(draftId) Drafts.remove(draftId);
         toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
       ta.focus();
