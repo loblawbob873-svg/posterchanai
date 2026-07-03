@@ -108,6 +108,7 @@
 /* neon drop-shadow filters on glyphs/badges → none */
 :root[data-theme] .usercount .wot-ico,
 :root[data-theme] .usercount .live-ico,
+:root[data-theme] .usercount .relay-ico,
 :root[data-theme] .note .pin-badge,
 :root[data-theme] .nav-item:hover .ic,
 :root[data-theme] .nav-item.active .ic{ filter:none; }
@@ -519,6 +520,9 @@ a.btn.full{display:block}
 .usercount .uc-dot{color:var(--muted);text-shadow:none;margin:0 2px}
 .usercount .wot-ico{width:19px;height:19px;vertical-align:-4px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,255,.75))}
 .usercount .live-ico{width:15px;height:15px;color:var(--neon2);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(255,0,255,.9));animation:conn-pulse 1.6s ease-in-out infinite}
+/* each stat on its own line (was <br>-joined); nowrap keeps the icon+number together. */
+.usercount .uc-stat{display:block;white-space:nowrap}
+.usercount .relay-ico{width:15px;height:15px;color:var(--green);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,136,.6))}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
 .conn.ok{color:var(--green)}
 .conn.ok .dot{background:var(--green);box-shadow:0 0 12px var(--green),0 0 22px var(--green)}

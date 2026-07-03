@@ -19,6 +19,8 @@
   const WOT_ICON = '<svg class="wot-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l7 3v6c0 4.7-3.1 8.3-7 11-3.9-2.7-7-6.3-7-11V5l7-3z"/></svg>';
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
   const LIVE_ICON = '<svg class="live-ico" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>';
+  // "on relay" = raw live socket count connected to the built-in relay right now (broadcast glyph).
+  const RELAY_ICON = '<svg class="relay-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M6.3 6.3a8 8 0 000 11.4l1.5-1.5a6 6 0 010-8.5L6.3 6.3zm11.4 0l-1.5 1.4a6 6 0 010 8.5l1.5 1.5a8 8 0 000-11.4z"/></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
   // ---- UI themes (slugs match static/css/client.css :root[data-theme] + schemas.CLIENT_THEMES) ----
   // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
@@ -884,10 +886,11 @@
   let _lastOnline=0;   // cached for the mobile More sheet (which is built synchronously)
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
-    let online=0, users=Number(CFG.users)||0;
+    let online=0, users=Number(CFG.users)||0, relay=0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
+      relay=Number(s.relay)||0;
       if(online>0) _lastOnline=online;
       // WoT size refreshes ONLY on boot/login (it barely changes — daily rebuild). The 15s poll passes
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
@@ -895,9 +898,10 @@
     }catch(_){}
     if(!uc) return;   // sidebar element absent (e.g. mobile DOM variants) — _lastOnline is still cached above
     const parts=[];
-    if(users>0) parts.push(WOT_ICON+' '+users.toLocaleString()+' users');
-    if(online>0) parts.push(LIVE_ICON+' '+online.toLocaleString()+' online');
-    if(parts.length){ uc.innerHTML=parts.join('<br>'); uc.classList.remove('hidden'); }
+    if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
+    if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
+    if(relay>0) parts.push(`<span class="uc-stat" title="Clients connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
+    if(parts.length){ uc.innerHTML=parts.join(''); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
   function renderMe(){

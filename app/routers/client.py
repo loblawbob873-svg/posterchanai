@@ -243,12 +243,16 @@ async def client_stats(request: Request, v: str = ""):
     """Sidebar stats: `users` = WoT network size (cached), `online` = distinct people with the site
     open right now (active /client viewers in the last ~2.5 min, deduped per-user). Polled ~1/min."""
     online = _record_viewer(request, v)
+    members = 0
+    relay_conns = 0
     try:
         from app.services.nostr_relay.thread import relay_status
-        members = int(relay_status().get("members", 0) or 0)
+        st = relay_status()
+        members = int(st.get("members", 0) or 0)
+        relay_conns = int(st.get("conns", 0) or 0)   # raw live sockets connected to the relay right now
     except Exception:
-        members = 0
-    return JSONResponse({"users": members, "online": online})
+        pass
+    return JSONResponse({"users": members, "online": online, "relay": relay_conns})
 
 
 @router.post("/qr")
