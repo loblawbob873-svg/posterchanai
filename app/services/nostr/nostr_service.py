@@ -25,7 +25,6 @@ DEFAULT_RELAYS = [
     "wss://relay.primal.net/",
     "wss://nostr.mom/",
     "wss://nostr.oxtr.dev/",
-    "wss://purplepag.es/",
     "wss://offchain.pub/",
     "wss://relay.ditto.pub/",
     "wss://relay.froth.zone/",
@@ -37,11 +36,12 @@ DEFAULT_RELAYS = [
     "wss://social.amanah.eblessing.co/",
     "wss://relay.sovrgn.co.za/",
     # 0xchat interop (NIP-17 DMs) — relay.0xchat.com is where 0xchat users + their kind-10050 live.
-    # We deliberately do NOT add the highest-volume firehoses (relay.damus.io, relay.nostr.band) or the
-    # AUTH/paid/bridge relays (auth.nostr1.com, inbox.nostr.wine, nostr.wine[429], relay.mostr.pub):
-    # they flooded the relay's startup with so much traffic/errors that it timed out bots' profile
-    # publish + sync on every restart (the "bot never goes green / nip05 not set" cascade). A couple of
-    # moderate extras are fine.
+    # We deliberately do NOT add the highest-volume firehoses (relay.damus.io, relay.nostr.band), the
+    # AUTH/paid/bridge relays (auth.nostr1.com, inbox.nostr.wine, nostr.wine[429], relay.mostr.pub), or
+    # purplepag.es (profile-ONLY — it rejects every note we federate, so it's pure outbox churn): they
+    # flooded the relay's startup with so much traffic/errors that it timed out bots' profile publish +
+    # sync on every restart (the "bot never goes green / nip05 not set" cascade). A couple of moderate
+    # extras are fine.
     "wss://relay.0xchat.com/",
     "wss://yabu.me/",
     "wss://nostr.data.haus/",
