@@ -777,17 +777,27 @@
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
     // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
-    let _hiddenAt = 0;
+    let _hiddenAt = 0, _lastWake = 0;
+    // Reconnect the relay + refetch the feed on resume. Debounced (4s) because a mobile resume fires
+    // several of these signals close together. wake() reopens every socket; onReconnect re-runs the
+    // per-user hydration + re-renders the feed view (see Relay.onReconnect below).
+    const _resumeRelay = ()=>{ if(Date.now() - _lastWake < 4000) return; _lastWake = Date.now(); try{ Relay.wake(); }catch(_){} };
     document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
       if(document.hidden){ _hiddenAt = Date.now(); return; }
       // Resumed to the foreground. A mobile PWA's relay WebSocket is frozen while backgrounded and very
       // often comes back DEAD-but-"open" (zombie) — the feed then looks stuck / a query "relay timeouts".
       // If we were away long enough for the OS to have suspended the socket, force a fresh relay
       // connection so the feed reconnects instantly instead of hanging on a dead socket.
-      if(Date.now() - _hiddenAt > 6000){ try{ Relay.wake(); }catch(_){} }
+      if(Date.now() - _hiddenAt > 6000) _resumeRelay();
       // Also: if an AI reply was still pending when we backgrounded, kick the recovery poll now (a slow
       // effect/video can finish while hidden where the timed recoverWatch is throttled). aiRecover self-guards.
       if(VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId); });
+    // visibilitychange alone is unreliable on a phone waking from OFF: it can fire BEFORE the radio is
+    // back, so wake()'s reconnect fails and the feed hangs on "request timeout" with no new posts. The
+    // `online` event (network actually returned) and `pageshow` w/ persisted (restored from bfcache)
+    // give reliable second chances to reconnect + refetch. Debounced so they don't stack with the above.
+    window.addEventListener('online', _resumeRelay);
+    window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
     if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
