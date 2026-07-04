@@ -258,6 +258,9 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
 
 _puppet_follows: dict = {}      # follower puppet pubkey -> set of followed pubkeys we've published
                                 # (so a momentary empty relay read can never SHRINK the list)
+_notif_poison: dict = {}        # user_id -> notification id that failed to publish LAST cycle. A second
+                                # failure on the same id = un-deliverable (e.g. a relay-blocked author);
+                                # skip it so it can't head-of-line-block every later notification forever.
 
 
 async def _bridge_follow(db: Session, port: int, follower_puppet: dict, followed_pk: str,
@@ -425,10 +428,22 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
             break
         last, stop = None, False
         for n in sorted(raw, key=lambda x: x.get("id") or ""):   # oldest-first
+            nid = n.get("id") or ""
             if not await _deliver_one_notif(db, port, user, instance_host, n, recipient, broadcast, blocked):
-                stop = True               # publish failed → retry next cycle, don't advance past it
+                # Publish failed. Retry next cycle — UNLESS this exact id already failed last cycle, in
+                # which case it's un-deliverable (e.g. a relay-blocked author) and would freeze the
+                # cursor forever, starving every later notification (the "missing a bunch" wedge). Skip
+                # the poison item and keep draining. Transient failures still get one retry first.
+                if _notif_poison.get(user.id) == nid:
+                    logger.warning("[fedi-personal] skipping un-deliverable notification %s (%s from %s) for %s",
+                                   nid, n.get("type"), (n.get("account") or {}).get("acct"), user.username)
+                    _notif_poison.pop(user.id, None)
+                    last = nid or last    # advance PAST the poison
+                    continue
+                _notif_poison[user.id] = nid
+                stop = True               # first failure → retry next cycle, don't advance past it
                 break
-            last = n.get("id") or last
+            last = nid or last
         if last and last != cursor:
             cursor = last
             user.fedi_bridge_notif_since = cursor
