@@ -1172,6 +1172,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .av-by .name{color:var(--text);cursor:pointer}.av-by .name:hover{color:var(--neon)}
 .av-actions{display:flex;gap:8px;margin:8px 0 20px;border-bottom:1px solid var(--line);padding-bottom:16px}
 .av-body{font-size:18.5px;line-height:1.75}
+/* article comments (NIP-22) under the reader — header wraps on narrow phones so the button never overflows */
+.av-comments{margin-top:30px;border-top:1px solid var(--line);padding-top:6px}
+.av-comments-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.av-comments-hd .search-section-title{padding:8px 0}
+.av-comments .note{margin:8px 0}
+.av-comments .empty{padding:18px 4px}
 .article-editor{padding:18px 20px 60px;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:12px;animation:fade .2s}
 .article-body{width:100%;min-height:46vh;resize:vertical;font-family:inherit;font-size:15px;line-height:1.65}
 .article-preview{min-height:46vh;padding:8px 2px}

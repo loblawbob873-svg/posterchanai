@@ -1582,6 +1582,11 @@
         <button class="act" id="av-copy" title="copy link">🔗</button>
       </div>
       <div class="markdown av-body">${mdToHtml(e.content)}</div>
+      <div class="av-comments">
+        <div class="av-comments-hd"><span class="search-section-title">Comments</span>
+          <button class="btn btn-neon small" id="av-comment">💬 Write a comment</button></div>
+        <div id="av-comment-list"><div class="spinner"></div></div>
+      </div>
     </div>`;
     $('#art-back').onclick=()=>switchView('articles');
     $('#av-bm').onclick=ev=>toggleBookmark(e.id, ev.currentTarget);
@@ -1589,8 +1594,23 @@
     { const ed=$('#av-edit'); if(ed) ed.onclick=()=>renderArticleEditor(e); }
     { const dl=$('#av-del'); if(dl) dl.onclick=()=>deleteArticle(e); }
     $('#av-copy').onclick=()=>{ try{ const naddr=NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30023 }); navigator.clipboard.writeText(_webLink(naddr)); toast('article link copied'); }catch(_){ navigator.clipboard.writeText(e.id); toast('id copied'); } };
+    { const cb=$('#av-comment'); if(cb) cb.onclick=()=>{ if(GUEST){ _guestPrompt(); return; } compose({articleComment:e}); }; }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
+    decorateProfiles();
+    loadArticleComments(e);
+  }
+  // NIP-22 comments (kind 1111) on a NIP-23 article, scoped to the article's `a` coordinate. Older
+  // clients may comment with a kind-1 carrying the same `#a` — query both.
+  function articleAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return '30023:'+e.pubkey+':'+d; }
+  async function loadArticleComments(e){
+    const addr=articleAddr(e);
+    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:100 }]); }catch(_){}
+    cs.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
+    if(VIEW!=='article') return;                         // navigated away while loading
+    const box=$('#av-comment-list'); if(!box) return;
+    cs=cs.filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);   // oldest-first (reading order)
+    box.innerHTML = cs.length ? cs.map(x=>noteCard(x)).join('') : '<div class="empty">No comments yet — be the first to reply.</div>';
     decorateProfiles();
   }
   function _insertAt(ta, text){ const s=ta.selectionStart||0, en=ta.selectionEnd||0; ta.value=ta.value.slice(0,s)+text+ta.value.slice(en); const c=s+text.length; ta.selectionStart=ta.selectionEnd=c; ta.focus(); }
@@ -3605,15 +3625,21 @@
     const d=(c.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='34550:'+c.pubkey+':'+d; const r=CFG.relay_url||'';
     return [['A',addr,r],['K','34550'],['P',c.pubkey,r],['a',addr,r],['k','34550'],['p',c.pubkey,r]];
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, cw=false, cwReason=''}={}){
-    const title = community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
+  // NIP-22 comment on a NIP-23 article: root scope (uppercase A/K/P) = the article; parent (lowercase
+  // a/k/p) = the article too for a top-level comment.
+  function articleCommentTags(a){
+    const d=(a.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='30023:'+a.pubkey+':'+d; const r=CFG.relay_url||'';
+    return [['A',addr,r],['K','30023'],['P',a.pubkey,r],['a',addr,r],['k','30023'],['p',a.pubkey,r]];
+  }
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, cw=false, cwReason=''}={}){
+    const title = articleComment?'Comment on article':community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
       </div>
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px;min-width:120px">💾 Draft</button><button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px;min-width:120px">Post ▶</button></div>
@@ -3744,14 +3770,17 @@
             closeModal(); try{ await publish(1068, text, tags); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); }
             catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
           } }
-        // Community post → NIP-22 comment (kind 1111) scoped to the community.
-        if(community){
-          let tags=communityPostTags(community);
+        // Community post / article comment → NIP-22 comment (kind 1111) scoped to that root.
+        if(community || articleComment){
+          let tags = articleComment ? articleCommentTags(articleComment) : communityPostTags(community);
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
           imetaTagsFor(text).forEach(t=>tags.push(t));
           _applyCw(tags);
-          closeModal(); try{ await publish(1111, text, tags); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
-          catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
+          closeModal();
+          try{ await publish(1111, text, tags);
+            if(articleComment){ toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
+            else { toast('posted to community'); if(VIEW==='community') openCommunity(community); }
+          }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
         let tags=[]; let content=text;
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }
