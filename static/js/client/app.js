@@ -1550,6 +1550,7 @@
     list.innerHTML = arts.length ? arts.map(articleCard).join('') : '<div class="empty">No articles yet. Tap “Write article” to publish the first one.</div>';
     decorateProfiles();
     $$('.article-card',list).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
+    if(arts.length) _fillArticleCommentCounts(arts, list);
   }
   function articleCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey);
@@ -1560,8 +1561,20 @@
       ${img?`<img class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`:''}
       <div class="art-meta"><h3 class="art-title">${enc(title)}</h3>
         ${summary?`<div class="art-sum">${enc(summary.slice(0,200))}</div>`:''}
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
+        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span><span class="art-cc muted small" data-addr="${enc(articleAddr(e))}"></span></div>
       </div></article>`;
+  }
+  // Fill the 💬 comment count on the listed article cards with ONE query (not one per card), counting
+  // events by the article ROOT scope (#A / legacy #a) they carry. Best-effort, purely additive.
+  async function _fillArticleCommentCounts(arts, list){
+    const addrs=[...new Set(arts.map(articleAddr))]; if(!addrs.length) return;
+    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#A':addrs, limit:500 }, { kinds:[1,1111], '#a':addrs, limit:500 }]); }catch(_){}
+    const counts=new Map(), seen=new Set();
+    for(const c of cs){ if(seen.has(c.id)) continue; seen.add(c.id);
+      const a=(c.tags||[]).find(t=>(t[0]==='A'||t[0]==='a') && addrs.includes(t[1]));
+      if(a) counts.set(a[1], (counts.get(a[1])||0)+1); }
+    if(VIEW!=='articles' || !list) return;
+    list.querySelectorAll('.art-cc').forEach(el=>{ const n=counts.get(el.dataset.addr)||0; if(n) el.textContent=` · 💬 ${n}`; });
   }
   function openArticle(e){
     VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Article';
@@ -1619,7 +1632,9 @@
   }
   async function loadArticleComments(e){
     const addr=articleAddr(e);
-    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:200 }]); }catch(_){}
+    // #A = the NIP-22 ROOT scope → catches top-level AND nested replies (nested carry `A`=article but
+    // `e`=parent, so `#a` alone would miss them). `#a` too for legacy/top-level. Pool dedups by id.
+    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#A':[addr], limit:200 }, { kinds:[1,1111], '#a':[addr], limit:200 }]); }catch(_){}
     cs.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
     if(VIEW!=='article') return;                         // navigated away while loading
     const box=$('#av-comment-list'); if(!box) return;
