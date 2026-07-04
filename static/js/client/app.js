@@ -718,7 +718,7 @@
     // ?embed=1 → chrome-less single-note view (for clean screenshots / link-preview captures)
     if(/[?&]embed\b/.test(location.search)) document.body.classList.add('embed');
     updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
-    if(!GUEST){ checkBlossomAccess(); restoreMediaServer(); }   // learn Blossom permission (→ nostr.build if none) + restore synced server
+    if(!GUEST) checkBlossomAccess();   // learn Blossom permission (→ nostr.build if none); restoreMediaServer runs on relay-ready (hydrateUser)
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
@@ -827,6 +827,8 @@
     let _hydrated = false;
     const hydrateUser = ()=>{
       if(GUEST || _hydrated) return; _hydrated = true;
+      restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
+                              // relay is connected (this fires on onReady), else the query returns nothing
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions();

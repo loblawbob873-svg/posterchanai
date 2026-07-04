@@ -648,14 +648,14 @@ class UserSettingsUpdate(BaseModel):
     fedi_bridge_enabled: Optional[bool] = None
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: Optional[bool] = None
-
-
-class BridgeAccessRequest(BaseModel):
-    enable: bool = True   # True = 1-click provision + enable; False = disable bridge access
     # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
     nitter_feeds: Optional[str] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
     # SettingsResponse (they're admin-global, not per-user) — see that class.
+
+
+class BridgeAccessRequest(BaseModel):
+    enable: bool = True   # True = 1-click provision + enable; False = disable bridge access
 
 
 class UserSettingsResponse(BaseModel):
