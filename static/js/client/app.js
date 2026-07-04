@@ -1603,14 +1603,41 @@
   // NIP-22 comments (kind 1111) on a NIP-23 article, scoped to the article's `a` coordinate. Older
   // clients may comment with a kind-1 carrying the same `#a` — query both.
   function articleAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return '30023:'+e.pubkey+':'+d; }
+  // One threaded comment (+ its nested replies, recursively). Custom card (not noteCard) so the Reply
+  // button posts a NIP-22 reply THREADED under this comment, not a plain kind-1.
+  function _acCard(c, depth){
+    const p=profOf(c.pubkey); needProfile(c.pubkey);
+    const name=p.name||p.display_name||(NT().nip19.npubEncode(c.pubkey).slice(0,12)+'…');
+    const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(c.pubkey).slice(4,12));
+    const mp=mediaParts(c.content);
+    const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
+    return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
+      <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
+      <div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.gallery}
+      <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}">↩ Reply</button></div>
+      ${kids}</div>`;
+  }
   async function loadArticleComments(e){
     const addr=articleAddr(e);
-    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:100 }]); }catch(_){}
+    let cs=[]; try{ cs=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:200 }]); }catch(_){}
     cs.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
     if(VIEW!=='article') return;                         // navigated away while loading
     const box=$('#av-comment-list'); if(!box) return;
-    cs=cs.filter(x=>!isMutedView(x)).sort((a,b)=>a.created_at-b.created_at);   // oldest-first (reading order)
-    box.innerHTML = cs.length ? cs.map(x=>noteCard(x)).join('') : '<div class="empty">No comments yet — be the first to reply.</div>';
+    cs=cs.filter(x=>!isMutedView(x));
+    // Build the reply tree: a comment nests under another comment IN this set that it e-tags; otherwise
+    // it's top-level (its parent is the article). Guard against self/cyclic parents.
+    const byId=new Map(cs.map(c=>[c.id,c])); cs.forEach(c=>c._kids=[]);
+    const roots=[];
+    for(const c of cs){
+      const pid=(c.tags||[]).filter(t=>t[0]==='e'&&t[1]&&t[1]!==c.id).map(t=>t[1]).find(id=>byId.has(id));
+      if(pid) byId.get(pid)._kids.push(c); else roots.push(c);
+    }
+    const sortRec=a=>{ a.sort((x,y)=>x.created_at-y.created_at); a.forEach(c=>sortRec(c._kids)); };   // oldest-first
+    sortRec(roots);
+    box.innerHTML = roots.length ? roots.map(c=>_acCard(c,0)).join('') : '<div class="empty">No comments yet — be the first to reply.</div>';
+    box.querySelectorAll('.ac-reply').forEach(b=> b.onclick=()=>{ if(GUEST){ _guestPrompt(); return; } const c=byId.get(b.dataset.id); if(c) compose({articleComment:e, articleParent:c}); });
+    box.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    box.querySelectorAll('.ac-item img:not(.ac-av)').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
     decorateProfiles();
   }
   function _insertAt(ta, text){ const s=ta.selectionStart||0, en=ta.selectionEnd||0; ta.value=ta.value.slice(0,s)+text+ta.value.slice(en); const c=s+text.length; ta.selectionStart=ta.selectionEnd=c; ta.focus(); }
@@ -3625,14 +3652,17 @@
     const d=(c.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='34550:'+c.pubkey+':'+d; const r=CFG.relay_url||'';
     return [['A',addr,r],['K','34550'],['P',c.pubkey,r],['a',addr,r],['k','34550'],['p',c.pubkey,r]];
   }
-  // NIP-22 comment on a NIP-23 article: root scope (uppercase A/K/P) = the article; parent (lowercase
-  // a/k/p) = the article too for a top-level comment.
-  function articleCommentTags(a){
+  // NIP-22 comment on a NIP-23 article. Root scope (uppercase A/K/P) is ALWAYS the article. The parent
+  // (lowercase) is the article for a top-level comment, or another comment (e/k/p) for a threaded reply.
+  function articleCommentTags(a, parent){
     const d=(a.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='30023:'+a.pubkey+':'+d; const r=CFG.relay_url||'';
-    return [['A',addr,r],['K','30023'],['P',a.pubkey,r],['a',addr,r],['k','30023'],['p',a.pubkey,r]];
+    const tags=[['A',addr,r],['K','30023'],['P',a.pubkey,r]];
+    if(parent) tags.push(['e',parent.id,r,parent.pubkey],['k',String(parent.kind||1111)],['p',parent.pubkey,r]);
+    else tags.push(['a',addr,r],['k','30023'],['p',a.pubkey,r]);
+    return tags;
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, cw=false, cwReason=''}={}){
-    const title = articleComment?'Comment on article':community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason=''}={}){
+    const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
@@ -3772,7 +3802,7 @@
           } }
         // Community post / article comment → NIP-22 comment (kind 1111) scoped to that root.
         if(community || articleComment){
-          let tags = articleComment ? articleCommentTags(articleComment) : communityPostTags(community);
+          let tags = articleComment ? articleCommentTags(articleComment, articleParent) : communityPostTags(community);
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
           imetaTagsFor(text).forEach(t=>tags.push(t));
           _applyCw(tags);

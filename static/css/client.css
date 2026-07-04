@@ -1176,8 +1176,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .av-comments{margin-top:30px;border-top:1px solid var(--line);padding-top:6px}
 .av-comments-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
 .av-comments-hd .search-section-title{padding:8px 0}
-.av-comments .note{margin:8px 0}
 .av-comments .empty{padding:18px 4px}
+/* threaded comment cards (nested replies indent via inline margin-left, capped for phones) */
+.ac-item{padding:10px 0 6px;border-top:1px solid var(--line)}
+.ac-hd{display:flex;align-items:center;gap:7px;font-size:13.5px;flex-wrap:wrap}
+.ac-av{width:26px;height:26px;border-radius:50%;object-fit:cover;flex:none}
+.ac-hd .name{font-weight:700}
+.ac-hd .handle{color:var(--muted);font-size:12px}
+.ac-hd .time{color:var(--muted);font-size:12px;margin-left:auto}
+.ac-body{margin:5px 0 4px;font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.ac-body img{max-width:100%;border-radius:10px}
+.ac-reply{padding:3px 11px;font-size:12.5px}
 .article-editor{padding:18px 20px 60px;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:12px;animation:fade .2s}
 .article-body{width:100%;min-height:46vh;resize:vertical;font-family:inherit;font-size:15px;line-height:1.65}
 .article-preview{min-height:46vh;padding:8px 2px}
