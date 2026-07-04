@@ -37,13 +37,17 @@ _PUBLISH_TIMEOUT = 10
 # failed), stop querying/publishing that relay for _RELAY_PAUSE_SEC so a dead/blocked upstream doesn't
 # slow every sync. A single successful connect clears the streak.
 _RELAY_FAIL_THRESHOLD = 3
-_RELAY_PAUSE_SEC = 600   # 10 minutes
+_RELAY_PAUSE_SEC = 600   # base pause: 10 minutes
+_RELAY_PAUSE_MAX = 14400   # cap the escalating pause at 4h — a persistently dead/paid relay (e.g. a
+                           # relay that always rejects our writes) is then probed ~6x/day, not ~144x/day,
+                           # cutting the wasted Tor+direct dial churn that dominates federation CPU.
 _RELAY_429_PAUSE_SEC = 900   # a 429 is an EXPLICIT rate-limit — pause 15m immediately (no ramp-up)
 _FAIL_DEBOUNCE = 30      # count at most ONE failure per relay per this many seconds (ignore bursts:
                          # a backfill pages many queries, so a brief blip shouldn't pause a relay)
 _relay_fail: dict = {}            # relay -> failure count (spaced >= _FAIL_DEBOUNCE apart)
 _relay_paused_until: dict = {}    # relay -> unix ts; skip the relay until then
 _relay_last_fail: dict = {}       # relay -> unix ts of the last counted failure (debounce)
+_relay_pause_streak: dict = {}    # relay -> consecutive pause cycles (no success between) → exp. backoff
 
 
 def _relay_paused(relay: str) -> bool:
@@ -51,8 +55,9 @@ def _relay_paused(relay: str) -> bool:
 
 
 def _note_relay_ok(relay: str) -> None:
-    """A successful connect clears the relay's failure streak / pause."""
+    """A successful connect clears the relay's failure streak / pause / escalation."""
     _relay_fail.pop(relay, None)
+    _relay_pause_streak.pop(relay, None)
     _relay_paused_until.pop(relay, None)
     _relay_last_fail.pop(relay, None)
 
@@ -91,10 +96,16 @@ def _note_relay_fail(relay: str) -> None:
     n = _relay_fail.get(relay, 0) + 1
     _relay_fail[relay] = n
     if n >= _RELAY_FAIL_THRESHOLD:
-        _relay_paused_until[relay] = time.time() + _RELAY_PAUSE_SEC
+        # Escalating backoff: each pause cycle without a success in between doubles the pause (10m, 20,
+        # 40, … capped at _RELAY_PAUSE_MAX), so a permanently dead/paid relay stops being re-dialed every
+        # 10 minutes. A single success (_note_relay_ok) resets the streak.
+        streak = _relay_pause_streak.get(relay, 0) + 1
+        _relay_pause_streak[relay] = streak
+        pause = min(_RELAY_PAUSE_SEC * (2 ** (streak - 1)), _RELAY_PAUSE_MAX)
+        _relay_paused_until[relay] = time.time() + pause
         _relay_fail.pop(relay, None)
-        logger.warning("[nostr] pausing sync with %s for %dm — %d failures over ~%ds (Tor+direct)",
-                       relay, _RELAY_PAUSE_SEC // 60, n, _RELAY_FAIL_THRESHOLD * _FAIL_DEBOUNCE)
+        logger.warning("[nostr] pausing sync with %s for %dm — %d failures (Tor+direct), streak %d",
+                       relay, pause // 60, n, streak)
 
 
 def normalize_relays(relays) -> list[str]:
