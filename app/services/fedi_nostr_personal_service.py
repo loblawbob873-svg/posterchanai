@@ -72,24 +72,16 @@ async def _wrap_dm(port: int, puppet: dict, recipient_hex: str, text: str) -> st
 
 
 def _persist_cursor(user_id: int, attr: str, value) -> None:
-    """Persist a poll cursor in a FRESH, short-lived session. The poll holds ONE transaction across all
-    users and many slow deliveries (relay publishes, puppet creation, media); those idle the shared
-    transaction past Postgres idle_in_transaction_session_timeout (1 min), so it gets killed and the
-    normal `db.commit()` of the cursor is silently rolled back — the drain then re-processes the same
-    page every poll forever (the stuck-cursor wedge). A dedicated tiny session guarantees forward
-    progress sticks regardless of the main transaction's fate."""
-    from app.database import SessionLocal
-    try:
-        s = SessionLocal()
-        try:
-            u = s.get(User, user_id)
-            if u is not None:
-                setattr(u, attr, value)
-                s.commit()
-        finally:
-            s.close()
-    except Exception as e:
-        logger.warning("[fedi-personal] cursor persist failed (%s=%s for user %s): %s", attr, value, user_id, e)
+    """Persist a poll cursor in a FRESH session (shared commit_in_fresh_session helper) so forward
+    progress sticks even when the long poll transaction is killed by Postgres
+    idle_in_transaction_session_timeout and its cursor commit rolls back (the stuck-cursor wedge)."""
+    from app.database import commit_in_fresh_session
+
+    def _mut(s):
+        u = s.get(User, user_id)
+        if u is not None:
+            setattr(u, attr, value)
+    commit_in_fresh_session(_mut)
 
 
 async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -> None:
@@ -516,18 +508,11 @@ def start_fedi_personal_scheduler() -> None:
 
     async def _job():
         from app.database import SessionLocal
-        from sqlalchemy import text
         db = SessionLocal()
         try:
-            # This poll holds one session across all users + slow relay/media deliveries; a single slow
-            # item can idle the txn past the server's idle_in_transaction_session_timeout (1 min), which
-            # kills the connection mid-poll (later deliveries + the cursor commit then fail → the drain
-            # re-processes forever). Disable that timeout for THIS session only; the poll stays bounded
-            # by _POLL_TIMEOUT below, and cursors also persist via a fresh session (_persist_cursor).
-            try:
-                db.execute(text("SET idle_in_transaction_session_timeout = 0"))
-            except Exception:
-                pass
+            # Cursors persist via a FRESH session (_persist_cursor) so a poll whose transaction is killed
+            # by Postgres idle_in_transaction_session_timeout (slow deliveries idle it) still records
+            # forward progress — no leaky per-session GUC override needed.
             await asyncio.wait_for(poll_once(db), timeout=_POLL_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning("[fedi-personal] poll exceeded %ss; retrying next cycle", _POLL_TIMEOUT)

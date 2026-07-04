@@ -91,6 +91,22 @@ def _set_user_setting(db: Session, user_id: int, key: str, value: str) -> None:
         db.add(UserSetting(user_id=user_id, key=key, value=value))
 
 
+def _commit_cursor(db: Session, user_id: int, key: str, value: str) -> None:
+    """Persist a notification cursor. If the poll's transaction was killed (Postgres
+    idle_in_transaction_session_timeout — a slow delivery idled it), the normal commit fails; fall back
+    to a FRESH session so forward progress isn't lost and this batch isn't re-DM'd next poll."""
+    _set_user_setting(db, user_id, key, value)
+    try:
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        from app.database import commit_in_fresh_session
+        commit_in_fresh_session(lambda s: _set_user_setting(s, user_id, key, value))
+
+
 async def _dm_room(db: Session, hs: str, bot_token: str, user: User) -> str | None:
     """The user's notification DM room id, creating + persisting it on first use."""
     room_id = _get_user_setting(db, user.id, "matrix_notif_dm_room")
@@ -164,8 +180,7 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
     since = _get_user_setting(db, user.id, cursor_key)
     newest_id = raw[0].get("id")        # platform APIs return newest-first
     if not since:
-        _set_user_setting(db, user.id, cursor_key, newest_id)
-        db.commit()
+        _commit_cursor(db, user.id, cursor_key, newest_id)
         return
     for n in reversed(raw):
         norm = normalize(n)
@@ -173,8 +188,7 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         # id that slips past the cursor). Still advance the cursor so it isn't re-fetched forever.
         if is_dupe_follow(db, user, norm, "matrix_notif_seen_follows"):
             if n.get("id"):
-                _set_user_setting(db, user.id, cursor_key, n["id"])
-                db.commit()
+                _commit_cursor(db, user.id, cursor_key, n["id"])
             continue
         # Misskey notifications carry no URL; build a viewable note link for context.
         if platform == "misskey" and not norm.get("url") and norm.get("reply_target"):
@@ -211,8 +225,9 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         # Advance the cursor per delivered notification (not once at the end) so a mid-batch
         # failure can't cause already-sent ones to be redelivered.
         if n.get("id"):
-            _set_user_setting(db, user.id, cursor_key, n["id"])
-        db.commit()
+            _commit_cursor(db, user.id, cursor_key, n["id"])
+        else:
+            db.commit()
 
 
 async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:

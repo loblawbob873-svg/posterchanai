@@ -84,6 +84,38 @@ def init_fedi_cache_db():
         ms.close()
 
 
+def commit_in_fresh_session(mutate) -> bool:
+    """Apply a small write in a FRESH, short-lived session and commit it.
+
+    The notification/DM pollers hold ONE transaction across all users and many slow deliveries (relay
+    publishes, puppet creation, media, Telegram/Matrix sends). A single slow item can idle that
+    transaction past Postgres `idle_in_transaction_session_timeout` (60s), which kills the connection
+    mid-poll so the cursor `commit()` silently rolls back — the drain then re-processes the same batch
+    every poll forever (a wedge) or re-sends duplicates. Persisting the cursor through a dedicated tiny
+    session guarantees forward progress survives a killed/rolled-back poll transaction, WITHOUT the
+    pooled-connection GUC leak that `SET idle_in_transaction_session_timeout = 0` would cause.
+
+    `mutate(session)` performs the write (e.g. set a User column or a UserSetting). Best-effort:
+    returns True on success, False (logged) on failure; never raises."""
+    s = SessionLocal()
+    try:
+        mutate(s)
+        s.commit()
+        return True
+    except Exception as e:
+        try:
+            s.rollback()
+        except Exception:
+            pass
+        logger.warning(f"commit_in_fresh_session failed: {e}")
+        return False
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
 def get_db():
     db = SessionLocal()
     try:

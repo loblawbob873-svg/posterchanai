@@ -296,9 +296,15 @@ async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: 
             break
         for n in reversed(raw):       # API returns newest-first → deliver oldest-first (chronological)
             await _deliver(db, tg, user, chat_id, _norm_pleroma(n))
-        user.pleroma_notif_since = raw[0].get("id")   # advance to the newest delivered
+        newid = raw[0].get("id")      # advance to the newest delivered
+        user.pleroma_notif_since = newid
         _prune(db)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:             # poll txn killed (idle timeout) → persist the cursor in a fresh
+            db.rollback()             # session so we don't re-deliver this whole page next poll
+            from app.database import commit_in_fresh_session
+            commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "pleroma_notif_since", newid))
         if len(raw) < _NOTIF_PAGE:    # partial page → caught up
             break
 

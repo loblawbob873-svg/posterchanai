@@ -2019,3 +2019,22 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     domain = _nip05_domain(request, db)
     return JSONResponse({"ok": True, "granted": not data.remove, "name": granted_name,
                          "nip05": (f"{granted_name}@{domain}" if granted_name else None)})
+
+
+_DEEPLINK_ENTITY = re.compile(
+    r"^(?:nostr:)?(?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+$", re.I)
+
+
+@router.get("/{path:path}", response_class=HTMLResponse)
+async def client_deeplink(path: str, request: Request, db: Session = Depends(get_db)):
+    """Serve the SPA shell for client-side deep-link routes (/client/<npub>, /client/<nevent>,
+    /client/users/<name>, …) so a REFRESH or bookmark of a profile / note / thread loads the app
+    instead of 404ing ({"detail":"Not Found"}). The client reads location.pathname and opens the
+    right view. Registered LAST so it never shadows the real /client/* API routes (FastAPI matches
+    in registration order, so every specific route above wins first). ONLY entity-like paths get the
+    shell — an unknown /client/* API path still returns a clean JSON 404 (not an HTML 200), so JSON
+    consumers aren't handed a shell document."""
+    seg = (path or "").split("/")[0]
+    if not (_DEEPLINK_ENTITY.match(seg) or seg.lower() == "users"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await client_app(request, db)
