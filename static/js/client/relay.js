@@ -43,25 +43,37 @@
       this.ws.onerror = () => { try{ this.ws.close(); }catch(_){} };
       this.ws.onmessage = (e) => { this._lastRx = Date.now(); this.pool._onMessage(this, e.data); };
     }
+    // Null handlers (so a stale onclose can't ALSO fire _retry and race an in-flight _open), close,
+    // drop the ref, and stop the beat. One place, reused by destroy()/wake()/the zombie branch.
+    _teardownSocket(){
+      this._stopHeartbeat();
+      if (this.ws){ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; try{ this.ws.close(); }catch(_){} this.ws = null; }
+    }
     // Keep the socket alive AND detect a zombie. On a high-latency / proxied link (e.g. Cloudflare in
     // front, client on another continent) an idle WebSocket with no traffic gets idle-closed by the
     // proxy but the browser still reports it "open": events stop flowing and the next query() times out
-    // → the "have to reload the page" symptom. Every 25s (under the ~60s nginx / ~100s CF idle windows)
-    // we send a cheap no-op REQ+CLOSE — which both keeps the proxy from closing the WS and draws an EOSE
-    // reply that refreshes _lastRx. If NOTHING has arrived for ~3 missed beats, the socket is dead →
-    // tear it down and reconnect (our relay re-opens in ~0.1s, re-arming live subs).
+    // → the "have to reload the page" symptom. Every 25s (under the ~60s nginx / ~100s CF idle windows),
+    // ONLY when the socket has been idle (an actively-receiving connection's own traffic already keeps
+    // the proxy open), send a cheap no-op REQ+CLOSE — which keeps the proxy from closing the WS and
+    // draws an EOSE that refreshes _lastRx. If our TRUSTED relay (which always answers) then goes silent
+    // for ~3 beats, the socket is a zombie → reconnect (via _retry, so a persistently-silent relay backs
+    // off instead of re-churning every 75s). Skipped while backgrounded — the OS freezes the socket and
+    // throttles this timer past the threshold; wake() (visibilitychange) re-establishes on focus.
     _startHeartbeat(){
       this._stopHeartbeat();
       this._hb = setInterval(() => {
         if (!this.ws || this.ws.readyState !== 1) return;
-        if (this._lastRx && Date.now() - this._lastRx > 75000){
-          try{ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; this.ws.close(); }catch(_){}
-          this.ws = null; this._stopHeartbeat(); this._backoff = 600; try{ this._open(); }catch(_){}
+        if (typeof document !== 'undefined' && document.hidden) return;
+        const idle = Date.now() - (this._lastRx || 0);
+        if (this.trusted && this._lastRx && idle > 75000){   // zombie: only the trusted relay is known
+          this._teardownSocket(); this._setStatus('off'); this._retry();   // to reliably answer the beat
           return;
         }
-        // Filter on a non-existent id → guaranteed 0 events + an immediate EOSE (a bare {limit:0} would
-        // be read as 500 by the relay — `limit or 500` — and dump events every beat).
-        try{ this._send(['REQ', '_hb', { ids: ['0000000000000000000000000000000000000000000000000000000000000000'] }]); this._send(['CLOSE', '_hb']); }catch(_){}
+        if (idle > 20000){
+          // Filter on a non-existent id → guaranteed 0 events + an immediate EOSE (a bare {limit:0} would
+          // be read as 500 by the relay — `limit or 500` — and dump events every beat).
+          try{ this._send(['REQ', '_hb', { ids: ['0000000000000000000000000000000000000000000000000000000000000000'] }]); this._send(['CLOSE', '_hb']); }catch(_){}
+        }
       }, 25000);
     }
     _stopHeartbeat(){ if (this._hb){ clearInterval(this._hb); this._hb = null; } }
@@ -70,8 +82,7 @@
               const d = this._backoff || 600; this._backoff = Math.min(d*1.7, cap);
               this._rt = setTimeout(()=>this._open(), d + Math.random()*300); }
     _send(arr){ if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(arr)); }
-    destroy(){ this.status = 'closed'; clearTimeout(this._rt); this._stopHeartbeat();
-               if (this.ws){ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; try{ this.ws.close(); }catch(_){} this.ws = null; } }
+    destroy(){ this.status = 'closed'; clearTimeout(this._rt); this._teardownSocket(); }
   }
 
   const Relay = {
@@ -112,7 +123,7 @@
     // (our relay reconnects in ~0.1s, re-arming live subs) refreshes the feed instantly on focus.
     wake(){
       for (const c of this._conns.values()){
-        if (c.ws){ try{ c.ws.onclose = c.ws.onerror = c.ws.onmessage = null; c.ws.close(); }catch(_){} c.ws = null; }
+        c._teardownSocket();   // nulls handlers + stops the prior heartbeat before reopening
         clearTimeout(c._rt); c._backoff = 600; try{ c._open(); }catch(_){}
       }
     },
