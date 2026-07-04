@@ -240,12 +240,87 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
             logger.debug("[fedi-bridge] ancestor deliver failed: %s", e)
 
 
+_linked_actors: dict = {}          # fedi actor url AND "username@host" -> real Nostr pubkey hex
+_linked_actors_ts: float = 0.0
+_linked_actors_partial: bool = False
+_LINKED_TTL = 900                  # rebuild the linked-user map every 15 min…
+_LINKED_RETRY_TTL = 120            # …but retry sooner when a user's instance failed to resolve
+_LINKED_VC_TIMEOUT = 8             # per-user verify timeout so one hung instance can't stall the poll
+
+
+async def _linked_actor_pubkeys(db: Session) -> dict:
+    """Map each LINKED bridge user's fediverse identity -> their REAL Nostr pubkey, so a mirrored note
+    @mentioning them p-tags their REAL key (→ a Nostr NOTIFICATION for them); a bare puppet p-tag isn't
+    (their client watches their own key). Indexed by BOTH the actor url and "username@host" so a
+    cross-instance rendering of the mention still matches. Covers Pleroma + Misskey links. All users are
+    resolved CONCURRENTLY with a bounded per-call timeout so one slow instance can't stall the mirror.
+    Cached by timestamp (an empty result is cached too — no rebuild storm during an outage); a shorter
+    retry TTL applies when some user failed this cycle."""
+    global _linked_actors, _linked_actors_ts, _linked_actors_partial
+    now = time.time()
+    ttl = _LINKED_RETRY_TTL if _linked_actors_partial else _LINKED_TTL
+    if _linked_actors_ts and now - _linked_actors_ts < ttl:
+        return _linked_actors
+    from app.models import User
+    from app.services.nostr.nostr_service import to_pubkey_hex
+    from app.services import misskey_service
+    try:
+        users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
+    except Exception:
+        return _linked_actors                       # DB hiccup → keep the last good map
+
+    async def _resolve(u):
+        pk = to_pubkey_hex(u.nostr_npub or "")
+        if not pk:
+            return ("skip", None, None)
+        try:
+            if u.pleroma_instance_url and u.pleroma_access_token:
+                me = await asyncio.wait_for(
+                    pleroma_service.verify_credentials(u.pleroma_instance_url, u.pleroma_access_token),
+                    _LINKED_VC_TIMEOUT)
+                inst, url = u.pleroma_instance_url, ((me or {}).get("url") or "").strip()
+                un = ((me or {}).get("username") or "").strip()
+            elif u.misskey_instance_url and u.misskey_api_token:
+                me = await asyncio.wait_for(
+                    misskey_service.call(u.misskey_instance_url, u.misskey_api_token, "i"),
+                    _LINKED_VC_TIMEOUT)
+                inst = u.misskey_instance_url
+                un = ((me or {}).get("username") or "").strip()
+                url = f"https://{urlparse(inst).netloc}/@{un}" if un else ""
+            else:
+                return ("skip", None, None)          # no linked fedi account — not a failure
+        except Exception:
+            return ("fail", pk, None)                # instance down/slow → retry sooner
+        keys = []
+        if url:
+            keys.append(url.rstrip("/").lower())
+        if un:
+            keys.append(f"{un.lower()}@{urlparse(inst).netloc.lower()}")
+        return ("ok", pk, keys)
+
+    out, partial = {}, False
+    for r in await asyncio.gather(*[_resolve(u) for u in users], return_exceptions=True):
+        if isinstance(r, Exception):
+            partial = True
+            continue
+        status, pk, keys = r
+        if status == "fail":
+            partial = True
+        elif status == "ok" and keys:
+            for k in keys:
+                out[k] = pk
+    _linked_actors, _linked_actors_ts, _linked_actors_partial = out, now, partial
+    return out
+
+
 async def _rewrite_mentions(db: Session, port: int, instance_host: str, content: str,
                             mentions: list) -> tuple:
     """Make fediverse @handle mentions CLICKABLE on Nostr: for each mentioned account, provision its
     puppet, replace the `@handle` text with a `nostr:<npub>` reference (which clients render as a
-    profile link), and p-tag it. Returns (rewritten_content, [p-tags])."""
+    profile link), and p-tag it. A mention of a LINKED bridge user is ALSO p-tagged with their REAL
+    Nostr pubkey, so the mirrored note surfaces as a notification for them. Returns (content, [p-tags])."""
     ptags = []
+    linked = await _linked_actor_pubkeys(db)   # fedi actor url -> real Nostr pubkey (cached)
     # Longest acct first so '@user@host' is replaced before a bare '@user' substring.
     for m in sorted(mentions or [], key=lambda x: len(x.get("acct", "")), reverse=True):
         url = (m.get("url") or "").strip()
@@ -262,6 +337,16 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         if not p:
             continue
         ptags.append(["p", p["pubkey_hex"]])
+        # A linked local user → ALSO p-tag their REAL key so the note notifies them. Match on the actor
+        # url, else "username@host" (robust when a federating instance renders the mention url oddly).
+        real = linked.get(url.rstrip("/").lower())
+        if not real:
+            a = acct.lstrip("@").lower()
+            cand = a if "@" in a else (f"{username.lower()}@{urlparse(url).netloc.lower()}" if username else None)
+            if cand:
+                real = linked.get(cand)
+        if real and ["p", real] not in ptags:
+            ptags.append(["p", real])
         ref = "nostr:" + p["npub"]
         for token in ("@" + acct, "@" + username):
             if token and token != "@" and token in content:
