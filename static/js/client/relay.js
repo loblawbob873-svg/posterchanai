@@ -185,17 +185,36 @@
       if (!this._subs.has(subId)) return;
       this._send(['CLOSE', subId]); this._subs.delete(subId);
     },
+    // Reconnect any socket that looks dead/stale (readyState not open, or nothing received in a while).
+    // Called when a query gets NO answer at all — the classic zombie-socket-after-resume case — so the
+    // connection self-heals on the FIRST failed query instead of waiting for a resume event or the
+    // heartbeat's ~75s zombie check. Only touches sockets that are actually stale (never a busy one).
+    reviveStale(){
+      for (const c of this._conns.values()){
+        const st = c.ws ? c.ws.readyState : 3;                 // no socket → treat as CLOSED
+        if (st === 0) continue;                                // CONNECTING → a reconnect is already in flight
+        const dead = (st === 2 || st === 3);                   // CLOSING / CLOSED
+        const zombie = (st === 1 && c._lastRx && Date.now() - c._lastRx > 30000);  // OPEN but silent
+        if (dead || zombie){
+          c._teardownSocket(); clearTimeout(c._rt); c._backoff = 600; try{ c._open(); }catch(_){}
+        }
+      }
+    },
     // one-shot query across all relays -> resolves with a deduped array after every relay EOSEs
     query(filters, timeout=6000){
       return new Promise((res)=>{
         const got = []; let done = false;
-        const finish = () => { if (done) return; done = true; this.close(id); res(got); };
+        const finish = (viaTimeout) => { if (done) return; done = true; this.close(id);
+          // No EOSE from ANY relay within the window → the socket is likely a zombie (frozen by a
+          // proxy/resume). Kick a reconnect so the retry + the next query succeed.
+          if (viaTimeout && !got.length) { try{ this.reviveStale(); }catch(_){} }
+          res(got); };
         const id = this.subscribe(filters, {
           live: false,
           onEvent: ev => got.push(ev),    // pool already deduped by id before delivery
-          onEose: finish
+          onEose: () => finish(false)
         });
-        setTimeout(finish, timeout);
+        setTimeout(() => finish(true), timeout);
       });
     },
     // NIP-45 COUNT: ask the relay for a COUNT(*) instead of fetching the events. Resolves with the
