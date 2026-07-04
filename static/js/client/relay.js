@@ -32,21 +32,45 @@
       this._setStatus('connecting');
       this.ws.onopen = () => {
         this._backoff = 600;                       // reset reconnect backoff on a good connection
+        this._lastRx = Date.now();
         this._setStatus('ok');
         // re-arm only LIVE subscriptions; one-shot query() subs (live:false) must not be re-REQ'd.
         for (const [id, s] of this.pool._subs) if (s.live) this._send(['REQ', id, ...s.filters]);
         this.pool._connReady(this);
+        this._startHeartbeat();
       };
-      this.ws.onclose = () => { this._setStatus('off'); this._retry(); };
+      this.ws.onclose = () => { this._stopHeartbeat(); this._setStatus('off'); this._retry(); };
       this.ws.onerror = () => { try{ this.ws.close(); }catch(_){} };
-      this.ws.onmessage = (e) => this.pool._onMessage(this, e.data);
+      this.ws.onmessage = (e) => { this._lastRx = Date.now(); this.pool._onMessage(this, e.data); };
     }
+    // Keep the socket alive AND detect a zombie. On a high-latency / proxied link (e.g. Cloudflare in
+    // front, client on another continent) an idle WebSocket with no traffic gets idle-closed by the
+    // proxy but the browser still reports it "open": events stop flowing and the next query() times out
+    // → the "have to reload the page" symptom. Every 25s (under the ~60s nginx / ~100s CF idle windows)
+    // we send a cheap no-op REQ+CLOSE — which both keeps the proxy from closing the WS and draws an EOSE
+    // reply that refreshes _lastRx. If NOTHING has arrived for ~3 missed beats, the socket is dead →
+    // tear it down and reconnect (our relay re-opens in ~0.1s, re-arming live subs).
+    _startHeartbeat(){
+      this._stopHeartbeat();
+      this._hb = setInterval(() => {
+        if (!this.ws || this.ws.readyState !== 1) return;
+        if (this._lastRx && Date.now() - this._lastRx > 75000){
+          try{ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; this.ws.close(); }catch(_){}
+          this.ws = null; this._stopHeartbeat(); this._backoff = 600; try{ this._open(); }catch(_){}
+          return;
+        }
+        // Filter on a non-existent id → guaranteed 0 events + an immediate EOSE (a bare {limit:0} would
+        // be read as 500 by the relay — `limit or 500` — and dump events every beat).
+        try{ this._send(['REQ', '_hb', { ids: ['0000000000000000000000000000000000000000000000000000000000000000'] }]); this._send(['CLOSE', '_hb']); }catch(_){}
+      }, 25000);
+    }
+    _stopHeartbeat(){ if (this._hb){ clearInterval(this._hb); this._hb = null; } }
     _setStatus(s){ this.status = s; this.pool._recomputeStatus(); }
     _retry(){ clearTimeout(this._rt); const cap = this.trusted ? 2500 : 8000;   // our built-in relay is always up → reconnect fast, never wait 8s
               const d = this._backoff || 600; this._backoff = Math.min(d*1.7, cap);
               this._rt = setTimeout(()=>this._open(), d + Math.random()*300); }
     _send(arr){ if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(arr)); }
-    destroy(){ this.status = 'closed'; clearTimeout(this._rt);
+    destroy(){ this.status = 'closed'; clearTimeout(this._rt); this._stopHeartbeat();
                if (this.ws){ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; try{ this.ws.close(); }catch(_){} this.ws = null; } }
   }
 
