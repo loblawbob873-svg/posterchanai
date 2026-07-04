@@ -23,6 +23,8 @@ from app.services.telegram_service import TelegramService
 logger = logging.getLogger(__name__)
 
 _REPLY_MAP_TTL_DAYS = 7
+_NOTIF_PAGE = 20            # per-page fetch size when draining notifications
+_NOTIF_DRAIN_PAGES = 25     # max pages drained per poll (bound; leftover drains next cycle)
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
 
@@ -275,22 +277,30 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
 
 
 async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
-    raw = await pleroma_service.fetch_notifications(
-        user.pleroma_instance_url, user.pleroma_access_token, since_id=user.pleroma_notif_since
-    )
-    if not raw:
-        return
-    newest_id = raw[0].get("id")  # API returns newest-first
     if not user.pleroma_notif_since:
         # First poll: establish the cursor without forwarding the backlog.
-        user.pleroma_notif_since = newest_id
-        db.commit()
+        raw = await pleroma_service.fetch_notifications(
+            user.pleroma_instance_url, user.pleroma_access_token, limit=1)
+        if raw:
+            user.pleroma_notif_since = raw[0].get("id")
+            db.commit()
         return
-    for n in reversed(raw):       # deliver oldest-first so chat order is chronological
-        await _deliver(db, tg, user, chat_id, _norm_pleroma(n))
-    user.pleroma_notif_since = newest_id
-    _prune(db)
-    db.commit()
+    # Drain forward from the cursor page-by-page with min_id (GAPLESS). A single since_id fetch drops
+    # everything beyond one page when more than `limit` notifications arrive between polls (the
+    # "missing a bunch" bug); min_id returns the items immediately after the cursor so nothing is lost.
+    for _ in range(_NOTIF_DRAIN_PAGES):
+        raw = await pleroma_service.fetch_notifications(
+            user.pleroma_instance_url, user.pleroma_access_token,
+            min_id=user.pleroma_notif_since, limit=_NOTIF_PAGE)
+        if not raw:
+            break
+        for n in reversed(raw):       # API returns newest-first → deliver oldest-first (chronological)
+            await _deliver(db, tg, user, chat_id, _norm_pleroma(n))
+        user.pleroma_notif_since = raw[0].get("id")   # advance to the newest delivered
+        _prune(db)
+        db.commit()
+        if len(raw) < _NOTIF_PAGE:    # partial page → caught up
+            break
 
 
 async def _relay_misskey(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:

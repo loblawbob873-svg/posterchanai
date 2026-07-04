@@ -109,6 +109,8 @@ async def _dm_room(db: Session, hs: str, bot_token: str, user: User) -> str | No
 # --- per-platform relay -----------------------------------------------------
 
 _MAX_CONTEXT = 25   # cap conversation messages mirrored into a notification thread
+_NOTIF_PAGE = 20            # per-page fetch size when draining notifications
+_NOTIF_DRAIN_PAGES = 25     # max pages drained per poll (bound; leftover drains next cycle)
 
 
 async def _thread_context(db: Session, hs: str, bot_token: str, room_id: str, root_event_id: str,
@@ -219,12 +221,28 @@ async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
         return
     if user.pleroma_enabled and user.pleroma_instance_url and user.pleroma_access_token:
         try:
-            raw = await pleroma_service.fetch_notifications(
-                user.pleroma_instance_url, user.pleroma_access_token,
-                since_id=_get_user_setting(db, user.id, "matrix_notif_pleroma_since") or None,
-            )
-            await _relay(db, hs, bot_token, user, room_id, "pleroma", user.pleroma_instance_url,
-                         user.pleroma_access_token, raw, _norm_pleroma)
+            if not (_get_user_setting(db, user.id, "matrix_notif_pleroma_since") or None):
+                # First poll: establish the cursor without forwarding the backlog.
+                raw = await pleroma_service.fetch_notifications(
+                    user.pleroma_instance_url, user.pleroma_access_token, limit=1)
+                if raw:
+                    _set_user_setting(db, user.id, "matrix_notif_pleroma_since", raw[0].get("id"))
+                    db.commit()
+            else:
+                # Drain forward page-by-page with min_id (GAPLESS). A single since_id fetch drops
+                # everything beyond one page when >limit notifications arrive between polls (the
+                # "missing a bunch" bug). _relay advances the cursor per delivered item.
+                for _ in range(_NOTIF_DRAIN_PAGES):
+                    cur = _get_user_setting(db, user.id, "matrix_notif_pleroma_since") or None
+                    raw = await pleroma_service.fetch_notifications(
+                        user.pleroma_instance_url, user.pleroma_access_token,
+                        min_id=cur, limit=_NOTIF_PAGE)
+                    if not raw:
+                        break
+                    await _relay(db, hs, bot_token, user, room_id, "pleroma", user.pleroma_instance_url,
+                                 user.pleroma_access_token, raw, _norm_pleroma)
+                    if len(raw) < _NOTIF_PAGE:
+                        break
         except Exception as e:
             logger.warning(f"[matrix-notif] pleroma poll failed for user {user.id}: {e}")
     if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
