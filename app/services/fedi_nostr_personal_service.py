@@ -71,6 +71,27 @@ async def _wrap_dm(port: int, puppet: dict, recipient_hex: str, text: str) -> st
     return wrap["id"] if ok else None
 
 
+def _persist_cursor(user_id: int, attr: str, value) -> None:
+    """Persist a poll cursor in a FRESH, short-lived session. The poll holds ONE transaction across all
+    users and many slow deliveries (relay publishes, puppet creation, media); those idle the shared
+    transaction past Postgres idle_in_transaction_session_timeout (1 min), so it gets killed and the
+    normal `db.commit()` of the cursor is silently rolled back — the drain then re-processes the same
+    page every poll forever (the stuck-cursor wedge). A dedicated tiny session guarantees forward
+    progress sticks regardless of the main transaction's fate."""
+    from app.database import SessionLocal
+    try:
+        s = SessionLocal()
+        try:
+            u = s.get(User, user_id)
+            if u is not None:
+                setattr(u, attr, value)
+                s.commit()
+        finally:
+            s.close()
+    except Exception as e:
+        logger.warning("[fedi-personal] cursor persist failed (%s=%s for user %s): %s", attr, value, user_id, e)
+
+
 async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -> None:
     recipient = _user_pubkey(user)
     if not recipient:
@@ -132,10 +153,7 @@ async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -
         if last and last != cursor:
             cursor = last
             user.fedi_bridge_dm_since = cursor
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            _persist_cursor(user.id, "fedi_bridge_dm_since", cursor)   # survive a killed poll txn
         if stop or len(raw) < _MAX:
             break
 
@@ -447,10 +465,7 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
         if last and last != cursor:
             cursor = last
             user.fedi_bridge_notif_since = cursor
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+            _persist_cursor(user.id, "fedi_bridge_notif_since", cursor)   # survive a killed poll txn
         if stop or len(raw) < _MAX:
             break
 
@@ -501,8 +516,18 @@ def start_fedi_personal_scheduler() -> None:
 
     async def _job():
         from app.database import SessionLocal
+        from sqlalchemy import text
         db = SessionLocal()
         try:
+            # This poll holds one session across all users + slow relay/media deliveries; a single slow
+            # item can idle the txn past the server's idle_in_transaction_session_timeout (1 min), which
+            # kills the connection mid-poll (later deliveries + the cursor commit then fail → the drain
+            # re-processes forever). Disable that timeout for THIS session only; the poll stays bounded
+            # by _POLL_TIMEOUT below, and cursors also persist via a fresh session (_persist_cursor).
+            try:
+                db.execute(text("SET idle_in_transaction_session_timeout = 0"))
+            except Exception:
+                pass
             await asyncio.wait_for(poll_once(db), timeout=_POLL_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning("[fedi-personal] poll exceeded %ss; retrying next cycle", _POLL_TIMEOUT)
