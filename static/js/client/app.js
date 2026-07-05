@@ -59,7 +59,7 @@
     const src = el.currentSrc || el.src;
     if(el.tagName === 'IMG'){
       const v=document.createElement('video'); v.src=src; v.controls=true; v.playsInline=true;
-      v.preload='metadata'; v.className=el.className; v.onerror=()=>window.__blobFallback(v); el.replaceWith(v);
+      v.preload='none'; v.className=el.className; v.onerror=()=>window.__blobFallback(v); el.replaceWith(v);   // don't auto-download on scroll
     } else {
       const a=document.createElement('a'); a.href=src; a.target='_blank'; a.rel='noopener'; a.textContent=src; el.replaceWith(a);
     }
@@ -2712,7 +2712,7 @@
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy">`); return tail; }
-      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="metadata" playsinline></video>`); return tail; }
+      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="none" playsinline></video>`); return tail; }
       if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`); return tail; }
       return url;  // non-media URL: leave for linkify
     });
@@ -4165,7 +4165,12 @@
     try{
       const auth=await sign(24242,'Upload blob',[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
       const res=await fetch(server+'/upload',{ method:'HEAD', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)) }});
-      return res.ok;            // 200 = allowed; 401/403/413 = not
+      // Only a DEFINITIVE denial from the real handler means "no": 401 bad auth, 403 not authorized,
+      // 413 too big. Anything else is inconclusive — some fronting proxies 404/405 a HEAD before it ever
+      // reaches the handler (media.poster.place does exactly this, while PUT/GET route fine), which used
+      // to make EVERY user see a false "request upload access" in Files. Don't gate on that; the real PUT
+      // upload speaks, and its 403 triggers the request-access flow.
+      return res.status!==401 && res.status!==403 && res.status!==413;
     }catch(_){ return true; }    // CORS/network hiccup → don't gate; let the real upload speak
   }
   function _blossomDenied(err){ const m=String(err&&err.message||err||'').toLowerCase(); return m.includes('not authorized')||m.includes('403')||m.includes('privilege'); }
@@ -7302,7 +7307,7 @@
       const yid=ytId(u);
       if(yid) tag=`<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy">`;
-      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<video class="m" src="${u}" controls preload="metadata" playsinline></video>`;
+      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<video class="m" src="${u}" controls preload="none" playsinline></video>`;
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
