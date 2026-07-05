@@ -5,6 +5,7 @@ the PWA is closed — the retention piece the client was missing. VAPID keys are
 persisted in settings (so subscriptions stay valid across restarts); `pywebpush`/`py_vapid` are
 imported lazily so the app still boots on a node where the dep isn't installed yet.
 """
+import asyncio
 import base64
 import json
 import logging
@@ -12,6 +13,7 @@ import logging
 from app.services import settings_store
 
 logger = logging.getLogger(__name__)
+_vapid_lock = asyncio.Lock()
 
 # Contact address embedded in the VAPID JWT (push services want a way to reach the app operator).
 _VAPID_SUBJECT = "mailto:admin@poster.place"
@@ -29,19 +31,33 @@ async def ensure_vapid(db) -> tuple[str, str]:
     pub = settings_store.get("push_vapid_public")
     if priv and pub:
         return priv, pub
-    from py_vapid import Vapid01
-    from cryptography.hazmat.primitives import serialization
+    async with _vapid_lock:
+        # Re-check inside the lock: another concurrent first-request may have just generated it. Without
+        # this (and the cache update below) EVERY call regenerated — write_through persists to the relay
+        # but does NOT update the in-memory cache that get() reads, so the key was never seen again.
+        priv = settings_store.get("push_vapid_private")
+        pub = settings_store.get("push_vapid_public")
+        if priv and pub:
+            return priv, pub
+        from py_vapid import Vapid01
+        from cryptography.hazmat.primitives import serialization
 
-    v = Vapid01()
-    v.generate_keys()
-    pem = v.private_pem()
-    priv = pem.decode() if isinstance(pem, (bytes, bytearray)) else pem
-    raw = v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
-    pub = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-    from app.services.settings_store import write_through
-    await write_through(db, {"push_vapid_private": priv, "push_vapid_public": pub})
-    logger.info("[push] generated + persisted a VAPID keypair")
-    return priv, pub
+        v = Vapid01()
+        v.generate_keys()
+        pem = v.private_pem()
+        priv = pem.decode() if isinstance(pem, (bytes, bytearray)) else pem
+        raw = v.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        pub = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        # Update the in-memory cache NOW (so the next get() returns this key, not a fresh one) + persist
+        # durably to the relay so it survives restarts and stays consistent across nodes.
+        settings_store.put_many({"push_vapid_private": priv, "push_vapid_public": pub}, write_relay=False)
+        try:
+            from app.services.settings_store import write_through
+            await write_through(db, {"push_vapid_private": priv, "push_vapid_public": pub})
+        except Exception as e:
+            logger.warning(f"[push] VAPID relay persist failed: {e}")
+        logger.info("[push] generated + cached a VAPID keypair")
+        return priv, pub
 
 
 def send(subscription: dict, payload: dict) -> bool:
