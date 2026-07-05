@@ -183,6 +183,26 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
                 generated_image_path = None
 
     save_content = result.get("content", "")
+    # Persist generated music/video (branded MP4 / audio) like the `files` case, so it SURVIVES a dropped
+    # WebSocket during the long (60-90s) render — a Thailand-latency WS dropout used to lose the song
+    # entirely ("says generated song but no mp3") since the media was only pushed live, never saved — AND
+    # so it shows on reload + in PosterChan AI files. Appended to save_content ONLY; the live result keeps
+    # its base64 for an instant render, so the live message isn't doubled.
+    _mkey = "video" if result.get("type") == "generated_video" else "audio" if result.get("type") == "generated_audio" else None
+    if _mkey and result.get(_mkey):
+        _mext = "mp4" if _mkey == "video" else (result.get("format") or "mp3").lower()
+        try:
+            import base64 as _b64m
+            _mbytes = _b64m.b64decode(result[_mkey])
+            if chat_store.enabled(db):
+                _mrel = await artifact_store.save_bytes(db, user, conversation_id, _mbytes, _mext)
+            else:
+                _mrel = storage_service.save_file_bytes(user.username, conversation_id, _mbytes, f"song.{_mext}")
+            _murl = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(_mrel).name)}"
+            _mmd = "!video" if _mkey == "video" else "!audio"
+            save_content = (save_content + f"\n\n{_mmd}[song]({_murl})").strip()
+        except Exception as _mv_err:
+            logger.warning(f"[CHAT] failed to persist generated {_mkey} (non-fatal): {_mv_err}")
     if result.get("type") == "flashcards" and result.get("cards"):
         try:
             import base64 as _b64fc
