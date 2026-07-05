@@ -1237,6 +1237,10 @@
   }
   // pagination state for the home/global timelines (infinite scroll-back via `until`)
   let _tl = { oldest:0, loading:false, done:false, pages:0 };
+  const _NEG_WINDOW = 3*24*3600;   // negentropy reconciles the home feed over this recent window (bounded)
+  const _NEG_MAX_FETCH = 800;      // if the delta exceeds this (cold cache), use the plain limit pull instead
+  let _tlGen = 0;                  // render generation — invalidates a slow async sync from a superseded render
+  const _TL_KINDS = [1,6,1068,5,30023,34550,40];
   let _tlMedia = !!ClientSettings.get('tlMedia', false);   // Home/Global "media grid" toggle (image posts only)
   // Blur NIP-36 sensitive/NSFW posts behind a reveal. ON by default; User Settings → Muted toggles it.
   // Stored per-device in ClientSettings (localStorage), so the choice survives reloads/PWA restarts.
@@ -1258,15 +1262,36 @@
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
-    subs[view] = Relay.subscribe(timelineFilter(), {
-      onEvent: ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
-        // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
-        // created_at (those would otherwise jump to the top as if new). A small grace covers skew.
-        if (VIEW===view && (ev.kind===1||ev.kind===6||ev.kind===1068||ev.kind===30023||ev.kind===34550||ev.kind===40) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } },
-      // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect/re-sync; redrawing then would
-      // wipe + rebuild the feed under the user (the "disappears with the timeline update" bug).
-      onEose: ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } }
-    });
+    const onEvent = ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
+      // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
+      // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
+      // watchDeletions handles them, so keep them out of the prepend. A small grace covers skew.
+      if (VIEW===view && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn); } };
+    // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect; redrawing then wipes the feed.
+    const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } };
+    // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
+    // must not install — and leak — a subscription for a superseded render. setSub closes such orphans.
+    const myGen = ++_tlGen;
+    const setSub = (s)=>{ if(myGen!==_tlGen || VIEW!==view){ try{ Relay.close(s); }catch(_){} } else subs[view]=s; };
+    const fullSub = ()=>{ setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed })); };
+    // Phase 2 (NIP-77): reconcile the HOME feed with the relay via negentropy and fetch ONLY the events
+    // we're missing, then keep a live-only sub — far less bandwidth than re-pulling the page every
+    // reconnect. Gated on a WARM cache: negentropy is bounded to a recent window, so a cold/low-volume
+    // cache would show a near-empty feed (older posts out of window) — those fall back to the plain
+    // limit:80 REQ, which returns the newest N regardless of age. Hard fallback on ANY negentropy failure
+    // (never loses data). The GLOBAL firehose is UNbounded — stays a plain limit REQ.
+    if(view==='home' && FOLLOWS.size && Store.feed(fn).length >= 40){
+      const negF = [{ kinds:_TL_KINDS, authors:[...FOLLOWS], since: Math.floor(Date.now()/1000) - _NEG_WINDOW }];
+      Relay.negSync(negF).then(need=>{
+        if(myGen!==_tlGen || VIEW!==view) return;
+        // Big delta (very stale cache) → cheaper + simpler to just limit-pull than to id-fetch hundreds.
+        if(need.size > _NEG_MAX_FETCH){ fullSub(); return; }
+        const after = ()=>{ markEosed();
+          setSub(Relay.subscribe([{ kinds:_TL_KINDS, authors:[...FOLLOWS], since:_liveSince }], { onEvent, onEose: ()=>{} })); };  // live-only
+        if(need.size){ Relay.query([{ ids:[...need], limit: need.size }]).then(evs=>{ evs.forEach(e=>{ if(Store.saveEvent(e)) needProfile(e.pubkey); }); after(); }).catch(after); }
+        else after();
+      }).catch(()=>{ if(myGen===_tlGen && VIEW===view) fullSub(); });   // fallback: plain full REQ
+    } else fullSub();
   }
   // Batched live updates: a busy global feed must NOT prepend + re-render per event (that pegged
   // the CPU and flashed). Buffer incoming notes and prepend them together a few times a second,

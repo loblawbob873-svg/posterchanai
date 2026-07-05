@@ -97,6 +97,7 @@
     _subs: new Map(),         // subId -> {filters, onEvent, onEose, live, seen:Set, eosed:Set}
     _okWaiters: new Map(),    // eventId -> { settle(fn) }
     _countWaiters: new Map(), // countId -> resolve(n)  (NIP-45 COUNT)
+    _negWaiters: new Map(),   // negId -> { onMsg(hex), onErr(reason) }  (NIP-77 negentropy)
     _verify: false,           // true when connected to user relays (untrusted -> verify sigs)
     _vq: [], _vt: null,       // verify queue for untrusted events
     _ready: false,
@@ -161,6 +162,10 @@
         if (w && m[2]){ this._okWaiters.delete(m[1]); w.settle({ ok: true, msg: m[3]||'' }); }   // first accept wins
       } else if (typ === 'COUNT'){
         const w = this._countWaiters.get(m[1]); if (w) w((m[2] && m[2].count) || 0);   // NIP-45 reply
+      } else if (typ === 'NEG-MSG'){
+        const w = this._negWaiters.get(m[1]); if (w) w.onMsg(m[2]);                    // NIP-77 round
+      } else if (typ === 'NEG-ERR'){
+        const w = this._negWaiters.get(m[1]); if (w) w.onErr(m[2] || 'error');
       }
     },
     async _flush(){
@@ -231,6 +236,32 @@
         });
         this._send(['COUNT', id, ...filters]);
         setTimeout(finish, timeout);   // hard fallback if no relay answers at all
+      });
+    },
+    // NIP-77 negentropy delta sync: reconcile ONE filter with the TRUSTED relay (range-based set
+    // reconciliation, see negentropy.js) and resolve with a Set of event ids the relay HAS that we
+    // DON'T — the caller then REQs only those. REJECTS on NEG-ERR / unsupported / timeout / no Negentropy
+    // so callers fall back to a plain REQ (this can never lose data). Single-filter (NEG is per-filter).
+    negSync(filters, { timeout = 15000 } = {}){
+      return new Promise((res, rej) => {
+        if (typeof window.Negentropy === 'undefined') return rej(new Error('neg: unavailable'));
+        const filter = Array.isArray(filters) ? filters[0] : filters;
+        const conn = [...this._conns.values()].find(c => c.trusted && c.ws && c.ws.readyState === 1);
+        if (!conn) return rej(new Error('neg: no trusted relay'));
+        const items = Store.query([filter]).map(e => ({ ts: e.created_at, id: e.id }));
+        const ng = new window.Negentropy(items);
+        const id = 'neg' + Math.random().toString(36).slice(2, 9);
+        let done = false;
+        const tm = setTimeout(() => finish(rej, new Error('neg: timeout')), timeout);
+        const finish = (fn, arg) => { if (done) return; done = true; clearTimeout(tm); this._negWaiters.delete(id); try{ conn._send(['NEG-CLOSE', id]); }catch(_){} fn(arg); };
+        this._negWaiters.set(id, {
+          onMsg: async (hex) => { try{ const { nextMsg } = await ng.reconcile(hex);
+            if (nextMsg) conn._send(['NEG-MSG', id, nextMsg]); else finish(res, ng.need); }
+            catch(e){ finish(rej, e); } },
+          onErr: (reason) => finish(rej, new Error('neg: ' + reason))
+        });
+        ng.initiate().then(msg => { if (!done) conn._send(['NEG-OPEN', id, filter, msg]); })
+          .catch(e => finish(rej, e));
       });
     },
     // publish to every connected relay; resolves on the first relay that accepts (OK true)
