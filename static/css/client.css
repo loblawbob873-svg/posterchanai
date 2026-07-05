@@ -1890,3 +1890,47 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
   .auth-card.neon-border::before{ animation:none; opacity:.3; }
   .skel{ animation:none; }
 }
+
+/* ============================================================================================
+   Landing redesign — a striking, theme-adaptive first impression. The grid + glows use ACCENT
+   VARS, so they glow blue/purple on the Dark default and go full cyan/magenta on Cyberpunk.
+   Battery-safe: the grid drifts via TRANSFORM only (GPU compositor, zero per-frame paint), the
+   glows are STATIC, it only exists on the login screen, and it pauses under anim-off/reduced-motion.
+   Mobile-first: fixed layers (no scroll jank) + chips wrap + hidden on short phones to keep the CTA up.
+   ============================================================================================ */
+.auth-gate::before{   /* drifting neon grid, faded from the top */
+  content:''; position:fixed; inset:-48px; z-index:-1; pointer-events:none;
+  background-image:
+    linear-gradient(var(--neon) 1px, transparent 1px),
+    linear-gradient(90deg, var(--neon) 1px, transparent 1px);
+  background-size:46px 46px; opacity:.10; will-change:transform;
+  -webkit-mask-image:radial-gradient(135% 90% at 50% -12%, #000 24%, transparent 72%);
+  mask-image:radial-gradient(135% 90% at 50% -12%, #000 24%, transparent 72%);
+  animation:gridDrift 9s linear infinite;
+}
+@keyframes gridDrift{ from{transform:translateY(0)} to{transform:translateY(46px)} }
+.auth-gate::after{    /* static ambient glows for depth (accent-tinted, theme-adaptive) */
+  content:''; position:fixed; inset:0; z-index:-2; pointer-events:none; opacity:.4;
+  background:
+    radial-gradient(55% 42% at 50% -4%, var(--neon2), transparent 68%),
+    radial-gradient(48% 38% at 100% 102%, var(--cyan), transparent 70%);
+}
+
+/* Feature chips — sell the superpowers right on the landing (why THIS client). */
+.feat-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:2px 0 20px}
+.feat-chips span{font-size:11.5px;line-height:1;padding:5px 10px;border-radius:999px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--text);white-space:nowrap;
+  transition:transform .14s cubic-bezier(.3,1.4,.5,1)}
+@media(hover:hover){ .feat-chips span:hover{ transform:translateY(-2px); } }
+
+/* Cyberpunk (bare :root) gets the amped, louder version — brighter grid, stronger glow, chip halos. */
+:root:not([data-theme]) .auth-gate::before{ opacity:.17; }
+:root:not([data-theme]) .auth-gate::after{ opacity:.6; }
+:root:not([data-theme]) .feat-chips span{ box-shadow:0 0 12px -5px var(--neon); border-color:var(--neon); }
+:root:not([data-theme]) .logo-img{ box-shadow:0 0 26px -6px var(--neon); }
+
+/* Short / landscape phones: drop the chips so the login buttons stay above the fold. */
+@media(max-height:640px){ .feat-chips{display:none} }
+@media(max-width:480px){ .feat-chips span{font-size:11px;padding:5px 9px} }
+
+@media(prefers-reduced-motion:reduce){ .auth-gate::before{ animation:none } }
