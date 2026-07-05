@@ -1,8 +1,14 @@
 /* PosterChan Nostr PWA service worker.
  * App code (our JS/CSS + the /client shell) is served NETWORK-FIRST so deploys reach users
  * immediately (cache is only an offline fallback) — caching it cache-first served stale code.
- * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh). */
-const CACHE = 'pc-nostr-v165';
+ * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh).
+ * Media (avatars, uploaded images, small played videos) is cache-first in a SEPARATE cache
+ * (MEDIA_CACHE) that survives shell bumps — an avatar reloads on every note by that author, so
+ * caching it kills a lot of repeat bandwidth. */
+const CACHE = 'pc-nostr-v166';
+const MEDIA_CACHE = 'pc-media-v1';        // avatars + images + small played videos (survives CACHE bumps)
+const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
+const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
 const SHELL = [
   '/client',
   '/static/css/client.css',
@@ -27,7 +33,11 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(()=>self.skipWaiting()).catch(()=>{}));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
+  // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
+  // every avatar/image just because the app code was redeployed).
+  e.waitUntil(caches.keys().then(ks => Promise.all(
+    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE).map(k => caches.delete(k))
+  )).then(()=>self.clients.claim()));
 });
 
 function networkFirst(req){
@@ -40,6 +50,28 @@ function cacheFirst(req){
   return caches.match(req).then(hit => hit || fetch(req).then(res => {
     const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{}); return res;
   }));
+}
+// Cache-first for media (avatars, images, small played videos): serve from cache with zero network, else
+// fetch + store. Bounded so it can't blow the mobile storage quota, and never caches partial/streamed
+// video (206) or a big video the user is streaming — only whole, small, actually-fetched clips.
+async function cacheFirstMedia(req){
+  const cache = await caches.open(MEDIA_CACHE);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  try {
+    const isVideo = req.destination === 'video';
+    const len = +(res.headers.get('content-length') || 0);
+    const cacheable = res.status === 200
+      ? (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES))  // video: only a small, whole (played) clip
+      : (!isVideo && res.type === 'opaque');               // cross-origin image; never a 206 partial
+    if (cacheable) { await cache.put(req, res.clone()); trimMedia(cache); }
+  } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
+  return res;
+}
+async function trimMedia(cache){
+  const keys = await cache.keys();
+  for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // evict oldest first
 }
 
 self.addEventListener('fetch', e => {
@@ -54,5 +86,8 @@ self.addEventListener('fetch', e => {
 
   if (isAppCode) e.respondWith(networkFirst(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
-  else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // media etc.
+  // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia). With
+  // preload="none" on timeline videos, a video isn't even fetched until the user taps play.
+  else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
+  else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
 });
