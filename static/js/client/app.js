@@ -6591,6 +6591,51 @@
   // ---------- settings view ----------
   // Local working copy of the relay list while editing (committed to ClientSettings on Save).
   let _setRelays = [];
+  // ---- Web Push (PWA OS notifications) ----
+  function _urlB64ToUint8(base64){
+    const pad='='.repeat((4-base64.length%4)%4);
+    const b64=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+    const raw=atob(b64); const arr=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+    return arr;
+  }
+  async function pushState(){   // 'unsupported' | 'denied' | 'off' | 'on'
+    if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+    if(Notification.permission==='denied') return 'denied';
+    try{ const reg=await navigator.serviceWorker.ready; return (await reg.pushManager.getSubscription()) ? 'on' : 'off'; }
+    catch(_){ return 'off'; }
+  }
+  async function enablePush(){
+    if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
+    if((await Notification.requestPermission())!=='granted'){ toast('Notifications blocked'); return; }
+    const reg=await navigator.serviceWorker.ready;
+    let publicKey; try{ publicKey=(await fetch('/api/push/vapid').then(r=>r.json())).publicKey; }catch(_){}
+    if(!publicKey){ toast('Push not configured on the server'); return; }
+    const sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:_urlB64ToUint8(publicKey) });
+    await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ pubkey:ME.pubkey, subscription:sub.toJSON() })});
+    toast('🔔 Push notifications on');
+  }
+  async function disablePush(){
+    try{ const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
+      if(sub){ await fetch('/api/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});
+        await sub.unsubscribe(); } }catch(_){}
+    toast('Push notifications off');
+  }
+  async function _wirePushToggle(){
+    const btn=$('#set-push-toggle'), st=$('#set-push-status'); if(!btn) return;
+    const render=(s)=>{
+      if(s==='unsupported'){ btn.disabled=true; btn.textContent='🔔 Not supported on this browser'; return; }
+      if(s==='denied'){ btn.disabled=true; btn.textContent='🔔 Blocked in browser settings'; if(st) st.textContent='Re-enable notifications for this site in your browser settings.'; return; }
+      btn.disabled=false; btn.textContent = s==='on' ? '🔕 Turn off push notifications' : '🔔 Enable push notifications';
+      if(st) st.textContent = s==='on' ? "On — you'll be pinged for mentions, replies, reactions and zaps." : '';
+    };
+    render(await pushState());
+    btn.onclick=async()=>{ btn.disabled=true;
+      try{ if((await pushState())==='on') await disablePush(); else await enablePush(); }catch(e){ toast('push change failed'); }
+      render(await pushState()); };
+  }
+
   function renderSettings(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings">
@@ -6619,9 +6664,18 @@
           <button class="btn btn-neon small" id="set-scan-qr">📷 Scan QR code</button>
         </div>
       </section>
+      <section class="set-card">
+        <div class="set-head"><div><div class="set-title">🔔 Notifications</div>
+          <div class="muted small">Push notifications for mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
+        <div class="set-body">
+          <button class="btn btn-neon small" id="set-push-toggle">🔔 Enable push notifications</button>
+          <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
+        </div>
+      </section>
       <div id="user-settings"></div>
     </div>`;
 
+    _wirePushToggle();
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{

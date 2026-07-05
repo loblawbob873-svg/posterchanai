@@ -20,7 +20,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
-from app.routers import fourchan, youtube_thumb, bots
+from app.routers import fourchan, youtube_thumb, bots, push
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -154,6 +154,7 @@ templates = Jinja2Templates(directory=templates_path)
 # chat.router has /api/files/{username}/{conversation_id}/{filename} which could match
 # files.router has /api/files/view/{file_path:path} which should take precedence for /view/ paths
 app.include_router(auth.router)
+app.include_router(push.router)   # PWA Web Push (VAPID subscribe + delivery)
 app.include_router(files.router)  # Register files router first to avoid conflicts
 app.include_router(chat.router)
 app.include_router(chat.ws_only_router)  # /ws/chat/{id} for clients that omit /api prefix

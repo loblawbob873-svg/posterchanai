@@ -465,3 +465,17 @@ class SavedSearch(Base):
 
     user = relationship("User", backref="saved_searches")
 
+
+
+class PushSubscription(Base):
+    """A browser Web Push subscription (PWA) tied to a Nostr pubkey. The push watcher sends OS
+    notifications here when the app is closed. Server-owned infra (endpoint + keys the SERVER must read
+    in plaintext to send), so it lives in a table, not a relay event."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pubkey = Column(String(64), index=True, nullable=False)   # Nostr pubkey hex this device belongs to
+    endpoint = Column(Text, unique=True, nullable=False)       # the push service endpoint URL
+    p256dh = Column(String(255), nullable=False)               # client public key (base64url)
+    auth = Column(String(255), nullable=False)                 # auth secret (base64url)
+    created_at = Column(DateTime, default=datetime.utcnow)

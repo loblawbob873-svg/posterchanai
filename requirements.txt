@@ -141,3 +141,8 @@ torpy
 # to a separate ACE-Step REST server. ACE-Step is NOT on PyPI and conflicts with this venv, so it
 # is installed on its own: `./install.sh --music` (uv + git clone) or the Docker `acestep` service
 # (Dockerfile.acestep). See docs/MUSIC.md.
+
+# PWA Web Push notifications (mentions/zaps/replies delivered when the client is closed). Pulls in
+# py-vapid + cryptography (already present) + http-ece. Server-side only; the client uses the browser
+# PushManager. See app/services/push_service.py + nostr_push_service.py.
+pywebpush>=1.14.0

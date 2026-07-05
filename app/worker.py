@@ -36,6 +36,7 @@ _SCHEDULERS = [
     ("fedi-nostr-bridge", "app.services.fedi_nostr_bridge_service", "start_fedi_bridge_scheduler"),
     ("fedi-nostr-writeback", "app.services.fedi_nostr_writeback_service", "start_fedi_writeback_listener"),
     ("fedi-nostr-personal", "app.services.fedi_nostr_personal_service", "start_fedi_personal_scheduler"),
+    ("nostr-push", "app.services.nostr_push_service", "start_nostr_push_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

@@ -5,7 +5,7 @@
  * Media (avatars, uploaded images, small played videos) is cache-first in a SEPARATE cache
  * (MEDIA_CACHE) that survives shell bumps — an avatar reloads on every note by that author, so
  * caching it kills a lot of repeat bandwidth. */
-const CACHE = 'pc-nostr-v166';
+const CACHE = 'pc-nostr-v167';
 const MEDIA_CACHE = 'pc-media-v1';        // avatars + images + small played videos (survives CACHE bumps)
 const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
@@ -90,4 +90,24 @@ self.addEventListener('fetch', e => {
   // preload="none" on timeline videos, a video isn't even fetched until the user taps play.
   else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
+});
+
+/* ---- Web Push: show OS notifications when the app is closed, focus/open it on click. ---- */
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: (e.data && e.data.text()) || 'New activity' }; }
+  const title = d.title || 'PosterChan';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.body || 'New activity',
+    icon: '/static/icon-192.png', badge: '/static/icon-192.png',
+    tag: d.eid || undefined,        // collapse duplicate pushes for the same event
+    data: d, vibrate: [40, 30, 40],
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+    for (const c of cs) { if (c.url.includes('/client') && 'focus' in c) return c.focus(); }
+    return clients.openWindow('/client');
+  }));
 });
