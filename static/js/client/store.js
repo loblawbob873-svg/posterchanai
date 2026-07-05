@@ -36,6 +36,67 @@
     const arr = [...mem.events.values()].sort((a,b)=>b.created_at-a.created_at).slice(0, MEM_KEEP);
     mem.events.clear();
     for (const ev of arr) mem.events.set(ev.id, ev);
+    _reindex();
+  }
+  // ---- local relay: in-memory indexes so we can answer Nostr filters LOCALLY (author / kind / single-
+  // letter tag). The point: reads (feed, profile, thread) resolve from cache instantly and we only hit
+  // the network for what's genuinely missing — less latency, far less bandwidth on mobile. Indexes are
+  // derived from mem.events (already bounded by MEM_MAX), so they can't grow unbounded. ----
+  const idx = { author: new Map(), kind: new Map(), tag: new Map() };  // key -> Set(event id)
+  function _idxAddTo(map, key, id){ let s = map.get(key); if (!s){ s = new Set(); map.set(key, s); } s.add(id); }
+  function _idxDelFrom(map, key, id){ const s = map.get(key); if (s){ s.delete(id); if (!s.size) map.delete(key); } }
+  function _indexAdd(ev){
+    _idxAddTo(idx.author, ev.pubkey, ev.id);
+    _idxAddTo(idx.kind, ev.kind, ev.id);
+    for (const t of ev.tags || []){ if (t && t.length >= 2 && typeof t[0] === 'string' && t[0].length === 1) _idxAddTo(idx.tag, t[0] + ':' + t[1], ev.id); }
+  }
+  function _indexDel(ev){
+    if (!ev) return;
+    _idxDelFrom(idx.author, ev.pubkey, ev.id);
+    _idxDelFrom(idx.kind, ev.kind, ev.id);
+    for (const t of ev.tags || []){ if (t && t.length >= 2 && typeof t[0] === 'string' && t[0].length === 1) _idxDelFrom(idx.tag, t[0] + ':' + t[1], ev.id); }
+  }
+  function _reindex(){ idx.author.clear(); idx.kind.clear(); idx.tag.clear(); for (const ev of mem.events.values()) _indexAdd(ev); }
+  // Candidate event-id set for ONE filter, using the most selective index; null = "scan everything".
+  function _candidates(f){
+    if (f.ids) return new Set(f.ids.filter(id => mem.events.has(id)));
+    const sets = [];
+    if (f.authors){ const u = new Set(); for (const a of f.authors){ const s = idx.author.get(a); if (s) for (const id of s) u.add(id); } sets.push(u); }
+    if (f.kinds){ const u = new Set(); for (const k of f.kinds){ const s = idx.kind.get(k); if (s) for (const id of s) u.add(id); } sets.push(u); }
+    for (const key in f){ if (key.length === 2 && key[0] === '#'){ const u = new Set(); for (const v of f[key]){ const s = idx.tag.get(key[1] + ':' + v); if (s) for (const id of s) u.add(id); } sets.push(u); } }
+    if (!sets.length) return null;
+    // AND across constraint types: intersect the candidate sets (smallest first is cheapest).
+    sets.sort((a, b) => a.size - b.size);
+    let acc = sets[0];
+    for (let i = 1; i < sets.length; i++){ const nxt = new Set(); for (const id of acc) if (sets[i].has(id)) nxt.add(id); acc = nxt; }
+    return acc;
+  }
+  function _matchOne(ev, f){
+    if (f.since && ev.created_at < f.since) return false;
+    if (f.until && ev.created_at > f.until) return false;
+    if (f.authors && !f.authors.includes(ev.pubkey)) return false;
+    if (f.kinds && !f.kinds.includes(ev.kind)) return false;
+    if (f.ids && !f.ids.includes(ev.id)) return false;
+    for (const key in f){ if (key.length === 2 && key[0] === '#'){ const want = f[key];
+      if (!(ev.tags || []).some(t => t && t[0] === key[1] && want.includes(t[1]))) return false; } }
+    return true;
+  }
+  // Newest-first ordering with the NIP-01 replaceable tiebreak: on equal created_at the LOWER event id
+  // wins, so _latestReplaceable (keep-first-per-key) picks the spec-defined version deterministically.
+  function _newestFirst(a, b){ return (b.created_at - a.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); }
+  // Collapse replaceable (0/3/1xxxx) + addressable (3xxxx, keyed by `d` tag) events to the LATEST per
+  // key — the cache stores every version by id, but a real relay only serves the newest. Input MUST be
+  // newest-first, so the first occurrence per key is the one to keep.
+  function _latestReplaceable(evsNewestFirst){
+    const seen = new Set(); const out = [];
+    for (const ev of evsNewestFirst){
+      const k = ev.kind; let key = null;
+      if (k === 0 || k === 3 || (k >= 10000 && k < 20000)) key = k + ':' + ev.pubkey;
+      else if (k >= 30000 && k < 40000){ const d = ((ev.tags || []).find(t => t[0] === 'd') || [])[1] || ''; key = k + ':' + ev.pubkey + ':' + d; }
+      if (key !== null){ if (seen.has(key)) continue; seen.add(key); }
+      out.push(ev);
+    }
+    return out;
   }
   // batched IndexedDB writes — one transaction per burst instead of per event (busy-feed perf)
   let _wbuf = [], _wt = null;
@@ -67,6 +128,7 @@
         const evs = await pr(tx('events','readonly').getAll());
         evs.sort((a,b)=>b.created_at-a.created_at);
         for (const ev of evs.slice(0, 2000)) mem.events.set(ev.id, ev);
+        _reindex();   // build the local query indexes over the hydrated events
         const profs = await pr(tx('profiles','readonly').getAll());
         for (const p of profs) mem.profiles.set(p.pubkey, p);
       } catch(e){ console.warn('hydrate failed', e); }
@@ -77,13 +139,33 @@
     saveEvent(ev){
       if (mem.events.has(ev.id)) return false;
       mem.events.set(ev.id, ev);
-      if (mem.events.size > MEM_MAX) _evictMem();   // bound in-memory cache
+      _indexAdd(ev);
+      if (mem.events.size > MEM_MAX) _evictMem();   // bound in-memory cache (also reindexes)
       if (db){ _wbuf.push(ev); if(!_wt) _wt=setTimeout(_flushWrites, 700); }  // batch IDB writes
       return true;
     },
     removeEvent(id){
+      _indexDel(mem.events.get(id));
       mem.events.delete(id);
       if (db) try { tx('events','readwrite').delete(id); } catch(_){}
+    },
+    // Answer a Nostr REQ filter set from the LOCAL cache (a real relay-style query). Same shape as a
+    // relay response: newest-first, deduped, replaceable/addressable events collapsed to their LATEST
+    // version (like a real relay — the cache keeps every version by id), each filter's own `limit`
+    // applied. Used for cache-first reads so the UI paints instantly and only the delta hits the network.
+    query(filters){
+      const seen = new Set(); const out = [];
+      for (const f of (filters || [])){
+        const cand = _candidates(f);
+        const ids = cand === null ? mem.events.keys() : cand;
+        const hits = [];
+        for (const id of ids){ const ev = mem.events.get(id); if (ev && _matchOne(ev, f)) hits.push(ev); }
+        hits.sort(_newestFirst);                                   // newest-first (NIP-01 tiebreak: lower id)
+        const latest = _latestReplaceable(hits);                   // drop superseded replaceable versions
+        const capped = (f.limit != null) ? latest.slice(0, f.limit) : latest;   // limit:0 → empty (NIP-01)
+        for (const ev of capped){ if (!seen.has(ev.id)){ seen.add(ev.id); out.push(ev); } }
+      }
+      return _latestReplaceable(out.sort(_newestFirst));
     },
     // notes (kind 1) + reposts (kind 6) newest first, optional author filter
     feed(filterFn){

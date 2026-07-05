@@ -929,24 +929,34 @@
   }
 
   // ---------- follows + profiles ----------
+  // Cache-first replaceable-list read: apply the LOCAL cached latest instantly (no network wait), then
+  // refresh from the relay and re-apply the LATEST KNOWN version (cache ∪ network via Store.query, so a
+  // late/older relay copy can't regress a version we already have). Never wipes on an empty/errored read
+  // (Store.query keeps returning the cache), and re-renders only when the winning event actually changed.
+  async function _cacheFirstList(filt, apply){
+    const c = Store.query(filt); apply(c);
+    try{
+      const evs = await Relay.query(filt);
+      if(evs.length){ evs.forEach(e=>Store.saveEvent(e)); const n = Store.query(filt);
+        if(!c.length || !n.length || c[0].id !== n[0].id) apply(n); }   // re-apply only on a real change
+    }catch(_){}
+  }
   async function fetchFollows(){
-    const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]);
-    if (evs.length){ const e = evs.sort((a,b)=>b.created_at-a.created_at)[0];
-      FOLLOWS = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); }
-    FOLLOWS.add(ME.pubkey);
-    // prefetch follows' profiles so @-mention autocomplete has names to suggest right away
-    [...FOLLOWS].slice(0,300).forEach(needProfile);
-    if (VIEW==='home') renderView(true);
+    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[3], limit:1 }], (evs)=>{
+      if (evs.length) FOLLOWS = new Set(evs[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+      FOLLOWS.add(ME.pubkey);
+      [...FOLLOWS].slice(0,300).forEach(needProfile);   // prefetch follows' profiles for @-autocomplete
+      if (VIEW==='home') renderView(true);
+    });
   }
   async function fetchMutes(){
-    const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
-    if (evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
-      MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
-      // NIP-51 muted words/phrases (lowercase) — hide matching posts from the timeline.
-      MUTED_WORDS = new Set(e.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase())); }
-    // mutes can finish loading AFTER the first view render — refresh a filtered view so already-
-    // shown muted users drop out of the feed / notifications / messages without a manual reload.
-    if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10000], limit:1 }], (evs)=>{
+      if (evs.length){ const e=evs[0];
+        MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+        MUTED_WORDS = new Set(e.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase())); }   // NIP-51 muted words
+      // mutes can finish loading AFTER the first render — refresh a filtered view so muted users drop out.
+      if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+    });
   }
   // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
   // list follows the user to any client.
@@ -1037,17 +1047,21 @@
     have?MUTED.delete(pk):MUTED.add(pk); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
   }
   async function fetchPins(){
-    const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10001], limit:1 }]);
-    if(evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
-      PINNED=new Set(e.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])); }
+    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10001], limit:1 }], (evs)=>{
+      if(evs.length) PINNED=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
+    });
   }
   async function _editEList(kind, eid, add){    // replaceable e-tag list (e.g. pinned notes k10001)
     const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[kind], limit:1 }]);
     const cur=evs.length?evs.sort((a,b)=>b.created_at-a.created_at)[0]:null;
-    let tags=cur?cur.tags.map(t=>[...t]):[];
-    const has=tags.some(t=>t[0]==='e'&&t[1]===eid);
-    if(add&&!has) tags.push(['e',eid]); else if(!add&&has) tags=tags.filter(t=>!(t[0]==='e'&&t[1]===eid)); else return;
-    await publish(kind, cur?cur.content:'', tags);
+    // Source of truth = UNION of the relay's list and our in-memory set — a bare relay read can be empty
+    // (not-yet-synced) or STALE, and republishing from it alone wipes/regresses the list. Same anti-wipe
+    // rule as _editPList (this is what the pins/bookmarks write path was missing).
+    const inmem = kind===10001 ? PINNED : kind===10003 ? BOOKMARKS : new Set();
+    const eset = new Set([...inmem, ...(cur?cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[])]);
+    if(add) eset.add(eid); else eset.delete(eid);
+    const nonE = cur ? cur.tags.filter(t=>t[0]!=='e') : [];
+    await publish(kind, cur?cur.content:'', nonE.concat([...eset].map(id=>['e',id])));
   }
   async function togglePin(id){
     const have=PINNED.has(id); await _editEList(10001, id, !have);
@@ -1056,11 +1070,11 @@
   }
   // ---------- bookmarks (NIP-51 kind 10003 — replaceable e-tag list) ----------
   async function fetchBookmarks(){
-    const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10003], limit:1 }]);
-    if(evs.length){ const e=evs.sort((a,b)=>b.created_at-a.created_at)[0];
-      BOOKMARKS=new Set(e.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])); }
-    if(VIEW==='bookmarks') renderBookmarks();
-    else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on any posts already on screen
+    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10003], limit:1 }], (evs)=>{
+      if(evs.length) BOOKMARKS=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
+      if(VIEW==='bookmarks') renderBookmarks();
+      else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on posts already on screen
+    });
   }
   async function toggleBookmark(id, btn){
     const have=BOOKMARKS.has(id); await _editEList(10003, id, !have);
@@ -1086,7 +1100,10 @@
     if(_profMiss.size>5000){ for(const k of _profMiss.keys()){ _profMiss.delete(k); if(_profMiss.size<=4000) break; } }
     if(changed){ renderMe(); decorateProfiles(); }
   }
-  async function fetchMyProfile(){ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe();} }
+  async function fetchMyProfile(){
+    if(Store.haveProfile(ME.pubkey)) renderMe();   // instant from the profile cache
+    try{ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){ Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe(); } }catch(_){}
+  }
   function decorateProfiles(){
     $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
