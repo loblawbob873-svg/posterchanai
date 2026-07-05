@@ -120,6 +120,34 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
 MEDIA_ATTACHMENT_COMMANDS = ("compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz")
 
 
+async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: str) -> str | None:
+    """Encrypt + store an artifact in Blossom on a FRESH DB session (returns its image_path, or None).
+    A long render (60-90s music/video, a big media command) idles the request's held DB txn past Postgres
+    idle_in_transaction_session_timeout, so THAT connection is dead by save time. We use a fresh session
+    AND re-fetch the user on it (user.id, a PK, never expires) so nothing lazy-loads off the dead conn."""
+    from app.database import SessionLocal
+    from app.models import User
+    s = SessionLocal()
+    try:
+        u = s.get(User, user_id)
+        if not u:
+            return None
+        return await artifact_store.save_bytes(s, u, conv_id, data, ext)
+    except Exception as e:
+        logger.warning("[CHAT] artifact Blossom save failed: %s", e)
+        return None
+    finally:
+        s.close()
+
+
+def _artifact_url(rel: str, conv_id: int) -> str:
+    """/api/files serve URL from a saved artifact path `<username>/chat/<conv>/<file>` — parses the
+    username out of `rel` so we never touch the (possibly session-expired) request user."""
+    from urllib.parse import quote as _q
+    uname = str(rel).split("/", 1)[0]
+    return f"/api/files/{_q(uname, safe='')}/{conv_id}/{_q(Path(rel).name)}"
+
+
 async def normalize_command_result(db, user, conversation_id, result, storage_service):
     """Turn a CommandService result into (save_content, generated_image_path, live_result).
 
@@ -145,13 +173,16 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
             try:
                 if chat_store.enabled(db):
                     _ext = (Path(_fname).suffix.lstrip(".") or "bin")
-                    _rel = await artifact_store.save_bytes(db, user, conversation_id, _fbytes, _ext)
+                    _rel = await _save_artifact_blossom(user.id, conversation_id, _fbytes, _ext)   # fresh session
+                    if not _rel:
+                        raise RuntimeError("Blossom store failed")
+                    _url = _artifact_url(_rel, conversation_id)
                 else:
                     _rel = storage_service.save_file_bytes(user.username, conversation_id, _fbytes, _fname)
+                    _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(_rel).name)}"
                 # Encode the filename too — spaces/parens (e.g. "image (2).png") otherwise leave a raw ")"
                 # that truncates the markdown link. Embed media INLINE so it shows/plays like geni; other
                 # files (pdf/txt/…) keep the download link.
-                _url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(_rel).name)}"
                 if _fct.startswith("image/"):
                     _links.append(f"![{_fname}]({_url})")
                 elif _fct.startswith("video/"):
@@ -174,8 +205,8 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
             try:
                 if chat_store.enabled(db):
                     import base64 as _b64g
-                    generated_image_path = await artifact_store.save_bytes(
-                        db, user, conversation_id, _b64g.b64decode(result["image"]), "png")
+                    generated_image_path = await _save_artifact_blossom(   # fresh session (slow gen kills the held conn)
+                        user.id, conversation_id, _b64g.b64decode(result["image"]), "png")
                 else:
                     generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
             except Exception as save_err:
@@ -193,14 +224,12 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
         _mext = "mp4" if _mkey == "video" else (result.get("format") or "mp3").lower()
         try:
             import base64 as _b64m
-            _mbytes = _b64m.b64decode(result[_mkey])
-            if chat_store.enabled(db):
-                _mrel = await artifact_store.save_bytes(db, user, conversation_id, _mbytes, _mext)
+            _mrel = await _save_artifact_blossom(user.id, conversation_id, _b64m.b64decode(result[_mkey]), _mext)
+            if _mrel:
+                _mmd, _mlabel = ("!video", "video") if _mkey == "video" else ("!audio", "song")
+                save_content = (save_content + f"\n\n{_mmd}[{_mlabel}]({_artifact_url(_mrel, conversation_id)})").strip()
             else:
-                _mrel = storage_service.save_file_bytes(user.username, conversation_id, _mbytes, f"song.{_mext}")
-            _murl = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(_mrel).name)}"
-            _mmd = "!video" if _mkey == "video" else "!audio"
-            save_content = (save_content + f"\n\n{_mmd}[song]({_murl})").strip()
+                logger.warning(f"[CHAT] generated {_mkey} not persisted (Blossom store failed)")
         except Exception as _mv_err:
             logger.warning(f"[CHAT] failed to persist generated {_mkey} (non-fatal): {_mv_err}")
     if result.get("type") == "flashcards" and result.get("cards"):
