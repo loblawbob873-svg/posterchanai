@@ -64,3 +64,8 @@ cheroot>=10.0.0,<12.0.0
 # Built-in torrent client (optional feature; keep — not AI)
 libtorrent>=2.0.0
 torpy
+
+# PWA Web Push notifications (mentions/zaps/replies delivered when the client is closed). Nostr client
+# feature, so it MUST be in the nostr-only set too (this file is what the `nostr` Docker profile +
+# NOSTR_ONLY installer path install). Pulls in py-vapid + http-ece.
+pywebpush>=1.14.0

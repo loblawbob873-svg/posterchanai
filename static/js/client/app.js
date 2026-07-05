@@ -4031,8 +4031,15 @@
   async function restoreMediaServer(){
     try{
       if(ClientSettings.get('mediaServer','') || !ME || !ME.pubkey) return;
-      const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10063,10096], limit:4 }]);
-      const rMedia=evs.filter(e=>e.kind===10063||e.kind===10096).sort((a,b)=>b.created_at-a.created_at)[0];
+      // Retry the query: on a fresh session over a high-latency link (Thailand→US) the first REQ can
+      // EOSE empty before the relay serves the user's own kind-10063/10096 event → the media server
+      // "never persisted". The event DOES exist, so a couple of retries with backoff find it.
+      let rMedia=null;
+      for(let attempt=0; attempt<3 && !rMedia; attempt++){
+        if(attempt>0) await new Promise(r=>setTimeout(r, 500*attempt));
+        const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[10063,10096], limit:4 }]);
+        rMedia=evs.filter(e=>e.kind===10063||e.kind===10096).sort((a,b)=>b.created_at-a.created_at)[0];
+      }
       const srv=rMedia && (rMedia.tags.find(t=>t[0]==='server')||[])[1];
       if(!srv) return;
       ClientSettings.set('mediaServer', srv);
@@ -6739,11 +6746,18 @@
     // /api/auth/settings needs the nostr-login session cookie. Establish it FIRST — otherwise the
     // very first open 401s (cookie not set yet) and shows "Couldn't load", and you had to click
     // Settings a second time once the session warmed (the flicker/"do it twice" bug).
-    await ensureAiSession();
-    if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
     // Load settings FIRST. If this fails we must NOT render an empty editable form — saving it would
     // wipe the user's real settings with blanks (that's how telegram_notifications got cleared).
-    let s=null; try{ const r=await fetch('/api/auth/settings'); if(r.ok) s=await r.json(); }catch(_){}
+    // Retry with backoff: over a high-latency link (e.g. Thailand→US) the session cookie can lag the
+    // first fetch → a 401 → the old one-shot "Couldn't load" (you had to hit Retry). ensureAiSession
+    // caches only a GOOD session, so re-calling it re-establishes the cookie after a transient failure.
+    let s=null;
+    for(let attempt=0; attempt<3; attempt++){
+      await ensureAiSession();
+      if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
+      try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; } }catch(_){}
+      await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
+    }
     if(!host || VIEW!=='settings') return;
     if(!s || typeof s!=='object'){
       host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
