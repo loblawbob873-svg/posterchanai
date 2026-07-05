@@ -1831,3 +1831,62 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .hm-svg{width:120px;height:150px;flex:none;filter:drop-shadow(0 0 5px rgba(0,255,255,.4))}
 .hm-game .hm-word{margin:0}
 @media(max-width:820px){ .hm-svg{width:100px;height:124px} }
+
+/* ============================================================================================
+   Premium polish v2 — motion + interaction feedback that makes the client feel alive/modern.
+   All theme-var based (safe across the 8 themes), hover-only where it should be (so touch feeds
+   aren't affected), and disabled under prefers-reduced-motion. Purely additive.
+   ============================================================================================ */
+
+/* Feed cards rise in as they load/stream (replaces the plain fade) — a busy feed feels alive. */
+.note{ animation: noteRise .3s cubic-bezier(.22,.7,.3,1) both; }
+@keyframes noteRise{ from{opacity:0; transform:translateY(9px)} to{opacity:1; transform:none} }
+
+/* Desktop pointer only: a subtle lift + neon accent edge + avatar glow on hover. */
+@media(hover:hover){
+  .note{ transition: background .18s, box-shadow .18s, transform .18s; }
+  .note:hover{ transform:translateY(-1px); box-shadow: inset 3px 0 0 -1px var(--neon), 0 8px 26px -16px var(--neon); }
+  .note .av{ transition: box-shadow .2s, transform .2s; }
+  .note:hover .av{ box-shadow: var(--glow-cy); transform: scale(1.03); }
+}
+
+/* Buttons: springy press + a touch brighter on hover. */
+.btn{ transition: transform .14s cubic-bezier(.3,1.4,.5,1), box-shadow .18s, filter .18s; }
+.btn:hover{ filter:brightness(1.07); }
+.btn:active{ transform: translateY(1px) scale(.975); }
+
+/* A slow travelling sheen across the primary CTAs on hover — the "premium" tell. */
+.btn-neon, .btn-cyan{ position:relative; overflow:hidden; }
+.btn-neon::after, .btn-cyan::after{
+  content:''; position:absolute; inset:0; pointer-events:none; transform:translateX(-130%);
+  background:linear-gradient(120deg,transparent 32%,rgba(255,255,255,.4) 50%,transparent 68%); }
+.btn-neon:hover::after, .btn-cyan:hover::after{ animation: sheen .85s ease; }
+@keyframes sheen{ to{ transform:translateX(130%); } }
+
+/* Action taps (reply / repost / like / zap): satisfying pop on press, glow burst when toggled ON. */
+.act{ transition: transform .16s cubic-bezier(.3,1.5,.5,1), color .15s, box-shadow .15s; }
+.act:active{ transform: scale(1.25); }
+.act.on{ animation: actPop .34s cubic-bezier(.3,1.5,.5,1); }
+@keyframes actPop{ 0%{transform:scale(1)} 40%{transform:scale(1.42)} 70%{transform:scale(.9)} 100%{transform:scale(1)} }
+
+/* The login card gently breathes so the very first screen feels alive. Battery-safe: a static glow
+   layer whose OPACITY pulses (compositor-only, no per-frame paint), login-screen only, and it pauses
+   with the app's anim-off-when-hidden system. */
+.auth-card.neon-border{ position:relative; }
+.auth-card.neon-border::before{
+  content:''; position:absolute; inset:-2px; border-radius:inherit; pointer-events:none; z-index:-1;
+  box-shadow:0 0 46px -8px var(--neon); animation: authGlow 5.5s ease-in-out infinite; will-change:opacity; }
+@keyframes authGlow{ 0%,100%{opacity:.22} 50%{opacity:.6} }
+
+/* Skeleton shimmer utility for loading placeholders (opt-in via .skel). */
+.skel{ background:linear-gradient(100deg,var(--panel) 38%,var(--panel2) 50%,var(--panel) 62%);
+  background-size:200% 100%; animation: shimmer 1.3s linear infinite; border-radius:8px; }
+@keyframes shimmer{ to{ background-position:-200% 0; } }
+
+@media(prefers-reduced-motion:reduce){
+  .note{ animation:none; }
+  .btn-neon::after,.btn-cyan::after{ display:none; }
+  .act.on{ animation:none; }
+  .auth-card.neon-border::before{ animation:none; opacity:.3; }
+  .skel{ animation:none; }
+}
