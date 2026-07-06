@@ -7406,6 +7406,9 @@
   async function runSearch(q){
     VIEW='search'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Search';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    // People naturally type a handle as "@name@domain" — strip the leading @ so it matches the NIP-05
+    // resolver below (else it falls through to full-text search for the literal string and finds nothing).
+    q=q.replace(/^@+/, '').trim(); if(!q) return;
     // 1. direct npub/hex -> jump to that profile
     const pk=safePk(q); if(pk){ return renderProfileView(pk); }
     // 1b. note/nevent (optionally nostr:-prefixed) -> open that note's thread
