@@ -266,6 +266,15 @@ def _do_publish(gameid, parent_id, players, body, png):
     # straight to the relay — same path the working blackjack bot uses. (post_note() takes no tag
     # list, so the old post_note(..., extra_tags=) call raised and nothing ever posted.)
     content = body
+    # Make the @handles in the body real, clickable Nostr mentions: swap each seated player's @name for
+    # a `nostr:npub…` ref that matches its p-tag (a bare @handle notifies via the p-tag but doesn't render
+    # as a mention / link to the profile). Longest names first so a name that's a prefix of another isn't
+    # half-replaced.
+    for pk in sorted([p for p in (players or []) if p], key=lambda p: -len(_name(p) or "")):
+        try:
+            content = content.replace(_name(pk), "nostr:" + _nk._svc.npub_of(pk))
+        except Exception:
+            pass
     imeta = None
     if png:
         try:

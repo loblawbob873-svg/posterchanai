@@ -293,6 +293,15 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
     if not text:
         return JSONResponse({"error": "no text"}, status_code=400)
     text = text[:4000]   # cap: posts are short; bounds the LLM work
+    # Strip nostr: refs / bare bech32 entities (npub/nprofile/note/nevent/naddr). A leading mention like
+    # "nostr:npub1…" makes the language detector mis-fire (returns the target lang → "unchanged") and the
+    # translator echo the whole post back — they're not prose, so drop them and translate the real text.
+    import re as _re
+    _stripped = _re.sub(r"nostr:[a-z0-9]+|\b(?:npub1|nprofile1|note1|nevent1|naddr1)[0-9a-z]{20,}", " ",
+                        text, flags=_re.IGNORECASE)
+    _stripped = _re.sub(r"\s+", " ", _stripped).strip()
+    if _stripped:
+        text = _stripped
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
