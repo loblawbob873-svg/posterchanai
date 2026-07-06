@@ -1934,3 +1934,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 @media(max-width:480px){ .feat-chips span{font-size:11px;padding:5px 9px} }
 
 @media(prefers-reduced-motion:reduce){ .auth-gate::before{ animation:none } }
+
+/* Combined tip (⚡) — a small Monero mark on the bolt when the author also has an XMR address, and the
+   Lightning/Monero chooser modal. ɱ orange is Monero's brand colour (fixed, reads on every theme). */
+.tipbolt{ white-space:nowrap; }                                   /* keep ⚡ and its ɱ mark together */
+.xmr-mark{ font-size:.58em; color:#f60; font-weight:800; vertical-align:super; margin-left:-1px; }
+.tip-choices{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+.tip-choices .btn{ text-align:left; white-space:normal; }         /* full-width chooser buttons wrap cleanly on narrow phones */
+.tip-choices .btn .muted{ margin-left:4px; }

@@ -2796,8 +2796,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${counts.zaps?'on':''}" data-a="zap" title="zap (lightning)">⚡ <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
-          ${isXmrAddr(xmrOf(p))?`<button class="act actxmr" data-a="xmrtip" title="tip Monero (XMR)">ɱ</button>`:''}
+          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${isXmrAddr(xmrOf(p))?' or Monero':''}"><span class="tipbolt">⚡${isXmrAddr(xmrOf(p))?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -2973,6 +2972,7 @@
       if(a==='quote') return compose({quote:id});
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
+      if(a==='tip') return doTip(id,pk);
       if(a==='zap') return doZap(id,pk);
       if(a==='xmrtip') return doXmrTip(id,pk);
       if(a==='bookmark') return toggleBookmark(id,btn);
@@ -3063,6 +3063,28 @@
       });
     },
   };
+  // Combined tip entry (the ⚡ button). If the author supports BOTH Lightning and Monero, let the user
+  // pick; otherwise go straight to whichever they have (Lightning is the default, so doZap still surfaces
+  // "no lightning address" when they have neither).
+  async function doTip(noteId, pk){
+    const p=profOf(pk)||{};
+    const hasLn=!!(p.lud16||p.lud06);
+    const hasXmr=isXmrAddr(xmrOf(p));
+    if(hasLn && hasXmr){
+      modal(`<h3>Tip ${enc(p.name||p.display_name||'')}</h3>
+        <p class="muted small">How would you like to tip?</p>
+        <div class="tip-choices"><button class="btn btn-neon full" id="tip-ln">⚡ Lightning<span class="muted small"> — instant zap</span></button>
+          <button class="btn btn-cyan full" id="tip-xmr">ɱ Monero<span class="muted small"> — private, from your wallet</span></button></div>`,
+        root=>{
+          $('#tip-ln',root).onclick=()=>{ closeModal(); doZap(noteId,pk); };
+          $('#tip-xmr',root).onclick=()=>{ closeModal(); doXmrTip(noteId,pk); };
+        });
+    } else if(hasXmr){
+      doXmrTip(noteId,pk);
+    } else {
+      doZap(noteId,pk);
+    }
+  }
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
