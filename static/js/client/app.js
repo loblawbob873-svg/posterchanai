@@ -1270,7 +1270,18 @@
   // feed pages — so the app stays usable when you've run out of data. Independent of the manual toggle,
   // and re-checked live at render time so it adapts as the connection changes.
   function _conn(){ return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null; }
-  function _slowConn(){ const c=_conn(); return !!(c && (c.saveData || c.effectiveType==='slow-2g' || c.effectiveType==='2g')); }
+  function _slowConn(){
+    const c=_conn(); if(!c) return false;
+    if(c.saveData) return true;                                     // browser/OS Data Saver requested
+    const et=c.effectiveType||'';
+    if(et==='slow-2g'||et==='2g'||et==='3g') return true;
+    // Carrier throttling (e.g. "out of data") caps THROUGHPUT while the radio stays 5G/4G, so
+    // effectiveType still reads '4g'. The raw estimates DO reflect it: a low measured downlink or a high
+    // round-trip means it's effectively slow. downlink is in Mbps, rtt in ms (both Chrome estimates).
+    if(typeof c.downlink==='number' && c.downlink>0 && c.downlink<2) return true;   // < 2 Mbps ≈ throttled
+    if(typeof c.rtt==='number' && c.rtt>=600) return true;                          // laggy link
+    return false;
+  }
   function _holdImages(){ return NO_IMAGES || _slowConn(); }
   function _flim(n){ return _slowConn() ? Math.max(15, Math.ceil(n*0.4)) : n; }   // smaller feed pages when slow
   // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
