@@ -340,6 +340,26 @@ async def _handle_dm_reply(db, ev: dict) -> None:
         logger.warning("[fedi-writeback] DM reply failed (ev %s): %s", eid, e)
 
 
+async def _quote_link(db, ev: dict) -> str | None:
+    """A NIP-18 quote-post's `q` reference is a bare `nostr:nevent…` that _strip_nostr_refs removes — so
+    the fediverse would see only the comment, out of context ("talking nonsense"). Resolve the quoted
+    note to a link fedi users can open: the ORIGINAL fediverse status when the quoted note is a bridged
+    post (so it renders natively), else a njump.me Nostr web link."""
+    qt = next((t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "q" and t[1]), None)
+    if not qt:
+        return None
+    q_eid = qt[1]
+    row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == q_eid).first()
+    if row and row.note_uri:
+        return row.note_uri
+    try:
+        from app.services.nostr import bech32
+        note = bech32.encode("note", bytes.fromhex(q_eid))
+        return f"https://njump.me/{note}" if note else None
+    except Exception:
+        return None
+
+
 async def _crosspost(db, user, ev: dict) -> None:
     """Federate a user's top-level Nostr note to their linked Pleroma account as a new public post.
     Idempotent across restart/replay via a recorded FediBridgeDelivered row keyed on the note id."""
@@ -347,6 +367,9 @@ async def _crosspost(db, user, ev: dict) -> None:
     if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
         return
     text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
+    q = await _quote_link(db, ev)
+    if q:
+        text = (text + "\n\n" + q).strip()   # keep the quoted post's context (else it reads as nonsense)
     text, media = await _extract_media(text)
     if not text and not media:
         return
@@ -407,6 +430,9 @@ async def _handle(db, ev: dict) -> None:
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
                 return
             text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
+            q = await _quote_link(db, ev)
+            if q:
+                text = (text + "\n\n" + q).strip()   # a reply can also quote — keep the quoted context
             text, media = await _extract_media(text)
             if not text and not media:
                 return
