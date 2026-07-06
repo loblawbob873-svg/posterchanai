@@ -5544,8 +5544,19 @@
     // Only the author's recent notes block the first paint. following/followers/pinned are loaded
     // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
     // was the multi-second stall on every profile open.
-    const notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); notes.forEach(n=>Store.saveEvent(n));   // include polls + reposts
-    if(VIEW!=='profile') return;   // navigated away during the notes fetch
+    // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
+    // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
+    // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
+    // profile still resolves fast).
+    let notes=[];
+    for(let attempt=0; attempt<3; attempt++){
+      try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
+      if(VIEW!=='profile') return;   // navigated away during the notes fetch
+      if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
+      await new Promise(r=>setTimeout(r, 450*(attempt+1)));
+    }
+    notes.forEach(n=>Store.saveEvent(n));
+    if(VIEW!=='profile') return;
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
