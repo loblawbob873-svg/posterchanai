@@ -805,23 +805,28 @@
       startAutoScroll(); }
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
-    // YouTube facade → load the real player iframe on click (kept out of the timeline until then
-    // for performance), and don't let the click bubble up to open the note thread.
-    document.addEventListener('click', e=>{
-      const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
-      e.preventDefault(); e.stopPropagation();
-      const f=document.createElement('div'); f.className='yt-frame';
-      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
-      yt.replaceWith(f);
-    });
-    // Data-saver: a "tap to load image" placeholder → swap in the real image on click (nothing downloaded until now).
-    document.addEventListener('click', e=>{
-      const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
-      const src=h.dataset.src; if(!src) return;
-      const img=document.createElement('img'); img.src=src; img.loading='eager';
-      img.onerror=function(){ this.onerror=null; window.__blobFallback(this); };
-      h.replaceWith(img);
-    });
+    // These two are document-level delegates — bind them ONCE. startApp() re-runs on login-without-reload
+    // (see below), so an unguarded addEventListener here would accumulate a listener per run and fire the
+    // handler N times per click.
+    if(!window.__pcClickLoadBound){ window.__pcClickLoadBound = true;
+      // YouTube facade → load the real player iframe on click (kept out of the timeline until then
+      // for performance), and don't let the click bubble up to open the note thread.
+      document.addEventListener('click', e=>{
+        const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
+        e.preventDefault(); e.stopPropagation();
+        const f=document.createElement('div'); f.className='yt-frame';
+        f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
+        yt.replaceWith(f);
+      });
+      // Data-saver: a "tap to load image" placeholder → swap in the real image on click (nothing downloaded until now).
+      document.addEventListener('click', e=>{
+        const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
+        const src=h.dataset.src; if(!src) return;
+        const img=document.createElement('img'); img.src=src; img.loading='eager';
+        img.onerror=function(){ this.onerror=null; window.__blobFallback(this); };
+        h.replaceWith(img);
+      });
+    }
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
@@ -1261,7 +1266,9 @@
   // Data saver = ONE manual toggle (NO_IMAGES). When on it both holds content images (tap to load) AND
   // fetches lighter feed pages — flip it when you're low on / throttled on data. No connection sniffing:
   // a carrier throttle looks like normal 5G to the browser, so auto-detection was unreliable.
-  function _flim(n){ return NO_IMAGES ? Math.max(15, Math.ceil(n*0.4)) : n; }   // smaller feed pages in data saver
+  // Lighter feed pages in data saver — but not so small that home (follows-only, replies/mutes dropped)
+  // renders near-empty after client-side filtering. ~60% with a floor of 30.
+  function _flim(n){ return NO_IMAGES ? Math.max(30, Math.ceil(n*0.6)) : n; }
   // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
   // content-warning, OR a topic `t` tag in this set, OR an inline #nsfw-style hashtag — so the common
   // "#nsfw" convention auto-blurs even without a formal content-warning tag.
@@ -4228,7 +4235,7 @@
   // sends hang. Skips animated/vector (gif/svg) and anything already small; never upsizes. Pure
   // browser canvas work, so it's cheap and offloads the server.
   async function compressImage(file, opts){
-    const o = opts || {}; const maxDim = o.maxDim || 3072, quality = o.quality || 0.9, maxBytes = o.maxBytes || 900*1024;
+    const o = opts || {}; const maxDim = o.maxDim || 2560, maxBytes = o.maxBytes || 800*1024;
     try{
       const t=(file.type||'').toLowerCase();
       if(!/^image\//.test(t) || /gif|svg/.test(t)) return file;     // keep animation/vector intact
@@ -4243,7 +4250,11 @@
       const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
       cv.getContext('2d').drawImage(bmp,0,0,w,h); if(bmp.close) bmp.close();
       const outType = isPng ? 'image/png' : 'image/jpeg';
-      const blob=await new Promise(r=> cv.toBlob(r, outType, quality));
+      // JPEG: actually ENFORCE the size cap — step the quality down until the blob is under maxBytes
+      // (was a no-op before: maxBytes only gated the early return, so big photos still uploaded big).
+      // PNG has no quality knob, so it's a single lossless pass.
+      let blob=await new Promise(r=> cv.toBlob(r, outType, 0.9));
+      if(!isPng){ let q=0.9; while(blob && blob.size>maxBytes && q>0.45){ q-=0.12; blob=await new Promise(r=> cv.toBlob(r,'image/jpeg',q)); } }
       if(!blob || blob.size>=file.size) return file;                // never make it bigger
       const ext = isPng ? 'png' : 'jpg';
       return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
