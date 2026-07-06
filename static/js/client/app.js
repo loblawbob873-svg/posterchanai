@@ -814,6 +814,14 @@
       f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
       yt.replaceWith(f);
     });
+    // Data-saver: a "tap to load image" placeholder → swap in the real image on click (nothing downloaded until now).
+    document.addEventListener('click', e=>{
+      const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
+      const src=h.dataset.src; if(!src) return;
+      const img=document.createElement('img'); img.src=src; img.loading='eager';
+      img.onerror=function(){ this.onerror=null; window.__blobFallback(this); };
+      h.replaceWith(img);
+    });
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
@@ -829,6 +837,7 @@
       if(GUEST || _hydrated) return; _hydrated = true;
       restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
                               // relay is connected (this fires on onReady), else the query returns nothing
+      restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions();
@@ -1245,6 +1254,10 @@
   // Blur NIP-36 sensitive/NSFW posts behind a reveal. ON by default; User Settings → Muted toggles it.
   // Stored per-device in ClientSettings (localStorage), so the choice survives reloads/PWA restarts.
   let BLUR_NSFW = ClientSettings.get('blurNsfw', true) !== false;
+  // Data-saver: don't auto-load content images — show a "tap to load" placeholder instead (saves
+  // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
+  // follows across devices (see save/restoreClientPrefsNostr).
+  let NO_IMAGES = ClientSettings.get('noImages', false) === true;
   // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
   // content-warning, OR a topic `t` tag in this set, OR an inline #nsfw-style hashtag — so the common
   // "#nsfw" convention auto-blurs even without a formal content-warning tag.
@@ -2707,13 +2720,19 @@
   }
   // Pull media URLs OUT of the text into a flex gallery — leaving them inline let the post's
   // newlines (white-space:pre-wrap) break each onto its own row (vertical stacking).
+  // An <img>, OR a tap-to-load placeholder when the data-saver (NO_IMAGES) is on — the placeholder has
+  // NO src, so nothing downloads until the user taps it (the click handler swaps in the real image).
+  function _img(encUrl){
+    return NO_IMAGES ? `<span class="img-hold" data-src="${encUrl}" role="button" tabindex="0">🖼️ tap to load image</span>`
+                     : `<img src="${encUrl}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
+  }
   function mediaParts(raw){
     const media=[];
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy">`); return tail; }
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_img(E)); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="none" playsinline></video>`); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(`<img src="${E}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_img(E)); return tail; }
       return url;  // non-media URL: leave for linkify
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
@@ -4154,6 +4173,27 @@
       ClientSettings.set('mediaServer', srv);
       ClientSettings.set('mediaProto', rMedia.kind===10096?'nip96':'blossom');
       ClientSettings.set('blossomEnabled', true);
+    }catch(_){}
+  }
+  // Sync a small set of CLIENT prefs to Nostr (kind-30078 app-data, d=pcai:client-prefs) so per-device
+  // toggles like the image data-saver follow the user across devices. Plain JSON (not sensitive).
+  async function saveClientPrefsNostr(){
+    try{ await publish(30078, JSON.stringify({ noImages: !!NO_IMAGES }), [['d','pcai:client-prefs']]); }catch(_){}
+  }
+  async function restoreClientPrefsNostr(){
+    if(!ME || !ME.pubkey) return;
+    let ev=null;
+    for(let attempt=0; attempt<3 && !ev; attempt++){   // retry: a laggy first REQ can EOSE empty (Thailand→US)
+      if(attempt>0) await new Promise(r=>setTimeout(r, 500*attempt));
+      try{ const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
+        ev=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+    }
+    if(!ev) return;
+    try{ const pr=JSON.parse(ev.content||'{}');
+      if(typeof pr.noImages==='boolean' && pr.noImages!==NO_IMAGES){
+        NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
+        if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }
     }catch(_){}
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -7004,6 +7044,7 @@
         </div>
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Data saver — don't auto-load images (tap to view)<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
@@ -7079,6 +7120,12 @@
         BLUR_NSFW = bn.checked; ClientSettings.set('blurNsfw', BLUR_NSFW);
         toast(BLUR_NSFW?'sensitive posts blurred':'sensitive posts shown');
         if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }; }
+    // Data saver (tap-to-load images): per-device now (instant) + synced to Nostr so it follows devices.
+    { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
+        NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); saveClientPrefsNostr();
+        toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
+        if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
     { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{

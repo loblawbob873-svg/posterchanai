@@ -1963,3 +1963,11 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
   .cmp-swatch{ width:34px; height:34px; font-size:16px; }
   textarea#cmp.cmp-bg-on{ font-size:18px; min-height:150px; padding:28px 18px; }
 }
+
+/* Data saver — tap-to-load image placeholder (User Settings → "don't auto-load images"). Nothing is
+   downloaded until tapped. Touch-friendly + theme-safe. */
+.img-hold{ display:flex; align-items:center; justify-content:center; gap:6px; min-height:110px; width:100%;
+  border:1px dashed var(--line); border-radius:12px; background:var(--panel2); color:var(--muted);
+  font-size:14px; cursor:pointer; text-align:center; padding:18px; -webkit-user-select:none; user-select:none; }
+.img-hold:active{ opacity:.75; }
+@media(hover:hover){ .img-hold:hover{ border-color:var(--neon); color:var(--text); } }
