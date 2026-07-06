@@ -3801,7 +3801,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(reply||quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(reply||quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
@@ -3850,7 +3850,6 @@
         openMenuPopover($('#cmp-react',root), items, a=>{
           if(a==='emoji') openEmojiPopover($('#cmp-react',root), (emoji)=>{ _insertAt(ta, emoji); });
           else if(a==='gif') gifPicker(ta); }); };
-      { const tb=$('#cmp-translate',root); if(tb) tb.onclick=()=>composeTranslate(ta, tb); }
       // 📊 Poll → toggle the poll-builder; ＋ Add option grows the list
       { const pb=$('#cmp-poll',root), box=$('#cmp-pollbox',root);
         if(pb) pb.onclick=()=>{ const on=box.classList.toggle('hidden')===false; pb.classList.toggle('active',on); };
@@ -3889,7 +3888,7 @@
             } else $('#cmp-status',root).textContent='no hashtags: '+((r&&r.error)||'try again');
           }catch(_){ $('#cmp-status',root).textContent='hashtags failed'; }
         };
-        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); openMenuPopover(aiBtn, [['enhance','✨ AI Enhancer'],['tags','# Hashtags']], a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); }); };
+        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); openMenuPopover(aiBtn, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']], a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
