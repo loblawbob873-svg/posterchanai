@@ -865,13 +865,6 @@
     // socket isn't open yet here, _ready is false, and onReady will fire it on connect. _hydrated dedupes.)
     if(!GUEST && Relay._ready) hydrateUser();
     renderMe();
-    // Throttled-connection UX: tell the user once why images are held + feed is lighter, and re-render
-    // if the link quality flips (e.g. data runs out mid-session) so the data-saver kicks in live.
-    if(_slowConn()) setTimeout(()=>{ try{ toast('🐢 Slow connection — data saver on: tap images to load'); }catch(_){} }, 1600);
-    { const c=_conn(); if(c && c.addEventListener){ let _wasSlow=_slowConn();
-        c.addEventListener('change', ()=>{ const now=_slowConn(); if(now===_wasSlow) return; _wasSlow=now;
-          if(now){ try{ toast('🐢 Slow connection — data saver on'); }catch(_){} }
-          if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} } }); } }
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
     // profile/note); otherwise land on the global feed immediately.
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
@@ -1265,25 +1258,10 @@
   // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
   // follows across devices (see save/restoreClientPrefsNostr).
   let NO_IMAGES = ClientSettings.get('noImages', false) === true;
-  // Auto data-saver on throttled / metered links (Network Information API): when the phone is on
-  // slow-2g/2g, or the browser's Data Saver is on, HOLD content images (tap to load) and fetch SMALLER
-  // feed pages — so the app stays usable when you've run out of data. Independent of the manual toggle,
-  // and re-checked live at render time so it adapts as the connection changes.
-  function _conn(){ return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null; }
-  function _slowConn(){
-    const c=_conn(); if(!c) return false;
-    if(c.saveData) return true;                                     // browser/OS Data Saver requested
-    const et=c.effectiveType||'';
-    if(et==='slow-2g'||et==='2g'||et==='3g') return true;
-    // Carrier throttling (e.g. "out of data") caps THROUGHPUT while the radio stays 5G/4G, so
-    // effectiveType still reads '4g'. The raw estimates DO reflect it: a low measured downlink or a high
-    // round-trip means it's effectively slow. downlink is in Mbps, rtt in ms (both Chrome estimates).
-    if(typeof c.downlink==='number' && c.downlink>0 && c.downlink<2) return true;   // < 2 Mbps ≈ throttled
-    if(typeof c.rtt==='number' && c.rtt>=600) return true;                          // laggy link
-    return false;
-  }
-  function _holdImages(){ return NO_IMAGES || _slowConn(); }
-  function _flim(n){ return _slowConn() ? Math.max(15, Math.ceil(n*0.4)) : n; }   // smaller feed pages when slow
+  // Data saver = ONE manual toggle (NO_IMAGES). When on it both holds content images (tap to load) AND
+  // fetches lighter feed pages — flip it when you're low on / throttled on data. No connection sniffing:
+  // a carrier throttle looks like normal 5G to the browser, so auto-detection was unreliable.
+  function _flim(n){ return NO_IMAGES ? Math.max(15, Math.ceil(n*0.4)) : n; }   // smaller feed pages in data saver
   // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
   // content-warning, OR a topic `t` tag in this set, OR an inline #nsfw-style hashtag — so the common
   // "#nsfw" convention auto-blurs even without a formal content-warning tag.
@@ -2749,7 +2727,7 @@
   // An <img>, OR a tap-to-load placeholder when the data-saver (NO_IMAGES) is on — the placeholder has
   // NO src, so nothing downloads until the user taps it (the click handler swaps in the real image).
   function _img(encUrl){
-    return _holdImages() ? `<span class="img-hold" data-src="${encUrl}" role="button" tabindex="0">🖼️ tap to load image</span>`
+    return NO_IMAGES ? `<span class="img-hold" data-src="${encUrl}" role="button" tabindex="0">🖼️ tap to load image</span>`
                      : `<img src="${encUrl}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
   }
   function mediaParts(raw){
@@ -7071,7 +7049,7 @@
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Data saver — don't auto-load images (tap to view)<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small" style="margin:-4px 0 6px">Also turns on automatically when your connection is slow or metered (and feed pages load lighter).</div>
+          <div class="muted small" style="margin:-4px 0 6px">Turn this on when you're low on data — it holds images until you tap them and loads lighter feed pages.</div>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
