@@ -818,13 +818,16 @@
         f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
         yt.replaceWith(f);
       });
-      // Data-saver: a "tap to load image" placeholder → swap in the real image on click (nothing downloaded until now).
+      // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
+      // downloaded until now). data-kind picks the element; data-cls restores the layout class.
       document.addEventListener('click', e=>{
         const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
         const src=h.dataset.src; if(!src) return;
-        const img=document.createElement('img'); img.src=src; img.loading='eager';
-        img.onerror=function(){ this.onerror=null; window.__blobFallback(this); };
-        h.replaceWith(img);
+        let el;
+        if(h.dataset.kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.playsInline=true; el.preload='metadata'; }
+        else { el=document.createElement('img'); el.src=src; el.loading='eager'; el.onerror=function(){ this.onerror=null; window.__blobFallback(this); }; }
+        if(h.dataset.cls) el.className=h.dataset.cls;
+        h.replaceWith(el);
       });
     }
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
@@ -1391,7 +1394,7 @@
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
       feed.innerHTML = pics.length
         ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && isSensitive(x.e);
-            return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
+            return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
         : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
       $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
       if(preserveScroll) feed.scrollTop=top;
@@ -1626,7 +1629,7 @@
     const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     return `<article class="article-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      ${img?`<img class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`:''}
+      ${img?_hold(`<img class="art-img" src="${enc(img)}" loading="lazy" onerror="this.remove()">`, img, 'image', 'art-img'):''}
       <div class="art-meta"><h3 class="art-title">${enc(title)}</h3>
         ${summary?`<div class="art-sum">${enc(summary.slice(0,200))}</div>`:''}
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span><span class="art-cc muted small" data-addr="${enc(articleAddr(e))}"></span></div>
@@ -1652,7 +1655,7 @@
     const mine=e.pubkey===ME.pubkey;
     feed.innerHTML=`<div class="article-view">
       <button class="btn btn-ghost small" id="art-back">← Articles</button>
-      ${img?`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`:''}
+      ${img?_hold(`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`, img, 'image', 'av-banner'):''}
       <h1 class="av-title">${enc(title)}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
       <div class="av-actions">
@@ -1887,7 +1890,7 @@
     const loc=(e.tags.find(t=>t[0]==='location')||[])[1]||'';
     const sold=mktStatus(e)==='sold';
     return `<article class="mkt-card ${sold?'sold':''}" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="mkt-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentNode.classList.add('noimg');this.remove()">`:'<span class="mkt-noimg">🛍️</span>'}${sold?'<span class="mkt-sold-badge">SOLD</span>':''}</div>
+      <div class="mkt-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentNode.classList.add('noimg');this.remove()">`, img):'<span class="mkt-noimg">🛍️</span>'}${sold?'<span class="mkt-sold-badge">SOLD</span>':''}</div>
       <div class="mkt-info">
         ${price?`<div class="mkt-price">${enc(price)}</div>`:''}
         <h3 class="mkt-title">${enc(title)}</h3>
@@ -2130,7 +2133,7 @@
     const badge = st==='live'?'<span class="live-badge">● LIVE</span>' : st==='ended'?'<span class="ended-badge">ended</span>' : st==='planned'?'<span class="planned-badge">soon</span>' : '';
     const viewers=(e.tags.find(t=>t[0]==='current_participants')||[])[1];
     return `<article class="stream-card" data-id="${e.id}" data-pk="${hpk}">
-      <div class="stream-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">▶</span>'}${badge}</div>
+      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">▶</span>'}${badge}</div>
       <div class="stream-meta"><div class="stream-title">${enc(title)}</div>
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${viewers?`<span class="muted small">· ${enc(viewers)} watching</span>`:''}</div>
       </div></article>`;
@@ -2176,7 +2179,7 @@
     const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     return `<article class="stream-card community-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="stream-thumb">${img?`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">☷</span>'}</div>
+      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">☷</span>'}</div>
       <div class="stream-meta"><div class="stream-title">${enc(name)}</div>
         ${desc?`<div class="muted small">${enc(desc.slice(0,120))}</div>`:''}
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
@@ -2250,7 +2253,7 @@
   function channelCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey); const m=_chanMeta(e);
     return `<article class="stream-card channel-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="stream-thumb">${m.picture?`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">✺</span>'}</div>
+      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">✺</span>'}</div>
       <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
         ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
@@ -2535,7 +2538,7 @@
   }
   function nip29Card(g){ const m=g.m;
     return `<article class="stream-card nip29-card" data-key="${enc(g.key)}">
-      <div class="stream-thumb">${m.picture?`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`:'<span class="stream-play">👥</span>'}</div>
+      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">👥</span>'}</div>
       <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
         ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
         <div class="muted small">🛰 ${enc(g.relay.replace(/^wss:\/\//,'').replace(/\/$/,''))}</div>
@@ -2731,19 +2734,31 @@
   }
   // Pull media URLs OUT of the text into a flex gallery — leaving them inline let the post's
   // newlines (white-space:pre-wrap) break each onto its own row (vertical stacking).
-  // An <img>, OR a tap-to-load placeholder when the data-saver (NO_IMAGES) is on — the placeholder has
-  // NO src, so nothing downloads until the user taps it (the click handler swaps in the real image).
-  function _img(encUrl){
-    return NO_IMAGES ? `<span class="img-hold" data-src="${encUrl}" role="button" tabindex="0">🖼️ tap to load image</span>`
-                     : `<img src="${encUrl}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
+  // ---- Data saver: tap-to-load media. When NO_IMAGES is on, content images AND videos render as a
+  // placeholder with NO src, so NOTHING downloads until the user taps it (the click handler swaps in the
+  // real element). Avatars are never routed through this — they always load. ----
+  function _phold(encUrl, kind, cls){   // the placeholder itself
+    const v = kind==='video';
+    return `<span class="img-hold${v?' vid-hold':''}" data-src="${encUrl}" data-kind="${v?'video':'image'}"${cls?` data-cls="${cls}"`:''} role="button" tabindex="0">${v?'▶️ tap to load video':'🖼️ tap to load image'}</span>`;
   }
+  // Constructed media (feed / inline text): placeholder in data saver, else a real <img>/<video>.
+  // `encUrl` is ALREADY html-encoded; `cls` is an optional layout class (e.g. inline text media = "m").
+  function _media(encUrl, kind, cls){
+    if(NO_IMAGES) return _phold(encUrl, kind, cls);
+    const c = cls?` class="${cls}"`:'';
+    if(kind==='video') return `<video${c} src="${encUrl}" controls preload="none" playsinline></video>`;
+    return `<img${c} src="${encUrl}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
+  }
+  // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
+  // placeholder in data saver, else the original html untouched. `cls` = layout class to restore on tap.
+  function _hold(html, url, kind, cls){ return NO_IMAGES ? _phold(enc(url), kind, cls) : html; }
   function mediaParts(raw){
     const media=[];
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
-      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_img(E)); return tail; }
-      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(`<video src="${E}" controls preload="none" playsinline></video>`); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_img(E)); return tail; }
+      if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
+      if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(_media(E,'video')); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
       return url;  // non-media URL: leave for linkify
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
@@ -2935,7 +2950,7 @@
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     const name=p.name||p.display_name||(NT().nip19.npubEncode(e.pubkey).slice(0,12)+'…');
     return `<div class="quoted naddrlink" data-pk="${enc(e.pubkey)}" data-d="${enc(d)}" data-k="${enc(String(e.kind))}">
-      ${img?`<img class="m" src="${enc(img)}" loading="lazy">`:''}
+      ${img?_hold(`<img class="m" src="${enc(img)}" loading="lazy">`, img, 'image', 'm'):''}
       <div class="hd"><span class="name">📄 ${e.kind===30023?'Article':'Post'} · ${enc(name)}</span></div>
       <div class="txt"><b>${enc(title)}</b>${summary?`<br><span class="muted small">${enc(summary)}</span>`:''}</div></div>`;
   }
@@ -4442,7 +4457,7 @@
       if(pics.length>=120) break;
     }
     const grid=$('#pics-grid'); if(!grid) return;
-    grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}"><img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()"></div>`).join('') : '<div class="empty">No pics found yet.</div>';
+    grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
   }
 
@@ -7543,7 +7558,7 @@
     const url=el.dataset.url; const d=await fetchPreview(url);
     if(!d || (!d.title && !d.image && !d.description)){ el.remove(); return; }
     const host=(()=>{ try{ return new URL(url).hostname.replace(/^www\./,''); }catch(_){ return url; } })();
-    el.innerHTML=`${d.image?`<img class="lc-img" src="${enc(d.image)}" loading="lazy" onerror="this.remove()">`:''}<div class="lc-body"><div class="lc-site">${enc(d.site||host)}</div>${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
+    el.innerHTML=`${d.image?_hold(`<img class="lc-img" src="${enc(d.image)}" loading="lazy" onerror="this.remove()">`, d.image, 'image', 'lc-img'):''}<div class="lc-body"><div class="lc-site">${enc(d.site||host)}</div>${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
     el.onclick=(ev)=>{ ev.stopPropagation(); window.open(url,'_blank','noopener'); };
   }
   // YouTube video id from watch / youtu.be / shorts / embed / live URLs (else null).
@@ -7560,12 +7575,12 @@
       let tag;
       const yid=ytId(u);
       if(yid) tag=`<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
-      else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy">`;
-      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=`<video class="m" src="${u}" controls preload="none" playsinline></video>`;
+      else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
+      else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
-      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=`<img class="m" src="${u}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
+      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
