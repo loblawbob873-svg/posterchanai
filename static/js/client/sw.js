@@ -2,11 +2,13 @@
  * App code (our JS/CSS + the /client shell) is served NETWORK-FIRST so deploys reach users
  * immediately (cache is only an offline fallback) — caching it cache-first served stale code.
  * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh).
- * Media (avatars, uploaded images, small played videos) is cache-first in a SEPARATE cache
- * (MEDIA_CACHE) that survives shell bumps — an avatar reloads on every note by that author, so
- * caching it kills a lot of repeat bandwidth. */
-const CACHE = 'pc-nostr-v167';
-const MEDIA_CACHE = 'pc-media-v1';        // avatars + images + small played videos (survives CACHE bumps)
+ * Media (same-origin images + small played videos) is cache-first in a SEPARATE cache (MEDIA_CACHE)
+ * that survives shell bumps. NOTE: we only cache responses we can TRUST (a real 200) — never an OPAQUE
+ * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
+ * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
+ * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
+const CACHE = 'pc-nostr-v168';
+const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
 const SHELL = [
@@ -58,13 +60,16 @@ async function cacheFirstMedia(req){
   const cache = await caches.open(MEDIA_CACHE);
   const hit = await cache.match(req);
   if (hit) return hit;
-  const res = await fetch(req);
+  let res;
+  try { res = await fetch(req); }
+  catch (_) { return Response.error(); }   // network died + nothing cached → let the <img> onerror → LOGO
   try {
     const isVideo = req.destination === 'video';
     const len = +(res.headers.get('content-length') || 0);
-    const cacheable = res.status === 200
-      ? (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES))  // video: only a small, whole (played) clip
-      : (!isVideo && res.type === 'opaque');               // cross-origin image; never a 206 partial
+    // ONLY cache a trusted 200 (same-origin / CORS). An opaque cross-origin response has status 0 — we
+    // can't tell success from an error page, so caching it risks poisoning the avatar permanently. Skip
+    // it; the browser's HTTP cache still handles repeat loads of the same avatar URL.
+    const cacheable = res.status === 200 && (!isVideo || (len > 0 && len <= VIDEO_MAX_BYTES));
     if (cacheable) { await cache.put(req, res.clone()); trimMedia(cache); }
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;
