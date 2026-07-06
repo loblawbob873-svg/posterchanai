@@ -1271,12 +1271,14 @@
   // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
   // follows across devices (see save/restoreClientPrefsNostr).
   let NO_IMAGES = ClientSettings.get('noImages', false) === true;
-  // Data saver = ONE manual toggle (NO_IMAGES). When on it both holds content images (tap to load) AND
-  // fetches lighter feed pages — flip it when you're low on / throttled on data. No connection sniffing:
+  // Data saver = ONE manual toggle (NO_IMAGES): it holds content images/videos as tap-to-load
+  // placeholders — that (not fewer posts) is where the bandwidth actually goes. No connection sniffing:
   // a carrier throttle looks like normal 5G to the browser, so auto-detection was unreliable.
-  // Lighter feed pages in data saver — but not so small that home (follows-only, replies/mutes dropped)
-  // renders near-empty after client-side filtering. ~60% with a floor of 30.
-  function _flim(n){ return NO_IMAGES ? Math.max(30, Math.ceil(n*0.6)) : n; }
+  // We deliberately do NOT shrink the feed page size any more: text events are tiny, and a smaller page
+  // just means MORE fetches to fill the same screen. On a high-latency throttled link (a mobile carrier
+  // reaching a distant server) every extra round trip is the real cost, so shrinking pages made data
+  // saver feel SLOWER to load new posts, not faster. Keep full pages; save data on media only.
+  function _flim(n){ return n; }
   // A post counts as sensitive (and is blurred when BLUR_NSFW is on) if it carries a NIP-36
   // content-warning, OR a topic `t` tag in this set, OR an inline #nsfw-style hashtag — so the common
   // "#nsfw" convention auto-blurs even without a formal content-warning tag.
@@ -5646,20 +5648,23 @@
         .catch(()=>{});
     }
     const p=profOf(pk); needProfile(pk); const all=dmPeers.get(pk)||[];
-    // PAGINATION: render only the last N messages (3 on open) so a long thread opens instantly on mobile;
-    // "Load older" reveals 20 more each tap. Decrypt ONLY the visible slice — decryption (ECDH+AES per
-    // message) is the slow/glitchy part, so decrypting a whole history on open is what lagged.
+    // PAGINATION: render only the last N messages (1 on open) so a long thread opens instantly on mobile;
+    // "Load older" reveals 20 more each tap.
     const shown=Math.min(all.length, _dmShown.get(pk)||_DM_INIT);
     const start=all.length-shown;
     const msgs=all.slice(start);
-    for(const m of msgs){ if(m.text==null) await decryptMsg(pk,m); }
-    if(dmActive!==pk) return;   // user switched away while decrypting
     // Was the user pinned to the bottom before this re-render? If they'd scrolled up to read, DON'T
     // yank them back down when a background message lands (part of "the window keeps moving").
     const _prev=$('#dm-msgs'); const _atBottom = !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
+    const _wantTop=_dmScrollTop;   // "load older" wants to stay at the top after this render
     const older = start>0 ? `<button class="dm-older" id="dm-older">⬆ Load older (${start})</button>` : '';
+    // Paint the thread chrome + bubbles IMMEDIATELY, BEFORE decrypting. Decryption is ECDH+AES in the
+    // crypto worker, which on a throttled/high-latency link is often busy verifying the incoming feed —
+    // awaiting it first left the whole pane blank ("clicked and no messages show"). Undecrypted bubbles
+    // render a "decrypting…" placeholder and get patched in place below (no re-render, no scroll jump).
+    const bubble=m=>`<div class="bubble ${m.mine?'me':'them'}" data-mid="${m.id}">${m.text!=null?linkify(m.text):'<span class="muted small">decrypting…</span>'}</div>`;
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
-      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(m=>`<div class="bubble ${m.mine?'me':'them'}">${linkify(m.text||'')}</div>`).join('')}</div>
+      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(bubble).join('')}</div>
       <div class="dm-compose">
         <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
         <div class="dm-tools">
@@ -5689,6 +5694,14 @@
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
       m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
     _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
+    // Decrypt the visible slice lazily and patch each bubble in place. document.querySelector targets the
+    // LIVE pane, so if a background renderMessages() rebuilt the DOM mid-decrypt we still patch the
+    // element that's actually on screen (not a detached one). Bail if the user navigated away.
+    let _patched=false;
+    for(const mm of msgs){ if(mm.text==null){ await decryptMsg(pk, mm); if(dmActive!==pk) return;
+      const el=document.querySelector('#dm-msgs .bubble[data-mid="'+mm.id+'"]'); if(el){ el.innerHTML=linkify(mm.text||''); _patched=true; } } }
+    // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.
+    if(_patched && _atBottom && !_wantTop){ const mm2=$('#dm-msgs'); if(mm2) mm2.scrollTop=mm2.scrollHeight; }
   }
 
   // ---------- profile ----------
@@ -7528,7 +7541,13 @@
   // Fetch reactions/reposts/replies for the posts currently on screen and show the counts +
   // liked/reposted state (the timeline sub only carries notes, so without this the counts are 0).
   let _ixT=null;
-  function hydrateCounts(){ if(_ixT) return; _ixT=setTimeout(async()=>{
+  function hydrateCounts(){ if(_ixT) return;
+    // Data saver: skip the engagement-count fetch — kinds 1/6/7/9735 for up to 200 notes is a heavy,
+    // purely-decorative query (reply/repost/react/zap numbers). On a throttled link that round trip is
+    // real cost; counts still fill in from what's cached + the live reaction sub. Decorate with what we
+    // have and bail on the network.
+    if(NO_IMAGES){ decorateCounts(); return; }
+    _ixT=setTimeout(async()=>{
     _ixT=null;
     const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
