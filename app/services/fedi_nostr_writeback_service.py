@@ -342,22 +342,52 @@ async def _handle_dm_reply(db, ev: dict) -> None:
 
 async def _quote_link(db, ev: dict) -> str | None:
     """A NIP-18 quote-post's `q` reference is a bare `nostr:nevent…` that _strip_nostr_refs removes — so
-    the fediverse would see only the comment, out of context ("talking nonsense"). Resolve the quoted
-    note to a link fedi users can open: the ORIGINAL fediverse status when the quoted note is a bridged
-    post (so it renders natively), else a njump.me Nostr web link."""
+    the fediverse would see only the comment, out of context ("talking nonsense"). Build a fedi-side
+    quote block: a short BLOCKQUOTE of the quoted note + a link fedi users can open (the ORIGINAL
+    fediverse status when the quoted note is bridged, else a njump.me Nostr link). Degrades to just the
+    link (or nothing) if the quoted note can't be fetched."""
     qt = next((t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "q" and t[1]), None)
     if not qt:
         return None
     q_eid = qt[1]
+    # Link: the original fediverse status if the quoted note is bridged, else a njump.me web link.
     row = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == q_eid).first()
-    if row and row.note_uri:
-        return row.note_uri
+    link = row.note_uri if (row and row.note_uri) else None
+    if not link:
+        try:
+            from app.services.nostr import bech32
+            note = bech32.encode("note", bytes.fromhex(q_eid))
+            link = f"https://njump.me/{note}" if note else None
+        except Exception:
+            link = None
+    # Short blockquote of the quoted note (best-effort; the local relay lookup is fast).
+    snippet, author = "", ""
     try:
-        from app.services.nostr import bech32
-        note = bech32.encode("note", bytes.fromhex(q_eid))
-        return f"https://njump.me/{note}" if note else None
+        relays = [f"ws://127.0.0.1:{_port()}"]
+        qev = await nostr_service.fetch_event(relays, q_eid)
+        if qev:
+            raw = _strip_nostr_refs(qev.get("content", "") or "")
+            raw = _re.sub(r"https?://\S+", "", raw)          # drop URLs/media from the snippet
+            raw = " ".join(raw.split())
+            if len(raw) > 220:
+                raw = raw[:219].rstrip() + "…"
+            snippet = raw
+            author = (await _fedi_handle_for_pubkey(db, qev.get("pubkey", "")) or "").strip()
+            if not author:
+                try:
+                    meta = await nostr_service.get_metadata(qev.get("pubkey", ""), relays)
+                    author = (meta.get("display_name") or meta.get("name") or "").strip()
+                except Exception:
+                    author = ""
     except Exception:
-        return None
+        pass
+    lines = []
+    if snippet:
+        lines.append("💬 quoting" + (f" {author}" if author else "") + ":")
+        lines.append(f"“{snippet}”")
+    if link:
+        lines.append(link)
+    return "\n".join(lines) if lines else None
 
 
 async def _crosspost(db, user, ev: dict) -> None:
