@@ -1941,4 +1941,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .xmr-mark{ font-size:.58em; color:#f60; font-weight:800; vertical-align:super; margin-left:-1px; }
 .tip-choices{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
 .tip-choices .btn{ text-align:left; white-space:normal; }         /* full-width chooser buttons wrap cleanly on narrow phones */
-.tip-choices .btn .muted{ margin-left:4px; }
+/* The description follows the BUTTON's own text colour (white on neon, dark on cyan) at reduced opacity —
+   NOT var(--muted), which is a low-contrast grey that's unreadable on the coloured gradient buttons
+   (worst on cyberpunk). */
+.tip-choices .btn .muted{ margin-left:4px; color:inherit; opacity:.82; font-weight:400; }
