@@ -538,12 +538,15 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
 
 
 async def _backfill_recent(db: Session, port: int, platform: str, instance_url: str,
-                           instance_host: str, blocked_domains: set, include_replies: bool) -> None:
+                           instance_host: str, blocked_domains: set, include_replies: bool,
+                           ttype: str = None, cursor_key: str = "fedi_bridge_global_since") -> None:
     """On a fresh connect, mirror a bounded window of RECENT history (paging backward with max_id) so
     the Nostr global timeline isn't empty until new posts trickle in. Mirrors oldest-first (parents
-    before replies) and then sets the forward cursor to the newest seen."""
+    before replies) and then sets the forward cursor to the newest seen. `ttype`/`cursor_key` let the
+    local-timeline drain reuse this with its own timeline + cursor."""
     token = _get("fedi_bridge_access_token")
-    ttype = _get("fedi_bridge_type", "global")
+    if ttype is None:
+        ttype = _get("fedi_bridge_type", "global")
     collected: list = []
     max_id = None
     for _ in range(_BACKFILL_PAGES):
@@ -566,11 +569,72 @@ async def _backfill_recent(db: Session, port: int, platform: str, instance_url: 
         except Exception as e:
             logger.debug("[fedi-bridge] backfill mirror failed: %s", e)
     if newest:
-        settings_store.put("fedi_bridge_global_since", newest)
-    logger.info("[fedi-bridge] initial backfill mirrored %d recent post(s)", done)
+        settings_store.put(cursor_key, newest)
+    logger.info("[fedi-bridge] initial %s backfill mirrored %d recent post(s)", ttype, done)
 
 
 # --- poll -------------------------------------------------------------------
+
+async def _drain_timeline(db: Session, port: int, platform: str, instance_url: str, token: str,
+                          instance_host: str, blocked_domains: set, include_replies: bool,
+                          ttype: str, cursor_key: str, deadline: float) -> None:
+    """Drain ONE fediverse timeline (`ttype`) FORWARD into Nostr using its own cursor (`cursor_key`),
+    bounded by the shared monotonic `deadline` so both timelines share one poll budget. On a lost/absent
+    cursor it resumes forward from the newest already-delivered note (recovering the downtime gap) or, on
+    a truly fresh install, backfills a bounded recent window. ONE code path for the global AND local
+    drains, so a pagination/cursor fix can't drift between them. Deduped across timelines by
+    _process → _seen (a post in both is mirrored exactly once)."""
+    async def _fetch(cursor, first):
+        return await pleroma_service.fetch_timeline(instance_url, token, ttype, limit=_PAGE,
+                                                    min_id=(None if first else cursor))
+
+    since = _get(cursor_key)
+    if not since:
+        # No cursor. If we already have mirrored history for this instance, the cursor was LOST (restart
+        # with a wiped local_settings.json) — resume forward from the newest delivered note so the gap
+        # during downtime is recovered, not skipped. Otherwise it's a fresh connect: backfill a bounded
+        # window of recent posts so the timeline isn't empty on day one.
+        last = (db.query(FediBridgeDelivered)
+                .filter(FediBridgeDelivered.instance_url == instance_url)
+                .order_by(FediBridgeDelivered.id.desc()).first())
+        if last and last.note_id:
+            since = last.note_id
+            settings_store.put(cursor_key, since)
+            logger.info("[fedi-bridge] %s cursor lost — resuming forward from newest delivered note %s", ttype, since)
+        else:
+            await _backfill_recent(db, port, platform, instance_url, instance_host,
+                                   blocked_domains, include_replies, ttype, cursor_key)
+            return
+
+    cursor = since
+    for _page in range(_MAX_PAGES):
+        if time.monotonic() > deadline:
+            break
+        raw_posts = await _fetch(cursor, False)
+        if not raw_posts:
+            break
+        # oldest-first so parents are mirrored before their replies (ISO8601 sorts lexically).
+        raw_posts = sorted(raw_posts, key=lambda r: r.get("created_at") or "")
+        last = None
+        transient = False
+        for raw in raw_posts:
+            try:
+                await _process(db, port, platform, instance_url, instance_host,
+                               blocked_domains, include_replies, raw)
+                last = raw.get("id") or last
+            except (httpx.TransportError, asyncio.TimeoutError) as e:
+                logger.warning("[fedi-bridge] %s drain transient error, retrying next cycle: %s", ttype, e)
+                transient = True
+                break
+            except Exception as e:
+                logger.warning("[fedi-bridge] %s post mirror failed: %s", ttype, e)
+                last = raw.get("id") or last
+        if last and last != cursor:
+            cursor = last
+            settings_store.put(cursor_key, cursor)
+        if transient or len(raw_posts) < _PAGE:
+            break
+
 
 async def poll_once(db: Session) -> None:
     if str(_get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
@@ -587,58 +651,21 @@ async def poll_once(db: Session) -> None:
     port = _port()
     await _refresh_moderation(instance_url, token)
 
-    since = _get("fedi_bridge_global_since")
+    deadline = time.monotonic() + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll
 
-    async def _fetch(cursor, first):
-        return await pleroma_service.fetch_timeline(instance_url, token, ttype, limit=_PAGE,
-                                                    min_id=(None if first else cursor))
+    # Drain the LOCAL timeline FIRST (when it's a distinct feed): it's low-volume and finishes fast, so
+    # the instance's OWN users — whose posts the federated firehose dilutes/drops (an active local
+    # account got ~7% of a week mirrored) — are never starved by the high-volume global drain. Wrapped so
+    # a local-drain failure can't break the main global mirror. Skip when the configured type IS local.
+    if ttype != "local":
+        try:
+            await _drain_timeline(db, port, platform, instance_url, token, instance_host,
+                                  blocked_domains, include_replies, "local", "fedi_bridge_local_since", deadline)
+        except Exception as e:
+            logger.warning("[fedi-bridge] local drain failed: %s", e)
 
-    if not since:
-        # No cursor. If we already have mirrored history for this instance, the cursor was LOST
-        # (restart with a wiped local_settings.json) — resume forward from the newest delivered note
-        # so the gap during downtime is recovered, not skipped. Otherwise it's a fresh connect:
-        # backfill a bounded window of recent posts so the global timeline isn't empty on day one.
-        last = (db.query(FediBridgeDelivered)
-                .filter(FediBridgeDelivered.instance_url == instance_url)
-                .order_by(FediBridgeDelivered.id.desc()).first())
-        if last and last.note_id:
-            since = last.note_id
-            settings_store.put("fedi_bridge_global_since", since)
-            logger.info("[fedi-bridge] cursor lost — resuming forward from newest delivered note %s", since)
-        else:
-            await _backfill_recent(db, port, platform, instance_url, instance_host,
-                                   blocked_domains, include_replies)
-            return
-
-    cursor = since
-    drain_start = time.monotonic()
-    for _page in range(_MAX_PAGES):
-        if time.monotonic() - drain_start > _DRAIN_BUDGET:
-            break
-        raw_posts = await _fetch(cursor, False)
-        if not raw_posts:
-            break
-        # oldest-first so parents are mirrored before their replies (ISO8601 sorts lexically).
-        raw_posts = sorted(raw_posts, key=lambda r: r.get("created_at") or "")
-        last = None
-        transient = False
-        for raw in raw_posts:
-            try:
-                await _process(db, port, platform, instance_url, instance_host,
-                               blocked_domains, include_replies, raw)
-                last = raw.get("id") or last
-            except (httpx.TransportError, asyncio.TimeoutError) as e:
-                logger.warning("[fedi-bridge] transient fetch/deliver error, retrying next cycle: %s", e)
-                transient = True
-                break
-            except Exception as e:
-                logger.warning("[fedi-bridge] post mirror failed: %s", e)
-                last = raw.get("id") or last
-        if last and last != cursor:
-            cursor = last
-            settings_store.put("fedi_bridge_global_since", cursor)
-        if transient or len(raw_posts) < _PAGE:
-            break
+    await _drain_timeline(db, port, platform, instance_url, token, instance_host,
+                          blocked_domains, include_replies, ttype, "fedi_bridge_global_since", deadline)
     # NOTE: deletion propagation used to run here — it's now a SEPARATE scheduled job so its HTTP
     # status checks can't eat this poll's time budget (the "poll exceeded 90s" cause).
 
