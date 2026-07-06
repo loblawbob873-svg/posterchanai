@@ -3742,6 +3742,57 @@
     else tags.push(['a',addr,r],['k','30023'],['p',a.pubkey,r]);
     return tags;
   }
+  // ---- Facebook-style background posts: render SHORT text onto a gradient/solid and post it as an
+  // IMAGE, so the styled text looks good in every Nostr client (not just ours). ----
+  const CMP_BGS=[
+    {id:'purple', colors:['#667eea','#764ba2']},
+    {id:'sunset', colors:['#ff512f','#dd2476']},
+    {id:'teal',   colors:['#11998e','#38ef7d']},
+    {id:'ocean',  colors:['#2193b0','#6dd5ed']},
+    {id:'candy',  colors:['#ec008c','#fc6767']},
+    {id:'ember',  colors:['#c31432','#240b36']},
+    {id:'neon',   colors:['#00ffff','#ff00ff']},
+    {id:'night',  colors:['#0f2027','#203a43','#2c5364']},
+    {id:'gold',   colors:['#f7971e','#ffd200'], fg:'#3a2a00'},
+    {id:'ink',    colors:['#141e30','#243b55']},
+    // Holiday themes — festive gradient + decorative emoji framed around the text.
+    {id:'christmas',    colors:['#b71c1c','#1b5e20'],          deco:['🎄','❄️','🎁']},
+    {id:'halloween',    colors:['#ff7518','#0d0d0d','#6a0dad'], deco:['🎃','👻','🦇']},
+    {id:'valentine',    colors:['#ff5e7e','#c9184a'],          deco:['❤️','💕','🌹']},
+    {id:'newyear',      colors:['#0d0d0d','#4a3f00','#d4af37'], deco:['🎆','✨','🥂']},
+    {id:'july4',        colors:['#b22234','#1e3a8a'],          deco:['🎆','⭐','🇺🇸']},
+    {id:'stpatrick',    colors:['#0b6623','#3cb043'],          deco:['🍀','🌈','☘️']},
+    {id:'thanksgiving', colors:['#c0392b','#e67e22','#6e2c00'], deco:['🍂','🦃','🍁']},
+    {id:'easter',       colors:['#a1c4fd','#fbc2eb'], fg:'#3a2a4a', deco:['🐰','🌷','🥚']},
+  ];
+  const _BG_MAX=200;   // backgrounds are for SHORT text only (longer posts fall back to a plain note)
+  function _bgCss(bg){ return bg.colors.length>1 ? `linear-gradient(135deg,${bg.colors.join(',')})` : bg.colors[0]; }
+  function _bgFill(ctx,W,H,bg){ if(bg.colors.length>1){ const g=ctx.createLinearGradient(0,0,W,H); bg.colors.forEach((c,i)=>g.addColorStop(i/(bg.colors.length-1),c)); ctx.fillStyle=g; } else ctx.fillStyle=bg.colors[0]; ctx.fillRect(0,0,W,H); }
+  function _bgWrap(ctx, text, maxW){ const out=[]; for(const para of String(text).split('\n')){ if(!para){ out.push(''); continue; } let line=''; for(const word of para.split(/\s+/)){ const t=line?line+' '+word:word; if(ctx.measureText(t).width>maxW && line){ out.push(line); line=word; } else line=t; } if(line) out.push(line); } return out; }
+  function _bgDeco(ctx, W, H, deco){   // festive emoji framed along the top + bottom edges
+    ctx.save(); ctx.globalAlpha=0.92; const size=Math.round(W*0.072);
+    ctx.font=`${size}px system-ui,-apple-system,'Segoe UI',sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const n=6, m=size*1.05;
+    for(let i=0;i<n;i++){ const x=W*(i+0.5)/n;
+      ctx.fillText(deco[i%deco.length], x, m);
+      ctx.fillText(deco[(i+1)%deco.length], x, H-m); }
+    ctx.restore();
+  }
+  async function renderBgPost(text, bg){
+    const W=1080,H=1080, pad=W*0.11, maxW=W-pad*2, maxH=(H-pad*2)*(bg.deco?0.82:1);   // leave room for deco rows
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
+    _bgFill(ctx,W,H,bg);
+    if(bg.deco) _bgDeco(ctx,W,H,bg.deco);
+    ctx.fillStyle=bg.fg||'#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const font=s=>`800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
+    let fs=112, lines=[];
+    for(; fs>=30; fs-=4){ ctx.font=font(fs); lines=_bgWrap(ctx,text,maxW); const lh=fs*1.22;
+      if(lines.length*lh<=maxH && lines.every(l=>ctx.measureText(l).width<=maxW)) break; }
+    const lh=fs*1.22, y0=H/2 - (lines.length*lh)/2 + lh/2;
+    ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=fs*0.12; ctx.shadowOffsetY=Math.max(1,fs*0.03);
+    lines.forEach((l,i)=>ctx.fillText(l, W/2, y0+i*lh));
+    return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
+  }
   function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason=''}={}){
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
@@ -3750,8 +3801,9 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button><button class="btn btn-ghost small" id="cmp-translate">🌐 Translate</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(reply||quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
+      ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px;min-width:120px">💾 Draft</button><button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px;min-width:120px">Post ▶</button></div>
       <div id="cmp-pollbox" class="poll-build hidden">
@@ -3865,6 +3917,26 @@
       if(cw){ const cb=$('#cmp-cw-btn',root); if(cb) cb.classList.add('on'); const r=$('#cmp-cw-row',root); if(r) r.classList.remove('hidden'); const ri=$('#cmp-cw-reason',root); if(ri) ri.value=cwReason||''; }
       const _cwState=()=>{ const cb=$('#cmp-cw-btn',root); return cb && cb.classList.contains('on') ? { cw:true, cwReason:(($('#cmp-cw-reason',root)||{}).value||'').trim() } : { cw:false, cwReason:'' }; };
       const _applyCw=(tags)=>{ const s=_cwState(); if(s.cw) tags.push(['content-warning', s.cwReason]); };
+      // 🎨 Background: swatch strip; picking one previews it in the composer and, on Post, renders the
+      // text onto it as an IMAGE. Only for SHORT plain text — a link/media or long text drops it + warns.
+      let _bgChoice=null;
+      { const bgBtn=$('#cmp-bg-btn',root), strip=$('#cmp-bg-strip',root);
+        if(bgBtn && strip){
+          const select=(bg,el)=>{ _bgChoice=bg; $$('.cmp-swatch',strip).forEach(s=>s.classList.toggle('on', s===el));
+            if(bg){ ta.classList.add('cmp-bg-on'); ta.style.background=_bgCss(bg); ta.style.color=bg.fg||'#fff'; }
+            else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; } };
+          const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='Aa';
+          none.onclick=()=>select(null,none); strip.appendChild(none);
+          CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch'; s.title=bg.id; s.style.background=_bgCss(bg);
+            if(bg.deco) s.textContent=bg.deco[0];   // show the holiday emoji so the swatch is recognisable
+            s.onclick=()=>select(bg,s); strip.appendChild(s); });
+          bgBtn.onclick=(e)=>{ e.stopPropagation(); const on=strip.classList.toggle('hidden')===false; bgBtn.classList.toggle('active',on); };
+          const _tooBig=()=>{ const v=ta.value||''; return v.length>_BG_MAX || /https?:\/\/|\/blossom\/|!\[/i.test(v); };
+          ta.addEventListener('input', ()=>{ if(_bgChoice && _tooBig()){ select(null,none);
+            $('#cmp-status',root).textContent='background removed — too long or has a link/media';
+            setTimeout(()=>{ const st=$('#cmp-status',root); if(st && st.textContent.startsWith('background removed')) st.textContent=''; },2500); } });
+        }
+      }
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text && !quote)return;   // a quote-repost may have no comment
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
@@ -3892,6 +3964,22 @@
             if(articleComment){ toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
             else { toast('posted to community'); if(VIEW==='community') openCommunity(community); }
           }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
+        }
+        // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the
+        // styled text IS the post). Only for plain top-level posts (the 🎨 button is hidden otherwise).
+        if(_bgChoice && !reply && !quote){
+          const sb=$('#cmp-send',root); if(sb) sb.disabled=true; $('#cmp-status',root).textContent='rendering…';
+          try{
+            const blob=await renderBgPost(text, _bgChoice);
+            $('#cmp-status',root).textContent='uploading…';
+            const url=await uploadBlob(new File([blob], 'post.png', {type:'image/png'}));
+            const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
+            closeModal(); await publish(1, url, btags); if(draftId) Drafts.remove(draftId);
+            toast('posted 🎨'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
+          }catch(err){ committed=false; const sb2=$('#cmp-send',root); if(sb2) sb2.disabled=false;
+            if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; }
+            else $('#cmp-status',root).textContent='background post failed: '+((err&&err.message)||err); }
+          return;
         }
         let tags=[]; let content=text;
         if(reply){ const o=Store.get(reply); tags=replyTags(o, reply, replyPk); }

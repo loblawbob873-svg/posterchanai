@@ -1945,3 +1945,21 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
    NOT var(--muted), which is a low-contrast grey that's unreadable on the coloured gradient buttons
    (worst on cyberpunk). */
 .tip-choices .btn .muted{ margin-left:4px; color:inherit; opacity:.82; font-weight:400; }
+
+/* ===== 🎨 Background posts (Facebook-style): a scrollable swatch strip + a live composer preview.
+   Mobile-first — the strip scrolls horizontally, swatches are touch-sized, and the tools row wraps so
+   the extra 🎨 button never overflows a narrow phone. The final post is a rendered IMAGE (canvas). ===== */
+.cmp-tools .cmp-left{ flex-wrap:wrap; }
+.cmp-bg-strip{ display:flex; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; padding:8px 2px; margin:2px 0 0; scrollbar-width:thin; }
+.cmp-swatch{ flex:0 0 auto; width:38px; height:38px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0;
+  display:flex; align-items:center; justify-content:center; font-size:18px; line-height:1; box-shadow:0 1px 4px rgba(0,0,0,.25); transition:transform .12s; }
+@media(hover:hover){ .cmp-swatch:hover{ transform:scale(1.1); } }
+.cmp-swatch.on{ border-color:var(--neon); box-shadow:0 0 0 2px var(--bg), 0 0 9px var(--neon); }
+.cmp-swatch-none{ background:var(--panel2); color:var(--text); border:2px solid var(--line); font-weight:800; font-size:15px; }
+/* live preview: the composer shows the chosen background with big centered text (the render is exact). */
+textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-height:180px; border-radius:14px;
+  text-shadow:0 1px 6px rgba(0,0,0,.28); padding:38px 22px; border-color:transparent; }
+@media(max-width:480px){
+  .cmp-swatch{ width:34px; height:34px; font-size:16px; }
+  textarea#cmp.cmp-bg-on{ font-size:18px; min-height:150px; padding:28px 18px; }
+}
