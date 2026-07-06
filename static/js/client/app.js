@@ -823,9 +823,14 @@
       document.addEventListener('click', e=>{
         const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
         const src=h.dataset.src; if(!src) return;
+        e.preventDefault(); e.stopPropagation();   // load in place — don't also fire the enclosing card's click
         let el;
         if(h.dataset.kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.playsInline=true; el.preload='metadata'; }
-        else { el=document.createElement('img'); el.src=src; el.loading='eager'; el.onerror=function(){ this.onerror=null; window.__blobFallback(this); }; }
+        else {
+          el=document.createElement('img'); el.src=src; el.loading='eager';
+          if(h.dataset.onerr) el.setAttribute('onerror', h.dataset.onerr);   // carried site onerror (blob→fallback)
+          else el.onerror=function(){ this.onerror=null; this.remove(); };   // else drop a broken image cleanly
+        }
         if(h.dataset.cls) el.className=h.dataset.cls;
         h.replaceWith(el);
       });
@@ -2737,17 +2742,21 @@
   // ---- Data saver: tap-to-load media. When NO_IMAGES is on, content images AND videos render as a
   // placeholder with NO src, so NOTHING downloads until the user taps it (the click handler swaps in the
   // real element). Avatars are never routed through this — they always load. ----
-  function _phold(encUrl, kind, cls){   // the placeholder itself
+  // Only EXTENSIONLESS blob URLs (media.poster.place/<sha>) get this onerror — the blob might really be a
+  // video, so fall back. Extension-typed images (.jpg/.png) get NO onerror (matches the pre-data-saver
+  // default; adding blobFallback there degraded broken links to a raw-URL/video for everyone).
+  const BLOBF = 'this.onerror=null;window.__blobFallback(this);';
+  function _phold(encUrl, kind, cls, onerr){   // the placeholder itself
     const v = kind==='video';
-    return `<span class="img-hold${v?' vid-hold':''}" data-src="${encUrl}" data-kind="${v?'video':'image'}"${cls?` data-cls="${cls}"`:''} role="button" tabindex="0">${v?'▶️ tap to load video':'🖼️ tap to load image'}</span>`;
+    return `<span class="img-hold${v?' vid-hold':''}" data-src="${encUrl}" data-kind="${v?'video':'image'}"${cls?` data-cls="${cls}"`:''}${onerr?` data-onerr="${enc(onerr)}"`:''} role="button" tabindex="0">${v?'▶️ tap to load video':'🖼️ tap to load image'}</span>`;
   }
   // Constructed media (feed / inline text): placeholder in data saver, else a real <img>/<video>.
-  // `encUrl` is ALREADY html-encoded; `cls` is an optional layout class (e.g. inline text media = "m").
-  function _media(encUrl, kind, cls){
-    if(NO_IMAGES) return _phold(encUrl, kind, cls);
-    const c = cls?` class="${cls}"`:'';
+  // `encUrl` is ALREADY html-encoded; `cls` = optional layout class ("m"); `onerr` = optional onerror.
+  function _media(encUrl, kind, cls, onerr){
+    if(NO_IMAGES) return _phold(encUrl, kind, cls, onerr);
+    const c = cls?` class="${cls}"`:''; const oe = onerr?` onerror="${onerr}"`:'';
     if(kind==='video') return `<video${c} src="${encUrl}" controls preload="none" playsinline></video>`;
-    return `<img${c} src="${encUrl}" loading="lazy" onerror="this.onerror=null;window.__blobFallback(this);">`;
+    return `<img${c} src="${encUrl}" loading="lazy"${oe}>`;
   }
   // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
   // placeholder in data saver, else the original html untouched. `cls` = layout class to restore on tap.
@@ -2758,7 +2767,7 @@
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
       if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)){ media.push(_media(E,'video')); return tail; }
-      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
+      if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF)); return tail; }
       return url;  // non-media URL: leave for linkify
     });
     return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
@@ -6972,6 +6981,8 @@
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -7074,8 +7085,6 @@
         </div>
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Data saver — don't auto-load images (tap to view)<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small" style="margin:-4px 0 6px">Turn this on when you're low on data — it holds images until you tap them and loads lighter feed pages.</div>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
@@ -7549,7 +7558,7 @@
       if(!/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) return u; }
     return null;
   }
-  function linkCardHtml(content){ const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }
+  function linkCardHtml(content){ if(NO_IMAGES) return ''; const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }   // data saver: no preview fetch/image, link stays clickable
   // Fill directly on render (the empty placeholder is display:none via CSS until filled; an
   // IntersectionObserver never fires on a zero-height hidden element, which broke lazy loading).
   function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{ el.setAttribute('data-done','1'); fillLinkCard(el); }); }
@@ -7580,7 +7589,7 @@
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
       // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
-      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
+      else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
       else tag=`<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
       return tag+tail;
     });
