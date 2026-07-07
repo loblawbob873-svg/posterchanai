@@ -16,6 +16,7 @@ pollers — correct on the single port-3051 instance.
 """
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -28,7 +29,7 @@ from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import bech32
 from app.services.fedi_timeline_service import (   # reuse the proven normalizers + emoji parsing
-    _norm, _canonical_uri, _EMOJI_SHORTCODE_RE)
+    _norm, _canonical_uri, emoji_tags_for)
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,15 @@ def _existing_mirror(db: Session, instance_url: str, uri: str | None, note_id: s
 _inflight: set = set()
 
 
+# The reply-addressing block at the very start of a note: a run of mention tokens — either a resolved
+# `nostr:npub…` ref (fixed 58-char bech32 body, anchored so it can't swallow a glued word) OR an
+# unresolved literal `@handle` (puppet provisioning failed). Only a run of 3+ is treated as an
+# addressing WALL to strip — a reply that opens with one or two @names is likely writing to them as
+# actual content, so those are kept (the p-tags still notify everyone regardless).
+_MENTION_TOKEN = r'(?:nostr:npub1[0-9a-z]{58}|@[A-Za-z0-9_](?:[A-Za-z0-9_.\-]*[A-Za-z0-9_])?(?:@[A-Za-z0-9.\-]+)?)'
+_LEADING_MENTIONS_RE = re.compile(r'^(?:' + _MENTION_TOKEN + r'\s+){3,}', re.I)
+
+
 def _build_content(post: dict, quote_bech: str | None = None) -> str:
     """The kind-1 note body: the post text plus any media URLs (Nostr clients render image/video
     URLs inline). When the post quotes another that we mirrored, append a `nostr:<note>` reference so
@@ -184,28 +194,13 @@ def _build_content(post: dict, quote_bech: str | None = None) -> str:
 
 
 def _emoji_tags(content: str, *emoji_maps: dict) -> list:
-    """NIP-30 custom-emoji tags for every :shortcode: that actually appears in `content` and has a
-    known URL in one of the supplied {shortcode: url} maps. Deduped; bounded so a spam note can't
-    publish hundreds of tags."""
-    if not content:
-        return []
+    """NIP-30 custom-emoji tags for the :shortcodes: in `content` present in any of the supplied maps.
+    Merges the maps, then defers to the shared builder so profile + note emoji matching can't drift."""
     merged: dict = {}
     for m in emoji_maps:
         if m:
             merged.update(m)
-    if not merged:
-        return []
-    out, seen = [], set()
-    for sc in _EMOJI_SHORTCODE_RE.findall(content):
-        if sc in seen:
-            continue
-        url = merged.get(sc)
-        if url:
-            out.append(["emoji", sc, url])
-            seen.add(sc)
-        if len(out) >= 30:
-            break
-    return out
+    return emoji_tags_for(content, merged, limit=30)
 
 
 async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
@@ -355,7 +350,7 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         try:
             p = await ident.ensure_puppet(
                 db, port, {"url": url, "acct": acct, "username": username, "display_name": username},
-                instance_host)
+                instance_host, profile_refresh=False)   # synthetic mention account → don't touch the kind-0
         except Exception:
             p = None
         if not p:
@@ -475,6 +470,14 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
         content = _build_content(post, quote_bech)
         content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content, raw.get("mentions") or [])
+        # Fediverse replies prefix the body with the full @-recipient list (which fedi clients hide);
+        # after the rewrite that's a wall of leading `nostr:npub…` refs burying the actual message. Drop
+        # the leading run of mention refs on replies — the p-tags (added above) still thread/notify. Keep
+        # the original if stripping would empty it (a mentions-only reply).
+        if post.get("in_reply_to_id"):
+            stripped = _LEADING_MENTIONS_RE.sub("", content).strip()
+            if stripped:
+                content = stripped
         for t in mention_ptags:
             if not any(x[0] == "p" and x[1] == t[1] for x in tags if len(x) >= 2):
                 tags.append(t)

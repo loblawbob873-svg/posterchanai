@@ -183,12 +183,18 @@
         const meta = JSON.parse(ev.content||'{}');
         const cur = mem.profiles.get(ev.pubkey);
         if (cur && cur.created_at >= ev.created_at) return;
+        // Keep NIP-30 custom-emoji tags (for rendering :shortcodes: in the display NAME) on the RECORD,
+        // NOT inside meta — meta is the publishable kind-0 content and editing your own profile spreads
+        // it, which would pollute your kind-0 and drop your real emoji tags. Read via profileEmojis().
+        const em = {}; for (const t of (ev.tags||[])) { if (t[0]==='emoji' && t[1] && t[2]) em[t[1]] = t[2]; }
         const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta };
+        if (Object.keys(em).length) rec.emojis = em;
         mem.profiles.set(ev.pubkey, rec);
         if (db) try { tx('profiles','readwrite').put(rec); } catch(_){}
       } catch(_){}
     },
     profile(pk){ return (mem.profiles.get(pk)||{}).meta || null; },
+    profileEmojis(pk){ return (mem.profiles.get(pk)||{}).emojis || null; },   // NIP-30 name emoji (kept off meta)
     haveProfile(pk){ return mem.profiles.has(pk); },
     profileList(){ return [...mem.profiles.entries()].map(([pubkey,rec])=>({ pubkey, meta: rec.meta||{} })); },
     async setMeta(k,v){ if(db) try{ await pr(tx('meta','readwrite').put({k,v})); }catch(_){} },

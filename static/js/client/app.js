@@ -1735,7 +1735,7 @@
     const mp=mediaParts(c.content);
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
-      <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
+      <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
       <div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.gallery}
       <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}">↩ Reply</button></div>
       ${kids}</div>`;
@@ -2738,7 +2738,7 @@
     return `<article class="note poll" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
       <div class="body">
-        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
+        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span></div>
         <div class="poll-q">📊 ${linkify(ev.content||'')}</div>
         <div class="poll-opts">${optHtml}</div>
@@ -2819,6 +2819,15 @@
   // image in place of the bare ":shortcode:" text (otherwise it reads like inline code). Restricted
   // to shortcodes the event actually declares, so it can't mangle an unrelated ":foo:" in a URL.
   function emojiTagMap(ev){ const m={}; for(const t of ((ev&&ev.tags)||[])){ if(t[0]==='emoji'&&t[1]&&t[2]) m[t[1]]=t[2]; } return m; }
+  // Render a display NAME with its NIP-30 custom emoji (fediverse-bridged names are full of :shortcodes:
+  // like :hellokitty_headbang:). Uses the author's OWN kind-0 emoji map (Store keeps it on the profile);
+  // HTML-escapes first, then swaps shortcodes for <img>. Plain escaped text when there's no custom emoji.
+  function emojiName(pk, name){
+    const safe=enc(name||'');
+    const map=Store.profileEmojis(pk); if(!map) return safe;
+    return safe.replace(/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
+      map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
+  }
   function applyEmojis(htmlStr, ev){
     const map=emojiTagMap(ev); if(!Object.keys(map).length) return htmlStr;
     // Alternate the regex so it CONSUMES whole HTML tags untouched, then matches a :shortcode: only in
@@ -2881,7 +2890,7 @@
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
-        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${enc(name)}</span><span class="vchk"></span>
+        <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
         <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
@@ -2936,7 +2945,7 @@
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(o.pubkey).slice(4,12));
     const mp = mediaParts(o.content);
     return `<div class="quoted" data-open="${o.id}">
-      <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${enc(name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
       ${mp.gallery}</div>`; }
   // NIP-10 parent of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
@@ -5436,7 +5445,7 @@
     else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${enc(p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
@@ -5779,7 +5788,7 @@
     const feed=$('#feed'); if(!feed) return; const p=Store.profile(pk)||{};
     const av=feed.querySelector('.pav'); if(av){ const s=p.picture||LOGO; if(av.getAttribute('src')!==s) av.src=s; }
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
-    const h2=feed.querySelector('.prof .pbody h2'); if(h2 && h2.firstChild) h2.firstChild.textContent=(p.name||p.display_name||'anon');
+    const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
   }
   async function renderProfileView(pk){
@@ -5813,7 +5822,7 @@
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div>
-      <div class="pbody"><h2>${enc(p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
+      <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}

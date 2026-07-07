@@ -26,6 +26,9 @@ from datetime import datetime
 from app.services import keystore, settings_store
 from app.services.nostr import bridge_keys, nostr_service
 from app.services.nostr.event import build_event as _build_event
+# HTML→text + custom-emoji parsing shared with the timeline/note mirror (no import cycle: neither
+# fedi_timeline_service nor this module imports the other's owner).
+from app.services.fedi_timeline_service import _strip_html, _emoji_url_map, emoji_tags_for
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +112,15 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
         "acct": acct,
         "host": host,
         "nip05_name": nip05_name_for(acct),
+        # display_name is PLAIN TEXT on Mastodon/Pleroma/Misskey (never HTML) — do NOT tag-strip it, or
+        # angle-bracket kaomoji like <(^o^)> get eaten. It keeps its :shortcode: emoji (rendered via the
+        # NIP-30 tags below). The BIO is fediverse HTML (<br>, <a>, entities) → flatten to text or the
+        # client shows raw markup. Custom-emoji shortcode→url map drives the profile's NIP-30 emoji tags.
         "display_name": (account.get("display_name") or account.get("name") or "").strip(),
         "avatar_url": (account.get("avatar") or account.get("avatar_static")
                        or account.get("avatarUrl") or "").strip(),
-        "about": (account.get("note") or account.get("description") or "").strip(),
+        "about": _strip_html(account.get("note") or account.get("description") or ""),
+        "emojis": _emoji_url_map(account.get("emojis")),
     }
 
 
@@ -151,18 +159,32 @@ def _profile_content(p: dict) -> dict:
     return out
 
 
-def _profile_sig_from(display_name: str, avatar_url: str, about: str) -> str:
-    raw = "\x1f".join([display_name or "", avatar_url or "", (about or "")[:200], nip05_domain()])
+def _profile_emoji_tags(p: dict) -> list:
+    """NIP-30 emoji tags for the custom-emoji :shortcodes: in the puppet's name/bio, so clients render
+    the emoji images instead of raw `:shortcode:` text (fediverse display names are full of them)."""
+    return emoji_tags_for((p.get("display_name") or "") + " " + (p.get("about") or ""),
+                          p.get("emojis") or {}, limit=20)
+
+
+def _profile_sig_from(display_name: str, avatar_url: str, about: str, emoji_tags: list | None = None) -> str:
+    # Sign over the emoji tags we ACTUALLY emit (shortcodes present in the name/bio), not the whole
+    # declared map — so an already-mirrored puppet whose plain text is unchanged still republishes once
+    # to GAIN its tags, but an upstream emoji change unused in the name/bio doesn't force a no-op rewrite.
+    emo = ",".join(f"{t[1]}={t[2]}" for t in (emoji_tags or []) if len(t) >= 3)
+    raw = "\x1f".join([display_name or "", avatar_url or "", (about or "")[:200], nip05_domain(), emo])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _account_profile_sig(account: dict) -> str:
     """The profile signature computed straight from a raw account object — WITHOUT deriving the puppet
     key — so a cache lookup can decide 'unchanged' cheaply (no HMAC/EC work for repeat authors)."""
+    dn = (account.get("display_name") or account.get("name") or "").strip()
+    about = _strip_html(account.get("note") or account.get("description") or "")
+    etags = emoji_tags_for(dn + " " + about, _emoji_url_map(account.get("emojis")), limit=20)
     return _profile_sig_from(
-        (account.get("display_name") or account.get("name") or "").strip(),
+        dn,
         (account.get("avatar") or account.get("avatar_static") or account.get("avatarUrl") or "").strip(),
-        (account.get("note") or account.get("description") or "").strip())
+        about, etags)
 
 
 # Provisioned-this-process puppets: actor_uri → {"p": puppet dict, "sig": profile sig}. A hit skips
@@ -231,7 +253,8 @@ async def query_one(port: int, filt: dict, timeout: float = 8.0) -> tuple[bool, 
         return False, None
 
 
-async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -> dict | None:
+async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
+                        profile_refresh: bool = True) -> dict | None:
     """Provision (or refresh) a fediverse account's puppet: upsert the registry row, and (re)publish
     its kind-0 profile when first seen or when the display name/avatar/bio/domain changed. Returns
     the puppet dict, or None if the account has no usable actor URI."""
@@ -250,15 +273,30 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
 
     p = puppet_for(account, instance_host)
     row = db.query(FediPuppet).filter(FediPuppet.actor_uri == p["actor_uri"]).first()
-    # Don't DOWNGRADE a known avatar: mentions provide an avatar-less account object, so an existing
-    # good avatar must survive a mention-only sighting (the reported "profile shows the default
-    # posterchan avatar" bug). The kind-0's `picture` is what the client renders in both timeline and
-    # profile view, so a blank republish leaves the stored-latest profile pictureless.
+    # A mention-only sighting passes a SYNTHETIC account ({url, acct, username, display_name=username})
+    # with no real profile fields (the caller sets profile_refresh=False). Recomputing the kind-0 from it
+    # would downgrade an already-mirrored profile — blank the bio, drop emoji tags, revert the name to the
+    # bare username. So for a KNOWN puppet, don't touch the profile: mark it seen and return the identity.
+    if row is not None and not profile_refresh:
+        row.last_seen = datetime.utcnow()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
+        _PUPPET_CACHE.move_to_end(actor_uri)
+        while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
+            _PUPPET_CACHE.popitem(last=False)
+        return p
+    # Don't DOWNGRADE a known avatar: a real sighting can still be momentarily avatar-less, so an
+    # existing good avatar must survive. The kind-0's `picture` is what the client renders in both
+    # timeline and profile view, so a blank republish leaves the stored-latest profile pictureless.
     if row is not None and not p["avatar_url"] and row.avatar_url:
         p["avatar_url"] = row.avatar_url
-    # Profile signature from the EFFECTIVE (post-merge) profile, so change-detection and the no-op
-    # check both account for the preserved avatar.
-    sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"])
+    # Signature over exactly what gets published (name/avatar/bio/domain + the emoji tags we actually
+    # emit) so an upstream emoji change that isn't used in the name/bio doesn't trigger a no-op republish.
+    emoji_tags = _profile_emoji_tags(p)
+    sig = _profile_sig_from(p["display_name"], p["avatar_url"], p["about"], emoji_tags)
     now = datetime.utcnow()
     need_profile = False
     if row is None:
@@ -286,8 +324,8 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "") -
 
     if need_profile:
         broadcast = str(settings_store.get("fedi_bridge_broadcast", "false")).lower() in ("1", "true", "yes", "on")
-        ev = build_event(p, 0, json.dumps(_profile_content(p)), object_uri=p["actor_uri"],
-                         broadcast=broadcast)
+        ev = build_event(p, 0, json.dumps(_profile_content(p)), tags=emoji_tags,
+                         object_uri=p["actor_uri"], broadcast=broadcast)
         ok, msg = await publish(port, ev)
         if ok:
             row.profile_sig = sig

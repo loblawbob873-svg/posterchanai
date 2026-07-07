@@ -209,6 +209,25 @@ def _quote_label(post: dict) -> str:
 _EMOJI_SHORTCODE_RE = re.compile(r':([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):')
 
 
+def emoji_tags_for(text: str, emap: dict, limit: int = 30) -> list:
+    """NIP-30 ['emoji', shortcode, url] tags for every :shortcode: in `text` that has a url in `emap`.
+    Deduped + bounded. Shared by the note mirror (kind-1 content) and the puppet profile builder (kind-0
+    name/bio) so shortcode matching can't drift between them."""
+    if not text or not emap:
+        return []
+    out, seen = [], set()
+    for sc in _EMOJI_SHORTCODE_RE.findall(text):
+        if sc in seen:
+            continue
+        url = emap.get(sc)
+        if url:
+            out.append(["emoji", sc, url])
+            seen.add(sc)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _emoji_url_map(raw) -> dict:
     """Normalize a platform emoji field (Pleroma list of {shortcode,url}; Misskey dict
     {name: url} or list) to {shortcode: url}."""
