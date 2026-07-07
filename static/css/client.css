@@ -229,7 +229,6 @@
 :root[data-theme="winxp"] .topbar input,
 :root[data-theme="winxp"] .topbar textarea{ color:#143c7a !important; background:#fff !important; }
 :root[data-theme="winxp"] .topbar input::placeholder{ color:#5a6a8a !important; }
-:root[data-theme="winxp"] #btn-refresh,
 :root[data-theme="winxp"] .topbar .mini{ background:linear-gradient(180deg,#fff,#ece9d8) !important; color:#143c7a !important; border:1px solid #7f9db9 !important; border-radius:4px !important; }
 :root[data-theme="winxp"] .nav-item.active,
 :root[data-theme="winxp"] .us-tab.active{ background:linear-gradient(180deg,#6aa6ec,#2a72d4) !important; color:#fff !important; box-shadow:none !important; border-radius:5px !important; }
@@ -418,13 +417,6 @@ a.btn.full{display:block}
 .mini:hover{color:var(--neon);border-color:var(--neon)}
 #tl-media{font-size:16px;line-height:1;padding:4px 8px}
 #tl-media.active{color:var(--cyan);border-color:var(--cyan);background:rgba(0,255,255,.12)}
-/* topbar refresh: a FILLED icon button that MIRRORS btn-cyan per theme so it never clashes.
-   Base = cyberpunk cyan (dark text); the :root[data-theme] rule below mirrors the btn-cyan
-   readability layer (theme neon gradient + white text) for every other theme; winxp keeps its
-   own button skin (the !important override further down). */
-#btn-refresh{flex-shrink:0;font-size:17px;line-height:1;padding:6px 11px;border:none;border-radius:10px;background:linear-gradient(135deg,#0bb6cf,var(--cyan));color:#04222a;box-shadow:var(--glow-cy)}
-:root[data-theme] #btn-refresh{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff}
-#btn-refresh:hover{filter:brightness(1.12)}
 .muted{color:var(--muted)} .small{font-size:12.5px} .full{width:100%}
 
 /* ===== auth ===== */
@@ -581,7 +573,7 @@ a.btn.full{display:block}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
-.searchbox{flex:1;max-width:640px;margin:0 16px}
+.searchbox{flex:1;max-width:720px;margin:0 16px}   /* wider now that the topbar reload button is gone */
 .searchbox .input{margin:0;padding:9px 14px;font-size:16.5px}
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13.5px;text-transform:uppercase;letter-spacing:1.5px}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}

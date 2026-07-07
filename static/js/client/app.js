@@ -778,7 +778,6 @@
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
-    $('#btn-refresh').onclick = ()=>renderView(true);
     bindSearch();
     bindFeedActions();
     // Media-grid toggle: flip Home/Global between the normal post list and an images-only picture grid.
