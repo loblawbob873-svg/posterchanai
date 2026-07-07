@@ -2967,18 +2967,19 @@
     const t=es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1];
     return t?t[1]:null;
   }
-  // "↩ replying to" context block shown ABOVE a reply (e.g. on a profile's Replies tab) so you can
-  // see what's being answered. Reuses quotedDiv + the data-qload fetch/patch path for the parent.
+  // Compact "↩ replying to <name>" LABEL shown above a reply — NOT the parent's full card. Rendering the
+  // whole parent inline duplicated it all over a busy feed: a reply's parent is often itself a shown reply
+  // or a popular post that many people reply to, so its card repeated dozens of times ("duplicate replies").
+  // The reply card itself opens the full thread on tap. Name the parent author from the cached parent, else
+  // the reply's last p-tag; a not-yet-cached parent is fetched so a later redraw can name it.
   function replyContextHtml(ev){
     const pid=replyParentId(ev); if(!pid) return '';
     const o=Store.get(pid);
-    // Cached parent → show it. Not cached: data saver skips the extra parent fetch (round trips are the
-    // real cost on a throttled link — a page of replies would fire dozens) and shows a plain label;
-    // otherwise lazy-fetch + patch in place via data-qload.
-    const inner = o ? quotedDiv(o)
-                    : NO_IMAGES ? ''
-                    : (needEvent(pid), `<div class="quoted muted small" data-qload="${pid}">post loading…</div>`);
-    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to${o||!NO_IMAGES?'':' a post'}</span>${inner}</div>`;
+    let lbl='↩ reply';
+    const pk=(o&&o.pubkey)||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
+    if(pk){ const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name; if(nm) lbl='↩ replying to '+enc(nm); }
+    if(!o) needEvent(pid);
+    return `<div class="reply-ctx"><span class="reply-ctx-lbl">${lbl}</span></div>`;
   }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
