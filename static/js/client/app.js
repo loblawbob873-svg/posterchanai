@@ -170,6 +170,17 @@
   }
   async function publish(kind, content, tags){
     if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
+    // Replaceable-list wipe guard (kind-3 follows / kind-10000 mutes): NEVER publish a member list that's
+    // drastically shorter than the last-known count. A throttled/empty relay read producing an empty base
+    // is exactly how the whole follows/mutes list got erased before — block it instead of erasing it.
+    if(kind===3 || kind===10000){
+      const outP=(tags||[]).filter(t=>t[0]==='p'&&t[1]).length;
+      const known=ClientSettings.get(kind===3?'followsCount':'mutedUsersCount',0)||0;
+      if(known>=8 && outP < Math.floor(known/2)){
+        toast('safety: refused to erase your '+(kind===3?'follows':'mute')+' list — reload and try again');
+        throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
+      }
+    }
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
@@ -963,22 +974,42 @@
         if(!c.length || !n.length || c[0].id !== n[0].id) apply(n); }   // re-apply only on a real change
     }catch(_){}
   }
+  // ---- Replaceable-list durability (follows/mutes). The "my mutes/follows vanished" bug is a WRITE bug:
+  // a throttled/empty relay read yields an empty base, and the next edit republishes it empty. We fix it
+  // at the write side, NOT by refusing to shrink on reads (that would silently revert legitimate
+  // unfollows/unmutes/clear-all done on another device). Two defenses:
+  //   (1) cache each list to localStorage + seed in-memory, so an edit's base is never empty; AND a
+  //       throttled read (Relay.query resolves [] on timeout) keeps the seed instead of blanking mutes.
+  //   (2) publish()'s shrink guard hard-blocks the destructive near-empty republish.
+  // Reads still ADOPT the relay's list whenever it returns an event (a present-but-empty event is a real
+  // clear-all, which we honour) — so cross-device removals propagate normally.
+  function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
+    ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedUsersCount', u.length); }
+  function _persistFollows(){ const f=[...FOLLOWS].filter(p=>p!==ME.pubkey);
+    ClientSettings.set('followsCache', f); ClientSettings.set('followsCount', f.length); }
   async function fetchFollows(){
-    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[3], limit:1 }], (evs)=>{
-      if (evs.length) FOLLOWS = new Set(evs[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
-      FOLLOWS.add(ME.pubkey);
-      [...FOLLOWS].slice(0,300).forEach(needProfile);   // prefetch follows' profiles for @-autocomplete
-      if (VIEW==='home') renderView(true);
-    });
+    (ClientSettings.get('followsCache',[])||[]).forEach(p=>FOLLOWS.add(p));   // seed → never an empty base
+    let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+    // Adopt the relay's list ONLY when it returned an event (respects unfollows). No event = timeout /
+    // not-yet-synced → keep the seeded cache rather than shrinking to empty.
+    if(ev){ FOLLOWS = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); _persistFollows(); }
+    FOLLOWS.add(ME.pubkey);
+    [...FOLLOWS].slice(0,300).forEach(needProfile);   // prefetch follows' profiles for @-autocomplete
+    if (VIEW==='home') renderView(true);
   }
   async function fetchMutes(){
-    await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10000], limit:1 }], (evs)=>{
-      if (evs.length){ const e=evs[0];
-        MUTED = new Set(e.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
-        MUTED_WORDS = new Set(e.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase())); }   // NIP-51 muted words
-      // mutes can finish loading AFTER the first render — refresh a filtered view so muted users drop out.
-      if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
-    });
+    // Seed from cache so a throttled/timed-out read leaves mutes intact (never an empty base → the wipe).
+    (ClientSettings.get('mutedUsers',[])||[]).forEach(p=>MUTED.add(p));
+    (ClientSettings.get('mutedWords',[])||[]).forEach(w=>MUTED_WORDS.add(String(w).toLowerCase()));
+    let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+    // Adopt the relay's list when it returned an event — a present-but-empty event is a real clear-all,
+    // which we honour. A []-result is a timeout / not-yet-synced relay → keep the seeded cache.
+    if(ev){
+      MUTED = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+      MUTED_WORDS = new Set(ev.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase()));
+      _persistMutes();
+    }
+    if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
   }
   // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
   // list follows the user to any client.
@@ -986,12 +1017,14 @@
     const clean=[...new Set(words.map(w=>String(w||'').trim().toLowerCase()).filter(Boolean))];
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
-    // Keep all non-word tags. If the relay didn't return our list (race / not-yet-synced), DON'T
-    // start from empty — rebuild person-mutes from in-memory MUTED so we never wipe them.
-    const base = cur ? cur.tags.filter(t=>t[0]!=='word') : [...MUTED].map(p=>['p',p]);
-    const tags = base.concat(clean.map(w=>['word',w]));
+    // Person-mutes: prefer the relay's current p-tags (respects unmutes done elsewhere); fall back to
+    // in-memory MUTED only when the read timed out, so we never publish an empty base. Keep t/e mutes.
+    const users = cur ? new Set(cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))
+                      : new Set([...MUTED].filter(p=>p!==ME.pubkey));
+    const other = cur ? cur.tags.filter(t=>t[0]!=='p'&&t[0]!=='word') : [];
+    const tags = [...users].map(p=>['p',p]).concat(other, clean.map(w=>['word',w]));
     await publish(10000, cur?cur.content:'', tags);
-    MUTED_WORDS = new Set(clean);
+    MUTED = users; MUTED_WORDS = new Set(clean); _persistMutes();
   }
   // True if a note's text contains any muted word/phrase (substring, case-insensitive). Applied to
   // the timeline feeds so muted-word posts never render.
@@ -1048,11 +1081,12 @@
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
     await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
+    _persistFollows();
     return added;
   }
   async function toggleFollow(pk){
     const have=FOLLOWS.has(pk); await _editPList(3, pk, !have);
-    have?FOLLOWS.delete(pk):FOLLOWS.add(pk); toast(have?'unfollowed':'followed');
+    have?FOLLOWS.delete(pk):FOLLOWS.add(pk); _persistFollows(); toast(have?'unfollowed':'followed');
   }
   // Who follows ME — the authors of kind-3 contact lists that p-tag my pubkey. Loaded once, lazily
   // (on the first people list), then cached. Used to badge "Follows you" / mark mutuals.
@@ -1066,7 +1100,7 @@
   }
   async function toggleMute(pk){
     const have=MUTED.has(pk); await _editPList(10000, pk, !have);
-    have?MUTED.delete(pk):MUTED.add(pk); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
+    have?MUTED.delete(pk):MUTED.add(pk); _persistMutes(); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
   }
   async function fetchPins(){
     await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10001], limit:1 }], (evs)=>{
