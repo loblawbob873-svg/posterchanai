@@ -306,24 +306,33 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
             keys.append(f"{un.lower()}@{urlparse(inst).netloc.lower()}")
         return ("ok", u.id, pk, keys)
 
-    partial = False
+    now_ids, fresh, partial = set(), {}, False
     for r in await asyncio.gather(*[_resolve(u) for u in users], return_exceptions=True):
         if isinstance(r, Exception):
             partial = True
             continue
         status, uid, pk, keys = r
+        now_ids.add(uid)
         if status == "ok" and keys:
             _linked_user_lkg[uid] = (pk, keys)       # refresh last-known-good
+            for k in keys:
+                fresh[k] = pk                        # resolved THIS cycle → wins any key collision
         elif status == "fail":
-            partial = True                           # keep this user's prior lkg entry — don't drop them
-        elif status == "skip":
-            _linked_user_lkg.pop(uid, None)          # unlinked / no key → forget them
-    # Rebuild the lookup from last-known-good across ALL users, so a user who merely failed to resolve
-    # THIS cycle (transient instance blip) stays mentionable instead of vanishing for a whole TTL.
+            partial = True                           # transient blip → keep this user's prior lkg entry
+        else:
+            _linked_user_lkg.pop(uid, None)          # 'skip' or 'ok' with no usable keys → forget them
+    # Prune users who dropped out of the query entirely (account deleted / nostr_npub cleared) — else a
+    # stale handle->pubkey mapping would linger for the process lifetime and misroute (phantom) mentions.
+    for uid in [i for i in _linked_user_lkg if i not in now_ids]:
+        _linked_user_lkg.pop(uid, None)
+    # Rebuild the lookup from last-known-good (so a user who merely failed to resolve this cycle stays
+    # mentionable instead of vanishing for a whole TTL), then let THIS cycle's fresh resolutions win any
+    # key collision — e.g. a fedi handle reassigned between users routes to the CURRENT owner.
     out = {}
     for pk, keys in _linked_user_lkg.values():
         for k in keys:
-            out[k] = pk
+            out.setdefault(k, pk)
+    out.update(fresh)
     _linked_actors, _linked_actors_ts, _linked_actors_partial = out, now, partial
     return out
 

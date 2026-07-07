@@ -1352,17 +1352,17 @@
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
-    for(const ev of evs){ if(ev.kind===1&&isReply(ev))continue; if(isMutedView(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
+    for(const ev of evs){ if(isMutedView(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
       const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
-      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
+      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
     if(!frag.childElementCount) return;
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
     feed.insertBefore(frag, feed.firstChild);
     if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend
     // cap the feed at 200 — but NOT once the user has paginated older posts, or we'd delete the
     // scroll-back history they just loaded as soon as a new live note arrives at the top.
-    if(_tl.pages===0){ const notes=[...feed.querySelectorAll('.note')]; for(let i=200;i<notes.length;i++) notes[i].remove(); }
+    if(_tl.pages===0){ const cards=[...feed.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair')); for(let i=200;i<cards.length;i++) cards[i].remove(); }   // trim whole top-level cards (a reply is a .reply-pair wrapper, not a bare .note)
     decorateProfiles(); hydrateLinkCards(feed); hydratePolls(feed);
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
@@ -1389,7 +1389,7 @@
     const feed=$('#feed'); if(!feed) return;
     const top=preserveScroll?feed.scrollTop:0;
     const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    const notes = Store.feed(e=>(!fn||fn(e))&&!isMutedView(e)).filter(e=>!isReply(e)).slice(0,200);
+    const notes = Store.feed(e=>(!fn||fn(e))&&!isMutedView(e)).slice(0,200);
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
     if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
@@ -1407,7 +1407,7 @@
       if(preserveScroll) feed.scrollTop=top;
       return;
     }
-    feed.innerHTML = notes.length ? notes.map(noteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+    feed.innerHTML = notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
   }
   // ---------- infinite scroll-back ----------
@@ -1499,7 +1499,6 @@
     for(const ev of evs){
       Store.saveEvent(ev); needProfile(ev.pubkey);
       if(ev.created_at<minTs) minTs=ev.created_at;
-      if(ev.kind===1 && isReply(ev)) continue;
       if(isMutedView(ev)) continue;
       if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
       // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
@@ -1507,7 +1506,7 @@
       if(_tlMedia) continue;   // media grid redraws from Store below — skip building list nodes
       const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // already on screen
-      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
+      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
@@ -1530,11 +1529,10 @@
     }) || false;
   }
   function prependNote(ev, fn){
-    if (ev.kind===1 && isReply(ev)) return;
     if (isMutedView(ev)) return;
     if (fn && !fn(ev)) return;
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
-    const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild;
+    const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild;
     if(node){ feed.insertBefore(node, feed.firstChild); hydrate(node.parentElement); }
   }
 
@@ -2684,6 +2682,14 @@
     if (ev.kind===40) return channelCard(ev);        // NIP-28 channel → discovery card in the feed
     return noteCard(ev);
   }
+  // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
+  // posts. A reply renders WITH its "↩ replying to" parent context so it reads in-context instead of as
+  // an orphaned card. Thread + profile views render their own context, so they keep calling noteHtml.
+  function feedNoteHtml(ev){
+    return (ev.kind===1 && isReply(ev))
+      ? `<div class="reply-pair">${replyContextHtml(ev)}${noteHtml(ev)}</div>`
+      : noteHtml(ev);
+  }
   // ---------- NIP-88 polls: kind-1068 poll, kind-1018 responses ----------
   const _myPollVotes = {};   // pollId -> Set(optionId)
   function pollCard(ev){
@@ -2826,7 +2832,10 @@
     const bodyTxt = stripQuoteRef(mp.text, ev);
     const longTxt = !!bodyTxt && (bodyTxt.length > 480 || (bodyTxt.match(/\n/g)||[]).length > 10);
     const name = p.name||p.display_name||(NT().nip19.npubEncode(ev.pubkey).slice(0,12)+'…');
-    const av = p.picture || LOGO;
+    // Data saver: avatars are the biggest remaining image cost in the feed (dozens per page). Point them
+    // at the single, already-cached local LOGO so a feed page pulls ~no avatar bytes over a throttled
+    // link. Content media is already tap-to-load; this closes the other half.
+    const av = NO_IMAGES ? LOGO : (p.picture || LOGO);
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(ev.pubkey).slice(4,12));
     const counts = countsFor(ev.id);
     const liked = myReaction(ev.id);
@@ -2889,7 +2898,7 @@
   }
   function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
     const name = p.name||p.display_name||(NT().nip19.npubEncode(o.pubkey).slice(0,12)+'…');
-    const av = p.picture || LOGO;
+    const av = NO_IMAGES ? LOGO : (p.picture || LOGO);   // data saver: hold quoted/reply-context avatars too
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(o.pubkey).slice(4,12));
     const mp = mediaParts(o.content);
     return `<div class="quoted" data-open="${o.id}">
@@ -2907,8 +2916,13 @@
   function replyContextHtml(ev){
     const pid=replyParentId(ev); if(!pid) return '';
     const o=Store.get(pid);
-    const inner=o?quotedDiv(o):(needEvent(pid),`<div class="quoted muted small" data-qload="${pid}">post loading…</div>`);
-    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to</span>${inner}</div>`;
+    // Cached parent → show it. Not cached: data saver skips the extra parent fetch (round trips are the
+    // real cost on a throttled link — a page of replies would fire dozens) and shows a plain label;
+    // otherwise lazy-fetch + patch in place via data-qload.
+    const inner = o ? quotedDiv(o)
+                    : NO_IMAGES ? ''
+                    : (needEvent(pid), `<div class="quoted muted small" data-qload="${pid}">post loading…</div>`);
+    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to${o||!NO_IMAGES?'':' a post'}</span>${inner}</div>`;
   }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
@@ -5779,7 +5793,7 @@
     const listFor=(tab)=>{
       const lim=_prof.limit;
       if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
-        return r.length ? r.map(e=>`<div class="reply-pair">${replyContextHtml(e)}${noteHtml(e)}</div>`).join('') : '<div class="empty">No replies yet.</div>'; }
+        return r.length ? r.map(feedNoteHtml).join('') : '<div class="empty">No replies yet.</div>'; }   // feedNoteHtml wraps a reply in the same reply-pair+context markup
       if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
         // gallery only — pull each post's media tags out of its mediaParts() gallery and grid them
@@ -7500,7 +7514,7 @@
     if(repos.length){ html+='<div class="search-section-title">🌱 Git Repos</div>'+repos.map(repoCard).join(''); }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
-    html+= posts.length ? `<div id="search-posts">${posts.map(e=>noteHtml(e)).join('')}</div>` : '<div class="empty">No matching posts.</div>';
+    html+= posts.length ? `<div id="search-posts">${posts.map(feedNoteHtml).join('')}</div>` : '<div class="empty">No matching posts.</div>';
     feed.innerHTML=html; hydrate(feed);
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
@@ -7527,7 +7541,7 @@
       Store.saveEvent(ev); needProfile(ev.pubkey);
       if(ev.created_at<minTs) minTs=ev.created_at;
       if(cont.querySelector('.note[data-id="'+ev.id+'"]')) continue;
-      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
+      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
     }
     invalidateCounts();
     if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
@@ -7744,7 +7758,7 @@
     let minTs=until; const frag=document.createDocumentFragment();
     for(const ev of evs){ Store.saveEvent(ev); needProfile(ev.pubkey); if(ev.created_at<minTs) minTs=ev.created_at;
       if(cont.querySelector('.note[data-id="'+ev.id+'"]')) continue;
-      const div=document.createElement('div'); div.innerHTML=noteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
+      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
     invalidateCounts();
     if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
     if(minTs<_hashtag.oldest) _hashtag.oldest=minTs;
