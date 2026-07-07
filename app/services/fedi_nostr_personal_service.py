@@ -27,7 +27,7 @@ from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import nip17
 from app.services.fedi_timeline_service import _norm_pleroma
-from app.services.fedi_nostr_bridge_service import _blocked_domains, _domain_blocked, _host_of
+from app.services.fedi_nostr_bridge_service import _blocked_domains, _domain_blocked, _host_of, _is_public_audience
 
 logger = logging.getLogger(__name__)
 
@@ -214,10 +214,10 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
     try:
         if ntype == "mention" and status:
             post = _norm_pleroma(status)
-            vis = (status.get("visibility") or "public").lower()
-            if vis in ("direct", "private"):
-                # A private/DM mention must NOT become a public note (that leaks the DM). Deliver it
-                # privately as a NIP-17 DM from the sender's puppet instead.
+            if not _is_public_audience(status):
+                # Any non-public-audience mention (direct/private DM, followers-only, Misskey specified/
+                # followers, or unknown) must NOT become a public note — that leaks it. Same allowlist
+                # guard as the mirror. Deliver it privately as a NIP-17 DM from the sender's puppet instead.
                 body = (post.get("text") or "").strip()
                 for m in (post.get("media") or []):
                     if m.get("url"):

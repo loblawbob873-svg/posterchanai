@@ -129,6 +129,22 @@ def _author_muted(acct: str, host: str, instance_host: str) -> bool:
 
 # --- delivery ---------------------------------------------------------------
 
+# Fediverse audiences safe to mirror as a PUBLIC Nostr note. ALLOWLIST (not a blocklist of
+# direct/private) so ANY other value — Pleroma `list`/`local`, Misskey `followers`/`specified`, or a
+# missing/unknown one — is never leaked to the public firehose. `unlisted` (Mastodon/Pleroma) and
+# `home` (Misskey) are "not listed but link-public", mirrored by design.
+_PUBLIC_AUDIENCE = ("public", "unlisted", "home")
+
+
+def _is_public_audience(raw: dict) -> bool:
+    """True iff a raw fediverse status/note is public-audience and may be mirrored as a public kind-1.
+    Reads the RAW platform object (the normalizers drop `visibility`). Shared by the timeline mirror and
+    the personal-notification plane so their guards can never drift. A MISSING/blank visibility is
+    treated as NON-public — every real fediverse API sets `visibility` on the statuses we mirror
+    (public-timeline/context/notification), so an absent one is abnormal and must not be leaked."""
+    return str(raw.get("visibility") or "").lower() in _PUBLIC_AUDIENCE
+
+
 def _seen(db: Session, instance_url: str, note_id: str, uri: str | None) -> bool:
     q = db.query(FediBridgeDelivered).filter(FediBridgeDelivered.instance_url == instance_url,
                                              FediBridgeDelivered.note_id == note_id)
@@ -415,9 +431,8 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None, _depth: int = 0) -> str | None:
-    # NEVER mirror a non-public status as a PUBLIC Nostr note — a `direct` (DM) or `private`
-    # (followers-only) status published as a public kind-1 leaks private content into the feed.
-    if (raw.get("visibility") or "public").lower() in ("direct", "private"):
+    # Only a PUBLIC-audience status may become a public Nostr note (see _is_public_audience).
+    if not _is_public_audience(raw):
         return None
     account = raw.get("account") or {}
     p = await ident.ensure_puppet(db, port, account, instance_host)
@@ -489,13 +504,26 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         if not ok:
             logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
             return None
-        db.add(FediBridgeDelivered(platform=platform, instance_url=instance_url, note_id=post["id"],
-                                   note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
-                                   nostr_pubkey=p["pubkey_hex"]))
+        row_kw = dict(platform=platform, instance_url=instance_url, note_id=post["id"],
+                      note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
+                      nostr_pubkey=p["pubkey_hex"])
+        db.add(FediBridgeDelivered(**row_kw))
         try:
             db.commit()
         except Exception:
             db.rollback()
+            # The relay ALREADY has this note. If the dedup row doesn't persist, the next poll re-mirrors
+            # it as a DIFFERENT event (build_event stamps a fresh created_at) → a duplicate. The session
+            # may be broken (idle-in-txn/conn death), so persist the row on a FRESH session.
+            try:
+                from app.database import SessionLocal
+                s2 = SessionLocal()
+                try:
+                    s2.add(FediBridgeDelivered(**row_kw)); s2.commit()
+                finally:
+                    s2.close()
+            except Exception as e2:
+                logger.debug("[fedi-bridge] dedup-row retry failed for %s: %s", post.get("id"), e2)
         return ev["id"]
     finally:
         _inflight.discard(inflight_key)
