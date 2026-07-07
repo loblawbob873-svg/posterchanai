@@ -243,6 +243,14 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
 _linked_actors: dict = {}          # fedi actor url AND "username@host" -> real Nostr pubkey hex
 _linked_actors_ts: float = 0.0
 _linked_actors_partial: bool = False
+_linked_user_lkg: dict = {}        # user_id -> (real_pubkey_hex, [keys]) LAST-KNOWN-GOOD resolution.
+                                   # Retained across rebuilds so a transient verify_credentials failure
+                                   # can't drop a linked user from the map. Without this, a user whose
+                                   # instance blips vanishes for a whole TTL — and a user ON the bridge's
+                                   # OWN read instance is uniquely hurt: their mention statuses are always
+                                   # mirrored by the drain FIRST (so _seen), so the personal plane never
+                                   # re-delivers the p-tag — the drain's tag is their ONLY notification
+                                   # path. Mirrors the _self_acct_cache resilience pattern.
 _LINKED_TTL = 900                  # rebuild the linked-user map every 15 min…
 _LINKED_RETRY_TTL = 120            # …but retry sooner when a user's instance failed to resolve
 _LINKED_VC_TIMEOUT = 8             # per-user verify timeout so one hung instance can't stall the poll
@@ -272,7 +280,7 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
     async def _resolve(u):
         pk = to_pubkey_hex(u.nostr_npub or "")
         if not pk:
-            return ("skip", None, None)
+            return ("skip", u.id, None, None)
         try:
             if u.pleroma_instance_url and u.pleroma_access_token:
                 me = await asyncio.wait_for(
@@ -288,27 +296,34 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
                 un = ((me or {}).get("username") or "").strip()
                 url = f"https://{urlparse(inst).netloc}/@{un}" if un else ""
             else:
-                return ("skip", None, None)          # no linked fedi account — not a failure
+                return ("skip", u.id, None, None)    # no linked fedi account — not a failure
         except Exception:
-            return ("fail", pk, None)                # instance down/slow → retry sooner
+            return ("fail", u.id, pk, None)          # instance down/slow → retry sooner
         keys = []
         if url:
             keys.append(url.rstrip("/").lower())
         if un:
             keys.append(f"{un.lower()}@{urlparse(inst).netloc.lower()}")
-        return ("ok", pk, keys)
+        return ("ok", u.id, pk, keys)
 
-    out, partial = {}, False
+    partial = False
     for r in await asyncio.gather(*[_resolve(u) for u in users], return_exceptions=True):
         if isinstance(r, Exception):
             partial = True
             continue
-        status, pk, keys = r
-        if status == "fail":
-            partial = True
-        elif status == "ok" and keys:
-            for k in keys:
-                out[k] = pk
+        status, uid, pk, keys = r
+        if status == "ok" and keys:
+            _linked_user_lkg[uid] = (pk, keys)       # refresh last-known-good
+        elif status == "fail":
+            partial = True                           # keep this user's prior lkg entry — don't drop them
+        elif status == "skip":
+            _linked_user_lkg.pop(uid, None)          # unlinked / no key → forget them
+    # Rebuild the lookup from last-known-good across ALL users, so a user who merely failed to resolve
+    # THIS cycle (transient instance blip) stays mentionable instead of vanishing for a whole TTL.
+    out = {}
+    for pk, keys in _linked_user_lkg.values():
+        for k in keys:
+            out[k] = pk
     _linked_actors, _linked_actors_ts, _linked_actors_partial = out, now, partial
     return out
 
