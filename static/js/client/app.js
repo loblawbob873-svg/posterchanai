@@ -1160,10 +1160,18 @@
     if(Store.haveProfile(ME.pubkey)) renderMe();   // instant from the profile cache
     try{ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){ Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe(); } }catch(_){}
   }
+  // Fill/refresh a `.name[data-prof]` span once its author's profile loads — WITH NIP-30 custom emoji
+  // (fediverse-bridged names have :shortcodes:). innerHTML only when there's actually an emoji to render
+  // (a real shortcode + a known map), else plain textContent — cheaper and avoids clobbering emoji with
+  // a later plain re-decorate. This is why the earlier `nm.textContent=name` wiped the rendered emoji.
+  function _decorName(nm){ const pk=nm.dataset.prof; if(!pk) return; const p=Store.profile(pk); if(!p) return;
+    const name=p.name||p.display_name; if(!name) return;
+    if(Store.profileEmojis(pk) && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
+    else nm.textContent=name;
+  }
   function decorateProfiles(){
     $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
-      const nm=n.querySelector('.name'); if(nm) nm.textContent=p.name||p.display_name||nm.textContent;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
@@ -1181,10 +1189,13 @@
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
     $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
       const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
-      nm.textContent=p.name||p.display_name||nm.textContent;
       const h=q&&q.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
+    // ONE pass fills every author-name span WITH custom emoji — feed notes, quoted/reply context, poll
+    // cards, article/stream/market bylines, AND search results — so bridged :shortcode: names render
+    // their images everywhere a name with data-prof appears.
+    $$('.name[data-prof]').forEach(_decorName);
   }
 
   // ---------- view routing ----------
@@ -7549,7 +7560,7 @@
     const repos=_dedupAddr(addrEvs.filter(e=>e.kind===30617 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
     let html='';
-    if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
+    if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${emojiName(p.pubkey,m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     if(arts.length){  html+='<div class="search-section-title">📝 Articles</div>'+arts.map(articleCard).join(''); }
     if(strms.length){ html+='<div class="search-section-title">▷ Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
     if(comms.length){ html+='<div class="search-section-title">☷ Communities</div><div class="stream-grid">'+comms.map(communityCard).join('')+'</div>'; }

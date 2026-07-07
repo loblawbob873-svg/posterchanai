@@ -7,7 +7,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v168';
+const CACHE = 'pc-nostr-v169';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
