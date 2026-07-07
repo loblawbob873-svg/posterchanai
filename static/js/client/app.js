@@ -1165,7 +1165,8 @@
   // a later plain re-decorate. This is why the earlier `nm.textContent=name` wiped the rendered emoji.
   function _decorName(nm){ const pk=nm.dataset.prof; if(!pk) return; const p=Store.profile(pk); if(!p) return;
     const name=p.name||p.display_name; if(!name) return;
-    if(Store.profileEmojis(pk) && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
+    const em=(Store.profileEmojis&&Store.profileEmojis(pk));
+    if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
     else nm.textContent=name;
   }
   function decorateProfiles(){
@@ -2834,7 +2835,9 @@
   // HTML-escapes first, then swaps shortcodes for <img>. Plain escaped text when there's no custom emoji.
   function emojiName(pk, name){
     const safe=enc(name||'');
-    const map=Store.profileEmojis(pk); if(!map) return safe;
+    // Defensive: if store.js is momentarily an older cached version (no profileEmojis), fall back to
+    // plain escaped text instead of throwing — a throw here would blank every name (feed/profile/search).
+    const map=(Store.profileEmojis&&Store.profileEmojis(pk)); if(!map) return safe;
     return safe.replace(/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
       map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
   }
@@ -7545,12 +7548,17 @@
     // Posts via NIP-50 FTS, and the Discover kinds (articles/streams/communities) fetched + filtered
     // client-side (FTS doesn't index them) — run in parallel.
     const ql=q.toLowerCase();
-    const [postEvs, addrEvs] = await Promise.all([
+    const [postEvs, addrEvs, profEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
       Relay.query([{ kinds:[30023,30311,34550,2003,30617], limit:240 }]).catch(()=>[]),
+      // Also ask the relay for matching PROFILES (NIP-50 kind-0 search) — otherwise "Profiles" only ever
+      // shows what THIS device has already cached, so a profile you haven't seen (or lost on a cache
+      // clear) never appears. Cached below so the local name/nip05 filter picks them up too.
+      Relay.query([{ kinds:[0], search:q, limit:20 }]).catch(()=>[]),
     ]);
     postEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     addrEvs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    (profEvs||[]).forEach(e=>{ Store.saveProfile(e); });
     if(VIEW!=='search') return;
     const arts =_dedupAddr(addrEvs.filter(e=>e.kind===30023 && _matchAddr(e,ql))).sort((a,b)=>artTime(b)-artTime(a)).slice(0,12);
     const strms=_dedupAddr(addrEvs.filter(e=>e.kind===30311 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
