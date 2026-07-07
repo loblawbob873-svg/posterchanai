@@ -155,13 +155,25 @@ def _reply_parent_id(ev: dict) -> str | None:
 
 
 def _is_reply(ev: dict) -> bool:
-    """A NIP-10 REPLY: has an e-tag explicitly marked 'reply' or 'root'. Quote-posts (NIP-18 `q` tag,
-    or a 'mention'-marked e-tag) are NOT replies, so they may still cross-post as top-level posts. This
-    app's client always marks reply e-tags (see replyTags), so marker-based detection catches replies
-    to native Nostr users WITHOUT the false-positive over-block that treating *any* e-tag as a reply
-    caused (which silently dropped legitimate quote-posts)."""
-    return any(len(t) >= 4 and t[0] == "e" and t[1] and t[3] in ("reply", "root")
-               for t in ev.get("tags", []))
+    """True if this note is a NIP-10 REPLY — so it must NOT cross-post as a standalone fediverse post
+    when its parent isn't a bridged note (that leaks the Nostr-side conversation to the fediverse). A
+    reply is an e-tag marked 'reply'/'root', OR — for clients using deprecated POSITIONAL NIP-10 — any
+    UNMARKED e-tag. Quote-posts are NOT replies: a 'mention'-marked e-tag and a NIP-18 `q` tag are
+    quote/embed references, so a note that only quotes still cross-posts. The earlier marker-only check
+    missed unmarked positional replies (e.g. `["e", <id>]`), which is how a reply to a native Nostr user
+    slipped through and federated out — this covers both markings."""
+    tags = ev.get("tags", [])
+    has_quote = any(len(t) >= 2 and t[0] == "q" and t[1] for t in tags)
+    for t in tags:
+        if len(t) >= 2 and t[0] == "e" and t[1]:
+            marker = t[3] if len(t) >= 4 else ""
+            if marker in ("reply", "root"):
+                return True
+            if marker == "mention":
+                continue                          # quote/embed reference, not a reply
+            if not marker and not has_quote:      # deprecated positional e-tag, not a quote-post → reply
+                return True
+    return False
 
 
 def _target_row(db, ev: dict):
