@@ -540,7 +540,14 @@
       if(navigator.serviceWorker.controller){
         navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return; _refreshing=true; location.reload(); });
       }
-      navigator.serviceWorker.register('/client/sw.js',{scope:'/client'}).catch(()=>{});
+      // updateViaCache:'none' → the browser fetches sw.js from the NETWORK every check instead of an
+      // HTTP cache that can pin the old worker for up to 24h (the reason deploys weren't reaching PWAs).
+      // Then force an update check on load + every 5 min so a new build is picked up promptly; the
+      // controllerchange handler above reloads the page once the new SW activates.
+      navigator.serviceWorker.register('/client/sw.js',{scope:'/client',updateViaCache:'none'}).then(reg=>{
+        try{ reg.update(); }catch(_){}
+        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 300000);
+      }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
     bindAuth();
@@ -6942,12 +6949,15 @@
       render(await pushState()); };
   }
 
+  // The running client build = the app.js ?v (mtime) the shell loaded. Lets us confirm a deploy actually
+  // reached this device (the SW-cache/"not updating" class of confusion).
+  function _clientBuild(){ try{ const s=document.querySelector('script[src*="/client/app.js"]'); const m=s&&s.src.match(/[?&]v=(\d+)/); return m?m[1]:'?'; }catch(_){ return '?'; } }
   function renderSettings(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings">
       <section class="set-card">
         <div class="set-head"><div><div class="set-title">Account</div>
-          <div class="muted small">${enc(ME.npub.slice(0,20))}…</div></div></div>
+          <div class="muted small">${enc(ME.npub.slice(0,20))}… · <span title="client build — the app.js ?v timestamp; matches on a fresh load">build ${_clientBuild()}</span></div></div></div>
         <div class="set-body">
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-copy-npub">🔑 Copy npub</button>
