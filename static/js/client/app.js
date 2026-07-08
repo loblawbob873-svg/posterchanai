@@ -182,6 +182,10 @@
         throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
       }
     }
+    // Interop: if you publish a Monero address to receive tips, stamp it on your kind-1 notes (like
+    // Nosmero) so ANY client can tip you straight from a post — most Monero-tipping clients read the
+    // note's `monero_address` tag, not your kind-0 profile. Only add it when it isn't already present.
+    if(kind===1){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !(tags||[]).some(t=>t&&t[0]==='monero_address')) tags=(tags||[]).concat([['monero_address', my]]); }catch(_){} }
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
@@ -2762,6 +2766,13 @@
     for(const k of ['about','website']){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; } }
     return '';
   }
+  // Monero tip address for a specific NOTE. Nosmero (and others) stamp the author's address on EACH note
+  // as a `monero_address` tag — most Nosmero users publish it ONLY there, not in their kind-0 — so check
+  // the note's tags FIRST, then fall back to the author's profile. Lets us tip any such post directly.
+  function xmrForNote(ev){
+    for(const t of ((ev&&ev.tags)||[])){ if(t && (t[0]==='monero_address'||t[0]==='xmr'||t[0]==='monero') && isXmrAddr(t[1])) return String(t[1]).trim(); }
+    return xmrOf(profOf((ev&&ev.pubkey)||''));
+  }
   function noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
@@ -2984,7 +2995,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${isXmrAddr(xmrOf(p))?' or Monero':''}"><span class="tipbolt">⚡${isXmrAddr(xmrOf(p))?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${isXmrAddr(xmrForNote(ev))?' or Monero':''}"><span class="tipbolt">⚡${isXmrAddr(xmrForNote(ev))?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -3271,7 +3282,8 @@
   async function doTip(noteId, pk){
     const p=profOf(pk)||{};
     const hasLn=!!(p.lud16||p.lud06);
-    const hasXmr=isXmrAddr(xmrOf(p));
+    const ev=noteId?Store.get(noteId):null;
+    const hasXmr=isXmrAddr(ev?xmrForNote(ev):xmrOf(p));   // note's monero_address tag counts (Nosmero puts it there, not the profile)
     if(hasLn && hasXmr){
       modal(`<h3>Tip ${enc(p.name||p.display_name||'')}</h3>
         <p class="muted small">How would you like to tip?</p>
@@ -3338,8 +3350,9 @@
   // stays on the box, no third-party leak). On confirmation we post a public kind-1 tip note (the
   // chosen "always post" behaviour) crediting the recipient — there's no cryptographic receipt for XMR.
   async function doXmrTip(noteId, pk){
-    const p=profOf(pk); const addr=xmrOf(p);
-    if(!isXmrAddr(addr)){ toast('no Monero address on this profile'); return; }
+    const p=profOf(pk); const ev=noteId?Store.get(noteId):null;
+    const addr = ev ? xmrForNote(ev) : xmrOf(p);   // prefer the note's own monero_address tag (Nosmero et al.), else the profile
+    if(!isXmrAddr(addr)){ toast('no Monero address on this post or profile'); return; }
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
