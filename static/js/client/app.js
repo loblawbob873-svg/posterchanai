@@ -2748,11 +2748,21 @@
 
   // ---------- note rendering ----------
   function profOf(pk){ return Store.profile(pk)||{}; }
-  // Monero address published in kind-0 metadata. No standard key exists yet, so we WRITE `xmr` and
-  // READ a few aliases other clients might use. Light validation: mainnet std(95)/integrated(106),
-  // base58, starts 4 (std/integrated) or 8 (subaddress).
-  function xmrOf(p){ return ((p&&(p.xmr||p.monero||p.monero_address))||'').toString().trim(); }
   function isXmrAddr(a){ return /^[48][1-9A-HJ-NP-Za-km-z]{94}([1-9A-HJ-NP-Za-km-z]{11})?$/.test((a||'').trim()); }  // base58 (no 0 O I l), exactly 95 (std/sub) or 106 (integrated)
+  // Monero address from kind-0 metadata. There is NO agreed Nostr standard (unlike LN's lud16/lud06), so
+  // clients scatter it across many keys — `monero_address` is the most common in the wild, then `xmr`/
+  // `monero`, plus capitalised/odd variants and even bio text. Read LIBERALLY so we can tip a user
+  // regardless of which client they used: common keys first, then ANY field that IS an XMR address, then
+  // one embedded in about/website text.
+  const _XMR_RX=/[48][1-9A-HJ-NP-Za-km-z]{94}(?:[1-9A-HJ-NP-Za-km-z]{11})?/;
+  function xmrOf(p){
+    if(!p || typeof p!=='object') return '';
+    const direct = p.monero_address || p.xmr || p.monero || p.xmr_address;
+    if(direct && isXmrAddr(direct)) return String(direct).trim();
+    for(const k in p){ const v=p[k]; if(typeof v==='string' && isXmrAddr(v)) return v.trim(); }
+    for(const k of ['about','website']){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_XMR_RX); if(m && isXmrAddr(m[0])) return m[0]; } }
+    return '';
+  }
   function noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
@@ -6240,8 +6250,13 @@
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
-        const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), xmr:_xmr, picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
-        delete meta.monero; delete meta.monero_address;   // `xmr` is canonical — drop legacy aliases so clearing the field actually removes the address (xmrOf reads them too)
+        const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
+        // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
+        // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
+        // alias. Previously we wrote ONLY `xmr` and DELETED monero_address, which hid your address from
+        // those clients and even wiped a monero_address set elsewhere.
+        if(_xmr){ meta.xmr=_xmr; meta.monero_address=_xmr; } else { delete meta.xmr; delete meta.monero_address; }
+        delete meta.monero;   // fold the rarer `monero` alias into the two canonical keys we write
         closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
     });
   }
