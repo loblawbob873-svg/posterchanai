@@ -3369,7 +3369,7 @@
       const who='nostr:'+NT().nip19.npubEncode(pk);
       // Point readers at where Monero tipping works (there's no cross-client XMR standard), so the
       // recipient/onlookers know how to receive/send XMR tips on Nostr.
-      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero\n\n— sent with Poster; add your XMR address at https://poster.place to receive Monero tips too`;
+      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero\n\n— sent with PosterChan AI; add your XMR address at https://poster.place to receive Monero tips too`;
       const tags=[['p',pk],['t','monerotip'],['t','monero']].concat(noteId?[['e',noteId]]:[]).concat(amt?[['amount_xmr',String(amt)]]:[]);
       await publish(1, body, tags); toast('ɱ tip note posted');
     }catch(e){ toast('could not post tip note'); }
