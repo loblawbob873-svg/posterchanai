@@ -2833,11 +2833,23 @@
   // Render a display NAME with its NIP-30 custom emoji (fediverse-bridged names are full of :shortcodes:
   // like :hellokitty_headbang:). Uses the author's OWN kind-0 emoji map (Store keeps it on the profile);
   // HTML-escapes first, then swaps shortcodes for <img>. Plain escaped text when there's no custom emoji.
+  const _SC_RE=/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/;
+  const _emojiRefetched=new Set();
+  // The author's kind-0 emoji map may be MISSING because we cached their profile before emoji-tag support
+  // OR they (a fedi puppet) republished their kind-0 with emoji tags AFTER we cached it — and needProfile
+  // skips already-cached pubkeys. So when a name HAS shortcodes but we have no map, force ONE fresh kind-0
+  // fetch (bypassing the cache skip); saveProfile backfills/updates the emoji, then re-decorate the names.
+  function _refetchEmojiProfile(pk){
+    if(!pk || _emojiRefetched.has(pk)) return; _emojiRefetched.add(pk);
+    Relay.query([{ authors:[pk], kinds:[0], limit:1 }]).then(evs=>{
+      if(evs && evs.length){ Store.saveProfile(evs.sort((a,b)=>b.created_at-a.created_at)[0]);
+        if(Store.profileEmojis(pk)) try{ decorateProfiles(); }catch(_){} }
+    }).catch(()=>{});
+  }
   function emojiName(pk, name){
     const safe=enc(name||'');
-    // Defensive: if store.js is momentarily an older cached version (no profileEmojis), fall back to
-    // plain escaped text instead of throwing — a throw here would blank every name (feed/profile/search).
-    const map=(Store.profileEmojis&&Store.profileEmojis(pk)); if(!map) return safe;
+    const map=(Store.profileEmojis&&Store.profileEmojis(pk));
+    if(!map){ if(_SC_RE.test(name||'')) _refetchEmojiProfile(pk); return safe; }   // has shortcodes but no map → refetch once
     return safe.replace(/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
       map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
   }
@@ -5462,7 +5474,7 @@
     else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------

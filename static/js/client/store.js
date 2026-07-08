@@ -182,11 +182,16 @@
       try {
         const meta = JSON.parse(ev.content||'{}');
         const cur = mem.profiles.get(ev.pubkey);
-        if (cur && cur.created_at >= ev.created_at) return;
         // Keep NIP-30 custom-emoji tags (for rendering :shortcodes: in the display NAME) on the RECORD,
         // NOT inside meta — meta is the publishable kind-0 content and editing your own profile spreads
         // it, which would pollute your kind-0 and drop your real emoji tags. Read via profileEmojis().
         const em = {}; for (const t of (ev.tags||[])) { if (t[0]==='emoji' && t[1] && t[2]) em[t[1]] = t[2]; }
+        if (cur && cur.created_at >= ev.created_at) {
+          // Not newer — but BACKFILL emoji if this profile was cached before emoji-tag storage existed
+          // (so re-fetching the same kind-0 still surfaces the shortcodes) instead of returning blind.
+          if (Object.keys(em).length && !cur.emojis) { cur.emojis = em; if (db) try { tx('profiles','readwrite').put(cur); } catch(_){} }
+          return;
+        }
         const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta };
         if (Object.keys(em).length) rec.emojis = em;
         mem.profiles.set(ev.pubkey, rec);
