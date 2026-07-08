@@ -529,7 +529,7 @@
         document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
       }catch(_){}
     }
-    updateUserCount(); setInterval(()=>{ if(!NO_IMAGES) updateUserCount(true); }, 15000);   // WoT size: boot+login; online refresh every 15s — but skip it in data saver (a needless round trip on a slow link)
+    updateUserCount(); let _ucT=0; setInterval(()=>{ if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
@@ -538,15 +538,22 @@
       // used to trigger a spurious second reload right after login/first load.
       let _refreshing=false;
       if(navigator.serviceWorker.controller){
-        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return; _refreshing=true; location.reload(); });
+        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return;
+          // Don't yank the page out from under an in-progress compose (unsaved text in a field). The new
+          // SW is already active (clients.claim), so the next navigation picks it up anyway.
+          const ae=document.activeElement; if(ae && (ae.tagName==='TEXTAREA'||ae.tagName==='INPUT') && ae.value && ae.value.trim()) return;
+          _refreshing=true; location.reload(); });
       }
       // updateViaCache:'none' → the browser fetches sw.js from the NETWORK every check instead of an
       // HTTP cache that can pin the old worker for up to 24h (the reason deploys weren't reaching PWAs).
       // Then force an update check on load + every 5 min so a new build is picked up promptly; the
       // controllerchange handler above reloads the page once the new SW activates.
+      // updateViaCache:'none' → the browser fetches sw.js from the NETWORK on each check instead of an
+      // HTTP cache that can pin the old worker for up to 24h (the reason deploys weren't reaching PWAs).
+      // Force ONE update check on load (not on a timer — a periodic check could reload the page mid-use);
+      // the controllerchange handler above reloads once the new SW activates, unless the user is typing.
       navigator.serviceWorker.register('/client/sw.js',{scope:'/client',updateViaCache:'none'}).then(reg=>{
         try{ reg.update(); }catch(_){}
-        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 300000);
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
@@ -7804,9 +7811,9 @@
   // The rightbar EXISTS in the DOM even on mobile (CSS display:none ≤820px), so a bare querySelector
   // isn't enough — gate on it being VISIBLE, else we run its heavy trending/hot/follows queries for a
   // sidebar the user can't see (pure waste on a slow phone link).
-  function _rightbarVisible(){ const rb=document.querySelector('.rightbar'); return !!rb && !document.hidden && getComputedStyle(rb).display!=='none'; }
+  function _rightbarShown(){ const rb=document.querySelector('.rightbar'); return !!rb && getComputedStyle(rb).display!=='none'; }
   async function loadRightbar(){
-    if(!_rightbarVisible()) return;
+    if(!_rightbarShown()) return;   // display:none on mobile → skip; but build in a backgrounded desktop tab (no document.hidden gate)
     loadHot(true);                   // Hot = most-engaged posts, infinite-scroll
     loadTrendingTags();              // Trending = trending hashtags (last 24h)
     loadDiscover();                  // curated hashtag shortcuts for newcomers
@@ -7815,7 +7822,7 @@
   // Routine update (timer): refresh the chip clouds and prepend any freshly-hot posts to the top
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
   function refreshRightbar(){
-    if(!_rightbarVisible()) return;
+    if(document.hidden || !_rightbarShown()) return;   // skip the periodic refresh while backgrounded or on mobile (hidden rightbar)
     // Only auto-refresh the (heavy: 300-event trending tally + follow reposts) rightbar while the user is
     // on a feed it belongs to. Refreshing trending/hot every interval while reading a Community/Profile/
     // Files view was needless CPU + relay load for content that isn't even being looked at.
