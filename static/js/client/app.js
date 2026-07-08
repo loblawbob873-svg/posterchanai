@@ -1206,7 +1206,7 @@
   // (a real shortcode + a known map), else plain textContent — cheaper and avoids clobbering emoji with
   // a later plain re-decorate. This is why the earlier `nm.textContent=name` wiped the rendered emoji.
   function _decorName(nm){ const pk=nm.dataset.prof; if(!pk) return; const p=Store.profile(pk); if(!p) return;
-    const name=p.name||p.display_name; if(!name) return;
+    const name=p.name||p.display_name||niceNip05(p.nip05); if(!name) return;   // nip05 fallback so a name-less peer isn't stuck on the raw npub
     const em=(Store.profileEmojis&&Store.profileEmojis(pk));
     if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
     else nm.textContent=name;
@@ -3367,8 +3367,10 @@
   async function _postXmrTipNote(noteId, pk, amt){
     try{
       const who='nostr:'+NT().nip19.npubEncode(pk);
-      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero`;
-      const tags=[['p',pk],['t','monerotip']].concat(noteId?[['e',noteId]]:[]).concat(amt?[['amount_xmr',String(amt)]]:[]);
+      // Point readers at where Monero tipping works (there's no cross-client XMR standard), so the
+      // recipient/onlookers know how to receive/send XMR tips on Nostr.
+      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero\n\n— sent with Poster; add your XMR address at https://poster.place to receive Monero tips too`;
+      const tags=[['p',pk],['t','monerotip'],['t','monero']].concat(noteId?[['e',noteId]]:[]).concat(amt?[['amount_xmr',String(amt)]]:[]);
       await publish(1, body, tags); toast('ɱ tip note posted');
     }catch(e){ toast('could not post tip note'); }
   }
@@ -5740,20 +5742,19 @@
     try{ m.text=await signer.nip04dec(peer, m.ev.content); }catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
     return m.text;
   }
-  // Shared image-URL test for compose preview strips: a real image extension, OR a bare sha256 path but
-  // ONLY on our own media host (an uploaded Blossom blob, which can be extensionless) — so a random
-  // 64-hex event-id link isn't mistaken for an image (which the strip would then let you delete by ✕).
-  function isImageUrl(u){
-    if(/\.(jpe?g|png|gif|webp|avif|bmp)(\?|#|$)/i.test(u)) return true;
-    try{ const ms=(typeof mediaServer==='function'&&mediaServer())||''; return !!ms && u.indexOf(ms)===0 && /\/[0-9a-f]{64}(\?|#|$)/i.test(u); }catch(_){ return false; }
-  }
+  // Shared image-URL test for compose preview strips. Extension-only (matches the linkify/media embed
+  // regex), so an event-id / non-image 64-hex link is never shown as a deletable thumbnail. uploadBlob and
+  // blossomPicker append the file extension, so pasted/attached images still match; a rare extensionless
+  // unknown-MIME blob just doesn't get a preview (it still sends fine as a text URL).
+  function isImageUrl(u){ return /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u); }
   // Wire a compose <textarea> for image PASTE-to-attach + a live, removable thumbnail strip. Shared by
   // both DM entry points. Returns sync() to call after programmatic value changes (e.g. send clears the box).
   function wireImgAttach(inp, strip){
     if(!inp) return ()=>{};
-    const removeOne=u=>{ const v=inp.value; let i=v.indexOf(u); if(i<0) return; let end=i+u.length;   // remove ONE occurrence + one adjacent space (keep the rest of the text intact)
-      if(v[end]===' '||v[end]==='\n') end++; else if(i>0 && (v[i-1]===' '||v[i-1]==='\n')) i--;
-      inp.value=v.slice(0,i)+v.slice(end); };
+    // Remove the URL only where it stands as a WHOLE token (+ its leading space), so it can't clobber a
+    // longer URL it's a prefix of (e.g. x.png vs x.png?thumb=1) and doesn't collapse unrelated whitespace.
+    const removeOne=u=>{ const esc=u.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      inp.value=inp.value.replace(new RegExp('[ \\t]*'+esc+'(?=\\s|$)'), ''); };
     const sync=()=>{ if(!strip) return; const imgs=(String(inp.value||'').match(/https?:\/\/\S+/g)||[]).filter(isImageUrl);
       if(!imgs.length){ strip.hidden=true; strip.innerHTML=''; return; }
       strip.hidden=false;
@@ -5834,9 +5835,10 @@
         if(!pk && /^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(v)){ $('#dm-status',root).textContent='resolving…'; pk=await nip05Resolve(v.toLowerCase()); }
         if(!pk){ $('#dm-status',root).textContent='pick a valid recipient (npub / NIP-05)'; return; }
         const txt=body.value.trim(); if(!txt){ $('#dm-status',root).textContent='write a message'; return; }
-        closeModal();
-        try{ await sendDm(pk, txt); if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
-        catch(e){ toast('dm failed: '+e.message); }
+        const go=$('#dm-go',root); if(go.disabled) return; go.disabled=true; $('#dm-status',root).textContent='sending…';   // guard double-send
+        // Send BEFORE closing so a failure keeps the modal (typed text + uploaded attachments intact).
+        try{ await sendDm(pk, txt); closeModal(); if(!dmPeers.has(pk))dmPeers.set(pk,[]); needProfile(pk); switchView('messages'); setTimeout(()=>openDm(pk),80); }
+        catch(e){ go.disabled=false; $('#dm-status',root).textContent='dm failed: '+((e&&e.message)||e); }
       };
       to.focus();
     });
@@ -5910,9 +5912,11 @@
     $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } } e.target.value=''; _syncAtts(); inp.focus(); };
     $('#dm-files').onclick=()=>blossomPicker(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
-    const send=async()=>{ const t=inp.value.trim(); if(!t)return;
+    let _dmSending=false;
+    const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
       try{ await sendDm(pk, t); inp.value=''; _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
-      catch(e){ toast('dm failed: '+((e&&e.message)||e)); } };
+      catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
+      finally{ _dmSending=false; } };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
     const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
