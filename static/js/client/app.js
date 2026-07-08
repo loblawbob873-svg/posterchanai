@@ -542,7 +542,9 @@
         // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
         // until its next navigation. The tab that clicked isn't typing, so it reloads.
         navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_swRefreshing) return;
-          const ae=document.activeElement; if(ae && (ae.tagName==='TEXTAREA'||ae.tagName==='INPUT') && ae.value && ae.value.trim()) return;
+          // Guard only a COMPOSER (textarea: post/DM/article) with unsaved text — NOT plain inputs like the
+          // search box, which shouldn't strand a tab on the old build. That tab reloads on its next nav.
+          const ae=document.activeElement; if(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()) return;
           _swRefreshing=true; location.reload(); });
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
@@ -5373,8 +5375,11 @@
   // FIRST time we see each follower and key the notification off that stable time, so a known
   // follower re-saving their list never re-pings or re-lights the badge.
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
-  function _followTs(pk, fallback){ if(!(pk in _followSeen)){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
-  function _notifTs(e){ return e.kind===3 ? (_followSeen[e.pubkey]!=null?_followSeen[e.pubkey]:e.created_at) : e.created_at; }
+  let _followSeeded=false;   // true once the follower seed (below) has run — before that, notifList must NOT persist pins
+  // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
+  // so it gets repaired to a real time on next access instead of sticking.
+  function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
+  function _notifTs(e){ return e.kind===3 ? (_followSeen[e.pubkey] || e.created_at) : e.created_at; }
   async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
     // Seed the known-follower set from the FULL current follower list BEFORE going live. kind-3 is the
@@ -5388,14 +5393,16 @@
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
         // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
-        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0.
-        if(!(e.pubkey in _followSeen)){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
+        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0. Also
+        // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
+        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
     }catch(_){}
+    _followSeeded=true;   // now notifList may persist pins for followers the seed didn't cover
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
-          const firstTime = !(ev.pubkey in _followSeen);
+          const firstTime = !_followSeen[ev.pubkey];
           const ts = _followTs(ev.pubkey, ev.created_at);
           if(firstTime && ts>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }   // genuinely new follower only
           if(VIEW==='notifications') renderNotifications();
@@ -5437,7 +5444,9 @@
     // PIN each follower's notification time on FIRST sight (persisted) BEFORE sorting — otherwise a
     // re-saved contact list (a NEW kind-3 with a fresh created_at) keeps sorting to the top and re-shows
     // an old follower as "followed you" over and over. _followTs records once; _notifTs then reads it.
-    for(const e of evs){ if(e.kind===3) _followTs(e.pubkey, e.created_at); }
+    // ONLY after the seed has run — else an early render (during the seed's await) would pin a re-saved
+    // follower to their fresh created_at and the seed's min(created_at, seen) would then be skipped.
+    if(_followSeeded) for(const e of evs){ if(e.kind===3) _followTs(e.pubkey, e.created_at); }
     evs.sort((a,b)=>_notifTs(b)-_notifTs(a));
     // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
     const seen3=new Set(); const out=[];
@@ -5448,20 +5457,20 @@
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
-  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updPrompted=false;
+  let _swRefreshing=false, _updateReady=null, _updBadge=false;
   function _onSwUpdateReady(worker){
-    _updateReady=worker;   // always point at the NEWEST waiting worker (a 2nd deploy supersedes the 1st)
-    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
-    if(_updPrompted) return; _updPrompted=true;
-    _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell once (cleared when Notifications is viewed)
+    if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced
+    _updateReady=worker;   // a NEWER waiting worker (e.g. a 2nd deploy) supersedes — re-surface it
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // they're already looking at it → the row shows; no badge/toast
+    _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
   function applyUpdate(){
-    // Re-read the CURRENT waiting worker at click time (a 2nd deploy could have superseded _updateReady,
-    // leaving it redundant/never-activating). postMessage → SKIP_WAITING → activate → controllerchange reload.
-    const go = w => { if(!w){ location.reload(); return; }
-      try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); return; }
-      setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 3000); };   // fallback if controllerchange didn't fire (activate cleanup can be slow)
+    // Reload no matter what after 3s (getRegistration stalling, or the new SW being slow to activate) so
+    // the tap can't silently do nothing — controllerchange normally beats this once the worker activates.
+    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 3000);
+    // Re-read the CURRENT waiting worker at click time (a 2nd deploy could have left _updateReady redundant).
+    const go = w => { if(!w){ location.reload(); return; } try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); } };
     if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
       navigator.serviceWorker.getRegistration('/client').then(reg=> go((reg&&reg.waiting)||_updateReady)).catch(()=> go(_updateReady));
     } else go(_updateReady);

@@ -1501,7 +1501,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
   .fx-grid{max-height:26vh;max-height:26dvh;gap:5px}
   .fx-sec{margin:9px 0 3px}
 }
-@media(max-width:820px){ .fx-cmd{font-size:15.5px;padding:12px 15px} }
 /* Interactive flashcard deck (study quiz) */
 .flashcard-deck{border:1px solid var(--neon);border-radius:14px;padding:14px;margin-top:6px;background:rgba(8,5,18,.55);box-shadow:0 0 18px rgba(0,255,255,.12)}
 .fc-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
