@@ -1221,13 +1221,12 @@
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
       const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
     }});
-    // DM list rows + open-thread header: fill name (name → display_name → nip05) + avatar once the
-    // peer's kind-0 arrives, so they don't stay stuck on the raw npub.
+    // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
+    // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
+    // do NOT set it via textContent here, which would strip custom :shortcode: emoji from the name.
     $$('.dm-peer[data-peer]').forEach(n=>{ const p=Store.profile(n.dataset.peer); if(p){
       const a=n.querySelector('.dmav'); if(p.picture && a) a.src=p.picture;
-      const b=n.querySelector('b'); if(b){ const nm=p.name||p.display_name||niceNip05(p.nip05); if(nm) b.textContent=nm; }
     }});
-    $$('.dm-peer-name[data-prof]').forEach(nm=>{ const p=Store.profile(nm.dataset.prof); if(p){ const t=p.name||p.display_name||niceNip05(p.nip05); if(t) nm.textContent=t; }});
     // embedded/quoted notes — fill avatar + name + nip05 once the referenced author's profile loads
     $$('.quoted .name[data-prof]').forEach(nm=>{ const pk=nm.dataset.prof; const p=Store.profile(pk); if(p){
       const q=nm.closest('.quoted'); const a=q&&q.querySelector('.qav'); if(p.picture && a) a.src=p.picture;
@@ -5553,7 +5552,7 @@
     if(e.type==='group'){
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
       const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
-      const who = (p.name||p.display_name||'someone')+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
+      const who = `<span class="name" data-prof="${fp}">${emojiName(fp, p.name||p.display_name||'someone')}</span>`+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
       return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
@@ -5741,6 +5740,38 @@
     try{ m.text=await signer.nip04dec(peer, m.ev.content); }catch(_){ m.text='🔒 (couldn\'t decrypt)'; }
     return m.text;
   }
+  // Shared image-URL test for compose preview strips: a real image extension, OR a bare sha256 path but
+  // ONLY on our own media host (an uploaded Blossom blob, which can be extensionless) — so a random
+  // 64-hex event-id link isn't mistaken for an image (which the strip would then let you delete by ✕).
+  function isImageUrl(u){
+    if(/\.(jpe?g|png|gif|webp|avif|bmp)(\?|#|$)/i.test(u)) return true;
+    try{ const ms=(typeof mediaServer==='function'&&mediaServer())||''; return !!ms && u.indexOf(ms)===0 && /\/[0-9a-f]{64}(\?|#|$)/i.test(u); }catch(_){ return false; }
+  }
+  // Wire a compose <textarea> for image PASTE-to-attach + a live, removable thumbnail strip. Shared by
+  // both DM entry points. Returns sync() to call after programmatic value changes (e.g. send clears the box).
+  function wireImgAttach(inp, strip){
+    if(!inp) return ()=>{};
+    const removeOne=u=>{ const v=inp.value; let i=v.indexOf(u); if(i<0) return; let end=i+u.length;   // remove ONE occurrence + one adjacent space (keep the rest of the text intact)
+      if(v[end]===' '||v[end]==='\n') end++; else if(i>0 && (v[i-1]===' '||v[i-1]==='\n')) i--;
+      inp.value=v.slice(0,i)+v.slice(end); };
+    const sync=()=>{ if(!strip) return; const imgs=(String(inp.value||'').match(/https?:\/\/\S+/g)||[]).filter(isImageUrl);
+      if(!imgs.length){ strip.hidden=true; strip.innerHTML=''; return; }
+      strip.hidden=false;
+      strip.innerHTML=imgs.map(u=> NO_IMAGES
+        ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove">✕</button></span>`
+        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.closest('.dm-att')&&this.closest('.dm-att').remove()"><button class="dm-att-x" title="remove">✕</button></span>`).join('');
+      strip.querySelectorAll('.dm-att-x').forEach(b=> b.onclick=()=>{ removeOne(b.closest('.dm-att').dataset.url); sync(); inp.focus(); }); };
+    inp.addEventListener('input', sync);
+    inp.addEventListener('paste', async e=>{
+      const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
+      if(!files.length) return; e.preventDefault();
+      for(const f of files){ toast('uploading pasted image…');
+        try{ const url=await uploadBlob(f); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }
+        catch(err){ if(typeof _blossomDenied==='function'&&_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed: '+((err&&err.message)||err)); } }
+      sync(); inp.focus();
+    });
+    return sync;
+  }
   function renderMessages(){
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
@@ -5758,7 +5789,7 @@
       const p=profOf(pk); needProfile(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
       const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …');
       const nm = p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
-      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${enc(nm)}</b><div class="muted small">${prev}</div></div></div>`;
+      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
     $('#dm-new').onclick=newDmModal;
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
@@ -5779,10 +5810,12 @@
     modal(`<h3>✉ New message</h3>
       <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
       <div id="dm-ac" class="mention-box hidden"></div>
-      <textarea id="dm-body" placeholder="encrypted message…"></textarea>
+      <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
+      <div class="dm-atts" id="dm-atts-new" hidden></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach">📎 Attach</button><button class="btn btn-ghost small" id="dm-files">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif">🎬 GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
+      const _newSync=wireImgAttach(body, $('#dm-atts-new',root));   // paste-to-attach + preview strip here too
       to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
         const pk=safePk(v); if(pk){ toPk=pk; ac.classList.add('hidden'); return; }
         const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
@@ -5792,7 +5825,7 @@
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
       });
       $('#dm-attach',root).onclick=()=>$('#dm-file',root).click();
-      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ $('#dm-status',root).textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); body.value+=(body.value?'\n':'')+url; }catch(err){ $('#dm-status',root).textContent='upload failed: '+err.message; return; } } $('#dm-status',root).textContent=''; };
+      $('#dm-file',root).onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ $('#dm-status',root).textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); body.value+=(body.value?'\n':'')+url; }catch(err){ $('#dm-status',root).textContent='upload failed: '+err.message; return; } } $('#dm-status',root).textContent=''; _newSync(); };
       $('#dm-files',root).onclick=()=>blossomPicker(body);
       { const g=$('#dm-gif',root); if(g) g.onclick=()=>gifPicker(body); }
       $('#dm-go',root).onclick=async()=>{
@@ -5852,7 +5885,7 @@
     // awaiting it first left the whole pane blank ("clicked and no messages show"). Undecrypted bubbles
     // render a "decrypting…" placeholder and get patched in place below (no re-render, no scroll jump).
     const bubble=m=>`<div class="bubble ${m.mine?'me':'them'}" data-mid="${m.id}">${m.text!=null?linkify(m.text):'<span class="muted small">decrypting…</span>'}</div>`;
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(bubble).join('')}</div>
       <div class="dm-compose">
         <div class="dm-atts" id="dm-atts" hidden></div>
@@ -5871,34 +5904,15 @@
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
     { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ if(!MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } await toggleMute(pk); }; }
     const inp=$('#dm-in');
-    // Attachment preview strip: shows any image URL currently in the input (from 📎 Attach, 🌸 Files, 🎬
-    // GIF, or a PASTED image) as a removable thumbnail, so you see what you're about to send. All paths
-    // update it via a dispatched 'input' event. In data saver it's a compact chip (no thumbnail fetch).
-    const _atts=$('#dm-atts');
-    const _dmImgUrls=t=>(String(t||'').match(/https?:\/\/\S+/g)||[]).filter(u=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)||/\/[0-9a-f]{64}(\?|#|$)/i.test(u));
-    const _syncAtts=()=>{ if(!_atts) return; const imgs=_dmImgUrls(inp.value);
-      if(!imgs.length){ _atts.hidden=true; _atts.innerHTML=''; return; }
-      _atts.hidden=false;
-      _atts.innerHTML=imgs.map(u=> NO_IMAGES
-        ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove">✕</button></span>`
-        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.remove()"><button class="dm-att-x" title="remove">✕</button></span>`).join('');
-      _atts.querySelectorAll('.dm-att-x').forEach(b=> b.onclick=()=>{ const u=b.closest('.dm-att').dataset.url; inp.value=inp.value.split(u).join('').replace(/[ \t]{2,}/g,' ').replace(/\n{2,}/g,'\n').trim(); _syncAtts(); inp.focus(); }); };
-    inp.addEventListener('input', _syncAtts);
+    // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
+    const _syncAtts = wireImgAttach(inp, $('#dm-atts'));
     $('#dm-attach').onclick=()=>$('#dm-file').click();
     $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } } e.target.value=''; _syncAtts(); inp.focus(); };
-    // Paste a screenshot / copied image → upload + attach (mirrors the post composer).
-    inp.addEventListener('paste', async e=>{
-      const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
-      if(!files.length) return; e.preventDefault();
-      for(const f of files){ toast('uploading pasted image…');
-        try{ const url=await uploadBlob(f); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }
-        catch(err){ if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed: '+((err&&err.message)||err)); } }
-      _syncAtts(); inp.focus();
-    });
     $('#dm-files').onclick=()=>blossomPicker(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
-    const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value=''; _syncAtts();
-      try{ await sendDm(pk, t); }catch(e){ toast('dm failed: '+e.message);} };
+    const send=async()=>{ const t=inp.value.trim(); if(!t)return;
+      try{ await sendDm(pk, t); inp.value=''; _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
+      catch(e){ toast('dm failed: '+((e&&e.message)||e)); } };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
     const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
