@@ -882,6 +882,16 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .bubble a{overflow-wrap:anywhere;word-break:break-all}
 .dm-compose{display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1px solid var(--line)}
 .dm-compose .input{margin:0;width:100%;font-size:16.5px;padding:12px 14px;min-height:54px;resize:vertical;font-family:inherit}
+/* Attachment preview strip (pasted/attached images) above the DM input — horizontally scrollable so many
+   attachments never push the input off-screen; thumbnails are a comfortable tap target on mobile. */
+.dm-atts{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:2px 0;scrollbar-width:none}
+.dm-atts::-webkit-scrollbar{display:none}
+.dm-atts[hidden]{display:none}
+.dm-att{position:relative;flex:0 0 auto;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel2)}
+.dm-att img{display:block;width:60px;height:60px;object-fit:cover}
+.dm-att.ds{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;color:var(--cyan);font-size:13px}
+.dm-att-x{position:absolute;top:2px;right:2px;width:20px;height:20px;border:none;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.dm-att.ds .dm-att-x{position:static;width:18px;height:18px;background:rgba(255,255,255,.15)}
 .dm-tools{display:flex;align-items:center;gap:8px}
 .dm-tools .mini{flex-shrink:0;font-size:19px;padding:8px 11px;line-height:1}
 .dm-tools .btn{padding:10px 20px;font-size:16px}

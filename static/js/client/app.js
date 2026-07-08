@@ -4558,7 +4558,7 @@
       const rs=j.results||[];
       if(!rs.length){ grid.innerHTML='<div class="empty">'+(j.error?'GIF search not configured (set a Tenor key in Admin).':'No GIFs.')+'</div>'; return; }
       grid.innerHTML=rs.map(g=>`<img class="gif-item" src="${enc(g.preview)}" data-url="${enc(g.url)}" loading="lazy">`).join('');
-      grid.querySelectorAll('.gif-item').forEach(im=> im.onclick=()=>{ ta.value+=(ta.value?'\n':'')+im.dataset.url+' '; bg.remove(); toast('GIF added'); });
+      grid.querySelectorAll('.gif-item').forEach(im=> im.onclick=()=>{ ta.value+=(ta.value?'\n':'')+im.dataset.url+' '; ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('GIF added'); });
     }
     q.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>load(q.value.trim()),350); };
     load(''); q.focus();
@@ -4585,7 +4585,7 @@
       grid.innerHTML = list.length ? list.map(b=>{
         return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`;
       }).join('') : '<div class="empty">No files yet — upload some in the Files tab.</div>';
-      bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); bg.remove(); toast('attached'); });
+      bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('attached'); });
     })();
   }
 
@@ -5855,7 +5855,8 @@
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name" data-prof="${pk}" style="cursor:pointer">${enc(p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(bubble).join('')}</div>
       <div class="dm-compose">
-        <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message…"></textarea>
+        <div class="dm-atts" id="dm-atts" hidden></div>
+        <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message… (paste an image to attach)"></textarea>
         <div class="dm-tools">
           <button class="mini" id="dm-attach" title="attach">📎</button>
           <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
@@ -5870,11 +5871,33 @@
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
     { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ if(!MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } await toggleMute(pk); }; }
     const inp=$('#dm-in');
+    // Attachment preview strip: shows any image URL currently in the input (from 📎 Attach, 🌸 Files, 🎬
+    // GIF, or a PASTED image) as a removable thumbnail, so you see what you're about to send. All paths
+    // update it via a dispatched 'input' event. In data saver it's a compact chip (no thumbnail fetch).
+    const _atts=$('#dm-atts');
+    const _dmImgUrls=t=>(String(t||'').match(/https?:\/\/\S+/g)||[]).filter(u=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)||/\/[0-9a-f]{64}(\?|#|$)/i.test(u));
+    const _syncAtts=()=>{ if(!_atts) return; const imgs=_dmImgUrls(inp.value);
+      if(!imgs.length){ _atts.hidden=true; _atts.innerHTML=''; return; }
+      _atts.hidden=false;
+      _atts.innerHTML=imgs.map(u=> NO_IMAGES
+        ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove">✕</button></span>`
+        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.remove()"><button class="dm-att-x" title="remove">✕</button></span>`).join('');
+      _atts.querySelectorAll('.dm-att-x').forEach(b=> b.onclick=()=>{ const u=b.closest('.dm-att').dataset.url; inp.value=inp.value.split(u).join('').replace(/[ \t]{2,}/g,' ').replace(/\n{2,}/g,'\n').trim(); _syncAtts(); inp.focus(); }); };
+    inp.addEventListener('input', _syncAtts);
     $('#dm-attach').onclick=()=>$('#dm-file').click();
-    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value?' ':'')+url; }catch(err){ toast('upload failed: '+err.message); } } e.target.value=''; inp.focus(); };
+    $('#dm-file').onchange=async e=>{ const files=[...e.target.files]; for(let i=0;i<files.length;i++){ try{ const url=await uploadBlob(files[i]); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }catch(err){ toast('upload failed: '+((err&&err.message)||err)); } } e.target.value=''; _syncAtts(); inp.focus(); };
+    // Paste a screenshot / copied image → upload + attach (mirrors the post composer).
+    inp.addEventListener('paste', async e=>{
+      const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
+      if(!files.length) return; e.preventDefault();
+      for(const f of files){ toast('uploading pasted image…');
+        try{ const url=await uploadBlob(f); inp.value+=(inp.value&&!/\s$/.test(inp.value)?' ':'')+url; }
+        catch(err){ if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed: '+((err&&err.message)||err)); } }
+      _syncAtts(); inp.focus();
+    });
     $('#dm-files').onclick=()=>blossomPicker(inp);
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
-    const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value='';
+    const send=async()=>{ const t=inp.value.trim(); if(!t)return; inp.value=''; _syncAtts();
       try{ await sendDm(pk, t); }catch(e){ toast('dm failed: '+e.message);} };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
