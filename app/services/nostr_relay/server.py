@@ -551,8 +551,16 @@ class RelayServer:
         else:
             _origin = "direct"
         stored = await self.store.add_event(ev, origin=_origin)
+        if not stored:
+            # add_event did NOT persist the event — a transient insert/commit error (logged in
+            # _add_event_sync) or a replaceable superseded by a newer stored version. Report the truth so
+            # the publisher RETRIES instead of trusting a false OK. Sending OK=true here regardless was
+            # how a mirrored fediverse reply that failed to store still made the bridge record a delivered
+            # row → the personal plane then skipped re-delivery → the user silently missed the reply.
+            self._send(conn, ["OK", eid, False, "error: not stored, retry"])
+            return
         self._send(conn, ["OK", eid, True, ""])
-        if stored:
+        if True:
             if _is_puppet and kind == 0:
                 self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
             self.subs.fanout(ev, self._send)
