@@ -1015,6 +1015,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .thread-focus{border-left:3px solid var(--neon)}
 .thread-focus .note{background:rgba(0,255,255,.06)}
 .thread-parent{opacity:.8}
+/* Threaded conversation view: root post first, replies nested (indented) under their parent, with the
+   post you clicked highlighted. A faint guide line on nested replies shows the indent depth. */
+.thread-node{position:relative}
+.thread-node[style]{border-left:2px solid var(--line)}
+.thread-hl>.note{background:rgba(0,255,255,.07);box-shadow:0 0 0 2px var(--neon) inset;border-radius:12px}
 
 /* notifications */
 .notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:center;font-size:16.5px}

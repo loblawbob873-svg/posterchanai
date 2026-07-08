@@ -7562,22 +7562,60 @@
       let chan=root ? (Store.get(root)||await fetchEvent(root)) : null;
       if(chan){ Store.saveEvent(chan); openChannel(chan, id); return; }
     }
-    // fetch the parent (for reply context) and the replies
-    let parent=null;
-    const es=ev.tags.filter(t=>t[0]==='e');
-    const parentId=((es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1])||[])[1];
-    if(parentId && parentId!==id){ parent=Store.get(parentId); if(!parent){ parent=await fetchEvent(parentId); if(parent) Store.saveEvent(parent); } }
-    const replies=(await Relay.query([{ kinds:[1], '#e':[id], limit:100 }])).filter(r=>r.id!==id);
-    replies.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
-    needProfile(ev.pubkey); if(parent) needProfile(parent.pubkey);
+    // Resolve the thread ROOT so a click on ANY reply opens the whole conversation root-first (no more
+    // clicking up parent-by-parent), then fetch the full reply set and render it as a tree with the
+    // clicked post highlighted + scrolled into view.
+    const rootId = await _threadRoot(ev);
+    let root = rootId===id ? ev : (Store.get(rootId) || await fetchEvent(rootId));
+    if(root) Store.saveEvent(root); else root=ev;   // can't reach the root → treat the clicked post as root
+    const thread=(await Relay.query([{ kinds:[1], '#e':[root.id], limit:200 }])).filter(r=>r.id!==root.id);
+    thread.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
+    needProfile(root.pubkey);
     if(VIEW!=='thread') return;
-    let html='';
-    if(parent) html+=`<div class="thread-parent">${noteHtml(parent)}</div>`;
-    html+=`<div class="thread-focus">${noteHtml(ev)}</div>`;
-    const rs=replies.sort((a,b)=>a.created_at-b.created_at);
-    html+=`<div class="search-section-title">Replies (${rs.length})</div>`;
-    html+= rs.length ? rs.map(e=>noteHtml(e)).join('') : '<div class="empty">No replies yet.</div>';
+    $('#view-title').textContent='Thread';
+    // group replies under their parent (reply-marked e-tag, else last e-tag); orphans hang off the root
+    const byId=new Set([root.id]); thread.forEach(r=>byId.add(r.id));
+    const kids=new Map();
+    for(const r of thread){
+      const res=r.tags.filter(t=>t[0]==='e'&&t[1]);
+      let pid=((res.find(t=>t[3]==='reply')||res.find(t=>t[3]==='root')||res[res.length-1])||[])[1];
+      if(!pid || !byId.has(pid)) pid=root.id;
+      (kids.get(pid) || kids.set(pid,[]).get(pid)).push(r);
+    }
+    const seen=new Set([root.id]);
+    const renderNode=(node,depth)=>{
+      if(seen.has(node.id)) return ''; seen.add(node.id);   // guard against malformed reply cycles
+      const hl = node.id===id ? ' thread-hl' : '';
+      const ind = depth>0 ? ` style="margin-left:${Math.min(depth,5)*14}px"` : '';
+      let h=`<div class="thread-node${hl}" data-tid="${enc(node.id)}"${ind}>${noteHtml(node)}</div>`;
+      for(const c of (kids.get(node.id)||[]).sort((a,b)=>a.created_at-b.created_at)) h+=renderNode(c, depth+1);
+      return h;
+    };
+    // root post first (highlighted if IT was the clicked one), then the count, then its reply subtree
+    let html=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
+    html+=`<div class="search-section-title">${thread.length} repl${thread.length===1?'y':'ies'}</div>`;
+    html+= thread.length ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
+    // center + flash the clicked post (when it isn't the root)
+    if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`); if(el) el.scrollIntoView({block:'center'}); }
+  }
+  // Walk to the thread root: prefer the NIP-10 'root'-marked e-tag, else climb the reply chain (bounded).
+  async function _threadRoot(ev){
+    const es=ev.tags.filter(t=>t[0]==='e' && t[1]);
+    const rootTag=es.find(t=>t[3]==='root'); if(rootTag) return rootTag[1];
+    if(!es.length) return ev.id;                       // no e-tags → already a root post
+    let cur=ev, depth=0;
+    while(depth++ < 20){
+      const ces=cur.tags.filter(t=>t[0]==='e' && t[1]);
+      const rt=ces.find(t=>t[3]==='root'); if(rt) return rt[1];
+      if(!ces.length) return cur.id;
+      const pid=((ces.find(t=>t[3]==='reply')||ces[ces.length-1])||[])[1];
+      if(!pid || pid===cur.id) return cur.id;
+      const par=Store.get(pid) || await fetchEvent(pid);
+      if(!par) return pid;                             // parent unreachable → it's the best root we have
+      Store.saveEvent(par); cur=par;
+    }
+    return cur.id;
   }
 
   // ---------- search (NIP-50 posts + profile lookup) ----------
