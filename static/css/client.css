@@ -82,6 +82,17 @@
   --r:12px; --amb1:transparent; --amb2:transparent;
 }
 
+/* Monero — sexy dark: deep near-black with the signature Monero orange (#FF6600) as a warm neon.
+   Orange primary (routes through --neon/--cyan so buttons, links, glows all glow orange), warm-white
+   text, subtle orange corner washes. A dark theme, so the hardcoded dark surfaces stay readable. */
+:root[data-theme="monero"]{
+  --bg:#0c0b0e; --bg2:#151217; --panel:rgba(28,22,20,.78); --panel2:rgba(41,31,27,.92);
+  --neon:#ff6600; --neon2:#ff8c42; --cyan:#ff6600; --green:#4fb783; --amber:#ffab40; --danger:#ff5a7a;
+  --text:#f4ede7; --muted:#a2968c; --line:rgba(255,102,0,.30);
+  --glow:0 0 12px rgba(255,102,0,.50); --glow-cy:0 0 12px rgba(255,102,0,.42);
+  --r:14px; --amb1:rgba(255,102,0,.09); --amb2:rgba(255,140,66,.05);
+}
+
 /* The cyberpunk-only decor (city skyline "buildings", CRT scanlines, neon grid) belongs to the
    flagship theme only — it looks wrong over the light/retro palettes. Cyberpunk is the bare :root
    (no data-theme attr), so any themed page hides all three. */

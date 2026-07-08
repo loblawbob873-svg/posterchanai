@@ -26,7 +26,7 @@
   // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
   const THEMES = [['cyberpunk','Cyberpunk'],['cherryblossom','Cherry Blossom'],
                   ['professional','Professional'],['win98','Windows 98'],['winxp','Windows XP'],
-                  ['animegirl','Anime Girl 🌸'],['sovietgothic','Soviet Gothic ☭'],['dark','Dark 🌙']];
+                  ['animegirl','Anime Girl 🌸'],['sovietgothic','Soviet Gothic ☭'],['dark','Dark 🌙'],['monero','Monero ɱ']];
   const THEME_SLUGS = new Set(THEMES.map(t=>t[0]));
   // persist defaults true (a SAVED choice). Pass persist=false for a live preview that must NOT stick:
   // preview only repaints; it reverts to the cached/saved theme on reload because pc_theme is untouched.
