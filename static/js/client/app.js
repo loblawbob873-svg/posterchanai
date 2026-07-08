@@ -30,9 +30,10 @@
   const THEME_SLUGS = new Set(THEMES.map(t=>t[0]));
   // persist defaults true (a SAVED choice). Pass persist=false for a live preview that must NOT stick:
   // preview only repaints; it reverts to the cached/saved theme on reload because pc_theme is untouched.
-  // The site-wide default theme the admin set (from /client/config); falls back to professional until
-  // CFG loads or if the admin value is stale. Used wherever no per-user/per-device theme is chosen.
-  function siteDefaultTheme(){ return THEME_SLUGS.has(CFG&&CFG.default_theme) ? CFG.default_theme : 'professional'; }
+  // The site-wide default theme the admin set (from /client/config); falls back to cyberpunk (the
+  // flagship bare-:root theme) until CFG loads or if the admin value is stale. Used wherever no
+  // per-user/per-device theme is chosen.
+  function siteDefaultTheme(){ return THEME_SLUGS.has(CFG&&CFG.default_theme) ? CFG.default_theme : 'cyberpunk'; }
   function applyTheme(slug, persist){
     slug = THEME_SLUGS.has(slug) ? slug : siteDefaultTheme();   // site default when unknown/unset
     if(slug==='cyberpunk') document.documentElement.removeAttribute('data-theme');   // cyberpunk = bare :root

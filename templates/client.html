@@ -17,7 +17,7 @@
     <!-- Apply the theme BEFORE first paint (no flash). Default = Professional (clean, broad appeal)
          for the login page + a fresh visitor; a saved choice (incl. Cyberpunk, the bare :root) wins.
          Cached locally on every theme change/settings load; the Nostr-stored value re-syncs on login. -->
-    <script>try{var d='{{ default_theme|default("professional") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','professional');}</script>
+    <script>try{var d='{{ default_theme|default("cyberpunk") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     <!-- Avatars/media: auto-upgrade http:// to https:// (mixed content is otherwise blocked on
          this https page) and send no Referer (many image CDNs 403 a cross-origin referrer). These
          are the usual reasons a profile's name shows but its picture falls back to the logo. -->

@@ -203,7 +203,7 @@ def init_db():
         from app.services.nostr import DEFAULT_RELAYS as _DEFAULT_RELAYS, DEFAULT_WOT_SEEDS as _DEFAULT_WOT_SEEDS
         default_settings = {
             # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
-            "client_default_theme": "professional",
+            "client_default_theme": "cyberpunk",
             "site_logo_url": "",
             # Nostr ↔ Fediverse bridge — non-secret defaults (instance_url/token/blocked_domains are
             # deployment-specific, left to the schema defaults). Master switch OFF so deploying the

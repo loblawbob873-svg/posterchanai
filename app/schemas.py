@@ -88,9 +88,9 @@ class SettingsUpdate(BaseModel):
 
 class SettingsResponse(BaseModel):
     # Default UI theme for the Nostr web client (/client) — applied to any visitor/device that
-    # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "professional"
-    # if unknown. Stored in the relay like every other setting (restorable via the datastore backup).
-    client_default_theme: str = "professional"
+    # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "cyberpunk" (the
+    # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.
+    client_default_theme: str = "cyberpunk"
     # Custom branding: URL of an image to replace the built-in PosterChan logo in the web client's
     # favicon, login splash and header (Admin → Site Settings). Blank → the default logo. Stored in
     # the relay like every other setting.
@@ -661,7 +661,7 @@ class BridgeAccessRequest(BaseModel):
 class UserSettingsResponse(BaseModel):
     notification_email: Optional[str] = None
     avatar: Optional[str] = None
-    theme: str = "professional"
+    theme: str = "cyberpunk"
     news_sources: str = ""  # Custom sources for the `news` command, one per line: url|name
     # Mail settings
     mail_accounts: List[dict] = []  # List of mail accounts (passwords masked)
