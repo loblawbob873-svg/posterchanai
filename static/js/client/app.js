@@ -2975,11 +2975,14 @@
   function replyContextHtml(ev){
     const pid=replyParentId(ev); if(!pid) return '';
     const o=Store.get(pid);
-    let lbl='↩ reply';
     const pk=(o&&o.pubkey)||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
-    if(pk){ const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name; if(nm) lbl='↩ replying to '+enc(nm); }
     if(!o) needEvent(pid);
-    return `<div class="reply-ctx"><span class="reply-ctx-lbl">${lbl}</span></div>`;
+    if(!pk) return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ reply</span></div>`;
+    const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name;
+    // Parent name is a .name[data-prof] span: renders custom emoji now (emojiName) and gets filled/patched
+    // by decorateProfiles once the author's kind-0 loads — so bridged :shortcode: usernames show as images.
+    const inner = nm ? emojiName(pk,nm) : (NT().nip19.npubEncode(pk).slice(0,12)+'…');
+    return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ replying to <span class="name" data-prof="${pk}">${inner}</span></span></div>`;
   }
   const _evQ=new Set(); let _evT=null;
   function needEvent(id){ if(id&&/^[0-9a-f]{64}$/i.test(id)&&!Store.get(id)){ _evQ.add(id); if(!_evT)_evT=setTimeout(flushEvents,150);} }
