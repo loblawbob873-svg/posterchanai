@@ -2770,6 +2770,9 @@
     for(const card of $$('.note.poll:not([data-poll-done])', scope||document)){
       card.setAttribute('data-poll-done','1');
       const pid=card.dataset.id;
+      // Data saver: skip the per-poll vote tally (a kinds:[1018] '#e' query, limit 1000 — one of the
+      // heaviest per-card fetches). Show the poll + let the user vote; results load when data saver is off.
+      if(NO_IMAGES){ const tot=card.querySelector('.poll-total'); if(tot) tot.textContent='poll results hidden · data saver'; continue; }
       let votes=[]; try{ votes=await Relay.query([{ kinds:[1018], '#e':[pid], limit:1000 }]); }catch(_){}
       const latest=new Map();
       for(const v of votes.sort((a,b)=>a.created_at-b.created_at)) latest.set(v.pubkey, v);
@@ -2969,7 +2972,12 @@
       needAddr(+mc[1], mc[2], mc[3]);
       return `<div class="quoted muted small" data-naload="${enc(key)}">📄 quoted post loading…</div>`; }
     if(!/^[0-9a-f]{64}$/i.test(q)) return '';            // not a valid event ref → don't render junk
-    const o=Store.get(q); if(!o){ needEvent(q); return `<div class="quoted muted small" data-qload="${enc(q)}">quoted post loading…</div>`; }
+    const o=Store.get(q);
+    if(!o){
+      // Data saver: don't eagerly fetch the quoted note — tapping opens it (data-open → openThread).
+      if(NO_IMAGES) return `<div class="quoted muted small" data-open="${enc(q)}">❝ quoted post — tap to load</div>`;
+      needEvent(q); return `<div class="quoted muted small" data-qload="${enc(q)}">quoted post loading…</div>`;
+    }
     return quotedDiv(o);
   }
   function quotedDiv(o){ const p=profOf(o.pubkey); needProfile(o.pubkey);
@@ -7705,7 +7713,9 @@
       const tail=url.slice(u.length);
       let tag;
       const yid=ytId(u);
-      if(yid) tag=`<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
+      if(yid) tag = NO_IMAGES
+        ? `<span class="yt-embed yt-ds" data-yt="${yid}" title="play">▶ YouTube — tap to load</span>`   // data saver: no external thumbnail fetch
+        : `<span class="yt-embed" data-yt="${yid}" title="play"><img class="yt-thumb" src="https://i.ytimg.com/vi/${yid}/hqdefault.jpg" loading="lazy" onerror="this.src='https://i.ytimg.com/vi/${yid}/0.jpg'"><span class="yt-play">▶</span></span>`;
       else if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)) tag=_media(u, null, 'm');
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
@@ -7731,6 +7741,7 @@
           const id = d.type==='note' ? d.data : d.data.id;
           const o = Store.get(id);
           if(o) return pre+quotedDiv(o);                   // already cached → embed now
+          if(NO_IMAGES) return pre+`<div class="quoted muted small" data-open="${enc(id)}">❝ referenced note — tap to load</div>`;  // data saver: no eager fetch
           needEvent(id);                                   // else fetch; patchLoaded swaps it in
           return pre+`<div class="quoted muted small" data-qload="${enc(id)}">referenced note loading…</div>`;
         }
