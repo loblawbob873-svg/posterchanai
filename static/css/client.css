@@ -1019,6 +1019,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* notifications */
 .notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:center;font-size:16.5px}
 .notif .ic{font-size:20px;width:26px;text-align:center}
+/* In-app updater row (pinned atop Notifications when a new build is ready). */
+.upd-notif{cursor:pointer;background:rgba(0,255,255,.08);border-left:3px solid var(--cyan)}
+.upd-notif:hover{background:rgba(0,255,255,.14)}
 .notif .muted.small{font-size:13px}
 .notif.like .ic{color:var(--neon)} .notif.rt .ic{color:var(--green)} .notif.reply .ic{color:var(--cyan)} .notif.mention .ic{color:var(--amber)} .notif.zap .ic{color:var(--amber)}
 .notif img{width:34px;height:34px;border-radius:50%;border:1px solid var(--line)}

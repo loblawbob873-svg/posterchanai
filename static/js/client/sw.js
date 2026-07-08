@@ -7,7 +7,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v181';
+const CACHE = 'pc-nostr-v182';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
@@ -32,8 +32,12 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(()=>self.skipWaiting()).catch(()=>{}));
+  // Precache the shell, but DON'T skipWaiting() automatically — a freshly installed worker waits until
+  // the user accepts the in-app "Update available" prompt, which posts SKIP_WAITING (below). This avoids
+  // reloading the page out from under someone; they choose when to update.
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{}));
 });
+self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
 self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).

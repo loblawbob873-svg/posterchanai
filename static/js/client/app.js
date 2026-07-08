@@ -532,28 +532,23 @@
     updateUserCount(); let _ucT=0; setInterval(()=>{ if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
     if ('serviceWorker' in navigator){
-      // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
-      // PWAs without manual cache-clearing. Only arm this when a controller ALREADY exists at load:
-      // on the very first visit the SW's install→clients.claim() also fires controllerchange, which
-      // used to trigger a spurious second reload right after login/first load.
-      let _refreshing=false;
+      // Reload once the NEW SW takes control. It only takes control after the USER accepts the update
+      // (applyUpdate → postMessage SKIP_WAITING) — the SW no longer skipWaiting()s on its own — so this
+      // reload is always user-initiated (never yanks the page mid-use). Arm only when a controller
+      // already exists at load, so a first-install clients.claim() doesn't cause a spurious reload.
       if(navigator.serviceWorker.controller){
-        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_refreshing) return;
-          // Don't yank the page out from under an in-progress compose (unsaved text in a field). The new
-          // SW is already active (clients.claim), so the next navigation picks it up anyway.
-          const ae=document.activeElement; if(ae && (ae.tagName==='TEXTAREA'||ae.tagName==='INPUT') && ae.value && ae.value.trim()) return;
-          _refreshing=true; location.reload(); });
+        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_swRefreshing) return; _swRefreshing=true; location.reload(); });
       }
-      // updateViaCache:'none' → the browser fetches sw.js from the NETWORK every check instead of an
-      // HTTP cache that can pin the old worker for up to 24h (the reason deploys weren't reaching PWAs).
-      // Then force an update check on load + every 5 min so a new build is picked up promptly; the
-      // controllerchange handler above reloads the page once the new SW activates.
-      // updateViaCache:'none' → the browser fetches sw.js from the NETWORK on each check instead of an
-      // HTTP cache that can pin the old worker for up to 24h (the reason deploys weren't reaching PWAs).
-      // Force ONE update check on load (not on a timer — a periodic check could reload the page mid-use);
-      // the controllerchange handler above reloads once the new SW activates, unless the user is typing.
+      // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
+      // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
+      // 15 min; when a new build finishes installing, _onSwUpdateReady surfaces an "Update available"
+      // entry in the Notifications menu instead of reloading automatically.
       navigator.serviceWorker.register('/client/sw.js',{scope:'/client',updateViaCache:'none'}).then(reg=>{
         try{ reg.update(); }catch(_){}
+        if(reg.waiting && navigator.serviceWorker.controller) _onSwUpdateReady(reg.waiting);
+        reg.addEventListener('updatefound', ()=>{ const nw=reg.installing; if(!nw) return;
+          nw.addEventListener('statechange', ()=>{ if(nw.state==='installed' && navigator.serviceWorker.controller) _onSwUpdateReady(nw); }); });
+        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only (no reload) — prompt appears if a build lands
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
@@ -5430,7 +5425,22 @@
     for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
     return out.slice(0,2000);
   }
-  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length; $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length + (_updateReady?1:0); $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
+  // entry in the Notifications menu (+ bell badge) instead of auto-reloading. applyUpdate tells the waiting
+  // worker to activate (SKIP_WAITING); the controllerchange handler then reloads onto the new build. ----
+  let _swRefreshing=false, _updateReady=null;
+  function _onSwUpdateReady(worker){
+    if(_updateReady) return; _updateReady=worker;
+    try{ bumpNotif(); }catch(_){}                              // light up the bell badge
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // reflect it live if that view is open
+    try{ toast('🔄 Update available — see Notifications'); }catch(_){}
+  }
+  function applyUpdate(){
+    if(!_updateReady){ location.reload(); return; }
+    try{ _updateReady.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); return; }
+    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 1800);   // fallback if controllerchange didn't fire
+  }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
@@ -5449,10 +5459,13 @@
     const all=notifGrouped(notifList().filter(_notifMatch));
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
-    feed.innerHTML = tabs + (all.length
+    // In-app updater: pinned above the list when a new build is ready to install.
+    const upd = _updateReady ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>Update available</b> — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div></div></div>` : '';
+    feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
-      : '<div class="empty">No notifications here.</div>');
+      : (upd ? '' : '<div class="empty">No notifications here.</div>'));
+    { const un=$('#upd-notif',feed); if(un) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
