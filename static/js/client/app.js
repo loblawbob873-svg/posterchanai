@@ -537,7 +537,13 @@
       // reload is always user-initiated (never yanks the page mid-use). Arm only when a controller
       // already exists at load, so a first-install clients.claim() doesn't cause a spurious reload.
       if(navigator.serviceWorker.controller){
-        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_swRefreshing) return; _swRefreshing=true; location.reload(); });
+        // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
+        // build. clients.claim() fires this in EVERY open tab, not just the one that clicked, so guard the
+        // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
+        // until its next navigation. The tab that clicked isn't typing, so it reloads.
+        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_swRefreshing) return;
+          const ae=document.activeElement; if(ae && (ae.tagName==='TEXTAREA'||ae.tagName==='INPUT') && ae.value && ae.value.trim()) return;
+          _swRefreshing=true; location.reload(); });
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
@@ -545,9 +551,13 @@
       // entry in the Notifications menu instead of reloading automatically.
       navigator.serviceWorker.register('/client/sw.js',{scope:'/client',updateViaCache:'none'}).then(reg=>{
         try{ reg.update(); }catch(_){}
+        // Watch a worker for the installed+waiting state (an UPDATE, not first install → controller exists).
+        const track = w => { if(!w) return;
+          if(w.state==='installed' && navigator.serviceWorker.controller){ _onSwUpdateReady(w); return; }
+          w.addEventListener('statechange', ()=>{ if(w.state==='installed' && navigator.serviceWorker.controller) _onSwUpdateReady(w); }); };
         if(reg.waiting && navigator.serviceWorker.controller) _onSwUpdateReady(reg.waiting);
-        reg.addEventListener('updatefound', ()=>{ const nw=reg.installing; if(!nw) return;
-          nw.addEventListener('statechange', ()=>{ if(nw.state==='installed' && navigator.serviceWorker.controller) _onSwUpdateReady(nw); }); });
+        if(reg.installing) track(reg.installing);            // an install already in-flight when register() resolved
+        reg.addEventListener('updatefound', ()=> track(reg.installing));
         setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only (no reload) — prompt appears if a build lands
       }).catch(()=>{});
     }
@@ -3747,12 +3757,14 @@
     const eff=(cat.effects||[]).map(chip).join('');
     const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
     const stk=(cat.chars||[]).map(n=>`<button class="fx-char" data-char="${enc(n)}">🧷 ${enc(n)}</button>`).join('');
-    return '<div class="fx-guide"><b>🎬 Effects studio</b> — your image is attached. Pick <b>one base effect</b>, then optionally <b>add</b> a motion, sticker and caption — they <b>stack together</b>. Hit ▶ Send; when the result appears, tap <b>↩ Send the Reply</b>.'+
-      (enh?'<div class="muted small" style="margin:10px 0 4px">✨ Enhance <span style="opacity:.7">(base — pick one)</span></div><div class="fx-grid">'+enh+'</div>':'')+
-      '<div class="muted small" style="margin:10px 0 4px">🎭 Effects <span style="opacity:.7">(base — pick one, '+((cat.effects||[]).length)+')</span></div><div class="fx-grid">'+eff+'</div>'+
-      '<div class="muted small" style="margin:10px 0 4px">🌀 Motion <span style="opacity:.7">(optional add-on — trippy/glow/alive stack; zoom/shake/pulse one at a time)</span></div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+mots+'</div>'+
-      (stk?'<div class="muted small" style="margin:10px 0 4px">🧷 Sticker <span style="opacity:.7">(optional add-on)</span></div><div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px">'+stk+'</div>':'')+
-      '<div class="muted small" style="margin:10px 0 4px">💬 Caption <span style="opacity:.7">(optional add-on)</span></div><div class="fx-row" style="display:flex;gap:6px"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
+    // Compact layout (esp. mobile, where the keyboard halves the viewport): pick ONE base — Enhance is
+    // shown inline; the large Effects catalog is collapsed behind a <details> so it isn't a wall of chips.
+    return '<div class="fx-guide"><b>🎬 Effects studio</b> — image attached. Pick <b>one base</b>, optionally <b>add</b> motion / sticker / caption (they stack), then ▶ Send.'+
+      (enh?'<div class="fx-sec">✨ Enhance <span class="fx-hint">pick one</span></div><div class="fx-grid">'+enh+'</div>':'')+
+      '<details class="fx-more"><summary>🎭 More effects <span class="fx-hint">('+((cat.effects||[]).length)+' — tap to browse)</span></summary><div class="fx-grid">'+eff+'</div></details>'+
+      '<div class="fx-sec">🌀 Motion <span class="fx-hint">add-on · trippy/glow/alive stack</span></div><div class="fx-row">'+mots+'</div>'+
+      (stk?'<div class="fx-sec">🧷 Sticker <span class="fx-hint">add-on</span></div><div class="fx-row">'+stk+'</div>':'')+
+      '<div class="fx-sec">💬 Caption <span class="fx-hint">add-on</span></div><div class="fx-row"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
@@ -5375,7 +5387,9 @@
       const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
-        if(!(e.pubkey in _followSeen)){ _followSeen[e.pubkey]=seenNotif.last; changed=true; } }
+        // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
+        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0.
+        if(!(e.pubkey in _followSeen)){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
     }catch(_){}
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
@@ -5419,27 +5433,38 @@
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)).sort((a,b)=>_notifTs(b)-_notifTs(a));
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey));
+    // PIN each follower's notification time on FIRST sight (persisted) BEFORE sorting — otherwise a
+    // re-saved contact list (a NEW kind-3 with a fresh created_at) keeps sorting to the top and re-shows
+    // an old follower as "followed you" over and over. _followTs records once; _notifTs then reads it.
+    for(const e of evs){ if(e.kind===3) _followTs(e.pubkey, e.created_at); }
+    evs.sort((a,b)=>_notifTs(b)-_notifTs(a));
     // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
     const seen3=new Set(); const out=[];
     for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
     return out.slice(0,2000);
   }
-  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length + (_updateReady?1:0); $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length + (_updBadge?1:0); $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
-  // entry in the Notifications menu (+ bell badge) instead of auto-reloading. applyUpdate tells the waiting
-  // worker to activate (SKIP_WAITING); the controllerchange handler then reloads onto the new build. ----
-  let _swRefreshing=false, _updateReady=null;
+  // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
+  // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
+  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updPrompted=false;
   function _onSwUpdateReady(worker){
-    if(_updateReady) return; _updateReady=worker;
-    try{ bumpNotif(); }catch(_){}                              // light up the bell badge
-    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // reflect it live if that view is open
+    _updateReady=worker;   // always point at the NEWEST waiting worker (a 2nd deploy supersedes the 1st)
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
+    if(_updPrompted) return; _updPrompted=true;
+    _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell once (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
   function applyUpdate(){
-    if(!_updateReady){ location.reload(); return; }
-    try{ _updateReady.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); return; }
-    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 1800);   // fallback if controllerchange didn't fire
+    // Re-read the CURRENT waiting worker at click time (a 2nd deploy could have superseded _updateReady,
+    // leaving it redundant/never-activating). postMessage → SKIP_WAITING → activate → controllerchange reload.
+    const go = w => { if(!w){ location.reload(); return; }
+      try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); return; }
+      setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 3000); };   // fallback if controllerchange didn't fire (activate cleanup can be slow)
+    if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
+      navigator.serviceWorker.getRegistration('/client').then(reg=> go((reg&&reg.waiting)||_updateReady)).catch(()=> go(_updateReady));
+    } else go(_updateReady);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
@@ -5469,9 +5494,11 @@
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
+    _updBadge=false;   // viewing Notifications clears the one-shot update badge (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
-    // row opens the post; avatar opens the sender's profile (stop the row handler firing too)
-    feed.querySelectorAll('.notif').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
+    // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
+    // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
+    feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
     const more=$('#notif-more'); if(more) more.onclick=async ()=>{
       _notifShown+=25;
@@ -5508,7 +5535,7 @@
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
       const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
       const who = (p.name||p.display_name||'someone')+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
-      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||LOGO;
@@ -5531,7 +5558,7 @@
     else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(e.created_at)}</div></div></div>`;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
