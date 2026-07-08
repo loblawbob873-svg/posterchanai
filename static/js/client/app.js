@@ -7701,7 +7701,7 @@
         if(d.type==='npub' || d.type==='nprofile'){
           const pk = d.type==='npub' ? d.data : d.data.pubkey;
           needProfile(pk); const nm=(Store.profile(pk)||{}).name||(Store.profile(pk)||{}).display_name;
-          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?enc(nm):'profile'}</a>`;
+          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?emojiName(pk,nm):'profile'}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;
