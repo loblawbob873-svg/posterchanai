@@ -904,7 +904,12 @@
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
-    setInterval(()=>{ if(document.hidden) return; let n=0; $$('.note[data-pk]').forEach(el=>{ if(n<60 && !Store.haveProfile(el.dataset.pk)){ needProfile(el.dataset.pk); n++; } }); }, 12000);
+    setInterval(()=>{ if(document.hidden) return; let n=0; const vh=innerHeight||800;
+      $$('.note[data-pk]').forEach(el=>{ if(n>=60 || Store.haveProfile(el.dataset.pk)) return;
+        // Data saver: only backfill profiles for notes near the viewport (the observer handles the rest),
+        // so this sweep doesn't defeat lazy loading by fetching every off-screen author.
+        if(NO_IMAGES){ const r=el.getBoundingClientRect(); if(r.bottom<-600 || r.top>vh+600) return; }
+        needProfile(el.dataset.pk); n++; }); }, 12000);
   }
   function logout(){ Session.clear(); Relay.worker.call('clearKey',{}); location.reload(); }
 
@@ -1152,6 +1157,21 @@
     if(!pk || Store.haveProfile(pk)) return;
     const miss=_profMiss.get(pk); if(miss && Date.now()-miss < _PROF_MISS_TTL) return;  // don't hammer
     _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);
+  }
+  // Lazy profile loading (data saver): on a slow link, fetching an author kind-0 for EVERY note in a
+  // page up front is the biggest cold-load cost. In data saver the feed's eager needProfile calls are
+  // skipped; this observer fetches a note's author profile only as it nears the viewport (600px ahead),
+  // then unobserves. Normal mode is unchanged (eager). decorateProfiles patches the name once it lands.
+  let _profObs=null;
+  function _ensureProfObs(){
+    if(_profObs || typeof IntersectionObserver==='undefined') return _profObs;
+    _profObs=new IntersectionObserver(ents=>{ for(const en of ents){ if(en.isIntersecting){ const pk=en.target.dataset.pk; _profObs.unobserve(en.target); if(pk) needProfile(pk); } } }, { rootMargin:'600px 0px' });
+    return _profObs;
+  }
+  function observeProfiles(scope){
+    if(!NO_IMAGES) return;                       // lazy only in data saver; normal mode already fetched eagerly
+    const ob=_ensureProfObs(); if(!ob) return;
+    $$('.note[data-pk]:not([data-pobs])', scope||document).forEach(el=>{ el.setAttribute('data-pobs','1'); if(!Store.haveProfile(el.dataset.pk)) ob.observe(el); });
   }
   async function flushProfiles(){
     _profT=null; const pks=[..._profQ]; _profQ.clear(); if(!pks.length) return;
@@ -1460,6 +1480,7 @@
       if(preserveScroll) feed.scrollTop=top;
       return;
     }
+    if(_profObs) _profObs.disconnect();   // drop observations on the notes we're about to replace (hydrate re-observes)
     feed.innerHTML = notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
   }
@@ -1550,7 +1571,7 @@
     evs.sort((a,b)=>b.created_at-a.created_at);
     let minTs=until; const frag=document.createDocumentFragment();
     for(const ev of evs){
-      Store.saveEvent(ev); needProfile(ev.pubkey);
+      Store.saveEvent(ev); if(!NO_IMAGES) needProfile(ev.pubkey);   // data saver: older-page authors load lazily via observeProfiles on scroll
       if(ev.created_at<minTs) minTs=ev.created_at;
       if(isMutedView(ev)) continue;
       if(view==='home' && !FOLLOWS.has(ev.pubkey)) continue;
@@ -1563,7 +1584,7 @@
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
-    else if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); }
+    else if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
@@ -2905,7 +2926,7 @@
   }
   function noteCard(ev, prefix=''){
    try{
-    const p = profOf(ev.pubkey); needProfile(ev.pubkey);
+    const p = profOf(ev.pubkey); if(!NO_IMAGES) needProfile(ev.pubkey);   // data saver: observeProfiles fetches lazily as the card nears view
     const mp = mediaParts(ev.content);
     // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
     const bodyTxt = stripQuoteRef(mp.text, ev);
@@ -7648,7 +7669,7 @@
   }
 
   // ---------- helpers ----------
-  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); hydratePolls(scope); }
+  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); hydratePolls(scope); observeProfiles(scope); }
   // Fetch reactions/reposts/replies for the posts currently on screen and show the counts +
   // liked/reposted state (the timeline sub only carries notes, so without this the counts are 0).
   let _ixT=null;
