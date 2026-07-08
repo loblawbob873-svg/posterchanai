@@ -548,7 +548,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
     return UserSettingsResponse(
         notification_email=current_user.notification_email,
         avatar=avatar_url,
-        theme=(getattr(current_user, "theme", None) or "professional"),
+        theme=(getattr(current_user, "theme", None) or "cyberpunk"),
         news_sources=current_user.news_sources or "",
         # Mail settings
         mail_accounts=mail_accounts,
@@ -614,7 +614,7 @@ def update_user_settings(
     if settings.theme is not None:
         from app.schemas import CLIENT_THEMES
         t = settings.theme.strip()
-        current_user.theme = t if t in CLIENT_THEMES else "professional"
+        current_user.theme = t if t in CLIENT_THEMES else "cyberpunk"
 
 
     # Update Calendar & Contacts settings (stored in UserSetting table)
