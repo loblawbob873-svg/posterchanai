@@ -738,7 +738,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* media gallery (pulled out of the text so newlines can't stack them) — capped height */
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .media-row img,.media-row video{max-height:300px;max-width:100%;width:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
-.thread-focus .media-row img,.thread-focus .media-row video{max-height:420px}
+.thread-hl .media-row img,.thread-hl .media-row video{max-height:420px}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 .media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
@@ -1012,9 +1012,6 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .statbtn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0}
 .statbtn:hover{color:var(--cyan)} .statbtn b{color:var(--text);font-size:15px}
 .people-list{max-height:60vh;overflow:auto;margin-top:8px}
-.thread-focus{border-left:3px solid var(--neon)}
-.thread-focus .note{background:rgba(0,255,255,.06)}
-.thread-parent{opacity:.8}
 /* Threaded conversation view: root post first, replies nested (indented) under their parent, with the
    post you clicked highlighted. A faint guide line on nested replies shows the indent depth. */
 .thread-node{position:relative}
