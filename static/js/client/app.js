@@ -529,7 +529,7 @@
         document.querySelectorAll('.logo-img,.brand-logo').forEach(img=>img.src=CFG.logo_url);
       }catch(_){}
     }
-    updateUserCount(); setInterval(()=>updateUserCount(true), 15000);   // WoT size: boot+login only; online: every 15s (onlineOnly → doesn't touch the frozen users count)
+    updateUserCount(); setInterval(()=>{ if(!NO_IMAGES) updateUserCount(true); }, 15000);   // WoT size: boot+login; online refresh every 15s — but skip it in data saver (a needless round trip on a slow link)
     await Store.init();
     if ('serviceWorker' in navigator){
       // auto-reload once when a NEW SW takes control (a deploy update), so it lands on installed
@@ -7551,6 +7551,7 @@
     if(!nip05 || nip05.indexOf('@') < 0){ slot.innerHTML=''; return; }
     const key = pubkey + '|' + nip05.toLowerCase();
     if(_nip05vR.has(key)){ slot.innerHTML = _nip05vR.get(key) ? VCHECK : ''; return; }
+    if(NO_IMAGES){ slot.innerHTML=''; return; }   // data saver: skip the per-profile /client/nip05 round trip (show cached only)
     verifyNip05(pubkey, nip05).then(ok => { if(ok && document.contains(slot)) slot.innerHTML = VCHECK; });
   }
   async function runSearch(q){
@@ -7768,8 +7769,12 @@
 
   // ---------- right column: Hot / Trending (desktop) ----------
   // First paint: build all three sections. Hot is an infinite-scroll feed (see _hot below).
+  // The rightbar EXISTS in the DOM even on mobile (CSS display:none ≤820px), so a bare querySelector
+  // isn't enough — gate on it being VISIBLE, else we run its heavy trending/hot/follows queries for a
+  // sidebar the user can't see (pure waste on a slow phone link).
+  function _rightbarVisible(){ const rb=document.querySelector('.rightbar'); return !!rb && !document.hidden && getComputedStyle(rb).display!=='none'; }
   async function loadRightbar(){
-    if(!document.querySelector('.rightbar')) return;
+    if(!_rightbarVisible()) return;
     loadHot(true);                   // Hot = most-engaged posts, infinite-scroll
     loadTrendingTags();              // Trending = trending hashtags (last 24h)
     loadDiscover();                  // curated hashtag shortcuts for newcomers
@@ -7778,7 +7783,7 @@
   // Routine update (timer): refresh the chip clouds and prepend any freshly-hot posts to the top
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
   function refreshRightbar(){
-    if(document.hidden || !document.querySelector('.rightbar')) return;
+    if(!_rightbarVisible()) return;
     // Only auto-refresh the (heavy: 300-event trending tally + follow reposts) rightbar while the user is
     // on a feed it belongs to. Refreshing trending/hot every interval while reading a Community/Profile/
     // Files view was needless CPU + relay load for content that isn't even being looked at.
