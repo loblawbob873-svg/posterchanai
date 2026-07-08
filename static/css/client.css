@@ -1027,6 +1027,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */
 .act.actxmr{color:#f60} .act.actxmr:hover{color:#ff8a33;border-color:#f60;box-shadow:0 0 14px rgba(255,102,0,.35)}
 .ln-addr.xmr{color:#f60} .ln-addr.xmr:hover{border-color:#f60;box-shadow:0 0 12px rgba(255,102,0,.35)}
+/* Monero tx-proof (optional): collapsible txid + proof-signature inputs in the tip modal. */
+.xmr-proof{margin-top:8px}
+.xmr-proof>summary{cursor:pointer;font-size:13px;color:var(--cyan);padding:6px 0;list-style:none}
+.xmr-proof>summary::-webkit-details-marker{display:none}
+.xmr-proof>summary::before{content:'▸ '}
+.xmr-proof[open]>summary::before{content:'▾ '}
+.xmr-proof .input{margin-top:6px;width:100%}
+.xmr-proof textarea.input{resize:vertical;min-height:52px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all}
 .xmr-qr{display:flex;justify-content:center;align-items:center;min-height:170px;margin:10px 0}
 .xmr-qr img{width:208px;height:208px;background:#fff;border-radius:10px;padding:7px;box-sizing:border-box}
 .follow-stats{display:flex;gap:18px;margin-top:10px}

@@ -182,10 +182,11 @@
         throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
       }
     }
-    // Interop: if you publish a Monero address to receive tips, stamp it on your kind-1 notes (like
-    // Nosmero) so ANY client can tip you straight from a post — most Monero-tipping clients read the
-    // note's `monero_address` tag, not your kind-0 profile. Only add it when it isn't already present.
-    if(kind===1){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !(tags||[]).some(t=>t&&t[0]==='monero_address')) tags=(tags||[]).concat([['monero_address', my]]); }catch(_){} }
+    // Interop (OPT-IN, default off): stamp your Monero address on your kind-1 notes (like Nosmero) so ANY
+    // client can tip you straight from a post. Off by default — attaching a receiving address to EVERY post
+    // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
+    // Profile if you want max tippability. Your address is still readable from your kind-0 profile regardless.
+    if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !(tags||[]).some(t=>t&&t[0]==='monero_address')) tags=(tags||[]).concat([['monero_address', my]]); }catch(_){} }
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
@@ -2978,7 +2979,8 @@
     const cwTag = ev.tags.find(t=>t[0]==='content-warning');
     const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
-    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}">
+    const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
+    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}>
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
@@ -2995,7 +2997,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react">${liked||'😀'} <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${isXmrAddr(xmrForNote(ev))?' or Monero':''}"><span class="tipbolt">⚡${isXmrAddr(xmrForNote(ev))?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?' or Monero':''}"><span class="tipbolt">⚡${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -3185,9 +3187,9 @@
       if(a==='quote') return compose({quote:id});
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
-      if(a==='tip') return doTip(id,pk);
+      if(a==='tip') return doTip(id,pk,art.dataset.xmr);
       if(a==='zap') return doZap(id,pk);
-      if(a==='xmrtip') return doXmrTip(id,pk);
+      if(a==='xmrtip') return doXmrTip(id,pk,art.dataset.xmr);
       if(a==='bookmark') return toggleBookmark(id,btn);
       if(a==='copyid'){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.neventEncode({id}))); toast('link copied'); }catch(_){ try{ navigator.clipboard.writeText(_webLink(NT().nip19.noteEncode(id))); toast('link copied'); }catch(__){ navigator.clipboard.writeText(id); toast('id copied'); } } return; }
       if(a==='translate') return translatePost(id);
@@ -3279,11 +3281,14 @@
   // Combined tip entry (the ⚡ button). If the author supports BOTH Lightning and Monero, let the user
   // pick; otherwise go straight to whichever they have (Lightning is the default, so doZap still surfaces
   // "no lightning address" when they have neither).
-  async function doTip(noteId, pk){
+  async function doTip(noteId, pk, cardXmr){
     const p=profOf(pk)||{};
     const hasLn=!!(p.lud16||p.lud06);
     const ev=noteId?Store.get(noteId):null;
-    const hasXmr=isXmrAddr(ev?xmrForNote(ev):xmrOf(p));   // note's monero_address tag counts (Nosmero puts it there, not the profile)
+    // Prefer the address resolved at render (passed from the card) — the note may since have been evicted
+    // from Store, which would otherwise drop its per-note monero_address tag and misroute the tip.
+    const xmrAddr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev?xmrForNote(ev):xmrOf(p));
+    const hasXmr=isXmrAddr(xmrAddr);
     if(hasLn && hasXmr){
       modal(`<h3>Tip ${enc(p.name||p.display_name||'')}</h3>
         <p class="muted small">How would you like to tip?</p>
@@ -3291,10 +3296,10 @@
           <button class="btn btn-cyan full" id="tip-xmr">ɱ Monero<span class="muted small"> — private, from your wallet</span></button></div>`,
         root=>{
           $('#tip-ln',root).onclick=()=>{ closeModal(); doZap(noteId,pk); };
-          $('#tip-xmr',root).onclick=()=>{ closeModal(); doXmrTip(noteId,pk); };
+          $('#tip-xmr',root).onclick=()=>{ closeModal(); doXmrTip(noteId,pk,xmrAddr); };
         });
     } else if(hasXmr){
-      doXmrTip(noteId,pk);
+      doXmrTip(noteId,pk,xmrAddr);
     } else {
       doZap(noteId,pk);
     }
@@ -3349,9 +3354,10 @@
   // wallet app prefilled). Nothing touches this server except the QR render (segno, /client/qr —
   // stays on the box, no third-party leak). On confirmation we post a public kind-1 tip note (the
   // chosen "always post" behaviour) crediting the recipient — there's no cryptographic receipt for XMR.
-  async function doXmrTip(noteId, pk){
+  async function doXmrTip(noteId, pk, cardXmr){
     const p=profOf(pk); const ev=noteId?Store.get(noteId):null;
-    const addr = ev ? xmrForNote(ev) : xmrOf(p);   // prefer the note's own monero_address tag (Nosmero et al.), else the profile
+    // Prefer the render-time address (passed from the card) so an evicted note doesn't lose its per-note tag.
+    const addr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev ? xmrForNote(ev) : xmrOf(p));
     if(!isXmrAddr(addr)){ toast('no Monero address on this post or profile'); return; }
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
@@ -3360,6 +3366,10 @@
       <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" placeholder="amount (XMR) — optional"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
+      ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (optional)</summary>
+        <p class="muted small">Optional — makes the tip publicly verifiable. In your wallet run <code>get_tx_proof &lt;txid&gt; ${enc(addr.slice(0,10))}…</code> and paste both below; anyone can then confirm the payment with <code>check_tx_proof</code>.</p>
+        <input class="input" id="xmr-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false">
+        <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them">✓ I sent it</button>`}</div>`,
       root=>{
         const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root); let _u=null, _t=null;
@@ -3374,16 +3384,27 @@
         sync(); renderQr();
         amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
         $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the Monero address:',addr)); }catch(_){ prompt('Copy the Monero address:',addr); } };
-        { const s=$('#xmr-sent',root); if(s) s.onclick=()=>{ const a=amtVal(); closeModal(); _postXmrTipNote(noteId, pk, a); }; }
+        { const s=$('#xmr-sent',root); if(s) s.onclick=()=>{ const a=amtVal();
+          const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
+          const proof=(($('#xmr-prf',root)||{}).value||'').trim();
+          if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
+          if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
+          closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
   }
-  async function _postXmrTipNote(noteId, pk, amt){
+  async function _postXmrTipNote(noteId, pk, amt, addr, txid, proof){
     try{
       const who='nostr:'+NT().nip19.npubEncode(pk);
       // Point readers at where Monero tipping works (there's no cross-client XMR standard), so the
       // recipient/onlookers know how to receive/send XMR tips on Nostr.
-      const body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero\n\n— sent with PosterChan AI; add your XMR address at https://poster.place to receive Monero tips too`;
+      let body=`ɱ Tipped${amt?(' '+amt+' XMR'):''} ${who} via Monero`;
+      if(txid) body+=`\n\nTx: ${txid}`+(proof?' 🔐 verifiable — check_tx_proof (proof attached)':'');
+      body+=`\n\n— sent with PosterChan AI; add your XMR address at https://poster.place to receive Monero tips too`;
       const tags=[['p',pk],['t','monerotip'],['t','monero']].concat(noteId?[['e',noteId]]:[]).concat(amt?[['amount_xmr',String(amt)]]:[]);
+      // Self-contained Monero tx proof (verify with check_tx_proof <txid> <addr> "" <proof>). One tag so
+      // it can't be confused with the author's own monero_address tip-jar tag that publish() may add.
+      if(proof && txid && isXmrAddr(addr)) tags.push(['monero_proof', txid, String(addr).trim(), proof]);
+      else if(txid) tags.push(['txid', txid]);
       await publish(1, body, tags); toast('ɱ tip note posted');
     }catch(e){ toast('could not post tip note'); }
   }
@@ -6296,6 +6317,7 @@
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
+      <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
@@ -6304,6 +6326,7 @@
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
+        { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
         // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
