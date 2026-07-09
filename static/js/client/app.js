@@ -6860,23 +6860,17 @@
   // (/client/translate), show both in a big transcript, and optionally speak the translation aloud
   // (ltSpeak → /client/narrate, voice matched to the target language). Reuses the AI chat's mic pattern.
   const LT_LANGS=[
-    // code, name, flag, script bucket, TTS voice (matched to the language, incl. Latin ones so a
-    // French/Spanish/… translation isn't spoken with an English voice)
-    ['en','English','🇬🇧','lat','en-GB-SoniaNeural'],['th','Thai','🇹🇭','thai','th-TH-PremwadeeNeural'],
-    ['es','Spanish','🇪🇸','lat','es-ES-ElviraNeural'],['fr','French','🇫🇷','lat','fr-FR-DeniseNeural'],
-    ['de','German','🇩🇪','lat','de-DE-KatjaNeural'],['it','Italian','🇮🇹','lat','it-IT-ElsaNeural'],
-    ['pt','Portuguese','🇵🇹','lat','pt-PT-RaquelNeural'],['ru','Russian','🇷🇺','cyril','ru-RU-SvetlanaNeural'],
-    ['zh','Chinese','🇨🇳','han','zh-CN-XiaoxiaoNeural'],['ja','Japanese','🇯🇵','kana','ja-JP-NanamiNeural'],
-    ['ko','Korean','🇰🇷','hang','ko-KR-SunHiNeural'],['ar','Arabic','🇸🇦','arab','ar-SA-ZariyahNeural'],
-    ['hi','Hindi','🇮🇳','deva','hi-IN-SwaraNeural'],['vi','Vietnamese','🇻🇳','lat','vi-VN-HoaiMyNeural'],
-    ['id','Indonesian','🇮🇩','lat','id-ID-GadisNeural'],['tl','Filipino','🇵🇭','lat','fil-PH-BlessicaNeural'],
-    ['uk','Ukrainian','🇺🇦','cyril','uk-UA-PolinaNeural'],['tr','Turkish','🇹🇷','lat','tr-TR-EmelNeural'],
-    ['pl','Polish','🇵🇱','lat','pl-PL-ZofiaNeural'],['nl','Dutch','🇳🇱','lat','nl-NL-ColetteNeural'],
+    // code, name, flag, script bucket. (The TTS voice per language lives SERVER-side in TTSService —
+    // /client/narrate is passed `lang` and picks the voice, so the voice table isn't duplicated here.)
+    ['en','English','🇬🇧','lat'],['th','Thai','🇹🇭','thai'],['es','Spanish','🇪🇸','lat'],['fr','French','🇫🇷','lat'],
+    ['de','German','🇩🇪','lat'],['it','Italian','🇮🇹','lat'],['pt','Portuguese','🇵🇹','lat'],['ru','Russian','🇷🇺','cyril'],
+    ['zh','Chinese','🇨🇳','han'],['ja','Japanese','🇯🇵','kana'],['ko','Korean','🇰🇷','hang'],['ar','Arabic','🇸🇦','arab'],
+    ['hi','Hindi','🇮🇳','deva'],['vi','Vietnamese','🇻🇳','lat'],['id','Indonesian','🇮🇩','lat'],['tl','Filipino','🇵🇭','lat'],
+    ['uk','Ukrainian','🇺🇦','cyril'],['tr','Turkish','🇹🇷','lat'],['pl','Polish','🇵🇱','lat'],['nl','Dutch','🇳🇱','lat'],
   ];
   const _ltRow=c=>LT_LANGS.find(l=>l[0]===c);
   const _ltName=c=>{ const f=_ltRow(c); return f?f[1]:(c||'').toUpperCase(); };
   const _ltFlag=c=>{ const f=_ltRow(c); return f?f[2]:'🏳️'; };
-  const _ltVoice=c=>{ const f=_ltRow(c); return f?f[4]:null; };
   function _ltPair(){ try{ const p=JSON.parse(localStorage.getItem('pcTranslatePair')||'null'); if(p&&p.a&&p.b&&_ltRow(p.a)&&_ltRow(p.b)) return p; }catch(_){} return { a:'en', b:'th' }; }
   function _ltSavePair(p){ try{ localStorage.setItem('pcTranslatePair', JSON.stringify(p)); }catch(_){} }
   let _ltSpeak = (localStorage.getItem('pcTranslateSpeak')||'1')!=='0';
@@ -6937,9 +6931,14 @@
     $('#lt-speak').onclick=()=>{ _ltSpeak=!_ltSpeak; try{ localStorage.setItem('pcTranslateSpeak', _ltSpeak?'1':'0'); }catch(_){} $('#lt-speak').textContent=_ltSpeak?'🔊':'🔇'; if(!_ltSpeak){ try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){} } };
     $('#lt-mic').onclick=ltToggleMic;
   }
-  // Stop an in-progress recording when leaving the view (called from renderView) so the mic/getUserMedia
-  // stream is released instead of staying hot; the cancel flag makes onstop skip processing the clip.
-  function ltTeardown(){ try{ if(_ltRec && _ltRec.state==='recording'){ _ltCancel=true; _ltRec.stop(); } }catch(_){} }
+  // Called from renderView when leaving Live Translate. Sets the cancel flag (so onstop skips the clip
+  // AND an in-flight pipeline skips its final render/speak — no audio playing on another screen),
+  // stops any active recording (releases the mic/getUserMedia stream), and halts current narration.
+  function ltTeardown(){
+    _ltCancel=true;
+    try{ if(_ltRec && _ltRec.state==='recording') _ltRec.stop(); }catch(_){}
+    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
+  }
   function _ltStatus(s){ const el=$('#lt-status'); if(el) el.textContent=s||''; }
   function _ltAddTurn(srcLang, original, tgtLang, translated){
     const log=$('#lt-log'); if(!log) return;
@@ -6949,14 +6948,14 @@
       +`<div class="lt-tr"><span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
     log.appendChild(el); log.scrollTop=log.scrollHeight;
   }
-  // Speak the translation in a voice MATCHED to the target language (edge-tts voice map), so Latin-script
-  // targets (Spanish/French/…) aren't read with the English default voice.
+  // Speak the translation. Passes the target language code so /client/narrate (TTSService) picks a
+  // language-matched voice — including Latin-script targets (Spanish/French/…) the English default
+  // voice would mispronounce. The voice table lives on the server (single source of truth).
   async function ltSpeak(text, lang){
-    const voice=_ltVoice(lang);
     try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
     try{
       const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ text:(text||'').slice(0,2000), voice })});
+        body:JSON.stringify({ text:(text||'').slice(0,2000), lang })});
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.audio) return;
       _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio); _narrateAudio.play().catch(()=>{});
@@ -7004,16 +7003,26 @@
         if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'could not hear that — try again'); return; }
         text=j.text.trim(); lang=(j.lang||'').toLowerCase();
       }catch(_){ _ltStatus(''); toast('transcription failed'); return; }
-      const [src, tgt]=_ltRoute(lang, text, a, b);
+      let [src, tgt]=_ltRoute(lang, text, a, b);
       _ltStatus('translating…');
-      let translated='';
-      try{
-        const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({ text, to:_ltName(tgt) })});
-        const j=await r.json().catch(()=>({}));
-        if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'translation unavailable'); return; }
-        translated=j.text.trim();
-      }catch(_){ _ltStatus(''); toast('translate failed'); return; }
+      // translate() posts the target ISO CODE (like the timeline translatePost caller), so
+      // /client/translate's "already in the target language" check works and returns the text
+      // UNCHANGED when we mis-routed — that's our signal to swap and retry with the other language.
+      const translate=async(toCode)=>{
+        try{
+          const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ text, to:toCode })});
+          const j=await r.json().catch(()=>({}));
+          return (r.ok && (j.text||'').trim()) ? j.text.trim() : (j.error ? {err:j.error} : {err:'translation unavailable'});
+        }catch(_){ return {err:'translate failed'}; }
+      };
+      let translated=await translate(tgt);
+      if(translated && translated.err){ _ltStatus(''); toast(translated.err); return; }
+      if(translated===text){   // endpoint said "already in the target language" → we routed backwards
+        const swapped=await translate(src);   // translate to the OTHER side instead
+        if(swapped && !swapped.err && swapped!==text){ [src, tgt]=[tgt, src]; translated=swapped; }
+      }
+      if(_ltCancel){ _ltStatus(''); return; }   // left the view mid-pipeline → don't render/speak
       _ltStatus('');
       _ltAddTurn(src, text, tgt, translated);
       if(_ltSpeak) ltSpeak(translated, tgt);   // TTS in the target language's own voice

@@ -58,6 +58,19 @@ class TTSService:
         "ja": "ja-JP-NanamiNeural", "ko": "ko-KR-SunHiNeural", "zh": "zh-CN-XiaoxiaoNeural",
     }
 
+    # Explicit language → edge-tts voice (covers Latin-script languages too, which script detection
+    # can't distinguish). Callers that KNOW the target language (e.g. Live Translate) pass `lang` and
+    # get the right voice; this keeps the voice table in ONE place (server) instead of the client.
+    _LANG_VOICE = {
+        "en": "en-GB-SoniaNeural", "es": "es-ES-ElviraNeural", "fr": "fr-FR-DeniseNeural",
+        "de": "de-DE-KatjaNeural", "it": "it-IT-ElsaNeural", "pt": "pt-PT-RaquelNeural",
+        "nl": "nl-NL-ColetteNeural", "pl": "pl-PL-ZofiaNeural", "tr": "tr-TR-EmelNeural",
+        "ru": "ru-RU-SvetlanaNeural", "uk": "uk-UA-PolinaNeural", "th": "th-TH-PremwadeeNeural",
+        "zh": "zh-CN-XiaoxiaoNeural", "ja": "ja-JP-NanamiNeural", "ko": "ko-KR-SunHiNeural",
+        "ar": "ar-SA-ZariyahNeural", "hi": "hi-IN-SwaraNeural", "vi": "vi-VN-HoaiMyNeural",
+        "id": "id-ID-GadisNeural", "tl": "fil-PH-BlessicaNeural",
+    }
+
     def _voice_for_text(self, text: str) -> Optional[str]:
         """A voice matching the text's DOMINANT non-Latin script, or None to keep the configured
         (Latin/English) default. Only switches when the script is a real share (≥4 chars) so a stray
@@ -84,17 +97,20 @@ class TTSService:
     async def generate_speech(
         self,
         text: str,
-        voice: Optional[str] = None
+        voice: Optional[str] = None,
+        lang: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate speech and return as base64 MP3"""
+        """Generate speech and return as base64 MP3. `lang` (ISO code) picks a language-matched voice
+        when the caller knows the target language; `voice` overrides everything."""
         cleaned_text = self._clean_text(text)
         if not cleaned_text:
             logger.debug(f"TTS: No text after cleaning (original length: {len(text) if text else 0})")
             return None
 
-        # An explicit voice wins; else auto-match the text's script (so foreign/translated text is
-        # actually spoken), else the configured default.
-        voice = voice or self._voice_for_text(cleaned_text) or self.default_voice
+        # Priority: explicit voice > language-matched voice (Live Translate) > script auto-detect
+        # (foreign text pasted with no lang) > the configured default.
+        voice = (voice or self._LANG_VOICE.get((lang or "").lower())
+                 or self._voice_for_text(cleaned_text) or self.default_voice)
         logger.debug(f"TTS: Generating speech for {len(cleaned_text)} chars with voice {voice}")
 
         try:

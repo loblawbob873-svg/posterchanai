@@ -366,7 +366,7 @@ async def client_narrate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "no text"}, status_code=400)
     try:
         from app.services.tts_service import TTSService
-        audio = await TTSService(db).generate_speech(text, (body.get("voice") or None))
+        audio = await TTSService(db).generate_speech(text, (body.get("voice") or None), (body.get("lang") or None))
         if not audio:
             return JSONResponse({"error": "narration unavailable"}, status_code=503)
         return JSONResponse({"audio": audio})
