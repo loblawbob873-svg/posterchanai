@@ -2543,7 +2543,8 @@
         body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); node.style.opacity=''; return; }
-      if(j.text.trim()===src.trim()){ node.style.opacity=''; toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
+      // normalized compare: /client/translate collapses whitespace on its unchanged (already-target) return
+      if(_ltNorm(j.text)===_ltNorm(src)){ node.style.opacity=''; toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
       node.style.opacity=''; node.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>';
     }catch(_){ toast('translate failed'); node.style.opacity=''; }
   }
@@ -3572,7 +3573,7 @@
         const j=await r.json().catch(()=>({}));
         ta.disabled=false;
         if(r.ok && j.text){
-          if(j.text.trim()===text.trim()){ ta.value=old; toast('no change — already '+to+'? (or just sounds/emoji)'); }
+          if(_ltNorm(j.text)===_ltNorm(text)){ ta.value=old; toast('no change — already '+to+'? (or just sounds/emoji)'); }
           else { ta.value=j.text; ta.focus(); ta.dispatchEvent(new Event('input')); toast('translated → '+to); }
         } else { ta.value=old; toast(j.error||'translation unavailable'); }
       }catch(e){ ta.disabled=false; ta.value=old; toast('translate failed'); }
@@ -3694,7 +3695,8 @@
         body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); nodes.forEach(n=>n.style.opacity=''); return; }
-      if(j.text.trim()===src.trim()){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
+      // normalized compare: /client/translate collapses whitespace on its unchanged (already-target) return
+      if(_ltNorm(j.text)===_ltNorm(src)){ nodes.forEach(n=>n.style.opacity=''); toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
       nodes.forEach(n=>{ n.style.opacity='';
         n.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>'; });
     }catch(_){ toast('translate failed'); nodes.forEach(n=>n.style.opacity=''); }

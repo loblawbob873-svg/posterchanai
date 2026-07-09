@@ -297,7 +297,16 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
                    "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", "ja": "Japanese",
                    "ko": "Korean", "ar": "Arabic", "hi": "Hindi", "vi": "Vietnamese", "id": "Indonesian",
                    "tl": "Filipino", "uk": "Ukrainian", "tr": "Turkish", "pl": "Polish", "nl": "Dutch"}
-    to_name = _LANG_NAMES.get(to.strip().lower()[:2], to)
+    # Map an ISO code ("en"/"th") or locale ("en-US") → language NAME for the prompt (LLMs render "into
+    # Filipino" better than "into tl"). Leave a FREE-TEXT name untouched — a composer "Other…" entry like
+    # "Traditional Chinese" must NOT be [:2]-mapped ("tr" → Turkish).
+    _to_l = to.strip().lower()
+    if _to_l in _LANG_NAMES:
+        to_name = _LANG_NAMES[_to_l]
+    elif "-" in _to_l and _to_l[:2] in _LANG_NAMES:   # locale code e.g. en-us / pt-br
+        to_name = _LANG_NAMES[_to_l[:2]]
+    else:
+        to_name = to
     if not text:
         return JSONResponse({"error": "no text"}, status_code=400)
     text = text[:4000]   # cap: posts are short; bounds the LLM work
