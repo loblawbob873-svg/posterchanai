@@ -1265,6 +1265,7 @@
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
     if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
+    if(VIEW!=='translate') ltTeardown();   // leaving Live Translate mid-record → release the mic stream
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
     if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
     if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
@@ -6835,7 +6836,7 @@
         const blob=new Blob(_aiChunks,{type:(_aiRec&&_aiRec.mimeType)||'audio/webm'});
         if(blob.size<200){ return; }
         toast('transcribing…');
-        const fd=new FormData(); fd.append('audio', blob, 'voice.webm');
+        const fd=new FormData(); fd.append('audio', blob, 'voice.webm'); fd.append('language','en');   // AI-chat voice input stays English (Live Translate uses auto-detect)
         try{
           const r=await fetch('/client/stt',{method:'POST',body:fd});
           const j=await r.json().catch(()=>({}));
@@ -6857,20 +6858,59 @@
   // Push-to-talk: one big mic button. Speak in either of the room's two chosen languages; Whisper
   // (/client/stt, language=auto) transcribes + detects which was spoken, we translate to the OTHER
   // (/client/translate), show both in a big transcript, and optionally speak the translation aloud
-  // (aiSpeak → /client/narrate, voice auto-picked by script). Reuses the AI chat's mic + TTS plumbing.
+  // (ltSpeak → /client/narrate, voice matched to the target language). Reuses the AI chat's mic pattern.
   const LT_LANGS=[
-    ['en','English','🇬🇧'],['th','Thai','🇹🇭'],['es','Spanish','🇪🇸'],['fr','French','🇫🇷'],
-    ['de','German','🇩🇪'],['it','Italian','🇮🇹'],['pt','Portuguese','🇵🇹'],['ru','Russian','🇷🇺'],
-    ['zh','Chinese','🇨🇳'],['ja','Japanese','🇯🇵'],['ko','Korean','🇰🇷'],['ar','Arabic','🇸🇦'],
-    ['hi','Hindi','🇮🇳'],['vi','Vietnamese','🇻🇳'],['id','Indonesian','🇮🇩'],['tl','Filipino','🇵🇭'],
-    ['uk','Ukrainian','🇺🇦'],['tr','Turkish','🇹🇷'],['pl','Polish','🇵🇱'],['nl','Dutch','🇳🇱'],
+    // code, name, flag, script bucket, TTS voice (matched to the language, incl. Latin ones so a
+    // French/Spanish/… translation isn't spoken with an English voice)
+    ['en','English','🇬🇧','lat','en-GB-SoniaNeural'],['th','Thai','🇹🇭','thai','th-TH-PremwadeeNeural'],
+    ['es','Spanish','🇪🇸','lat','es-ES-ElviraNeural'],['fr','French','🇫🇷','lat','fr-FR-DeniseNeural'],
+    ['de','German','🇩🇪','lat','de-DE-KatjaNeural'],['it','Italian','🇮🇹','lat','it-IT-ElsaNeural'],
+    ['pt','Portuguese','🇵🇹','lat','pt-PT-RaquelNeural'],['ru','Russian','🇷🇺','cyril','ru-RU-SvetlanaNeural'],
+    ['zh','Chinese','🇨🇳','han','zh-CN-XiaoxiaoNeural'],['ja','Japanese','🇯🇵','kana','ja-JP-NanamiNeural'],
+    ['ko','Korean','🇰🇷','hang','ko-KR-SunHiNeural'],['ar','Arabic','🇸🇦','arab','ar-SA-ZariyahNeural'],
+    ['hi','Hindi','🇮🇳','deva','hi-IN-SwaraNeural'],['vi','Vietnamese','🇻🇳','lat','vi-VN-HoaiMyNeural'],
+    ['id','Indonesian','🇮🇩','lat','id-ID-GadisNeural'],['tl','Filipino','🇵🇭','lat','fil-PH-BlessicaNeural'],
+    ['uk','Ukrainian','🇺🇦','cyril','uk-UA-PolinaNeural'],['tr','Turkish','🇹🇷','lat','tr-TR-EmelNeural'],
+    ['pl','Polish','🇵🇱','lat','pl-PL-ZofiaNeural'],['nl','Dutch','🇳🇱','lat','nl-NL-ColetteNeural'],
   ];
-  const _ltName=c=>{ const f=LT_LANGS.find(l=>l[0]===c); return f?f[1]:(c||'').toUpperCase(); };
-  const _ltFlag=c=>{ const f=LT_LANGS.find(l=>l[0]===c); return f?f[2]:'🏳️'; };
-  function _ltPair(){ try{ const p=JSON.parse(localStorage.getItem('pcTranslatePair')||'null'); if(p&&p.a&&p.b) return p; }catch(_){} return { a:'en', b:'th' }; }
+  const _ltRow=c=>LT_LANGS.find(l=>l[0]===c);
+  const _ltName=c=>{ const f=_ltRow(c); return f?f[1]:(c||'').toUpperCase(); };
+  const _ltFlag=c=>{ const f=_ltRow(c); return f?f[2]:'🏳️'; };
+  const _ltVoice=c=>{ const f=_ltRow(c); return f?f[4]:null; };
+  function _ltPair(){ try{ const p=JSON.parse(localStorage.getItem('pcTranslatePair')||'null'); if(p&&p.a&&p.b&&_ltRow(p.a)&&_ltRow(p.b)) return p; }catch(_){} return { a:'en', b:'th' }; }
   function _ltSavePair(p){ try{ localStorage.setItem('pcTranslatePair', JSON.stringify(p)); }catch(_){} }
   let _ltSpeak = (localStorage.getItem('pcTranslateSpeak')||'1')!=='0';
-  let _ltRec=null, _ltChunks=[], _ltMicStarting=false;
+  let _ltRec=null, _ltChunks=[], _ltMicStarting=false, _ltBusy=false, _ltCancel=false;
+
+  // Dominant Unicode script of the transcript — used to disambiguate the two languages when Whisper's
+  // detected code is empty/near-miss (reliable for cross-script pairs like English+Thai/CJK/Arabic).
+  function _ltScriptOf(text){
+    const c={};
+    for(const ch of (text||'')){ const o=ch.codePointAt(0); let k=null;
+      if(o>=0x0E00&&o<=0x0E7F)k='thai'; else if(o>=0x0400&&o<=0x04FF)k='cyril';
+      else if(o>=0x0600&&o<=0x06FF)k='arab'; else if(o>=0x0900&&o<=0x097F)k='deva';
+      else if(o>=0x3040&&o<=0x30FF)k='kana'; else if(o>=0xAC00&&o<=0xD7AF)k='hang';
+      else if(o>=0x4E00&&o<=0x9FFF)k='han';
+      else if((o>=0x41&&o<=0x5A)||(o>=0x61&&o<=0x7A)||(o>=0xC0&&o<=0x24F))k='lat';
+      else continue;
+      c[k]=(c[k]||0)+1;
+    }
+    let top=null,n=0; for(const k in c){ if(c[k]>n){ n=c[k]; top=k; } }
+    return top;
+  }
+  // Decide [source, target] within the chosen pair. Prefer Whisper's detected ISO code; if it's neither
+  // (empty/near-miss), fall back to the transcript's script — so a mis-detected B turn is NOT silently
+  // routed as A→B and echoed back untranslated. Last resort: default the source to A.
+  function _ltRoute(lang, text, a, b){
+    if(lang===a) return [a, b];
+    if(lang===b) return [b, a];
+    const sa=(_ltRow(a)||[])[3], sb=(_ltRow(b)||[])[3], ts=_ltScriptOf(text);
+    if(ts && sa!==sb){
+      if(ts===sb && ts!==sa) return [b, a];
+      if(ts===sa && ts!==sb) return [a, b];
+    }
+    return [a, b];
+  }
 
   function renderTranslate(){
     const feed=$('#feed'); if(!feed) return;
@@ -6889,11 +6929,17 @@
         <span id="lt-status" class="lt-status muted"></span>
       </div></div>`;
     const save=()=>{ _ltSavePair({ a:$('#lt-a').value, b:$('#lt-b').value }); };
-    $('#lt-a').onchange=save; $('#lt-b').onchange=save;
+    // Guard: the two sides must differ, else every turn would translate a language into itself.
+    const guard=(changed, other)=>{ if(changed.value===other.value){ const alt=LT_LANGS.find(l=>l[0]!==changed.value); if(alt) other.value=alt[0]; } };
+    $('#lt-a').onchange=()=>{ guard($('#lt-a'),$('#lt-b')); save(); };
+    $('#lt-b').onchange=()=>{ guard($('#lt-b'),$('#lt-a')); save(); };
     $('#lt-swap').onclick=()=>{ const a=$('#lt-a'), b=$('#lt-b'); const t=a.value; a.value=b.value; b.value=t; save(); };
     $('#lt-speak').onclick=()=>{ _ltSpeak=!_ltSpeak; try{ localStorage.setItem('pcTranslateSpeak', _ltSpeak?'1':'0'); }catch(_){} $('#lt-speak').textContent=_ltSpeak?'🔊':'🔇'; if(!_ltSpeak){ try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){} } };
     $('#lt-mic').onclick=ltToggleMic;
   }
+  // Stop an in-progress recording when leaving the view (called from renderView) so the mic/getUserMedia
+  // stream is released instead of staying hot; the cancel flag makes onstop skip processing the clip.
+  function ltTeardown(){ try{ if(_ltRec && _ltRec.state==='recording'){ _ltCancel=true; _ltRec.stop(); } }catch(_){} }
   function _ltStatus(s){ const el=$('#lt-status'); if(el) el.textContent=s||''; }
   function _ltAddTurn(srcLang, original, tgtLang, translated){
     const log=$('#lt-log'); if(!log) return;
@@ -6903,21 +6949,36 @@
       +`<div class="lt-tr"><span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
     log.appendChild(el); log.scrollTop=log.scrollHeight;
   }
+  // Speak the translation in a voice MATCHED to the target language (edge-tts voice map), so Latin-script
+  // targets (Spanish/French/…) aren't read with the English default voice.
+  async function ltSpeak(text, lang){
+    const voice=_ltVoice(lang);
+    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
+    try{
+      const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ text:(text||'').slice(0,2000), voice })});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.audio) return;
+      _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio); _narrateAudio.play().catch(()=>{});
+    }catch(_){}
+  }
   async function ltToggleMic(){
     const mic=$('#lt-mic');
     if(_ltRec && _ltRec.state==='recording'){ _ltRec.stop(); return; }
     if(_ltMicStarting) return;
+    if(_ltBusy){ toast('one moment — still translating the last turn'); return; }   // serialize turns
     if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){ toast('voice input not supported on this browser'); return; }
     _ltMicStarting=true; let stream=null;
     try{
       stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      _ltChunks=[];
+      _ltChunks=[]; _ltCancel=false;
       const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4',''].find(t=>!t || MediaRecorder.isTypeSupported(t));
       _ltRec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
       _ltRec.ondataavailable=e=>{ if(e.data && e.data.size) _ltChunks.push(e.data); };
       _ltRec.onstop=async()=>{
-        try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-        if(mic){ mic.classList.remove('rec'); mic.textContent='🎤'; }
+        try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}   // release the mic FIRST, always
+        const mic2=$('#lt-mic'); if(mic2){ mic2.classList.remove('rec'); mic2.textContent='🎤'; }
+        if(_ltCancel){ _ltCancel=false; _ltStatus(''); return; }   // navigated away mid-record → don't process
         const blob=new Blob(_ltChunks,{type:(_ltRec&&_ltRec.mimeType)||'audio/webm'});
         if(blob.size<200){ _ltStatus(''); return; }
         await ltPipeline(blob);
@@ -6931,31 +6992,32 @@
     }finally{ _ltMicStarting=false; }
   }
   async function ltPipeline(blob){
-    const a=($('#lt-a')||{}).value||'en', b=($('#lt-b')||{}).value||'th';
-    _ltStatus('transcribing…');
-    let text='', lang='';
+    _ltBusy=true;
     try{
-      const fd=new FormData(); fd.append('audio', blob, 'turn.webm'); fd.append('language','auto');
-      const r=await fetch('/client/stt',{method:'POST',body:fd});
-      const j=await r.json().catch(()=>({}));
-      if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'could not hear that — try again'); return; }
-      text=j.text.trim(); lang=(j.lang||'').toLowerCase();
-    }catch(_){ _ltStatus(''); toast('transcription failed'); return; }
-    // Route to the OTHER language. If detection is neither of the pair, default the target to A.
-    const src = (lang===b) ? b : a;                 // treat "not clearly B" as A
-    const tgt = (src===a) ? b : a;
-    _ltStatus('translating…');
-    let translated='';
-    try{
-      const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ text, to:_ltName(tgt) })});
-      const j=await r.json().catch(()=>({}));
-      if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'translation unavailable'); return; }
-      translated=j.text.trim();
-    }catch(_){ _ltStatus(''); toast('translate failed'); return; }
-    _ltStatus('');
-    _ltAddTurn(src, text, tgt, translated);
-    if(_ltSpeak) aiSpeak(translated);   // TTS the translation (voice auto-picked by script)
+      const a=($('#lt-a')||{}).value||'en', b=($('#lt-b')||{}).value||'th';
+      _ltStatus('transcribing…');
+      let text='', lang='';
+      try{
+        const fd=new FormData(); fd.append('audio', blob, 'turn.webm'); fd.append('language','auto');
+        const r=await fetch('/client/stt',{method:'POST',body:fd});
+        const j=await r.json().catch(()=>({}));
+        if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'could not hear that — try again'); return; }
+        text=j.text.trim(); lang=(j.lang||'').toLowerCase();
+      }catch(_){ _ltStatus(''); toast('transcription failed'); return; }
+      const [src, tgt]=_ltRoute(lang, text, a, b);
+      _ltStatus('translating…');
+      let translated='';
+      try{
+        const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ text, to:_ltName(tgt) })});
+        const j=await r.json().catch(()=>({}));
+        if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'translation unavailable'); return; }
+        translated=j.text.trim();
+      }catch(_){ _ltStatus(''); toast('translate failed'); return; }
+      _ltStatus('');
+      _ltAddTurn(src, text, tgt, translated);
+      if(_ltSpeak) ltSpeak(translated, tgt);   // TTS in the target language's own voice
+    }finally{ _ltBusy=false; }
   }
   function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
   function aiHandle(d){
