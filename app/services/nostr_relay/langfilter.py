@@ -87,37 +87,55 @@ _VIET_MIN = 2  # this many distinctive chars in a note ⇒ Vietnamese
 # hindi (Eng. name of Hindi), sino (Sino-/Spanish), mahal (Taj Mahal/surname), kaya, lang (programming),
 # sana, wala, ano (año), kung (kung-fu), sobra/medyo/parang, saan/kailan, and short particles (nga/din/
 # rin/po/ho/ba). What remains is dense Tagalog grammar that rarely coincides in English prose.
-_TL_WORDS = frozenset({
-    "ang", "ng", "mga", "ako", "ikaw", "siya", "kami", "kayo", "tayo",
-    "namin", "natin", "ninyo", "nila", "niya", "naman", "yung", "iyung",
-    "kasi", "kapag", "meron", "mayroon", "talaga", "ganyan", "ganun", "ganito",
-    "salamat", "maganda", "opo", "ngayon", "kanina", "bukas", "kahapon",
-    "bakit", "paano", "pwede", "puwede", "kaunti", "marami",
+# Every token here is (as a standalone lowercase word) essentially unique to Tagalog — NOT an English or
+# Spanish word or a common name. That's what lets 2 of them be a safe signal (incl. Taglish, where an
+# otherwise-English post is peppered with Tagalog grammar). Still DELIBERATELY excludes collision-prone
+# tokens (hindi/sino/mahal/kaya/lang/sana/wala/ano/gusto/para/si…) because a false positive DELETES the note.
+# CORE markers: unambiguous Tagalog grammar/verbs that are essentially never an English word OR a common
+# name — a match here is real signal. (Excludes collision-prone tokens hindi/sino/mahal/kaya/lang/sana/
+# wala/ano/gusto/para/si that would DELETE English notes.)
+_TL_CORE = frozenset({
+    "ng", "mga", "naman", "yung", "iyung", "iyong", "aking", "kasi", "dahil", "kapag",
+    "mayroon", "talaga", "ganyan", "ganun", "ganito", "ganon", "salamat", "maganda", "mabuti",
+    "opo", "ngayon", "ngayong", "kanina", "kahapon", "bakit", "paano", "pwede", "puwede",
+    "kaunti", "marami", "lamang", "kailangan", "nakita", "gagawin", "ginawa", "pumunta",
+    "kumain", "sabihin", "naiintindihan", "makita", "magkano", "ninyo", "namin", "natin",
+    "kanila", "kaniya",
 })
-# Cheap gate: real Tagalog almost always contains a standalone "ng" or "mga" — skip the full word scan
-# (and the whole per-event cost) when neither is present, which is nearly all non-Tagalog notes.
-_TL_GATE = re.compile(r"\b(?:ng|mga)\b")
-_TL_MIN = 3            # need this many DISTINCT markers …
-_TL_RATIO = 0.15       # … AND markers must be ≥ this fraction of words, so a long English note with a few
-                       # stray tokens (low ratio) is NOT misclassified — the guard the script langs get via _BLOCK_THRESHOLD.
+# EXTRA markers: real Tagalog words, but each could also be a proper name / acronym (Ang, Ako, Meron,
+# Sila, Kami …), so they count toward the distinct total but can't classify a note on their own.
+_TL_EXTRA = frozenset({
+    "ang", "ako", "ikaw", "siya", "sila", "kami", "kayo", "tayo", "niya", "meron", "amin", "atin", "inyo",
+})
+_TL_WORDS = _TL_CORE | _TL_EXTRA
+# Gate: skip the full word scan (per-event cost) unless AT LEAST ONE marker might be present. Built from
+# the word set itself, so it catches Taglish that has (say) "salamat"/"talaga" but no "ng"/"mga".
+_TL_GATE = re.compile(r"\b(?:" + "|".join(sorted(_TL_WORDS, key=len, reverse=True)) + r")\b")
+_TL_MIN = 2            # >= this many DISTINCT markers, AND >= 1 of them CORE (so two name-like tokens like
+_TL_RATIO = 0.05       # "Ang"+"Meron" can't classify), with a light density floor for long English notes.
 _WORD_RE = re.compile(r"[a-z]+")
 
 
 def _is_tagalog(text: str) -> bool:
-    """True if `text` (already lowercased + de-noised) reads as Tagalog: enough distinct function words
-    AND a high enough marker density that an English note with a few incidental tokens can't trip it."""
+    """True if `text` (already lowercased + de-noised) reads as Tagalog/Taglish: >= _TL_MIN distinct
+    markers with at least one CORE (unambiguous) marker and a light density floor. Conservative on English
+    (a false positive DELETES the note) while catching code-switched posts the ratio-heavy version missed."""
     if not _TL_GATE.search(text):
         return False
     words = _WORD_RE.findall(text)
     if not words:
         return False
     seen = set()
+    core = 0
     total = 0
     for w in words:
         if w in _TL_WORDS:
-            seen.add(w)
             total += 1
-    return len(seen) >= _TL_MIN and (total / len(words)) >= _TL_RATIO
+            if w not in seen:
+                seen.add(w)
+                if w in _TL_CORE:
+                    core += 1
+    return len(seen) >= _TL_MIN and core >= 1 and (total / len(words)) >= _TL_RATIO
 
 
 def _script_of(cp: int) -> str | None:
