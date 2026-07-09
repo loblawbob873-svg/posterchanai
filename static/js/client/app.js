@@ -7021,7 +7021,7 @@
       const translate=async(toCode)=>{
         try{
           const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ text, to:toCode })});
+            body:JSON.stringify({ text, to:toCode, fast:true })});   // skip detection round-trip + examples → faster
           const j=await r.json().catch(()=>({}));
           return (r.ok && (j.text||'').trim()) ? j.text.trim() : (j.error ? {err:j.error} : {err:'translation unavailable'});
         }catch(_){ return {err:'translate failed'}; }

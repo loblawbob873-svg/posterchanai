@@ -307,6 +307,9 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         to_name = _LANG_NAMES[_to_l[:2]]
     else:
         to_name = to
+    # Live Translate sets fast=true: skip the separate source-detection round-trip and the few-shot
+    # examples, and cap output low — conversational turns are short, so this ~halves the LLM latency.
+    fast = bool(body.get("fast"))
     if not text:
         return JSONResponse({"error": "no text"}, status_code=400)
     text = text[:4000]   # cap: posts are short; bounds the LLM work
@@ -322,22 +325,23 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
-        # Detect the source language FIRST. This avoids two opposite failures: (a) a foreign post being
-        # echoed and shown as "already in your language" (the reported French bug), and (b) fabricating
-        # a bogus translation for a post that genuinely already is the target language. We only run the
-        # translation when the detected language differs from the target.
-        try:
-            det = await svc.chat_completion(
-                [{"role": "system", "content": "Identify the language of the user's message. Reply with "
-                  "ONLY its ISO 639-1 code (e.g. en, fr, es, ja, de). No other text."},
-                 {"role": "user", "content": text[:600]}], max_tokens=4, temperature=0.0)
-            src_lang = (det.get("choices") or [{}])[0].get("message", {}).get("content", "").strip().lower()[:2]
-        except Exception:
-            src_lang = ""
-        if src_lang and src_lang == to.strip().lower()[:2]:
-            # Genuinely already the target language → return unchanged; the client shows the honest
-            # "already in your language" notice (it compares the result to the source).
-            return JSONResponse({"text": text})
+        # Detect the source language FIRST (skipped in fast mode). This avoids two opposite failures:
+        # (a) a foreign post echoed + shown as "already in your language", and (b) fabricating a bogus
+        # translation for text that genuinely already is the target language. (Live Translate skips this
+        # and relies on its own normalized echo-retry to catch a mis-route.)
+        if not fast:
+            try:
+                det = await svc.chat_completion(
+                    [{"role": "system", "content": "Identify the language of the user's message. Reply with "
+                      "ONLY its ISO 639-1 code (e.g. en, fr, es, ja, de). No other text."},
+                     {"role": "user", "content": text[:600]}], max_tokens=4, temperature=0.0)
+                src_lang = (det.get("choices") or [{}])[0].get("message", {}).get("content", "").strip().lower()[:2]
+            except Exception:
+                src_lang = ""
+            if src_lang and src_lang == to.strip().lower()[:2]:
+                # Genuinely already the target language → return unchanged; the client shows the honest
+                # "already in your language" notice (it compares the result to the source).
+                return JSONResponse({"text": text})
         msgs = [{"role": "system", "content": f"You are a translation engine. Translate the user's "
               f"message into {to_name}. The message is often colloquial, run-on, code-switched and "
               f"unpunctuated. Translate the ENTIRE message into natural {to_name} — EVERY word or phrase "
@@ -349,7 +353,7 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         # The echo-fixing examples translate INTO ENGLISH (they fix the 'English-dominant mixed text
         # gets echoed' case). They bias the model toward ENGLISH output, so ONLY include them when the
         # target IS English — otherwise translating to (say) Japanese would wrongly echo the English.
-        if to.strip().lower() in ("english", "en", "en-us", "en-gb"):
+        if not fast and to.strip().lower() in ("english", "en", "en-us", "en-gb"):
             msgs += [
                 {"role": "user", "content": "My babies! ang cute nila kahit pagod na pagod ako kakaalaga. Hook Needle"},
                 {"role": "assistant", "content": "My babies! They're so cute even though I'm exhausted from taking care of them. Hook Needle"},
@@ -358,7 +362,7 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
             ]
         msgs.append({"role": "user", "content": text})
         # Translation should be faithful, not creative — near-greedy decoding cuts hallucination.
-        res = await svc.chat_completion(msgs, max_tokens=1200, temperature=0.0)
+        res = await svc.chat_completion(msgs, max_tokens=(400 if fast else 1200), temperature=0.0)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         if not out:
             return JSONResponse({"error": "translation unavailable"}, status_code=503)
