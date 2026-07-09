@@ -5542,12 +5542,13 @@
       : ev.kind===42?'💬 messaged you in chat'
       : ev.kind===1111?'👥 replied to you in a community'
       : isReply(ev)?'replied to you' : 'mentioned you';
-    notifToast(`🔔 ${who} ${what}`, p.picture);
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`, icon:p.picture||LOGO }); }catch(_){}
+    notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(/:[a-zA-Z0-9_+\-]+:/g,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
   }
-  function notifToast(msg, pic){
+  // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
+  function notifToast(html, pic){
     const t=document.createElement('div'); t.className='toast notif-toast';
-    t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(msg)}</span>`;
+    t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${html}</span>`;
     t.onclick=()=>{ switchView('notifications'); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
@@ -5651,6 +5652,18 @@
     }
     return out.sort((a,b)=>b.created_at-a.created_at);
   }
+  // Clean a notification's content for a compact one-line preview: turn npub/nprofile mentions into @name
+  // (resolved from the profile, else a short @npub…) and collapse note/nevent/naddr refs to a 🔗 — so a
+  // reply/mention preview doesn't show a wall of raw npubs. Resolve BEFORE the caller slices to 80 chars.
+  function _notifPreview(content){
+    let s=String(content||'');
+    s=s.replace(/(?:nostr:)?(n(?:pub|profile)1[0-9a-z]{20,})/gi, (m, ent)=>{
+      try{ const d=NT().nip19.decode(ent); const pk=d.type==='npub'?d.data:(d.data&&d.data.pubkey);
+        if(!pk) return '@…'; needProfile(pk); const p=Store.profile(pk); const nm=p&&(p.name||p.display_name);
+        return '@'+(nm || (NT().nip19.npubEncode(pk).slice(0,10)+'…')); }catch(_){ return '@…'; }
+    });
+    return s.replace(/(?:nostr:)?(n(?:ote|event|addr)1[0-9a-z]{20,})/gi, '🔗');
+  }
   function notifHtml(e){
     if(e.type==='group'){
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
@@ -5670,13 +5683,13 @@
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
-    else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc((e.content||'').slice(0,80)):''}`;}
+    else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc(_notifPreview(e.content).slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${reactDisp(e)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
-    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
-    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
-    else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
-    else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc((e.content||'').slice(0,80)), e);}
+    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
+    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
+    else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
+    else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
     return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
@@ -5819,8 +5832,8 @@
     for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue; for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
   function _dmNotify(fromPk){
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
-    notifToast(`✉ ${who} sent you a message`, p.picture);   // in-app toast (no OS permission needed)
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`, tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
+    notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`.replace(/:[a-zA-Z0-9_+\-]+:/g,'').trim(), tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
   }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
@@ -7337,8 +7350,6 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
-          <label class="fld">⚡ Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
-          <label class="fld">ɱ Monero tip amounts <span class="muted small">(XMR — your one-tap presets)</span><input class="input" id="us-xmr-presets" value="${enc(ClientSettings.get('xmrPresets','')||_XMR_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.1, 1"></label>
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -7438,6 +7449,9 @@
           <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
             <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
           <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
+          <label class="fld">⚡ Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
+          <label class="fld">ɱ Monero tip amounts <span class="muted small">(XMR — your one-tap presets)</span><input class="input" id="us-xmr-presets" value="${enc(ClientSettings.get('xmrPresets','')||_XMR_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.1, 1"></label>
+          <div class="muted small">Your one-tap amounts in the ⚡ zap / ɱ Monero tip dialogs. Comma-separated; synced to your other devices.</div>
         </div>
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
