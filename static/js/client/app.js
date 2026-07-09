@@ -2925,6 +2925,7 @@
   // like :hellokitty_headbang:). Uses the author's OWN kind-0 emoji map (Store keeps it on the profile);
   // HTML-escapes first, then swaps shortcodes for <img>. Plain escaped text when there's no custom emoji.
   const _SC_RE=/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/;
+  const _SHORTCODE_STRIP=/:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/g;   // strip NIP-30 shortcodes (incl. federated @host) from plain text
   const _emojiRefetched=new Set();
   // The author's kind-0 emoji map may be MISSING because we cached their profile before emoji-tag support
   // OR they (a fedi puppet) republished their kind-0 with emoji tags AFTER we cached it — and needProfile
@@ -5543,7 +5544,7 @@
       : ev.kind===1111?'👥 replied to you in a community'
       : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(/:[a-zA-Z0-9_+\-]+:/g,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
   function notifToast(html, pic){
@@ -5657,12 +5658,16 @@
   // reply/mention preview doesn't show a wall of raw npubs. Resolve BEFORE the caller slices to 80 chars.
   function _notifPreview(content){
     let s=String(content||'');
-    s=s.replace(/(?:nostr:)?(n(?:pub|profile)1[0-9a-z]{20,})/gi, (m, ent)=>{
+    // Collapse note/nevent/naddr refs FIRST (on the raw content), so a bech32-like token that happens to
+    // sit inside a resolved @display-name isn't later mangled into a stray 🔗.
+    s=s.replace(/(?:nostr:)?(n(?:ote|event|addr)1[0-9a-z]{20,})/gi, '🔗');
+    return s.replace(/(?:nostr:)?(n(?:pub|profile)1[0-9a-z]{20,})/gi, (m, ent)=>{
       try{ const d=NT().nip19.decode(ent); const pk=d.type==='npub'?d.data:(d.data&&d.data.pubkey);
         if(!pk) return '@…'; needProfile(pk); const p=Store.profile(pk); const nm=p&&(p.name||p.display_name);
-        return '@'+(nm || (NT().nip19.npubEncode(pk).slice(0,10)+'…')); }catch(_){ return '@…'; }
+        // Strip the mentioned user's own :shortcodes: — we can't render THEIR emoji here (applyEmojis only
+        // has the notification event's tags), so leaving them would show as literal :code: text.
+        return '@'+String(nm || (NT().nip19.npubEncode(pk).slice(0,10)+'…')).replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(); }catch(_){ return '@…'; }
     });
-    return s.replace(/(?:nostr:)?(n(?:ote|event|addr)1[0-9a-z]{20,})/gi, '🔗');
   }
   function notifHtml(e){
     if(e.type==='group'){
@@ -5833,7 +5838,7 @@
   function _dmNotify(fromPk){
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
     notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
-    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`.replace(/:[a-zA-Z0-9_+\-]+:/g,'').trim(), tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
+    try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
   }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
   // 200 on load jams the worker and stalls timeline verification). Decrypt lazily on view.
