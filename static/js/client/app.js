@@ -3334,10 +3334,16 @@
       doZap(noteId,pk);
     }
   }
+  // User-defined amount presets (Settings → Zaps & tips), stored in the per-user Nostr client-prefs so they
+  // follow you across devices. Comma/space separated, positive numbers, capped; fall back to sane defaults.
+  const _ZAP_DEFAULTS=[21,100,500,1000,5000], _XMR_DEFAULTS=[0.001,0.01,0.1,1];
+  function _parsePresets(s, dflt){ const a=String(s||'').split(/[\s,]+/).map(x=>parseFloat(x)).filter(n=>isFinite(n)&&n>0); return a.length?a.slice(0,8):dflt.slice(); }
+  function zapPresets(){ return _parsePresets(ClientSettings.get('zapPresets',''), _ZAP_DEFAULTS); }
+  function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
-    const presets=[21,100,500,1000,5000];
+    const presets=zapPresets();
     modal(`<h3>⚡ Zap ${enc(p.name||p.display_name||'')}</h3>
       <div class="zap-presets">${presets.map(a=>`<button class="zap-amt" data-amt="${a}">${a>=1000?(a/1000)+'k':a} sats</button>`).join('')}</div>
       <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go">⚡ Zap</button></div>`,
@@ -3394,7 +3400,7 @@
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
       <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay → tap “I sent it”. Non-custodial: nothing touches this server.</p>
       <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" value="${enc(ClientSettings.get('xmrLastAmt','')||'')}" placeholder="amount (XMR) — fills your wallet & shows in the note"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
-      <div class="xmr-presets" id="xmr-presets">${[0.001,0.01,0.1,1].map(a=>`<button class="xmr-preset" data-amt="${a}">ɱ ${a}</button>`).join('')}</div>
+      <div class="xmr-presets" id="xmr-presets">${xmrPresets().map(a=>`<button class="xmr-preset" data-amt="${a}">ɱ ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
       ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (advanced, optional)</summary>
@@ -4463,6 +4469,8 @@
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
+      if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
+      if(!_prefTouched.has('xmrPresets') && pr.xmrPresets!=null) ClientSettings.set('xmrPresets', String(pr.xmrPresets));
     }catch(_){}
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -7318,6 +7326,8 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
+          <label class="fld">⚡ Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
+          <label class="fld">ɱ Monero tip amounts <span class="muted small">(XMR — your one-tap presets)</span><input class="input" id="us-xmr-presets" value="${enc(ClientSettings.get('xmrPresets','')||_XMR_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.1, 1"></label>
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -7559,6 +7569,13 @@
       if(d && d.key){ alert('Your new key (shown once):\n\n'+d.key); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
+      // Amount presets are CLIENT prefs (not account columns): normalize, persist locally, and sync to the
+      // per-user Nostr client-prefs so they follow across devices. _parsePresets validates; store the cleaned list.
+      { const zp=_parsePresets(($('#us-zap-presets')||{}).value, _ZAP_DEFAULTS).join(', ');
+        const xp=_parsePresets(($('#us-xmr-presets')||{}).value, _XMR_DEFAULTS).join(', ');
+        ClientSettings.set('zapPresets', zp); ClientSettings.set('xmrPresets', xp);
+        _prefTouched.add('zapPresets'); _prefTouched.add('xmrPresets');
+        saveClientPrefsNostr({ zapPresets: zp, xmrPresets: xp }); }
       const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
         matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
