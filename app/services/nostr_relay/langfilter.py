@@ -95,12 +95,24 @@ _VIET_MIN = 2  # this many distinctive chars in a note ⇒ Vietnamese
 # name — a match here is real signal. (Excludes collision-prone tokens hindi/sino/mahal/kaya/lang/sana/
 # wala/ano/gusto/para/si that would DELETE English notes.)
 _TL_CORE = frozenset({
+    # particles / grammar (po/nga/yata/muna/daw are unambiguous Tagalog function words — NOT English
+    # words or common names, so they're safe to treat as core, unlike the name-risky pronouns in _TL_EXTRA)
     "ng", "mga", "naman", "yung", "iyung", "iyong", "aking", "kasi", "dahil", "kapag",
-    "mayroon", "talaga", "ganyan", "ganun", "ganito", "ganon", "salamat", "maganda", "mabuti",
-    "opo", "ngayon", "ngayong", "kanina", "kahapon", "bakit", "paano", "pwede", "puwede",
-    "kaunti", "marami", "lamang", "kailangan", "nakita", "gagawin", "ginawa", "pumunta",
-    "kumain", "sabihin", "naiintindihan", "makita", "magkano", "ninyo", "namin", "natin",
-    "kanila", "kaniya",
+    "mayroon", "walang", "talaga", "ganyan", "ganun", "ganito", "ganon", "lamang", "ayon",
+    "kailangan", "kaya't", "sana't", "gusto't", "tuloy", "sarili",
+    "po", "nga", "yata", "muna", "daw",
+    # greetings / social
+    "salamat", "maganda", "mabuti", "kumusta", "kamusta", "kaibigan", "opo",
+    # time / place
+    "ngayon", "ngayong", "kanina", "kahapon", "bukas", "dito", "doon", "diyan", "dyan",
+    # questions / quantity
+    "bakit", "paano", "pwede", "puwede", "kaunti", "konti", "marami", "maraming", "lahat",
+    # verbs (Tagalog affix forms — essentially never English)
+    "kausap", "sumang", "bilis", "nakita", "makita", "gagawin", "ginawa", "gawin",
+    "pumunta", "pupunta", "kumain", "kakain", "sabihin", "sinabi", "sabi",
+    "naiintindihan", "intindi", "magkano", "alam", "pakiramdam",
+    # pronouns that don't double as common names/acronyms
+    "ninyo", "namin", "natin", "kanila", "kaniya",
 })
 # EXTRA markers: real Tagalog words, but each could also be a proper name / acronym (Ang, Ako, Meron,
 # Sila, Kami …), so they count toward the distinct total but can't classify a note on their own.

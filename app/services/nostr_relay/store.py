@@ -430,10 +430,12 @@ class RelayStore:
             return 0
         from .langfilter import detect_languages
         conn = self._conn()
-        # Exclude direct-published + preserved pubkeys (local users' own notes) — same guard as prune.
+        # Spare only LOCAL users' own notes (preserve/direct). A blocked language is blocked at INGEST for
+        # everyone including WoT members (server.py has no WoT exemption), so the retroactive purge must
+        # match — otherwise a followed member's already-stored foreign posts linger forever. Only that
+        # member's blocked-language notes go; their other-language posts don't match detect_languages.
         ids = [r["id"] for r in conn.execute(
-                   f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()} "
-                   "AND pubkey NOT IN (SELECT pubkey FROM wot)")
+                   f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()}")
                if detect_languages(r["content"]) & blocked]
         removed = 0
         for i in range(0, len(ids), 900):
