@@ -4,7 +4,9 @@ No language-detection package is installed (self-contained rule), so we classify
 script — which maps cleanly to languages for non-Latin writing systems (the actual abuse
 cases: Cyrillic/CJK/Arabic/Hebrew/etc. spam). An event is blocked when a blocked language's
 share of the *letters* in its content meets a threshold. Latin-script languages aren't
-distinguishable by script alone and are intentionally not offered.
+distinguishable by script alone, so the two that matter are detected another way: Vietnamese
+by its unique tone-marked characters, Tagalog by its high-frequency function words + a density
+guard (a false positive DELETES the note via the retroactive purge, so both are conservative).
 
 `LANGUAGES` (code → UI label) drives the clickable toggles in Admin → Relay.
 """
@@ -38,6 +40,7 @@ LANGUAGES = {
     "hy": "Armenian",
     "ka": "Georgian",
     "vi": "Vietnamese",
+    "tl": "Tagalog / Filipino",
 }
 
 _BLOCK_THRESHOLD = 0.20  # ≥20% of letters in a blocked script → reject
@@ -74,6 +77,48 @@ _VIET_CHARS = frozenset(
 )
 _VIET_MIN = 2  # this many distinctive chars in a note ⇒ Vietnamese
 
+# Tagalog/Filipino is Latin-script with NO distinctive diacritics (unlike Vietnamese), so script/char
+# detection can't see it. Instead detect it by its high-frequency function words — markers that are
+# essentially never English, so a few of them in a note is a strong, low-false-positive signal. Curated to
+# avoid English/Spanish collisions (dropped ambiguous ones like "at"/"si"/"para"/"como"; "ng"/"mga" are
+# unique letter patterns and the strongest tells).
+# Curated for LOW English/Spanish collision — a false positive here isn't cosmetic, it deletes the note
+# (the retroactive lang purge removes matching kind-1s). Deliberately DROPPED collision-prone tokens:
+# hindi (Eng. name of Hindi), sino (Sino-/Spanish), mahal (Taj Mahal/surname), kaya, lang (programming),
+# sana, wala, ano (año), kung (kung-fu), sobra/medyo/parang, saan/kailan, and short particles (nga/din/
+# rin/po/ho/ba). What remains is dense Tagalog grammar that rarely coincides in English prose.
+_TL_WORDS = frozenset({
+    "ang", "ng", "mga", "ako", "ikaw", "siya", "kami", "kayo", "tayo",
+    "namin", "natin", "ninyo", "nila", "niya", "naman", "yung", "iyung",
+    "kasi", "kapag", "meron", "mayroon", "talaga", "ganyan", "ganun", "ganito",
+    "salamat", "maganda", "opo", "ngayon", "kanina", "bukas", "kahapon",
+    "bakit", "paano", "pwede", "puwede", "kaunti", "marami",
+})
+# Cheap gate: real Tagalog almost always contains a standalone "ng" or "mga" — skip the full word scan
+# (and the whole per-event cost) when neither is present, which is nearly all non-Tagalog notes.
+_TL_GATE = re.compile(r"\b(?:ng|mga)\b")
+_TL_MIN = 3            # need this many DISTINCT markers …
+_TL_RATIO = 0.15       # … AND markers must be ≥ this fraction of words, so a long English note with a few
+                       # stray tokens (low ratio) is NOT misclassified — the guard the script langs get via _BLOCK_THRESHOLD.
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _is_tagalog(text: str) -> bool:
+    """True if `text` (already lowercased + de-noised) reads as Tagalog: enough distinct function words
+    AND a high enough marker density that an English note with a few incidental tokens can't trip it."""
+    if not _TL_GATE.search(text):
+        return False
+    words = _WORD_RE.findall(text)
+    if not words:
+        return False
+    seen = set()
+    total = 0
+    for w in words:
+        if w in _TL_WORDS:
+            seen.add(w)
+            total += 1
+    return len(seen) >= _TL_MIN and (total / len(words)) >= _TL_RATIO
+
 
 def _script_of(cp: int) -> str | None:
     for script, ranges in _RANGES.items():
@@ -88,6 +133,7 @@ def detect_languages(text: str) -> set:
     if not text:
         return set()
     text = _NOISE_RE.sub(" ", text)  # drop URLs/refs/emoji shortcodes so they don't dilute the ratio
+    tagalog = _is_tagalog(text.lower())   # word-based + density guard (Latin-script, no distinctive chars)
     counts = defaultdict(int)
     letters = 0
     viet = 0
@@ -101,6 +147,8 @@ def detect_languages(text: str) -> set:
         counts[sc] += 1
         letters += 1
     if letters == 0:
+        # Tagalog markers are ASCII [a-z] → they'd have counted as Latin letters, so letters>0 whenever
+        # tagalog is true; only Vietnamese (whose tone chars aren't in the Latin bucket) can land here.
         return {"vi"} if viet >= _VIET_MIN else set()
 
     # Resolve CJK ambiguity: kana ⇒ Japanese (han counts with it); hangul ⇒ Korean;
@@ -130,6 +178,8 @@ def detect_languages(text: str) -> set:
              if c and ((c / letters) >= _BLOCK_THRESHOLD or c >= _BLOCK_ABS_MIN)}
     if viet >= _VIET_MIN:
         found.add("vi")
+    if tagalog:
+        found.add("tl")
     return found
 
 

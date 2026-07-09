@@ -219,7 +219,7 @@
 
     <fieldset>
         <legend>Blocked languages</legend>
-        <small>Reject text notes (kind 1) written or synced in these scripts. Detection is by writing system, so it targets non-Latin spam (Cyrillic, CJK, Arabic, …). Click to toggle:</small>
+        <small>Reject text notes (kind 1) written or synced in these languages. Non-Latin ones are detected by writing system (Cyrillic, CJK, Arabic, …); the Latin-script ones are detected by distinctive characters (Vietnamese) or high-frequency words (Tagalog). Click to toggle:</small>
         <div class="lang-grid" id="relayLangGrid">
             <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ru"><span>Russian / Cyrillic</span></label>
             <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="zh"><span>Chinese</span></label>
@@ -233,6 +233,7 @@
             <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="hy"><span>Armenian</span></label>
             <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="ka"><span>Georgian</span></label>
             <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="vi"><span>Vietnamese</span></label>
+            <label class="lang-box"><input type="checkbox" class="relay-lang" data-lang="tl"><span>Tagalog / Filipino</span></label>
         </div>
         <input type="hidden" id="nostr_relay_blocked_langs" name="nostr_relay_blocked_langs">
     </fieldset>
