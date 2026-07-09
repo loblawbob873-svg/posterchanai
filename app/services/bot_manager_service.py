@@ -516,7 +516,10 @@ def _enabled_bots_for_host():
 
 # ---- text-bot reconcile ------------------------------------------------------
 
-def _terminate(name, proc, timeout=10):
+def _terminate(name, proc, timeout=3):
+    # 3s (was 10): bots are stateless subprocesses that normally exit at once on SIGTERM; a short
+    # graceful wait before SIGKILL keeps a slow/hung bot from pushing the service past its 10s stop
+    # deadline (stop_bot_manager terminates bots sequentially, so a long per-bot wait compounds).
     try:
         proc.terminate()
         proc.wait(timeout=timeout)

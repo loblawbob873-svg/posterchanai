@@ -137,7 +137,9 @@ def stop_worker_process():
     if _worker_process and _worker_process.poll() is None:
         _worker_process.terminate()
         try:
-            _worker_process.wait(timeout=10)
+            _worker_process.wait(timeout=3)   # was 10 — escalate to SIGKILL fast so it can't
+            #                                   push the service past its 10s stop deadline (the
+            #                                   worker only runs pollers; cursors persist to the relay)
         except Exception:
             _worker_process.kill()
         logger.info("[worker] background scheduler process stopped")

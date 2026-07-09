@@ -61,4 +61,11 @@ if __name__ == "__main__":
         # base64 over the WebSocket; the 16 MB default drops large frames and
         # the message never arrives. Raise to 64 MB.
         ws_max_size=64 * 1024 * 1024,
+        # Restart speed: without this, uvicorn's graceful shutdown waits INDEFINITELY for in-flight
+        # requests to finish. The bots generate near-constantly, so there's almost always a 30-300s LLM
+        # request open → the process never exits on SIGTERM → systemd hits TimeoutStopSec (10s) and
+        # SIGKILLs it ("Failed with result 'timeout'") on EVERY restart. Cap the drain at 3s so uvicorn
+        # abandons in-flight requests, runs the lifespan shutdown cleanly, and exits well under the 10s
+        # kill deadline — turning every restart from a 10s hard-kill into a ~fast, clean stop.
+        timeout_graceful_shutdown=3,
     )

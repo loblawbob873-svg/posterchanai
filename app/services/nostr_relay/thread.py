@@ -1195,7 +1195,10 @@ def stop_nostr_relay() -> None:
         except Exception:
             pass
         try:
-            proc.wait(timeout=15)
+            # 4s (was 15): the snapshot is a warm-cache over the DURABLE Postgres store, so a quick
+            # snapshot is enough; escalate to SIGKILL fast so a slow relay can't blow the service's
+            # 10s stop deadline (restart was always hitting the systemd SIGKILL timeout). Re-syncs on boot.
+            proc.wait(timeout=4)
         except Exception:
             try:
                 proc.kill()
