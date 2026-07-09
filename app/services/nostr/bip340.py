@@ -93,9 +93,11 @@ def pubkey_from_seckey(seckey: bytes) -> bytes:
     CACHED (seckey→pubkey): the derivation is a pure-Python secp256k1 point-mul (~35ms), and the same
     key derives its pubkey constantly — the settings hydrate alone called this once per setting doc
     (240× ≈ 8.5s of startup, via nip44.decrypt_self), plus every self-encrypt/decrypt and event sign.
-    Deterministic, so the cache is exact; bounded to cap memory (same pattern as nip44._CONV_KEY_CACHE)."""
-    key = bytes(seckey)
-    v = _PUBKEY_CACHE.get(key)
+    Deterministic, so the cache is exact; bounded to cap memory. The cache is keyed on a SHA-256 of the
+    seckey (not the raw bytes) so no private key material is retained in the long-lived dict — a heap
+    scrape / core dump of the cache yields only hashes + public keys."""
+    ck = hashlib.sha256(bytes(seckey)).digest()
+    v = _PUBKEY_CACHE.get(ck)
     if v is not None:
         return v
     d0 = int.from_bytes(seckey, "big")
@@ -105,7 +107,7 @@ def pubkey_from_seckey(seckey: bytes) -> bytes:
     v = _bytes_from_int(_x(P))
     if len(_PUBKEY_CACHE) >= _PUBKEY_CACHE_MAX:   # simple bound — cheap to recompute on miss
         _PUBKEY_CACHE.clear()
-    _PUBKEY_CACHE[key] = v
+    _PUBKEY_CACHE[ck] = v
     return v
 
 
