@@ -519,7 +519,7 @@ def _enabled_bots_for_host():
 def _terminate(name, proc, timeout=3):
     # 3s (was 10): bots are stateless subprocesses that normally exit at once on SIGTERM; a short
     # graceful wait before SIGKILL keeps a slow/hung bot from pushing the service past its 10s stop
-    # deadline (stop_bot_manager terminates bots sequentially, so a long per-bot wait compounds).
+    # deadline.
     try:
         proc.terminate()
         proc.wait(timeout=timeout)
@@ -528,6 +528,29 @@ def _terminate(name, proc, timeout=3):
     except Exception:
         pass
     logger.info("[BOTS] stopped %s", name)
+
+
+def _terminate_all(named_procs, timeout=3):
+    """SIGTERM every proc at once, then wait up to `timeout` TOTAL (shared deadline) for them to exit,
+    SIGKILL stragglers. CONCURRENT — so N slow bots shut down in parallel and can't compound the
+    service's 10s stop deadline the way N sequential per-bot waits would."""
+    import time as _time
+    live = [(n, p) for (n, p) in named_procs if p and p.poll() is None]
+    for _n, p in live:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    end = _time.monotonic() + timeout
+    for n, p in live:
+        try:
+            p.wait(timeout=max(0.05, end - _time.monotonic()))
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        logger.info("[BOTS] stopped %s", n)
 
 
 def _reconcile_text(text_bots, base_env):
@@ -966,23 +989,18 @@ def stop_bot_manager():
     global _monitor_thread
     _stop_event.set()
     with _lock:
-        for name, proc in list(_procs.items()):
-            if proc and proc.poll() is None:
-                _terminate(name, proc)
+        # Collect ALL child processes and terminate them concurrently (one shared ~3s deadline) rather
+        # than sequentially, so a busy node's many bots can't sum past the service's 10s stop deadline.
+        named = list(_procs.items())
+        named += [(n, s["process"]) for n, s in _post_sched.items()
+                  if n != "_last_start" and s.get("process")]
+        named += [("test-post", p) for p in _oneshot_procs]
+        _terminate_all(named)
         _procs.clear()
-        for name, sched in list(_post_sched.items()):
-            if name == "_last_start":
-                continue
-            if sched.get("process") and sched["process"].poll() is None:
-                _terminate(name, sched["process"])
         _post_sched.clear()
-        # terminate any in-flight manual test-post one-shots
-        for proc in _oneshot_procs:
-            if proc and proc.poll() is None:
-                _terminate("test-post", proc)
         _oneshot_procs.clear()
     if _monitor_thread:
-        _monitor_thread.join(timeout=15)
+        _monitor_thread.join(timeout=3)   # was 15 — don't let the monitor join blow the stop deadline
         _monitor_thread = None
 
 

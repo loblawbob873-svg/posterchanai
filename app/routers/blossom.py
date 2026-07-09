@@ -265,7 +265,7 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
                 if t is None:
                     data = await blossom_service.read_full(db, blob)
                     if data is None:
-                        blossom_service.drop_meta(sha)   # self-heal a stale meta entry (bytes gone)
+                        blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
                         return _err(404, "blob bytes unavailable")
                     if mime.startswith("video/"):
                         t = await asyncio.to_thread(_video_thumb_bytes, data, 320)
@@ -304,7 +304,7 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
         body = await blossom_service.read_range(db, blob, start, end)
         if body is None:
-            blossom_service.drop_meta(sha)   # self-heal a stale meta entry (bytes gone)
+            blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
             return _err(404, "blob bytes unavailable")
         return StreamingResponse(body, status_code=206, media_type=mime,
                                  headers={**headers, "Content-Range": f"bytes {start}-{end}/{total}",
@@ -312,7 +312,7 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
 
     result = await blossom_service.read_blob(db, blob)
     if result is None:
-        blossom_service.drop_meta(sha)   # self-heal a stale meta entry (bytes gone)
+        blossom_service.revalidate_meta(db, sha)   # self-heal ONLY if the row is truly gone (not a transient outage)
         return _err(404, "blob bytes unavailable")
     stream, rmime, size = result
     return StreamingResponse(stream, media_type=rmime,

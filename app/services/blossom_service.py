@@ -227,9 +227,20 @@ def _meta_drop(sha256: str) -> None:
 
 def drop_meta(sha256: str) -> None:
     """Public metadata-cache eviction. Call AFTER a delete commits (a drop BEFORE commit can be
-    re-poisoned by a concurrent GET that re-queries the still-visible row under MVCC), and as a
-    self-heal whenever a read finds the bytes gone (so a stale entry can't strand a blob at 404)."""
+    re-poisoned by a concurrent GET that re-queries the still-visible row under MVCC)."""
     _meta_drop(sha256)
+
+
+def revalidate_meta(db: Session, sha256: str) -> None:
+    """Self-heal for the read path: when a read finds the bytes gone, evict the cached metadata ONLY
+    if the DB row is actually gone (a delete we raced). A transient storage outage returns the same
+    'no bytes' but the row is still present — evicting then would cold-wipe the hot cache and stampede
+    Postgres on recovery (every GET re-querying get_blob_meta), so leave valid entries in place."""
+    try:
+        if db.query(BlossomBlob.sha256).filter(BlossomBlob.sha256 == sha256).first() is None:
+            _meta_drop(sha256)
+    except Exception:
+        pass
 
 
 def get_blob_meta(db: Session, sha256: str):
@@ -651,12 +662,24 @@ async def read_blob(db: Session, blob: BlossomBlob):
             _cache_put(blob.sha256, data, budget)
             return _aiter_bytes(data), mime, len(data)
 
+        # Open + check the upstream status BEFORE returning, so gone/errored bytes yield None (→ clean
+        # 404 + self-heal) instead of a StreamingResponse 200 whose promised Content-Length never
+        # arrives (client hang) — the same fix as read_range (see its note).
+        c = _client()
+        try:
+            resp = await c.send(c.build_request("GET", url, headers=_proxy_headers()), stream=True)
+        except Exception:
+            return None
+        if resp.status_code != 200:
+            await resp.aclose()
+            return None
+
         async def _proxy_stream():
-            async with _client().stream("GET", url, headers=_proxy_headers()) as resp:
-                if resp.status_code != 200:
-                    return
+            try:
                 async for chunk in resp.aiter_bytes():
                     yield chunk
+            finally:
+                await resp.aclose()
 
         return _proxy_stream(), mime, blob.size
 
@@ -796,8 +819,12 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
     _cache_drop(blob.sha256)
-    # NOTE: the metadata cache is dropped by the CALLER *after* it commits the row deletion (drop_meta),
-    # not here — dropping it pre-commit lets a concurrent GET re-query the still-visible row and re-cache.
+    # Evict the metadata cache here so EVERY delete path invalidates it (router /delete, the cleanup
+    # sweep, artifact_store, admin purge, bot-delete purge all route through here). This is pre-commit,
+    # so a GET racing the delete could re-query the still-visible row and re-cache a stale entry; that
+    # narrow window is closed by the post-commit drop_meta in the interactive /delete route and by the
+    # revalidate_meta self-heal on the read path (which only evicts once the row is truly gone).
+    _meta_drop(blob.sha256)
     try:
         if blob.storage == "proxy" and cfg["storage_url"]:
             from urllib.parse import quote
