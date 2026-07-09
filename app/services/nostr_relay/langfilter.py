@@ -89,7 +89,7 @@ _TL_CORE = frozenset({
     # particles / grammar
     "ng", "mga", "naman", "yung", "iyung", "iyong", "aking", "kasi", "dahil", "kapag",
     "mayroon", "walang", "talaga", "ganyan", "ganun", "ganito", "ganon", "lamang", "ayon",
-    "kailangan", "kaya't", "sana't", "gusto't", "tuloy", "sarili", "po", "nga", "yata", "muna", "daw",
+    "kailangan", "tuloy", "sarili", "nga", "yata", "muna", "daw",
     # greetings / social
     "salamat", "maganda", "mabuti", "kumusta", "kamusta", "kaibigan", "opo",
     "pasensya", "pasensiya", "patawad",
@@ -124,27 +124,33 @@ _TL_SOFT = frozenset({
     "aba", "anak", "tara", "pera", "gabi", "bata", "ulan", "punta", "dali", "din", "rin", "sya", "tau",
     "lang", "kung", "kahit", "para", "pati", "sana", "kaya", "yan", "iyan", "isa", "isang", "ano",
     "nyan", "niyan", "pala", "oo",
+    # "po" is the #1 Tagalog politeness particle but collides hard (P.O. box, Italian/Portuguese "po",
+    # texting filler) — SOFT so it counts toward density but can't classify a note by itself.
+    "po",
 })
 _TL_WORDS = _TL_CORE | _TL_SOFT
-# Gate: skip the full word scan (per-event cost) unless AT LEAST ONE marker might be present. Built from
-# the word set itself, so it catches Taglish that has (say) "salamat"/"talaga" but no "ng"/"mga".
-_TL_GATE = re.compile(r"\b(?:" + "|".join(sorted(_TL_WORDS, key=len, reverse=True)) + r")\b")
+# Gate: skip the full word scan (per-event cost) unless a note might classify. EVERY path below requires
+# >= 1 CORE marker, so a note with no CORE word can NEVER be Tagalog — gate on _TL_CORE only (not the full
+# word set). CORE words are Tagalog-specific, so this stays selective (doesn't fire on the common SOFT
+# collisions para/ano/oo/lang that appear in ordinary English/Spanish), keeping the ingest hot path cheap.
+_TL_GATE = re.compile(r"\b(?:" + "|".join(sorted(_TL_CORE, key=len, reverse=True)) + r")\b")
 # Three independent paths, any ⇒ Tagalog. All require >= 1 CORE marker so pure name/slang collisions
 # ("Ako Corp / Sila Ventures", "sarap energy galing vibes") can never classify English on their own:
-_TL_CORE_MIN = 2       #  (1) >= 2 distinct CORE markers                      — clear Taglish, any length
-_TL_DIST_MIN = 3       #  (2) >= 3 distinct markers that DOMINATE the note    — dense Taglish, one core word
+_TL_CORE_MIN = 2       #  (1) >= 2 distinct CORE markers with a light density floor — clear Taglish; the
+_TL_CORE_DENS = 0.15   #      floor stops two stray CORE collisions in a long note (e.g. Italian "dito"+"po")
+_TL_DIST_MIN = 3       #  (2) >= 3 distinct markers that DOMINATE the note        — dense Taglish, one core
 _TL_DENSITY = 0.40     #      (>= 40% of words are markers) with >= 1 CORE
-_TL_SHORT_WORDS = 5    #  (3) short note (<= 5 words) that is >= 2 distinct   — short interjections like
-_TL_SHORT_DENS = 0.50  #      markers, >= 50% dense, with >= 1 CORE           — "Walang ano man"
+_TL_SHORT_WORDS = 5    #  (3) short note (<= 5 words) that is >= 2 distinct       — short interjections like
+_TL_SHORT_DENS = 0.50  #      markers, >= 50% dense, with >= 1 CORE               — "Walang ano man"
 _WORD_RE = re.compile(r"[a-z]+")
 
 
 def _is_tagalog(text: str) -> bool:
     """True if `text` (already lowercased + de-noised) reads as Tagalog/Taglish. Three paths (any fires):
-    (1) >= 2 distinct CORE (unambiguous) markers; (2) >= 3 distinct markers DOMINATING the note (>=40% of
-    words) with >= 1 CORE; (3) a short note (<=5 words) that is >= 2 distinct markers, >=50% dense, with
-    >= 1 CORE. All demand a CORE marker, so English name/slang collisions never classify. Conservative
-    because a false positive DELETES the note via the retroactive purge."""
+    (1) >= 2 distinct CORE (unambiguous) markers at >= 15% density; (2) >= 3 distinct markers DOMINATING
+    the note (>=40% of words) with >= 1 CORE; (3) a short note (<=5 words) that is >= 2 distinct markers,
+    >=50% dense, with >= 1 CORE. All demand a CORE marker + a density floor, so English name/slang
+    collisions never classify. Conservative because a false positive DELETES the note via the purge."""
     if not _TL_GATE.search(text):
         return False
     words = _WORD_RE.findall(text)
@@ -160,11 +166,11 @@ def _is_tagalog(text: str) -> bool:
                 seen.add(w)
                 if w in _TL_CORE:
                     core += 1
-    if core >= _TL_CORE_MIN:                                              # path 1: clear Taglish
-        return True
     if core < 1 or len(seen) < 2:
         return False
     dens = total / len(words)
+    if core >= _TL_CORE_MIN and dens >= _TL_CORE_DENS:                    # path 1: clear Taglish
+        return True
     if len(seen) >= _TL_DIST_MIN and dens >= _TL_DENSITY:                 # path 2: dense Taglish
         return True
     return len(words) <= _TL_SHORT_WORDS and dens >= _TL_SHORT_DENS       # path 3: short interjection

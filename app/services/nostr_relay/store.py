@@ -399,14 +399,16 @@ class RelayStore:
             return 0
         conn = self._conn()
         removed = 0
-        # Never delete a local user's own posts: exclude direct-published + preserved pubkeys, the
-        # same guard prune uses. Content filters target synced feed spam, not first-party notes.
+        # Spare only LOCAL users' own notes (preserve/direct). A blocked word is blocked at INGEST for
+        # everyone including WoT members (server.py has no WoT exemption), so the retroactive purge matches:
+        # it also purges WoT members' matching notes. Blocked words are EXACT admin-defined strings (no
+        # heuristic false-positive risk), so this can't delete legitimate content the way a bad lang guess
+        # could. Kept consistent with _delete_by_langs_sync.
         preserve = self._preserve_clause()
         for w in words:
             like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             ids = [r["id"] for r in conn.execute(
-                f"SELECT id FROM events WHERE kind=1 AND {preserve} "
-                "AND pubkey NOT IN (SELECT pubkey FROM wot) AND LOWER(content) LIKE ? ESCAPE '\\'",
+                f"SELECT id FROM events WHERE kind=1 AND {preserve} AND LOWER(content) LIKE ? ESCAPE '\\'",
                 (like,)).fetchall()]
             for i in range(0, len(ids), 900):
                 chunk = ids[i:i + 900]

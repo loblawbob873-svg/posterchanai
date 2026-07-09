@@ -630,7 +630,7 @@ async def _main(cfg: dict) -> None:
         by_proxy = (await store.delete_by_proxy() or 0) if fresh.get("block_bridged") else 0
         total = by_pk + by_word + by_lang + by_bridge + by_proxy
         if total:
-            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d) — WoT members preserved",
+            logger.info("[nostr-relay] block-purge breakdown: total=%d (pubkeys=%d words=%d langs=%d bridge=%d proxy=%d) — local/direct-published notes preserved (word/lang purges DO cover WoT members, matching ingest)",
                         total, by_pk, by_word, by_lang, by_bridge, by_proxy)
         _purge_state["count"] = total
         _purge_state["ts"] = int(time.time())
