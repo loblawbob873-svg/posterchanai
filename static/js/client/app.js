@@ -3632,7 +3632,7 @@
   // text when we have it cached (else strip the raw bech32 — the gibberish token looked broken).
   function _cardText(ev){
     let t=(mediaParts(ev.content).text||ev.content||'');
-    t=t.replace(/nostr:(npub1[0-9a-z]+|nprofile1[0-9a-z]+)/gi,(m,b)=>{
+    t=t.replace(/nostr:(npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|nprofile1[0-9a-z]+)/gi,(m,b)=>{
       try{ const d=NT().nip19.decode(b); const pk=d.type==='npub'?d.data:(d.data&&d.data.pubkey);
         if(pk){ const pr=profOf(pk); const nm=pr&&(pr.name||pr.display_name); return '@'+(nm||(NT().nip19.npubEncode(pk).slice(4,12)+'…')); } }catch(_){}
       return '';
@@ -8257,7 +8257,10 @@
     // (fetched + patched in place, like a quote); naddr → openable article/addressable link.
     // The leading group skips entities that are part of a URL/word (e.g. "zapstore.dev/apps/naddr1…")
     // — those were already turned into <a> links above, and re-embedding them broke the href HTML.
-    h=h.replace(/(^|[^\w/.])((?:nostr:)?(?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,})/gi, (m,pre,ent)=>{
+    // npub is a FIXED length (npub1 + 58 bech32 chars); bound it exactly so trailing text glued straight
+    // onto a mention (e.g. "nostr:npub1…qwprrpcicp") isn't swallowed into an invalid npub that fails to
+    // decode and renders as raw gibberish. The variable-length TLV entities stay greedy.
+    h=h.replace(/(^|[^\w/.])((?:nostr:)?(?:npub1[023456789acdefghjklmnpqrstuvwxyz]{58}|(?:nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,}))/gi, (m,pre,ent)=>{
       try{
         const d=NT().nip19.decode(ent.replace(/^nostr:/i,''));
         if(d.type==='npub' || d.type==='nprofile'){
