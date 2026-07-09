@@ -3337,8 +3337,14 @@
   // User-defined amount presets (Settings → Zaps & tips), stored in the per-user Nostr client-prefs so they
   // follow you across devices. Comma/space separated, positive numbers, capped; fall back to sane defaults.
   const _ZAP_DEFAULTS=[21,100,500,1000,5000], _XMR_DEFAULTS=[0.001,0.01,0.1,1];
-  function _parsePresets(s, dflt){ const a=String(s||'').split(/[\s,]+/).map(x=>parseFloat(x)).filter(n=>isFinite(n)&&n>0); return a.length?a.slice(0,8):dflt.slice(); }
-  function zapPresets(){ return _parsePresets(ClientSettings.get('zapPresets',''), _ZAP_DEFAULTS); }
+  // Parse a preset list. `int` → round to whole sats ≥1 (zaps are integer msats; a 0.5 button would be
+  // rejected by _runZap). Empty/garbage → the defaults. Capped so a huge paste can't wall the modal.
+  function _parsePresets(s, dflt, int){
+    let a=String(s||'').split(/[\s,]+/).map(x=>parseFloat(x)).filter(n=>isFinite(n)&&n>0);
+    if(int) a=a.map(n=>Math.round(n)).filter(n=>n>=1);
+    return a.length ? a.slice(0,8) : dflt.slice();
+  }
+  function zapPresets(){ return _parsePresets(ClientSettings.get('zapPresets',''), _ZAP_DEFAULTS, true); }
   function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
@@ -4449,15 +4455,20 @@
     if(!ev) return null;
     try{ return JSON.parse(ev.content||'{}')||{}; }catch(_){ return {}; }
   }
-  async function saveClientPrefsNostr(patch){
-    if(!ME || !ME.pubkey) return;
-    try{
-      // READ-MODIFY-WRITE: merge only the changed key(s) into the CURRENT remote value, so changing one
-      // pref can't clobber the others a laggy restore hasn't loaded yet (the replaceable-list-wipe class).
-      const cur = (await _readPrefs()) || {};
-      const next = { ...cur, ...(patch||{}) };
-      await publish(30078, JSON.stringify(next), [['d','pcai:client-prefs']]);
-    }catch(_){}
+  let _prefsSaveChain = Promise.resolve();
+  function saveClientPrefsNostr(patch){
+    if(!ME || !ME.pubkey) return Promise.resolve();
+    // SERIALIZE writes: each read-modify-write runs after the previous one's publish, so two concurrent
+    // saves (e.g. a data-saver toggle + a presets Save) can't each read a stale `cur` and clobber the other.
+    _prefsSaveChain = _prefsSaveChain.catch(()=>{}).then(async()=>{
+      try{
+        // Merge only the changed key(s) into the CURRENT remote value, so changing one pref can't wipe the
+        // others a laggy restore hasn't loaded yet (the replaceable-list-wipe class).
+        const cur = (await _readPrefs()) || {};
+        await publish(30078, JSON.stringify({ ...cur, ...(patch||{}) }), [['d','pcai:client-prefs']]);
+      }catch(_){}
+    });
+    return _prefsSaveChain;
   }
   async function restoreClientPrefsNostr(){
     if(!ME || !ME.pubkey) return;
@@ -7567,15 +7578,25 @@
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
       if(d && d.key){ alert('Your new key (shown once):\n\n'+d.key); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };
+    // Presets are only persisted on Save if the user actually edited them (else an unrelated Save clobbers).
+    let _presetsEdited=false;
+    { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; }
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
-      // Amount presets are CLIENT prefs (not account columns): normalize, persist locally, and sync to the
-      // per-user Nostr client-prefs so they follow across devices. _parsePresets validates; store the cleaned list.
-      { const zp=_parsePresets(($('#us-zap-presets')||{}).value, _ZAP_DEFAULTS).join(', ');
-        const xp=_parsePresets(($('#us-xmr-presets')||{}).value, _XMR_DEFAULTS).join(', ');
-        ClientSettings.set('zapPresets', zp); ClientSettings.set('xmrPresets', xp);
+      // Amount presets are CLIENT prefs (not account columns): only touch them if the user actually EDITED
+      // the fields this session — otherwise a Save that changed only (say) the email would force the
+      // default-prefilled values over the user's custom presets on their other devices (replaceable-wipe).
+      // Store '' when the list equals the built-in defaults, so future default changes still apply. AWAIT
+      // the sync so a same-Save relay/media reload can't abort the fire-and-forget publish.
+      if(_presetsEdited){
+        const zp=_parsePresets(($('#us-zap-presets')||{}).value, _ZAP_DEFAULTS, true);
+        const xp=_parsePresets(($('#us-xmr-presets')||{}).value, _XMR_DEFAULTS);
+        const zpStr = zp.join(',')===_ZAP_DEFAULTS.join(',') ? '' : zp.join(', ');
+        const xpStr = xp.join(',')===_XMR_DEFAULTS.join(',') ? '' : xp.join(', ');
+        ClientSettings.set('zapPresets', zpStr); ClientSettings.set('xmrPresets', xpStr);
         _prefTouched.add('zapPresets'); _prefTouched.add('xmrPresets');
-        saveClientPrefsNostr({ zapPresets: zp, xmrPresets: xp }); }
+        await saveClientPrefsNostr({ zapPresets: zpStr, xmrPresets: xpStr });
+      }
       const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
         matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
