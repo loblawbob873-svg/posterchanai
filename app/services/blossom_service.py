@@ -193,6 +193,43 @@ async def _aiter_bytes(data: bytes):
     yield data
 
 
+# --- shared pooled HTTP client (storage-proxy I/O to nas) -------------------
+# One connection pool, reused across ALL blob reads/writes/deletes. A fresh httpx.AsyncClient per
+# request (the old pattern) opened a new TCP+TLS connection to the storage node on every cache-miss
+# GET — at many requests/second that floods nas with handshakes and adds latency to every miss. A
+# shared client keep-alives the connections instead. Bound so a burst can't open unlimited sockets.
+# (The DR mirror worker keeps its OWN client — different event loop + fallback transport.)
+_http_client: "httpx.AsyncClient | None" = None
+_http_client_lock = threading.Lock()
+
+
+def _client() -> "httpx.AsyncClient":
+    global _http_client
+    c = _http_client
+    if c is not None and not c.is_closed:
+        return c
+    with _http_client_lock:
+        if _http_client is None or _http_client.is_closed:
+            _http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0, connect=10.0),
+                limits=httpx.Limits(max_connections=128, max_keepalive_connections=64,
+                                    keepalive_expiry=30.0),
+            )
+    return _http_client
+
+
+async def aclose_http() -> None:
+    """Close the shared client on shutdown (wired into the app's port-3051 shutdown block)."""
+    global _http_client
+    c = _http_client
+    _http_client = None
+    if c is not None and not c.is_closed:
+        try:
+            await c.aclose()
+        except Exception:
+            pass
+
+
 # --- authorization ----------------------------------------------------------
 
 _operator_cache = {"ts": 0.0, "set": frozenset()}
@@ -343,11 +380,10 @@ async def _proxy_put(storage_url: str, sha256: str, data: bytes, mime: str) -> s
     url = f"{storage_url.rstrip('/')}/api/storage/upload-file"
     files = {"file": (sha256, data, mime or "application/octet-stream")}
     form = {"username": _PROXY_USER, "path": subdir}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-        r = await client.post(url, headers=_proxy_headers(), files=files, data=form)
-        if r.status_code != 200:
-            raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
-        return (r.json().get("path") or f"{subdir}/{sha256}")
+    r = await _client().post(url, headers=_proxy_headers(), files=files, data=form)
+    if r.status_code != 200:
+        raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
+    return (r.json().get("path") or f"{subdir}/{sha256}")
 
 
 async def _mirror_blob(sha256: str, data: bytes, mime: str, servers: list):
@@ -534,8 +570,7 @@ async def read_blob(db: Session, blob: BlossomBlob):
                f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
 
         if cacheable:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-                resp = await client.get(url, headers=_proxy_headers())
+            resp = await _client().get(url, headers=_proxy_headers())
             if resp.status_code != 200:
                 return None
             data = resp.content
@@ -543,12 +578,11 @@ async def read_blob(db: Session, blob: BlossomBlob):
             return _aiter_bytes(data), mime, len(data)
 
         async def _proxy_stream():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-                async with client.stream("GET", url, headers=_proxy_headers()) as resp:
-                    if resp.status_code != 200:
-                        return
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
+            async with _client().stream("GET", url, headers=_proxy_headers()) as resp:
+                if resp.status_code != 200:
+                    return
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
 
         return _proxy_stream(), mime, blob.size
 
@@ -590,8 +624,7 @@ async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:
         from urllib.parse import quote
         url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
                f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-            r = await client.get(url, headers=_proxy_headers())
+        r = await _client().get(url, headers=_proxy_headers())
         if r.status_code != 200:
             return None
         data = r.content
@@ -603,6 +636,74 @@ async def read_full(db: Session, blob: BlossomBlob) -> bytes | None:
     return data
 
 
+async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
+    """Async-iterate ONLY bytes [start, end] (inclusive) of a blob, without buffering the whole thing.
+    Serves from the RAM cache (slice) when hot; otherwise forwards the Range to the storage proxy (nas
+    returns 206 via FileResponse) or seeks the local file. This is what makes video seeking O(range)
+    instead of re-downloading the full blob from nas on every seek. Returns an async iterator, or None
+    if the bytes are gone. No caching of partial reads (a full GET seeds the cache)."""
+    cached = _cache_get(blob.sha256)
+    if cached is not None:
+        return _aiter_bytes(cached[start:end + 1])
+
+    n = end - start + 1
+    cfg = _cfg(db)
+    if blob.storage == "proxy":
+        if not cfg["storage_url"]:
+            return None
+        from urllib.parse import quote
+        url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
+               f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
+        headers = {**_proxy_headers(), "Range": f"bytes={start}-{end}"}
+
+        async def _proxy_range():
+            async with _client().stream("GET", url, headers=headers) as resp:
+                if resp.status_code == 206:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                elif resp.status_code == 200:
+                    # nas ignored Range (shouldn't happen — FileResponse honours it) → slice the stream
+                    # ourselves so we still return only the requested window, never the whole blob to RAM.
+                    skip, remaining = start, n
+                    async for chunk in resp.aiter_bytes():
+                        if remaining <= 0:
+                            break
+                        if skip:
+                            if len(chunk) <= skip:
+                                skip -= len(chunk)
+                                continue
+                            chunk = chunk[skip:]
+                            skip = 0
+                        chunk = chunk[:remaining]
+                        remaining -= len(chunk)
+                        yield chunk
+
+        return _proxy_range()
+
+    # local — seek to start, read exactly n bytes (never loads the whole file)
+    if not os.path.isfile(blob.path):
+        return None
+
+    async def _local_range():
+        def _open():
+            f = open(blob.path, "rb")
+            f.seek(start)
+            return f
+        f = await asyncio.to_thread(_open)
+        remaining = n
+        try:
+            while remaining > 0:
+                chunk = await asyncio.to_thread(f.read, min(262144, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            f.close()
+
+    return _local_range()
+
+
 async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
@@ -612,8 +713,7 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
             from urllib.parse import quote
             url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/delete-file"
                    f"?username={_PROXY_USER}&file_path={quote(blob.path)}")
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                await client.delete(url, headers=_proxy_headers())
+            await _client().delete(url, headers=_proxy_headers(), timeout=httpx.Timeout(30.0, connect=10.0))
         elif blob.storage == "local":
             await asyncio.to_thread(lambda: os.path.isfile(blob.path) and os.remove(blob.path))
     except Exception as e:

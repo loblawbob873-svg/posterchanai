@@ -621,10 +621,11 @@ async def shutdown():
         except Exception:
             pass
 
-        # Stop the Blossom expiry-cleanup thread
+        # Stop the Blossom expiry-cleanup thread + close the shared storage-proxy HTTP client
         try:
-            from app.services.blossom_service import stop_blossom_cleanup
+            from app.services.blossom_service import stop_blossom_cleanup, aclose_http
             stop_blossom_cleanup()
+            await aclose_http()
         except Exception:
             pass
 

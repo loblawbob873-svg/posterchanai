@@ -280,15 +280,12 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
         return Response(t, media_type="image/jpeg",
                         headers={**headers, "Content-Length": str(len(t))})
 
-    # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Buffer-and-slice for
-    # blobs up to _RANGE_MAX (kept in the RAM cache); larger blobs stream whole.
-    _RANGE_MAX = 32 * 1024 * 1024
+    # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Streams ONLY the requested
+    # window — from the RAM cache (slice), the storage proxy (Range forwarded → nas 206), or a local
+    # file seek — so a seek never re-downloads the whole blob (the old buffer-the-whole-thing path).
     rng = request.headers.get("range")
-    if rng and rng.startswith("bytes=") and blob.size <= _RANGE_MAX:
-        data = await blossom_service.read_full(db, blob)
-        if data is None:
-            return _err(404, "blob bytes unavailable")
-        total = len(data)
+    if rng and rng.startswith("bytes=") and blob.size:
+        total = blob.size
         try:
             s, _, e = rng[6:].partition("-")
             start = int(s) if s else 0
@@ -298,10 +295,12 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
         end = min(end, total - 1)
         if start > end or start < 0:
             return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
-        chunk = data[start:end + 1]
-        return Response(chunk, status_code=206, media_type=mime,
-                        headers={**headers, "Content-Range": f"bytes {start}-{end}/{total}",
-                                 "Content-Length": str(len(chunk))})
+        body = await blossom_service.read_range(db, blob, start, end)
+        if body is None:
+            return _err(404, "blob bytes unavailable")
+        return StreamingResponse(body, status_code=206, media_type=mime,
+                                 headers={**headers, "Content-Range": f"bytes {start}-{end}/{total}",
+                                          "Content-Length": str(end - start + 1)})
 
     result = await blossom_service.read_blob(db, blob)
     if result is None:
