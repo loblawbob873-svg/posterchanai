@@ -1027,6 +1027,18 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */
 .act.actxmr{color:#f60} .act.actxmr:hover{color:#ff8a33;border-color:#f60;box-shadow:0 0 14px rgba(255,102,0,.35)}
 .ln-addr.xmr{color:#f60} .ln-addr.xmr:hover{border-color:#f60;box-shadow:0 0 12px rgba(255,102,0,.35)}
+/* Monero tip note badge — shows the amount prominently; when a proof is attached, a one-tap button
+   copies a check_tx_proof command so anyone can verify the payment in their own wallet. */
+.xmr-tip-badge{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;padding:8px 12px;border-radius:12px;background:rgba(255,102,0,.10);border:1px solid rgba(255,102,0,.35)}
+.xt-amt{font-weight:800;color:#ff7a1a;font-size:15px}
+.xmr-tip-badge.has-proof .xt-amt::after{content:' 🔐';font-size:12px}   /* proof ATTACHED (not "verified" — we don't run a Monero node; verify it yourself) */
+.xt-verify{margin-left:auto;background:rgba(255,102,0,.16);color:#ff8c42;border:1px solid rgba(255,102,0,.4);border-radius:9px;padding:6px 11px;font-size:12.5px;font-weight:600;cursor:pointer;min-height:34px}
+.xt-verify:active{background:rgba(255,102,0,.26)}
+.xt-txid{margin-left:auto;color:var(--muted);font-size:12px;font-family:ui-monospace,monospace}
+/* Monero tip amount presets — one-tap common amounts in the tip modal. */
+.xmr-presets{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 4px}
+.xmr-preset{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:11px;padding:7px 12px;font-weight:600;font-size:13.5px;cursor:pointer;min-height:38px}
+.xmr-preset:active{background:rgba(255,102,0,.14)}
 /* Monero tx-proof (optional): collapsible txid + proof-signature inputs in the tip modal. */
 .xmr-proof{margin-top:8px}
 .xmr-proof>summary{cursor:pointer;font-size:13px;color:var(--cyan);padding:6px 0;list-style:none}

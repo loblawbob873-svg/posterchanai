@@ -2774,6 +2774,24 @@
     for(const t of ((ev&&ev.tags)||[])){ if(t && (t[0]==='monero_address'||t[0]==='xmr'||t[0]==='monero') && isXmrAddr(t[1])) return String(t[1]).trim(); }
     return xmrOf(profOf((ev&&ev.pubkey)||''));
   }
+  // A Monero tip note (t:monerotip) → a clean ɱ amount badge, plus a one-tap "copy verify command" when it
+  // carries a tx proof so anyone can confirm the payment in THEIR own wallet (no server, no Monero infra).
+  function _xmrTip(ev){
+    if(!ev || !ev.tags || !ev.tags.some(t=>t[0]==='t'&&t[1]==='monerotip')) return null;
+    const amt=(ev.tags.find(t=>t[0]==='amount_xmr')||[])[1]||'';
+    const pr=ev.tags.find(t=>t[0]==='monero_proof');   // ['monero_proof', txid, addr, proof]
+    return { amt, txid: pr?(pr[1]||''):((ev.tags.find(t=>t[0]==='txid')||[])[1]||''),
+             addr: pr?(pr[2]||''):'', proof: pr?(pr[3]||''):'' };
+  }
+  function xmrTipBadge(ev){
+    const t=_xmrTip(ev); if(!t) return '';
+    const verifiable = t.txid && t.addr && t.proof;
+    return `<div class="xmr-tip-badge${verifiable?' has-proof':''}">`
+      + `<span class="xt-amt">ɱ ${t.amt?enc(t.amt)+' XMR':'Monero tip'}</span>`
+      + (verifiable ? `<button class="xt-verify" data-xtxid="${enc(t.txid)}" data-xaddr="${enc(t.addr)}" data-xproof="${enc(t.proof)}" title="copy a wallet command to verify this payment yourself">🔐 Copy verify command</button>`
+                    : (t.txid ? `<span class="xt-txid" title="transaction id">tx ${enc(t.txid.slice(0,10))}…</span>` : ''))
+      + `</div>`;
+  }
   function noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
@@ -2988,6 +3006,7 @@
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
         <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
+        ${xmrTipBadge(ev)}
         ${mp.gallery}
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
@@ -3162,6 +3181,9 @@
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
         return; }   // docs: fall through to the link (download / new tab)
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
+      const xv=e.target.closest('.xt-verify'); if(xv){ e.stopPropagation();   // Monero tip: copy a ready-to-run verify command for the viewer's own wallet
+        const cmd=`check_tx_proof ${xv.dataset.xtxid} ${xv.dataset.xaddr} "" ${xv.dataset.xproof}`;
+        try{ navigator.clipboard.writeText(cmd).then(()=>toast('verify command copied — paste it into your Monero wallet'),()=>prompt('Paste this into your Monero wallet:',cmd)); }catch(_){ prompt('Paste this into your Monero wallet:',cmd); } return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
       const q=e.target.closest('[data-open]'); if(q){ openThread(q.dataset.open); return; }
@@ -3363,7 +3385,8 @@
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
       <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay → tap “I sent it”. Non-custodial: nothing touches this server.</p>
-      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" placeholder="amount (XMR) — fills your wallet & shows in the note"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
+      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" value="${enc(ClientSettings.get('xmrLastAmt','')||'')}" placeholder="amount (XMR) — fills your wallet & shows in the note"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
+      <div class="xmr-presets" id="xmr-presets">${[0.001,0.01,0.1,1].map(a=>`<button class="xmr-preset" data-amt="${a}">ɱ ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
       ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (advanced, optional)</summary>
@@ -3383,6 +3406,7 @@
         const sync=()=>{ openBtn.href=uri(amtVal()); };   // deeplink tracks the amount IMMEDIATELY (QR fetch is debounced, the href is not)
         sync(); renderQr();
         amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
+        $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); clearTimeout(_t); _t=setTimeout(renderQr,300); });   // one-tap amount
         $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the Monero address:',addr)); }catch(_){ prompt('Copy the Monero address:',addr); } };
         { const s=$('#xmr-sent',root); if(s) s.onclick=()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
@@ -3390,6 +3414,7 @@
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
           if((txid||proof) && !a && !confirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
+          if(a){ ClientSettings.set('xmrLastAmt', a); saveClientPrefsNostr(); }   // remember + sync the amount to Nostr (follows across devices)
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
   }
@@ -4400,7 +4425,11 @@
   // Sync a small set of CLIENT prefs to Nostr (kind-30078 app-data, d=pcai:client-prefs) so per-device
   // toggles like the image data-saver follow the user across devices. Plain JSON (not sensitive).
   async function saveClientPrefsNostr(){
-    try{ await publish(30078, JSON.stringify({ noImages: !!NO_IMAGES }), [['d','pcai:client-prefs']]); }catch(_){}
+    try{ await publish(30078, JSON.stringify({
+      noImages: !!NO_IMAGES,
+      xmrTip: ClientSettings.get('xmrLastAmt','')||'',        // remembered tip amount → follows you across devices
+      xmrStamp: !!ClientSettings.get('xmrStampNotes',false),  // opt-in: attach my XMR address to my posts
+    }), [['d','pcai:client-prefs']]); }catch(_){}
   }
   async function restoreClientPrefsNostr(){
     if(!ME || !ME.pubkey) return;
@@ -4416,6 +4445,8 @@
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
+      if(pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));   // tip amount + stamp opt-in follow across devices
+      if(typeof pr.xmrStamp==='boolean') ClientSettings.set('xmrStampNotes', pr.xmrStamp);
     }catch(_){}
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -6327,7 +6358,7 @@
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
-        { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts
+        { const sc=$('#pf-xmr-stamp',root); if(sc){ ClientSettings.set('xmrStampNotes', !!sc.checked); saveClientPrefsNostr(); } }   // opt-in: attach my XMR to my posts (synced to Nostr)
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
         // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
