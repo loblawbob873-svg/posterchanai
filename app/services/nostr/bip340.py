@@ -83,13 +83,30 @@ def _has_even_y(point) -> bool:
     return _y(point) % 2 == 0
 
 
+_PUBKEY_CACHE: dict = {}
+_PUBKEY_CACHE_MAX = 4096
+
+
 def pubkey_from_seckey(seckey: bytes) -> bytes:
-    """Return the 32-byte x-only public key for a 32-byte secret key."""
+    """Return the 32-byte x-only public key for a 32-byte secret key.
+
+    CACHED (seckey→pubkey): the derivation is a pure-Python secp256k1 point-mul (~35ms), and the same
+    key derives its pubkey constantly — the settings hydrate alone called this once per setting doc
+    (240× ≈ 8.5s of startup, via nip44.decrypt_self), plus every self-encrypt/decrypt and event sign.
+    Deterministic, so the cache is exact; bounded to cap memory (same pattern as nip44._CONV_KEY_CACHE)."""
+    key = bytes(seckey)
+    v = _PUBKEY_CACHE.get(key)
+    if v is not None:
+        return v
     d0 = int.from_bytes(seckey, "big")
     if not (1 <= d0 <= n - 1):
         raise ValueError("secret key out of range")
     P = _point_mul(G, d0)
-    return _bytes_from_int(_x(P))
+    v = _bytes_from_int(_x(P))
+    if len(_PUBKEY_CACHE) >= _PUBKEY_CACHE_MAX:   # simple bound — cheap to recompute on miss
+        _PUBKEY_CACHE.clear()
+    _PUBKEY_CACHE[key] = v
+    return v
 
 
 def sign(msg32: bytes, seckey: bytes, aux: bytes | None = None) -> bytes:
