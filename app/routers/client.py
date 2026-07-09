@@ -290,6 +290,14 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"error": "bad request"}, status_code=400)
     text = (body.get("text") or "").strip()
     to = (str(body.get("to") or "English")).strip()[:40] or "English"
+    # Callers pass an ISO code (navigator.language / Live Translate) OR a name. Keep `to` for the
+    # already-in-target short-circuit (compared as to[:2]), but translate INTO the full language NAME
+    # in the prompt — an LLM renders "into Filipino"/"into Indonesian" far more reliably than "into tl"/"id".
+    _LANG_NAMES = {"en": "English", "th": "Thai", "es": "Spanish", "fr": "French", "de": "German",
+                   "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", "ja": "Japanese",
+                   "ko": "Korean", "ar": "Arabic", "hi": "Hindi", "vi": "Vietnamese", "id": "Indonesian",
+                   "tl": "Filipino", "uk": "Ukrainian", "tr": "Turkish", "pl": "Polish", "nl": "Dutch"}
+    to_name = _LANG_NAMES.get(to.strip().lower()[:2], to)
     if not text:
         return JSONResponse({"error": "no text"}, status_code=400)
     text = text[:4000]   # cap: posts are short; bounds the LLM work
@@ -322,10 +330,10 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
             # "already in your language" notice (it compares the result to the source).
             return JSONResponse({"text": text})
         msgs = [{"role": "system", "content": f"You are a translation engine. Translate the user's "
-              f"message into {to}. The message is often colloquial, run-on, code-switched and "
-              f"unpunctuated. Translate the ENTIRE message into natural {to} — EVERY word or phrase "
-              f"that is not already {to}. This applies to SHORT, casual, and slang messages too "
-              f"(e.g. 'lol that's funny') — they MUST be rendered in {to}, never echoed in the "
+              f"message into {to_name}. The message is often colloquial, run-on, code-switched and "
+              f"unpunctuated. Translate the ENTIRE message into natural {to_name} — EVERY word or phrase "
+              f"that is not already {to_name}. This applies to SHORT, casual, and slang messages too "
+              f"(e.g. 'lol that's funny') — they MUST be rendered in {to_name}, never echoed in the "
               f"source language. Do NOT leave any source-language words in the output, and do not "
               f"just re-punctuate the original. Keep @mentions, #hashtags, URLs and emoji exactly "
               f"as-is. Output ONLY the translated text — no preamble, notes, or quotes."}]

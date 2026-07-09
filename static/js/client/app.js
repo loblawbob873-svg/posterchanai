@@ -6906,8 +6906,11 @@
     return [a, b];
   }
 
+  const _ltNorm=s=>(s||'').replace(/\s+/g,' ').trim();   // match /client/translate's whitespace collapse
   function renderTranslate(){
     const feed=$('#feed'); if(!feed) return;
+    // NOTE: _ltCancel is intentionally NOT reset here — a stale cancel from navigating away suppresses
+    // that turn's in-flight pipeline/narration; ltToggleMic clears it when the next recording starts.
     const pair=_ltPair();
     const opts=sel=>LT_LANGS.map(([c,n,fl])=>`<option value="${c}"${c===sel?' selected':''}>${fl} ${enc(n)}</option>`).join('');
     feed.innerHTML=`<div class="lt-wrap">
@@ -6957,6 +6960,7 @@
       const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({ text:(text||'').slice(0,2000), lang })});
       const j=await r.json().catch(()=>({}));
+      if(_ltCancel) return;   // navigated away while the audio was generating → don't play it elsewhere
       if(!r.ok || !j.audio) return;
       _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio); _narrateAudio.play().catch(()=>{});
     }catch(_){}
@@ -7018,9 +7022,13 @@
       };
       let translated=await translate(tgt);
       if(translated && translated.err){ _ltStatus(''); toast(translated.err); return; }
-      if(translated===text){   // endpoint said "already in the target language" → we routed backwards
+      // Echo = endpoint returned the text unchanged (it's already in tgt → we routed backwards). Compare
+      // normalized, since the endpoint collapses whitespace on that unchanged return.
+      if(_ltNorm(translated)===_ltNorm(text)){
         const swapped=await translate(src);   // translate to the OTHER side instead
-        if(swapped && !swapped.err && swapped!==text){ [src, tgt]=[tgt, src]; translated=swapped; }
+        if(swapped && swapped.err){ _ltStatus(''); toast(swapped.err); return; }   // don't render the untranslated original
+        if(_ltNorm(swapped)!==_ltNorm(text)){ [src, tgt]=[tgt, src]; translated=swapped; }
+        // else: both sides return it unchanged → the phrase is the same in both languages; keep it as-is
       }
       if(_ltCancel){ _ltStatus(''); return; }   // left the view mid-pipeline → don't render/speak
       _ltStatus('');
