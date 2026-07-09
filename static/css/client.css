@@ -1516,6 +1516,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 .lt-tag{display:inline-block;font-size:12px;font-weight:700;opacity:.7;margin-right:8px;vertical-align:middle}
 .lt-src{font-size:15px;color:var(--muted);border-left:2px solid var(--line);padding-left:12px}
 .lt-tr{font-size:23px;line-height:1.35;font-weight:600;color:var(--text);border-left:3px solid var(--neon);padding-left:12px}
+.lt-replay{float:right;margin-left:8px;background:none;border:none;color:var(--cyan);font-size:18px;cursor:pointer;opacity:.7;padding:0 2px;line-height:1}
+.lt-replay:active{opacity:1;transform:scale(.9)}
 .lt-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:18px;position:relative;padding:14px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
 .lt-mic{width:76px;height:76px;border-radius:50%;border:2px solid var(--neon);background:rgba(0,255,255,.06);color:var(--neon);font-size:32px;cursor:pointer;box-shadow:var(--glow);transition:transform .1s,background .15s}
 .lt-mic:active{transform:scale(.94)}

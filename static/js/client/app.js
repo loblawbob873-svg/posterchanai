@@ -6950,7 +6950,11 @@
     const h=log.querySelector('.lt-hint'); if(h) h.remove();
     const el=document.createElement('div'); el.className='lt-turn';
     el.innerHTML=`<div class="lt-src"><span class="lt-tag">${_ltFlag(srcLang)} ${enc(_ltName(srcLang))}</span>${enc(original)}</div>`
-      +`<div class="lt-tr"><span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
+      +`<div class="lt-tr"><button class="lt-replay" title="play the translation again" aria-label="replay">🔊</button>`
+      +`<span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
+    // Replay always plays (even when auto-speak is off). Clear the cancel flag first: it's an explicit
+    // on-view action, and the flag can linger true after a navigate-away (would otherwise mute ltSpeak).
+    const rb=el.querySelector('.lt-replay'); if(rb) rb.onclick=()=>{ _ltCancel=false; ltSpeak(translated, tgtLang); };
     log.appendChild(el); log.scrollTop=log.scrollHeight;
   }
   // Speak the translation. Passes the target language code so /client/narrate (TTSService) picks a
