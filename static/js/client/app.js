@@ -3851,11 +3851,14 @@
     const eff=(cat.effects||[]).map(chip).join('');
     const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
     const stk=(cat.chars||[]).map(n=>`<button class="fx-char" data-char="${enc(n)}">🧷 ${enc(n)}</button>`).join('');
-    // Compact layout (esp. mobile, where the keyboard halves the viewport): pick ONE base — Enhance is
-    // shown inline; the large Effects catalog is collapsed behind a <details> so it isn't a wall of chips.
+    // Pick ONE base: the full Effects catalog is the point of the studio, so it's shown INLINE as the
+    // primary section (never collapsed — hiding it behind a <details> buried the main feature). Both grids
+    // are height-capped + internally scrollable (see .fx-grid), so even the big catalog stays bounded on
+    // mobile where the keyboard halves the viewport, instead of becoming a wall that buries the add-ons.
+    const nEff=(cat.effects||[]).length;
     return '<div class="fx-guide"><b>🎬 Effects studio</b> — image attached. Pick <b>one base</b>, optionally <b>add</b> motion / sticker / caption (they stack), then ▶ Send.'+
-      (enh?'<div class="fx-sec">✨ Enhance <span class="fx-hint">pick one</span></div><div class="fx-grid">'+enh+'</div>':'')+
-      '<details class="fx-more"><summary>🎭 More effects <span class="fx-hint">('+((cat.effects||[]).length)+' — tap to browse)</span></summary><div class="fx-grid">'+eff+'</div></details>'+
+      (eff?'<div class="fx-sec">🎭 Effects <span class="fx-hint">pick one'+(nEff>8?' · scroll for all '+nEff:'')+'</span></div><div class="fx-grid fx-grid-eff">'+eff+'</div>':'')+
+      (enh?'<div class="fx-sec">✨ Enhance <span class="fx-hint">or pick one of these</span></div><div class="fx-grid">'+enh+'</div>':'')+
       '<div class="fx-sec">🌀 Motion <span class="fx-hint">add-on · trippy/glow/alive stack</span></div><div class="fx-row">'+mots+'</div>'+
       (stk?'<div class="fx-sec">🧷 Sticker <span class="fx-hint">add-on</span></div><div class="fx-row">'+stk+'</div>':'')+
       '<div class="fx-sec">💬 Caption <span class="fx-hint">add-on</span></div><div class="fx-row"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';

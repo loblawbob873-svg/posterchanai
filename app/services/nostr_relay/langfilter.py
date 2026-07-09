@@ -77,61 +77,74 @@ _VIET_CHARS = frozenset(
 )
 _VIET_MIN = 2  # this many distinctive chars in a note ⇒ Vietnamese
 
-# Tagalog/Filipino is Latin-script with NO distinctive diacritics (unlike Vietnamese), so script/char
-# detection can't see it. Instead detect it by its high-frequency function words — markers that are
-# essentially never English, so a few of them in a note is a strong, low-false-positive signal. Curated to
-# avoid English/Spanish collisions (dropped ambiguous ones like "at"/"si"/"para"/"como"; "ng"/"mga" are
-# unique letter patterns and the strongest tells).
-# Curated for LOW English/Spanish collision — a false positive here isn't cosmetic, it deletes the note
-# (the retroactive lang purge removes matching kind-1s). Deliberately DROPPED collision-prone tokens:
-# hindi (Eng. name of Hindi), sino (Sino-/Spanish), mahal (Taj Mahal/surname), kaya, lang (programming),
-# sana, wala, ano (año), kung (kung-fu), sobra/medyo/parang, saan/kailan, and short particles (nga/din/
-# rin/po/ho/ba). What remains is dense Tagalog grammar that rarely coincides in English prose.
-# Every token here is (as a standalone lowercase word) essentially unique to Tagalog — NOT an English or
-# Spanish word or a common name. That's what lets 2 of them be a safe signal (incl. Taglish, where an
-# otherwise-English post is peppered with Tagalog grammar). Still DELIBERATELY excludes collision-prone
-# tokens (hindi/sino/mahal/kaya/lang/sana/wala/ano/gusto/para/si…) because a false positive DELETES the note.
-# CORE markers: unambiguous Tagalog grammar/verbs that are essentially never an English word OR a common
-# name — a match here is real signal. (Excludes collision-prone tokens hindi/sino/mahal/kaya/lang/sana/
-# wala/ano/gusto/para/si that would DELETE English notes.)
+# Tagalog/Filipino is Latin-script with no distinctive diacritics (unlike Vietnamese), so detect it by its
+# words. A false positive DELETES the note (the retroactive purge removes matching kind-1s), so words are
+# split into two tiers and a note is Tagalog only when it has >= _TL_MIN distinct markers INCLUDING >= 1
+# CORE one, plus a light density floor.
+#
+# CORE = tokens that as a standalone lowercase word are essentially UNIQUE to Tagalog — not an English or
+# Spanish word, not a common name. Two of these classify a note (catches Taglish). Deliberately EXCLUDES
+# collision-prone tokens entirely (hindi/sino/mahal/kaya/lang/sana/wala/ano/gusto/para/si/sobra/grabe…).
 _TL_CORE = frozenset({
-    # particles / grammar (po/nga/yata/muna/daw are unambiguous Tagalog function words — NOT English
-    # words or common names, so they're safe to treat as core, unlike the name-risky pronouns in _TL_EXTRA)
+    # particles / grammar
     "ng", "mga", "naman", "yung", "iyung", "iyong", "aking", "kasi", "dahil", "kapag",
     "mayroon", "walang", "talaga", "ganyan", "ganun", "ganito", "ganon", "lamang", "ayon",
-    "kailangan", "kaya't", "sana't", "gusto't", "tuloy", "sarili",
-    "po", "nga", "yata", "muna", "daw",
+    "kailangan", "kaya't", "sana't", "gusto't", "tuloy", "sarili", "po", "nga", "yata", "muna", "daw",
     # greetings / social
     "salamat", "maganda", "mabuti", "kumusta", "kamusta", "kaibigan", "opo",
+    "pasensya", "pasensiya", "patawad",
     # time / place
-    "ngayon", "ngayong", "kanina", "kahapon", "bukas", "dito", "doon", "diyan", "dyan",
+    "ngayon", "ngayong", "kanina", "kahapon", "bukas", "umaga", "dito", "doon", "diyan", "dyan",
     # questions / quantity
     "bakit", "paano", "pwede", "puwede", "kaunti", "konti", "marami", "maraming", "lahat",
     # verbs (Tagalog affix forms — essentially never English)
     "kausap", "sumang", "bilis", "nakita", "makita", "gagawin", "ginawa", "gawin",
-    "pumunta", "pupunta", "kumain", "kakain", "sabihin", "sinabi", "sabi",
-    "naiintindihan", "intindi", "magkano", "alam", "pakiramdam",
+    "pumunta", "pupunta", "kumain", "kakain", "sabihin", "sinabi", "sabi", "naiintindihan",
+    "intindi", "magkano", "pakiramdam", "tignan", "tingnan", "tingin", "akala",
+    "tulog", "gising", "lakad", "takbo", "uwi", "inom", "ayaw", "ayoko", "halika", "tulong", "ingat",
+    "kain", "hanapin", "hinahanap", "naghahanap", "pahingi", "papunta", "pumupunta",
+    # adjectives / feelings (unambiguous)
+    "sipag", "tamad", "pagod", "gutom", "busog", "tahimik", "mabait", "pangit", "malungkot", "asim",
+    # everyday nouns (unambiguous)
+    "bahay", "trabaho", "pagkain", "tubig", "kanin", "nanay", "tatay", "kapatid", "asawa", "pamilya", "saglit",
+    "ulam", "kutsara",
+    # interjections
+    "naku", "sige", "teka", "sandali",
     # pronouns that don't double as common names/acronyms
     "ninyo", "namin", "natin", "kanila", "kaniya",
 })
-# EXTRA markers: real Tagalog words, but each could also be a proper name / acronym (Ang, Ako, Meron,
-# Sila, Kami …), so they count toward the distinct total but can't classify a note on their own.
-_TL_EXTRA = frozenset({
-    "ang", "ako", "ikaw", "siya", "sila", "kami", "kayo", "tayo", "niya", "meron", "amin", "atin", "inyo",
+# SOFT = real Tagalog words that ALSO occur as proper names / Fil-Am slang / Spanish / English collisions,
+# so they count toward the distinct total + density but CANNOT classify a note on their own (guards English
+# like "Ako Corp / Sila Ventures / Ang / Meron", slang like "sarap energy, galing vibes", and short-word
+# collisions like "kaya lang"/"para"/"sana"). Includes high-frequency Tagalog function words used by the
+# DENSITY path below to catch dense Taglish that has only one CORE word but is otherwise saturated.
+_TL_SOFT = frozenset({
+    "ang", "ako", "ikaw", "siya", "sila", "kami", "kayo", "tayo", "niya", "nila", "meron", "amin", "atin",
+    "inyo", "kita", "sarap", "galing", "ganda", "astig", "masaya", "galit", "takot",
+    "aba", "anak", "tara", "pera", "gabi", "bata", "ulan", "punta", "dali", "din", "rin", "sya", "tau",
+    "lang", "kung", "kahit", "para", "pati", "sana", "kaya", "yan", "iyan", "isa", "isang", "ano",
+    "nyan", "niyan", "pala", "oo",
 })
-_TL_WORDS = _TL_CORE | _TL_EXTRA
+_TL_WORDS = _TL_CORE | _TL_SOFT
 # Gate: skip the full word scan (per-event cost) unless AT LEAST ONE marker might be present. Built from
 # the word set itself, so it catches Taglish that has (say) "salamat"/"talaga" but no "ng"/"mga".
 _TL_GATE = re.compile(r"\b(?:" + "|".join(sorted(_TL_WORDS, key=len, reverse=True)) + r")\b")
-_TL_MIN = 2            # >= this many DISTINCT markers, AND >= 1 of them CORE (so two name-like tokens like
-_TL_RATIO = 0.05       # "Ang"+"Meron" can't classify), with a light density floor for long English notes.
+# Three independent paths, any ⇒ Tagalog. All require >= 1 CORE marker so pure name/slang collisions
+# ("Ako Corp / Sila Ventures", "sarap energy galing vibes") can never classify English on their own:
+_TL_CORE_MIN = 2       #  (1) >= 2 distinct CORE markers                      — clear Taglish, any length
+_TL_DIST_MIN = 3       #  (2) >= 3 distinct markers that DOMINATE the note    — dense Taglish, one core word
+_TL_DENSITY = 0.40     #      (>= 40% of words are markers) with >= 1 CORE
+_TL_SHORT_WORDS = 5    #  (3) short note (<= 5 words) that is >= 2 distinct   — short interjections like
+_TL_SHORT_DENS = 0.50  #      markers, >= 50% dense, with >= 1 CORE           — "Walang ano man"
 _WORD_RE = re.compile(r"[a-z]+")
 
 
 def _is_tagalog(text: str) -> bool:
-    """True if `text` (already lowercased + de-noised) reads as Tagalog/Taglish: >= _TL_MIN distinct
-    markers with at least one CORE (unambiguous) marker and a light density floor. Conservative on English
-    (a false positive DELETES the note) while catching code-switched posts the ratio-heavy version missed."""
+    """True if `text` (already lowercased + de-noised) reads as Tagalog/Taglish. Three paths (any fires):
+    (1) >= 2 distinct CORE (unambiguous) markers; (2) >= 3 distinct markers DOMINATING the note (>=40% of
+    words) with >= 1 CORE; (3) a short note (<=5 words) that is >= 2 distinct markers, >=50% dense, with
+    >= 1 CORE. All demand a CORE marker, so English name/slang collisions never classify. Conservative
+    because a false positive DELETES the note via the retroactive purge."""
     if not _TL_GATE.search(text):
         return False
     words = _WORD_RE.findall(text)
@@ -147,7 +160,14 @@ def _is_tagalog(text: str) -> bool:
                 seen.add(w)
                 if w in _TL_CORE:
                     core += 1
-    return len(seen) >= _TL_MIN and core >= 1 and (total / len(words)) >= _TL_RATIO
+    if core >= _TL_CORE_MIN:                                              # path 1: clear Taglish
+        return True
+    if core < 1 or len(seen) < 2:
+        return False
+    dens = total / len(words)
+    if len(seen) >= _TL_DIST_MIN and dens >= _TL_DENSITY:                 # path 2: dense Taglish
+        return True
+    return len(words) <= _TL_SHORT_WORDS and dens >= _TL_SHORT_DENS       # path 3: short interjection
 
 
 def _script_of(cp: int) -> str | None:
