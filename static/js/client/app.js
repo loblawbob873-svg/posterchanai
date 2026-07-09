@@ -6864,7 +6864,7 @@
   const LT_LANGS=[
     // code, name, flag, script bucket. (The TTS voice per language lives SERVER-side in TTSService —
     // /client/narrate is passed `lang` and picks the voice, so the voice table isn't duplicated here.)
-    ['en','English','🇬🇧','lat'],['th','Thai','🇹🇭','thai'],['es','Spanish','🇪🇸','lat'],['fr','French','🇫🇷','lat'],
+    ['en','English','🇬🇧','lat'],['th','Thai','🇹🇭','thai'],['my','Burmese','🇲🇲','mymr'],['es','Spanish','🇪🇸','lat'],['fr','French','🇫🇷','lat'],
     ['de','German','🇩🇪','lat'],['it','Italian','🇮🇹','lat'],['pt','Portuguese','🇵🇹','lat'],['ru','Russian','🇷🇺','cyril'],
     ['zh','Chinese','🇨🇳','han'],['ja','Japanese','🇯🇵','kana'],['ko','Korean','🇰🇷','hang'],['ar','Arabic','🇸🇦','arab'],
     ['hi','Hindi','🇮🇳','deva'],['vi','Vietnamese','🇻🇳','lat'],['id','Indonesian','🇮🇩','lat'],['tl','Filipino','🇵🇭','lat'],
@@ -6883,7 +6883,7 @@
   function _ltScriptOf(text){
     const c={};
     for(const ch of (text||'')){ const o=ch.codePointAt(0); let k=null;
-      if(o>=0x0E00&&o<=0x0E7F)k='thai'; else if(o>=0x0400&&o<=0x04FF)k='cyril';
+      if(o>=0x0E00&&o<=0x0E7F)k='thai'; else if(o>=0x1000&&o<=0x109F)k='mymr'; else if(o>=0x0400&&o<=0x04FF)k='cyril';
       else if(o>=0x0600&&o<=0x06FF)k='arab'; else if(o>=0x0900&&o<=0x097F)k='deva';
       else if(o>=0x3040&&o<=0x30FF)k='kana'; else if(o>=0xAC00&&o<=0xD7AF)k='hang';
       else if(o>=0x4E00&&o<=0x9FFF)k='han';

@@ -56,6 +56,7 @@ class TTSService:
         "th": "th-TH-PremwadeeNeural", "ru": "ru-RU-SvetlanaNeural", "ar": "ar-SA-ZariyahNeural",
         "he": "he-IL-HilaNeural", "el": "el-GR-AthinaNeural", "hi": "hi-IN-SwaraNeural",
         "ja": "ja-JP-NanamiNeural", "ko": "ko-KR-SunHiNeural", "zh": "zh-CN-XiaoxiaoNeural",
+        "my": "my-MM-NilarNeural",
     }
 
     # Explicit language → edge-tts voice (covers Latin-script languages too, which script detection
@@ -68,7 +69,7 @@ class TTSService:
         "ru": "ru-RU-SvetlanaNeural", "uk": "uk-UA-PolinaNeural", "th": "th-TH-PremwadeeNeural",
         "zh": "zh-CN-XiaoxiaoNeural", "ja": "ja-JP-NanamiNeural", "ko": "ko-KR-SunHiNeural",
         "ar": "ar-SA-ZariyahNeural", "hi": "hi-IN-SwaraNeural", "vi": "vi-VN-HoaiMyNeural",
-        "id": "id-ID-GadisNeural", "tl": "fil-PH-BlessicaNeural",
+        "id": "id-ID-GadisNeural", "tl": "fil-PH-BlessicaNeural", "my": "my-MM-NilarNeural",
     }
 
     def _voice_for_text(self, text: str) -> Optional[str]:
@@ -79,6 +80,7 @@ class TTSService:
         for ch in text:
             c = ord(ch)
             if   0x0E00 <= c <= 0x0E7F: k = "th"
+            elif 0x1000 <= c <= 0x109F: k = "my"
             elif 0x0400 <= c <= 0x04FF: k = "ru"
             elif 0x0600 <= c <= 0x06FF: k = "ar"
             elif 0x0590 <= c <= 0x05FF: k = "he"

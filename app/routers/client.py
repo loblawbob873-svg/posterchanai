@@ -296,7 +296,8 @@ async def client_translate(request: Request, db: Session = Depends(get_db)):
     _LANG_NAMES = {"en": "English", "th": "Thai", "es": "Spanish", "fr": "French", "de": "German",
                    "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", "ja": "Japanese",
                    "ko": "Korean", "ar": "Arabic", "hi": "Hindi", "vi": "Vietnamese", "id": "Indonesian",
-                   "tl": "Filipino", "uk": "Ukrainian", "tr": "Turkish", "pl": "Polish", "nl": "Dutch"}
+                   "tl": "Filipino", "uk": "Ukrainian", "tr": "Turkish", "pl": "Polish", "nl": "Dutch",
+                   "my": "Burmese"}
     # Map an ISO code ("en"/"th") or locale ("en-US") → language NAME for the prompt (LLMs render "into
     # Filipino" better than "into tl"). Leave a FREE-TEXT name untouched — a composer "Other…" entry like
     # "Traditional Chinese" must NOT be [:2]-mapped ("tr" → Turkish).
