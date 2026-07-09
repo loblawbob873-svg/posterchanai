@@ -176,6 +176,18 @@ def _run_migrations():
             except Exception as e:
                 logger.warning(f"[MIGRATE] could not add {table.name}.{col.name}: {e}")
 
+    # Ensure model-declared indexes exist on already-created tables. create_all() only builds indexes
+    # for brand-new tables, so an index added to an existing model (e.g. users.nostr_npub) needs this.
+    # checkfirst=True makes it idempotent (a no-op when the index is already present).
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        for idx in table.indexes:
+            try:
+                idx.create(bind=engine, checkfirst=True)
+            except Exception as e:
+                logger.warning(f"[MIGRATE] could not create index {idx.name}: {e}")
+
 
 # The canonical default settings, populated by init_db() — settings_store seeds these into the
 # relay datastore on first boot (there is no SQL Setting table).

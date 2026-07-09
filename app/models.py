@@ -58,7 +58,8 @@ class User(Base):
     # user's relays; media uploads to an external Blossom/NIP-96 host (not an "instance").
     nostr_enabled = Column(Boolean, default=False)
     nostr_nsec = Column(String(200), nullable=True)            # secret key (nsec1… or hex)
-    nostr_npub = Column(String(100), nullable=True)            # derived public key, for display
+    nostr_npub = Column(String(100), nullable=True, index=True)  # derived pubkey; indexed — Blossom
+    #                                              auth (is_pubkey_allowed) looks users up by npub per upload/delete
     nostr_relays = Column(Text, nullable=True)                 # comma/newline list; blank = defaults
     nostr_media_service = Column(String(20), nullable=True)    # "blossom" | "nip96"
     nostr_media_endpoint = Column(String(500), nullable=True)  # blank = service default

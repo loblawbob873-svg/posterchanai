@@ -53,7 +53,19 @@ _CLEANUP_INTERVAL_SEC = 600   # sweep expired blobs every 10 min (idle, low CPU)
 
 # --- config -----------------------------------------------------------------
 
+# _cfg is read several times per request; settings change rarely. Memoize the built dict for a couple
+# of seconds so high-RPS serving doesn't rebuild it (and re-take the global settings lock via
+# prefixed(), which scans ALL settings) on every call. The gate `is_enabled()` reads settings_store
+# directly (NOT memoized), so enabling/disabling Blossom stays live; only derived config lags ≤ _CFG_TTL.
+_cfg_cache = {"ts": 0.0, "val": None}
+_CFG_TTL = 3.0
+
+
 def _cfg(db: Session) -> dict:
+    now = time.time()
+    cached = _cfg_cache["val"]
+    if cached is not None and now - _cfg_cache["ts"] < _CFG_TTL:
+        return cached
     rows = settings_store.prefixed("blossom_")
 
     def g(key, default=""):
@@ -74,7 +86,7 @@ def _cfg(db: Session) -> dict:
     if backend == "proxy" and not storage_url.startswith(("http://", "https://")):
         backend = "local"
 
-    return {
+    cfg = {
         "enabled": g("blossom_enabled", "false").lower() == "true",
         "public_url": g("blossom_public_url", "").rstrip("/"),
         "ttl_days": gi("blossom_blob_ttl_days", 0),
@@ -87,6 +99,9 @@ def _cfg(db: Session) -> dict:
         "mirror_servers": [s for s in (g("blossom_mirror_servers", "")).split()
                            if s.startswith(("http://", "https://"))],
     }
+    _cfg_cache["val"] = cfg
+    _cfg_cache["ts"] = now
+    return cfg
 
 
 def is_enabled(db: Session) -> bool:
@@ -189,6 +204,57 @@ def _cache_drop(sha256: str) -> None:
             _cache_bytes -= len(_cache.pop(sha256))
 
 
+# --- blob metadata cache ----------------------------------------------------
+# The app DB is POSTGRES (shared with the relay), so every GET's `db.query(BlossomBlob)` is a
+# round-trip over the local socket + a connection out of the shared pool — the ceiling at high
+# read RPS. A blob row is IMMUTABLE once written (content-addressed: sha256/size/mime/storage/path
+# never change), so cache the small metadata tuple and skip Postgres entirely on hot reads. Combined
+# with the byte cache, a hot blob GET touches neither the DB nor the network. Invalidated only on
+# delete. Bounded entry count (each entry is a few hundred bytes → a full cache is a few MB).
+from collections import namedtuple  # noqa: E402
+
+BlobMeta = namedtuple("BlobMeta", "sha256 pubkey size mime created_at storage path")
+_META_MAX = 50000
+_meta_cache: "OrderedDict[str, BlobMeta]" = OrderedDict()
+_meta_lock = threading.Lock()
+
+
+def _meta_from_row(blob: BlossomBlob) -> BlobMeta:
+    return BlobMeta(blob.sha256, blob.pubkey, blob.size, blob.mime, blob.created_at, blob.storage, blob.path)
+
+
+def _meta_put(m: BlobMeta) -> None:
+    with _meta_lock:
+        _meta_cache[m.sha256] = m
+        _meta_cache.move_to_end(m.sha256)
+        while len(_meta_cache) > _META_MAX:
+            _meta_cache.popitem(last=False)
+
+
+def _meta_drop(sha256: str) -> None:
+    with _meta_lock:
+        _meta_cache.pop(sha256, None)
+
+
+def get_blob_meta(db: Session, sha256: str):
+    """Return a blob's metadata (BlobMeta) for reads WITHOUT hitting Postgres when it's hot. Serves
+    from the metadata cache; on a miss, queries the row ONCE, caches it, and returns. None if unknown.
+    Use for GET/HEAD only — DELETE needs the live ORM row (`db.delete`), so it keeps its own query."""
+    m = None
+    with _meta_lock:
+        m = _meta_cache.get(sha256)
+        if m is not None:
+            _meta_cache.move_to_end(sha256)
+    if m is not None:
+        return m
+    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    if not blob:
+        return None
+    m = _meta_from_row(blob)
+    _meta_put(m)
+    return m
+
+
 async def _aiter_bytes(data: bytes):
     yield data
 
@@ -210,9 +276,14 @@ def _client() -> "httpx.AsyncClient":
         return c
     with _http_client_lock:
         if _http_client is None or _http_client.is_closed:
+            # High max_connections: each in-flight video/audio STREAM holds one connection to nas for
+            # its whole playback, so a low cap would self-throttle a busy media server (the 129th
+            # concurrent stream blocking on pool acquisition). 1000 is generous headroom — far below
+            # the process FD limit — while max_keepalive bounds IDLE reuse between bursts. Cacheable
+            # reads/uploads/deletes are short and release their connection immediately.
             _http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0, connect=10.0),
-                limits=httpx.Limits(max_connections=128, max_keepalive_connections=64,
+                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100,
                                     keepalive_expiry=30.0),
             )
     return _http_client
@@ -233,7 +304,10 @@ async def aclose_http() -> None:
 # --- authorization ----------------------------------------------------------
 
 _operator_cache = {"ts": 0.0, "set": frozenset()}
-_OPERATOR_TTL = 60.0
+# Rebuilding this scans users+bots and decodes every seckey ON the event loop (is_pubkey_allowed is
+# sync, called from the upload/delete handlers). 5 min keeps that rare; a user who just linked a key
+# and gets a transient 403 can retry. (Reads never call this — it's only on the upload/delete path.)
+_OPERATOR_TTL = 300.0
 
 
 def _operator_pubkeys(db: Session) -> frozenset:
@@ -508,6 +582,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         # Already stored (possibly by another user) — content-addressed, so nothing to write.
         # Retention is governed live by the admin TTL setting (see _cleanup_once), keyed off
         # created_at, so re-uploads don't need to re-stamp anything.
+        _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 
     if cfg["backend"] == "proxy":
@@ -535,9 +610,10 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     )
     db.add(blob)
     db.commit()
-    # Seed the read cache — the bytes are already in RAM, so a fetch right after upload
-    # (the common case) won't touch disk or the storage proxy.
+    # Seed the read + metadata caches — the bytes are already in RAM and the row is immutable, so a
+    # fetch right after upload (the common case) touches neither disk/proxy nor Postgres.
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
+    _meta_put(_meta_from_row(blob))
     # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
     # touches the request's event loop and is paced/serialised (saves bandwidth, polite to mirrors).
     # Only newly-stored blobs are queued — a re-upload of the same hash is already mirrored.
@@ -655,15 +731,27 @@ async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
         url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/view-file"
                f"?username={_PROXY_USER}&file_path={quote(blob.path)}&download=1")
         headers = {**_proxy_headers(), "Range": f"bytes={start}-{end}"}
+        # Open the stream and check the upstream status HERE, before returning an iterator — so a
+        # missing/errored blob on nas (404/5xx/connect error) yields None → the router sends a clean
+        # 404, instead of a committed 206 whose promised Content-Length never arrives (client hang).
+        c = _client()
+        try:
+            resp = await c.send(c.build_request("GET", url, headers=headers), stream=True)
+        except Exception:
+            return None
+        if resp.status_code not in (200, 206):
+            await resp.aclose()
+            return None
+        partial = resp.status_code == 206
 
         async def _proxy_range():
-            async with _client().stream("GET", url, headers=headers) as resp:
-                if resp.status_code == 206:
+            try:
+                if partial:
                     async for chunk in resp.aiter_bytes():
                         yield chunk
-                elif resp.status_code == 200:
-                    # nas ignored Range (shouldn't happen — FileResponse honours it) → slice the stream
-                    # ourselves so we still return only the requested window, never the whole blob to RAM.
+                else:
+                    # Defensive: nas returned 200 (FileResponse normally honours Range → 206). Slice the
+                    # stream so we still return only [start, end], never buffering the whole blob to RAM.
                     skip, remaining = start, n
                     async for chunk in resp.aiter_bytes():
                         if remaining <= 0:
@@ -677,6 +765,8 @@ async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
                         chunk = chunk[:remaining]
                         remaining -= len(chunk)
                         yield chunk
+            finally:
+                await resp.aclose()
 
         return _proxy_range()
 
@@ -708,6 +798,7 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
     _cache_drop(blob.sha256)
+    _meta_drop(blob.sha256)
     try:
         if blob.storage == "proxy" and cfg["storage_url"]:
             from urllib.parse import quote

@@ -237,7 +237,9 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     sha = _strip_ext(sha256)
-    blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha).first()
+    # Metadata cache: a hot blob's row is served from RAM, so a GET/HEAD skips Postgres entirely
+    # (the row is immutable — content-addressed). Only a cache miss touches the DB.
+    blob = blossom_service.get_blob_meta(db, sha)
     if not blob:
         return _err(404, "blob not found")
 
@@ -288,8 +290,12 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
         total = blob.size
         try:
             s, _, e = rng[6:].partition("-")
-            start = int(s) if s else 0
-            end = int(e) if e else total - 1
+            if s == "" and e:            # suffix range: "bytes=-N" ⇒ the LAST N bytes
+                start = max(0, total - int(e))
+                end = total - 1
+            else:
+                start = int(s) if s else 0
+                end = int(e) if e else total - 1
         except ValueError:
             start, end = 0, total - 1
         end = min(end, total - 1)
