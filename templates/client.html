@@ -105,7 +105,6 @@
         <div class="brand"><img src="/static/posterchan-relay.png" alt="PosterChan" class="brand-logo"></div>
         <nav class="nav">
             {% if not nostr_only %}<button class="nav-item nav-ai" data-view="ai"><span class="ic">🤖</span><span>AI</span></button>{% endif %}
-            {% if not nostr_only %}<button class="nav-item" data-view="translate"><span class="ic">🗣️</span><span>Live Translate</span></button>{% endif %}
             <button class="nav-item active" data-view="home"><span class="ic">🏠</span><span>Home</span></button>
             <button class="nav-item" data-view="global"><span class="ic">🌐</span><span>Nostrverse</span></button>
             <button class="nav-item" data-view="notifications"><span class="ic">🔔</span><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>
@@ -115,6 +114,7 @@
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="disc-toggle"><span class="ic">🧭</span><span>Discover</span><span class="chev" id="disc-chev">▾</span></button>
                 <div class="nav-sub" id="disc-sub">
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="translate"><span class="ic">🗣️</span><span>Live Translate</span></button>{% endif %}
                     <button class="nav-item sub" data-view="articles"><span class="ic">📰</span><span>Articles</span></button>
                     <button class="nav-item sub" data-view="market"><span class="ic">🛍️</span><span>Market</span></button>
                     <button class="nav-item sub" data-view="streams"><span class="ic">📺</span><span>Streams</span></button>
