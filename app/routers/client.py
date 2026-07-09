@@ -22,7 +22,7 @@ import re
 import secrets
 import time
 
-from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -447,9 +447,11 @@ async def client_screenshot(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/stt")
-async def client_stt(audio: UploadFile = File(...)):
-    """Voice input for the web client's AI chat — Whisper speech-to-text. Same-origin helper (no
-    app-user auth, like /narrate); returns 503 if STT (faster-whisper) isn't installed."""
+async def client_stt(audio: UploadFile = File(...), language: str = Form("auto")):
+    """Voice input for the web client's AI chat + Live Translate — Whisper speech-to-text. Same-origin
+    helper (no app-user auth, like /narrate); returns 503 if STT (faster-whisper) isn't installed.
+    `language` defaults to "auto" (Whisper detects it); returns the detected language as `lang` so the
+    Live Translate screen can route the turn to the other language."""
     from app.services import stt_service
     if not stt_service.is_available():
         return JSONResponse({"error": "voice input unavailable"}, status_code=503)
@@ -460,11 +462,11 @@ async def client_stt(audio: UploadFile = File(...)):
     if len(data) < 100:
         return JSONResponse({"error": "audio too small"}, status_code=400)
     try:
-        text = await stt_service.transcribe_audio(data)
+        text, lang = await stt_service.transcribe_audio(data, language or "auto")
     except Exception as e:
         logger.warning(f"[client] stt failed: {e}")
         return JSONResponse({"error": "transcription failed"}, status_code=503)
-    return JSONResponse({"text": text or ""})
+    return JSONResponse({"text": text or "", "lang": lang or ""})
 
 
 @router.post("/summarize")

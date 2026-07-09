@@ -50,10 +50,10 @@ async def transcribe(
 
     # No file size limit
 
-    # Transcribe
-    text = await stt_service.transcribe_audio(audio_data)
+    # Transcribe (transcribe_audio now returns (text, detected_language))
+    text, lang = await stt_service.transcribe_audio(audio_data)
 
     if text is None:
         raise HTTPException(status_code=500, detail="Transcription failed")
 
-    return {"text": text}
+    return {"text": text, "lang": lang or ""}

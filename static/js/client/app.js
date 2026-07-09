@@ -518,7 +518,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','settings']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','settings','translate']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -1256,7 +1256,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
     renderView(true);
@@ -1272,6 +1272,7 @@
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
+    feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
     // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
@@ -1297,6 +1298,7 @@
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='ai') return renderAI();
+    if (VIEW==='translate') return renderTranslate();
     if (VIEW==='admin') return renderAdmin();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
   }
@@ -3951,8 +3953,8 @@
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI in Nostr-only deployments
+    const items=[['ai','🤖','PosterChan AI'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI + Translate in Nostr-only deployments
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     const _stat=(_wot||_lastOnline||_lastRelay)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}</div>`:'';
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
@@ -6850,6 +6852,110 @@
     }finally{
       _aiMicStarting=false;
     }
+  }
+  // ---------- Live Translate (in-person two-way voice translator) ----------
+  // Push-to-talk: one big mic button. Speak in either of the room's two chosen languages; Whisper
+  // (/client/stt, language=auto) transcribes + detects which was spoken, we translate to the OTHER
+  // (/client/translate), show both in a big transcript, and optionally speak the translation aloud
+  // (aiSpeak → /client/narrate, voice auto-picked by script). Reuses the AI chat's mic + TTS plumbing.
+  const LT_LANGS=[
+    ['en','English','🇬🇧'],['th','Thai','🇹🇭'],['es','Spanish','🇪🇸'],['fr','French','🇫🇷'],
+    ['de','German','🇩🇪'],['it','Italian','🇮🇹'],['pt','Portuguese','🇵🇹'],['ru','Russian','🇷🇺'],
+    ['zh','Chinese','🇨🇳'],['ja','Japanese','🇯🇵'],['ko','Korean','🇰🇷'],['ar','Arabic','🇸🇦'],
+    ['hi','Hindi','🇮🇳'],['vi','Vietnamese','🇻🇳'],['id','Indonesian','🇮🇩'],['tl','Filipino','🇵🇭'],
+    ['uk','Ukrainian','🇺🇦'],['tr','Turkish','🇹🇷'],['pl','Polish','🇵🇱'],['nl','Dutch','🇳🇱'],
+  ];
+  const _ltName=c=>{ const f=LT_LANGS.find(l=>l[0]===c); return f?f[1]:(c||'').toUpperCase(); };
+  const _ltFlag=c=>{ const f=LT_LANGS.find(l=>l[0]===c); return f?f[2]:'🏳️'; };
+  function _ltPair(){ try{ const p=JSON.parse(localStorage.getItem('pcTranslatePair')||'null'); if(p&&p.a&&p.b) return p; }catch(_){} return { a:'en', b:'th' }; }
+  function _ltSavePair(p){ try{ localStorage.setItem('pcTranslatePair', JSON.stringify(p)); }catch(_){} }
+  let _ltSpeak = (localStorage.getItem('pcTranslateSpeak')||'1')!=='0';
+  let _ltRec=null, _ltChunks=[], _ltMicStarting=false;
+
+  function renderTranslate(){
+    const feed=$('#feed'); if(!feed) return;
+    const pair=_ltPair();
+    const opts=sel=>LT_LANGS.map(([c,n,fl])=>`<option value="${c}"${c===sel?' selected':''}>${fl} ${enc(n)}</option>`).join('');
+    feed.innerHTML=`<div class="lt-wrap">
+      <div class="lt-bar">
+        <select id="lt-a" class="lt-lang">${opts(pair.a)}</select>
+        <button id="lt-swap" class="lt-swap" title="swap languages">⇄</button>
+        <select id="lt-b" class="lt-lang">${opts(pair.b)}</select>
+      </div>
+      <div class="lt-log" id="lt-log"><div class="lt-hint muted">Pick the two languages, then tap the mic and speak. Either person can talk — it auto-detects and translates to the other side.</div></div>
+      <div class="lt-foot">
+        <button id="lt-speak" class="lt-speak" title="speak the translation aloud">${_ltSpeak?'🔊':'🔇'}</button>
+        <button id="lt-mic" class="lt-mic" aria-label="tap to speak">🎤</button>
+        <span id="lt-status" class="lt-status muted"></span>
+      </div></div>`;
+    const save=()=>{ _ltSavePair({ a:$('#lt-a').value, b:$('#lt-b').value }); };
+    $('#lt-a').onchange=save; $('#lt-b').onchange=save;
+    $('#lt-swap').onclick=()=>{ const a=$('#lt-a'), b=$('#lt-b'); const t=a.value; a.value=b.value; b.value=t; save(); };
+    $('#lt-speak').onclick=()=>{ _ltSpeak=!_ltSpeak; try{ localStorage.setItem('pcTranslateSpeak', _ltSpeak?'1':'0'); }catch(_){} $('#lt-speak').textContent=_ltSpeak?'🔊':'🔇'; if(!_ltSpeak){ try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){} } };
+    $('#lt-mic').onclick=ltToggleMic;
+  }
+  function _ltStatus(s){ const el=$('#lt-status'); if(el) el.textContent=s||''; }
+  function _ltAddTurn(srcLang, original, tgtLang, translated){
+    const log=$('#lt-log'); if(!log) return;
+    const h=log.querySelector('.lt-hint'); if(h) h.remove();
+    const el=document.createElement('div'); el.className='lt-turn';
+    el.innerHTML=`<div class="lt-src"><span class="lt-tag">${_ltFlag(srcLang)} ${enc(_ltName(srcLang))}</span>${enc(original)}</div>`
+      +`<div class="lt-tr"><span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
+    log.appendChild(el); log.scrollTop=log.scrollHeight;
+  }
+  async function ltToggleMic(){
+    const mic=$('#lt-mic');
+    if(_ltRec && _ltRec.state==='recording'){ _ltRec.stop(); return; }
+    if(_ltMicStarting) return;
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){ toast('voice input not supported on this browser'); return; }
+    _ltMicStarting=true; let stream=null;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      _ltChunks=[];
+      const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4',''].find(t=>!t || MediaRecorder.isTypeSupported(t));
+      _ltRec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined);
+      _ltRec.ondataavailable=e=>{ if(e.data && e.data.size) _ltChunks.push(e.data); };
+      _ltRec.onstop=async()=>{
+        try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+        if(mic){ mic.classList.remove('rec'); mic.textContent='🎤'; }
+        const blob=new Blob(_ltChunks,{type:(_ltRec&&_ltRec.mimeType)||'audio/webm'});
+        if(blob.size<200){ _ltStatus(''); return; }
+        await ltPipeline(blob);
+      };
+      _ltRec.start();
+      if(mic){ mic.classList.add('rec'); mic.textContent='⏹'; }
+      _ltStatus('listening… tap to stop');
+    }catch(e){
+      try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+      toast(e && e.name==='NotAllowedError' ? 'microphone permission denied' : 'could not start recording');
+    }finally{ _ltMicStarting=false; }
+  }
+  async function ltPipeline(blob){
+    const a=($('#lt-a')||{}).value||'en', b=($('#lt-b')||{}).value||'th';
+    _ltStatus('transcribing…');
+    let text='', lang='';
+    try{
+      const fd=new FormData(); fd.append('audio', blob, 'turn.webm'); fd.append('language','auto');
+      const r=await fetch('/client/stt',{method:'POST',body:fd});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'could not hear that — try again'); return; }
+      text=j.text.trim(); lang=(j.lang||'').toLowerCase();
+    }catch(_){ _ltStatus(''); toast('transcription failed'); return; }
+    // Route to the OTHER language. If detection is neither of the pair, default the target to A.
+    const src = (lang===b) ? b : a;                 // treat "not clearly B" as A
+    const tgt = (src===a) ? b : a;
+    _ltStatus('translating…');
+    let translated='';
+    try{
+      const r=await fetch('/client/translate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ text, to:_ltName(tgt) })});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !(j.text||'').trim()){ _ltStatus(''); toast(j.error||'translation unavailable'); return; }
+      translated=j.text.trim();
+    }catch(_){ _ltStatus(''); toast('translate failed'); return; }
+    _ltStatus('');
+    _ltAddTurn(src, text, tgt, translated);
+    if(_ltSpeak) aiSpeak(translated);   // TTS the translation (voice auto-picked by script)
   }
   function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
   function aiHandle(d){
