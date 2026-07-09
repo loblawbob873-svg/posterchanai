@@ -5621,7 +5621,7 @@
   let dmActive = null;
   const _dmFull = new Set();   // peers whose full DM history has been backfilled on open (once each)
   const _dmShown = new Map();  // pk -> how many recent messages are rendered (paginated)
-  const _DM_INIT = 1, _DM_STEP = 20;   // show last 1 on open (instant); "load older" reveals 20 more at a time
+  const _DM_INIT = 25, _DM_STEP = 30;   // show the last 25 on open (bubbles paint instantly w/ placeholders, then decrypt); "load older" reveals 30 more
   let _dmScrollTop = false;    // next thread render keeps the top (after "load older") instead of bottom
   let _dmLoaded=false, _dmUnread=0;
   async function ensureDMs(){
