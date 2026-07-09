@@ -439,6 +439,23 @@ class RelayStore:
         ids = [r["id"] for r in conn.execute(
                    f"SELECT id, content FROM events WHERE kind=1 AND {self._preserve_clause()}")
                if detect_languages(r["content"]) & blocked]
+        # Spare thread ANCHORS: don't delete a note that a KEPT event still references via an e-tag —
+        # deleting it orphans a surviving reply's whole thread (the "open a notification → no original
+        # post, no threaded replies" bug). A note is an anchor if any event OUTSIDE this delete set
+        # e-tags it (e.g. a blocked-language root with a surviving English reply). Its own blocked
+        # descendants are in the set, so a thread that's blocked top-to-bottom is still fully removed.
+        if ids:
+            cand = set(ids)
+            anchored = set()
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                ph = ",".join("?" * len(chunk))
+                for row in conn.execute(
+                        f"SELECT value, event_id FROM event_tags WHERE tag='e' AND value IN ({ph})", chunk):
+                    if row["event_id"] not in cand:
+                        anchored.add(row["value"])
+            if anchored:
+                ids = [x for x in ids if x not in anchored]
         removed = 0
         for i in range(0, len(ids), 900):
             chunk = ids[i:i + 900]
