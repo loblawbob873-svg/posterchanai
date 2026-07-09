@@ -2783,13 +2783,19 @@
     return { amt, txid: pr?(pr[1]||''):((ev.tags.find(t=>t[0]==='txid')||[])[1]||''),
              addr: pr?(pr[2]||''):'', proof: pr?(pr[3]||''):'' };
   }
+  // The relay is untrusted (client skips sig verify), so a tip note's proof fields are attacker-controlled.
+  // STRICTLY validate before they ever reach a copied `check_tx_proof` wallet command — a stray space/
+  // newline/; in the proof could inject extra tokens the victim's wallet then runs. txid=64hex, addr=XMR,
+  // proof=base58-ish (no whitespace/punctuation).
+  const _isTxid = s => /^[0-9a-f]{64}$/i.test(s||'');
+  const _isProofSig = s => /^[A-Za-z0-9]{1,600}$/.test(s||'');
   function xmrTipBadge(ev){
     const t=_xmrTip(ev); if(!t) return '';
-    const verifiable = t.txid && t.addr && t.proof;
+    const verifiable = _isTxid(t.txid) && isXmrAddr(t.addr) && _isProofSig(t.proof);
     return `<div class="xmr-tip-badge${verifiable?' has-proof':''}">`
       + `<span class="xt-amt">ɱ ${t.amt?enc(t.amt)+' XMR':'Monero tip'}</span>`
       + (verifiable ? `<button class="xt-verify" data-xtxid="${enc(t.txid)}" data-xaddr="${enc(t.addr)}" data-xproof="${enc(t.proof)}" title="copy a wallet command to verify this payment yourself">🔐 Copy verify command</button>`
-                    : (t.txid ? `<span class="xt-txid" title="transaction id">tx ${enc(t.txid.slice(0,10))}…</span>` : ''))
+                    : (_isTxid(t.txid) ? `<span class="xt-txid" title="transaction id">tx ${enc(t.txid.slice(0,10))}…</span>` : ''))
       + `</div>`;
   }
   function noteHtml(ev){
@@ -3182,7 +3188,9 @@
         return; }   // docs: fall through to the link (download / new tab)
       const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const xv=e.target.closest('.xt-verify'); if(xv){ e.stopPropagation();   // Monero tip: copy a ready-to-run verify command for the viewer's own wallet
-        const cmd=`check_tx_proof ${xv.dataset.xtxid} ${xv.dataset.xaddr} "" ${xv.dataset.xproof}`;
+        const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
+        if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
+        const cmd=`check_tx_proof ${tx} ${ad} "" ${pf}`;
         try{ navigator.clipboard.writeText(cmd).then(()=>toast('verify command copied — paste it into your Monero wallet'),()=>prompt('Paste this into your Monero wallet:',cmd)); }catch(_){ prompt('Paste this into your Monero wallet:',cmd); } return; }
       const av=e.target.closest('.av'); if(av){ const n=e.target.closest('.note'); if(n){ renderProfileView(n.dataset.pk); return; } }
       const prof=e.target.closest('[data-prof]'); if(prof){ renderProfileView(prof.dataset.prof); return; }
@@ -3414,7 +3422,7 @@
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
           if((txid||proof) && !a && !confirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
-          if(a){ ClientSettings.set('xmrLastAmt', a); saveClientPrefsNostr(); }   // remember + sync the amount to Nostr (follows across devices)
+          if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); }   // remember + sync the amount to Nostr (follows across devices)
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
   }
@@ -4422,31 +4430,39 @@
       ClientSettings.set('blossomEnabled', true);
     }catch(_){}
   }
-  // Sync a small set of CLIENT prefs to Nostr (kind-30078 app-data, d=pcai:client-prefs) so per-device
-  // toggles like the image data-saver follow the user across devices. Plain JSON (not sensitive).
-  async function saveClientPrefsNostr(){
-    try{ await publish(30078, JSON.stringify({
-      noImages: !!NO_IMAGES,
-      xmrTip: ClientSettings.get('xmrLastAmt','')||'',        // remembered tip amount → follows you across devices
-      xmrStamp: !!ClientSettings.get('xmrStampNotes',false),  // opt-in: attach my XMR address to my posts
-    }), [['d','pcai:client-prefs']]); }catch(_){}
+  // Sync a small set of NON-sensitive CLIENT prefs to Nostr (kind-30078, d=pcai:client-prefs) so they
+  // follow you across devices: the image data-saver + the remembered tip amount. (The "attach my XMR
+  // address to my posts" opt-in is DELIBERATELY per-device localStorage only — auto-enabling an
+  // address-linking privacy setting on another device is not consent the user gave there.)
+  const _prefTouched = new Set();   // keys the user changed THIS session — a late restore must not revert them
+  async function _readPrefs(){   // read the current prefs event, with retries (a laggy first REQ can EOSE empty)
+    let ev=null;
+    for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
+      try{ const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
+        ev=(evs||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){} }
+    if(!ev) return null;
+    try{ return JSON.parse(ev.content||'{}')||{}; }catch(_){ return {}; }
+  }
+  async function saveClientPrefsNostr(patch){
+    if(!ME || !ME.pubkey) return;
+    try{
+      // READ-MODIFY-WRITE: merge only the changed key(s) into the CURRENT remote value, so changing one
+      // pref can't clobber the others a laggy restore hasn't loaded yet (the replaceable-list-wipe class).
+      const cur = (await _readPrefs()) || {};
+      const next = { ...cur, ...(patch||{}) };
+      await publish(30078, JSON.stringify(next), [['d','pcai:client-prefs']]);
+    }catch(_){}
   }
   async function restoreClientPrefsNostr(){
     if(!ME || !ME.pubkey) return;
-    let ev=null;
-    for(let attempt=0; attempt<3 && !ev; attempt++){   // retry: a laggy first REQ can EOSE empty (Thailand→US)
-      if(attempt>0) await new Promise(r=>setTimeout(r, 500*attempt));
-      try{ const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
-        ev=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
-    }
-    if(!ev) return;
-    try{ const pr=JSON.parse(ev.content||'{}');
-      if(typeof pr.noImages==='boolean' && pr.noImages!==NO_IMAGES){
+    const pr = await _readPrefs();
+    if(!pr) return;
+    try{
+      if(!_prefTouched.has('noImages') && typeof pr.noImages==='boolean' && pr.noImages!==NO_IMAGES){
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
-      if(pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));   // tip amount + stamp opt-in follow across devices
-      if(typeof pr.xmrStamp==='boolean') ClientSettings.set('xmrStampNotes', pr.xmrStamp);
+      if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
     }catch(_){}
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -6358,7 +6374,7 @@
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
-        { const sc=$('#pf-xmr-stamp',root); if(sc){ ClientSettings.set('xmrStampNotes', !!sc.checked); saveClientPrefsNostr(); } }   // opt-in: attach my XMR to my posts (synced to Nostr)
+        { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts — per-device only (NOT synced: it's an address-linking privacy choice)
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
         // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
@@ -7482,7 +7498,7 @@
       }; }
     // Data saver (tap-to-load images): per-device now (instant) + synced to Nostr so it follows devices.
     { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
-        NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); saveClientPrefsNostr();
+        NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: NO_IMAGES });
         toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
