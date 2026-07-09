@@ -3362,11 +3362,11 @@
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
-      <p class="muted small">Send XMR from your own wallet — scan the QR or open your wallet app. Non-custodial: nothing touches this server.</p>
-      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" placeholder="amount (XMR) — optional"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
+      <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay → tap “I sent it”. Non-custodial: nothing touches this server.</p>
+      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" placeholder="amount (XMR) — fills your wallet & shows in the note"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}">📲 Open wallet</a></div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
-      ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (optional)</summary>
+      ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (advanced, optional)</summary>
         <p class="muted small">Optional — makes the tip publicly verifiable. In your wallet run <code>get_tx_proof &lt;txid&gt; ${enc(addr.slice(0,10))}…</code> and paste both below; anyone can then confirm the payment with <code>check_tx_proof</code>.</p>
         <input class="input" id="xmr-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false">
         <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
@@ -3389,6 +3389,7 @@
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
+          if((txid||proof) && !a && !confirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
   }
