@@ -891,7 +891,8 @@
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions();
-      setTimeout(()=>ensureDMs(), 3000); setTimeout(()=>ensureDmInboxList(), 3500);
+      setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
+      // is published lazily on first DM use (renderMessages / send), NOT here — see ensureDmInboxList.
     };
     Relay.onReady = ()=>{
       hydrateUser();
@@ -5768,18 +5769,26 @@
     const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
     return [...new Set((list.length ? list : [CFG.relay_url]).map(u=>normalizeRelay(u)).filter(Boolean))];
   }
-  // Publish our kind-10050 DM-inbox list. Idempotent + change-only (compares to the current event),
-  // runs once per session from Relay.onReady — no polling, no spin. The relay broadcasts kind-10050
-  // upstream, so other clients can discover where to gift-wrap-DM us.
+  // Publish our kind-10050 DM-inbox list so other clients can discover where to gift-wrap-DM us. Called
+  // LAZILY — the first time the user actually uses DMs (opens Messages / sends a DM), NOT on login: a
+  // silent login-time write surprised users ("why did it change my relay list just for logging in?").
+  //
+  // MERGE, never replace: we only ADD our inbox relay(s) to whatever kind-10050 already exists (possibly
+  // set by another client pointing at the user's OWN relays). We must never shrink a non-empty list down
+  // to just ours — that would hijack the user's DM delivery to this node and drop their other inboxes
+  // (the replaceable-list clobber bug). Idempotent: if our relays are already listed, publish nothing.
+  let _dmInboxEnsured = false;
   async function ensureDmInboxList(){
+    if(_dmInboxEnsured || GUEST) return; _dmInboxEnsured = true;   // once per session, on first DM use
     try{
       const want = myInboxRelays(); if(!want.length) return;
       const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10050], limit:1 }]);
       const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
       const have = cur ? [...new Set(cur.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean))] : [];
-      if(cur && have.length===want.length && want.every(u=>have.includes(u))) return;   // unchanged → don't republish
-      await publish(10050, '', want.map(u=>['relay', u]));
-    }catch(_){}
+      if(want.every(u=>have.includes(u))) return;   // our relays already present → don't republish
+      const merged = [...new Set([...have, ...want])];   // union: add ours, keep theirs
+      await publish(10050, '', merged.map(u=>['relay', u]));
+    }catch(_){ _dmInboxEnsured = false; }   // let a later DM-use retry after a transient failure
   }
   // Discovery/indexer relays queried to find an EXTERNAL (non-WoT) peer's DM-inbox list — these
   // specialise in profiles/relay-lists (kind 0/10002/10050), so they're low-volume to hit, plus
@@ -5898,6 +5907,7 @@
   function renderMessages(){
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
+    ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
     const feed=$('#feed');
     // Preserve the list scroll across the rebuild. A background refresh (the NIP-17 history replay)
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
@@ -6036,7 +6046,7 @@
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
     let _dmSending=false;
     const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
-      try{ await sendDm(pk, t); inp.value=''; _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
+      try{ ensureDmInboxList(); await sendDm(pk, t); inp.value=''; _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
       catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
       finally{ _dmSending=false; } };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
