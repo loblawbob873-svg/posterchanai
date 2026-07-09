@@ -53,19 +53,10 @@ _CLEANUP_INTERVAL_SEC = 600   # sweep expired blobs every 10 min (idle, low CPU)
 
 # --- config -----------------------------------------------------------------
 
-# _cfg is read several times per request; settings change rarely. Memoize the built dict for a couple
-# of seconds so high-RPS serving doesn't rebuild it (and re-take the global settings lock via
-# prefixed(), which scans ALL settings) on every call. The gate `is_enabled()` reads settings_store
-# directly (NOT memoized), so enabling/disabling Blossom stays live; only derived config lags ≤ _CFG_TTL.
-_cfg_cache = {"ts": 0.0, "val": None}
-_CFG_TTL = 3.0
-
-
 def _cfg(db: Session) -> dict:
-    now = time.time()
-    cached = _cfg_cache["val"]
-    if cached is not None and now - _cfg_cache["ts"] < _CFG_TTL:
-        return cached
+    # Kept fresh (no memo) so admin config changes take effect at once. It's off the hot cache-hit
+    # path anyway — every read helper checks the byte cache BEFORE calling _cfg, so this only runs on
+    # a cache miss (where a network/disk fetch dominates and one settings read is negligible).
     rows = settings_store.prefixed("blossom_")
 
     def g(key, default=""):
@@ -99,8 +90,6 @@ def _cfg(db: Session) -> dict:
         "mirror_servers": [s for s in (g("blossom_mirror_servers", "")).split()
                            if s.startswith(("http://", "https://"))],
     }
-    _cfg_cache["val"] = cfg
-    _cfg_cache["ts"] = now
     return cfg
 
 
@@ -236,6 +225,13 @@ def _meta_drop(sha256: str) -> None:
         _meta_cache.pop(sha256, None)
 
 
+def drop_meta(sha256: str) -> None:
+    """Public metadata-cache eviction. Call AFTER a delete commits (a drop BEFORE commit can be
+    re-poisoned by a concurrent GET that re-queries the still-visible row under MVCC), and as a
+    self-heal whenever a read finds the bytes gone (so a stale entry can't strand a blob at 404)."""
+    _meta_drop(sha256)
+
+
 def get_blob_meta(db: Session, sha256: str):
     """Return a blob's metadata (BlobMeta) for reads WITHOUT hitting Postgres when it's hot. Serves
     from the metadata cache; on a miss, queries the row ONCE, caches it, and returns. None if unknown.
@@ -304,10 +300,12 @@ async def aclose_http() -> None:
 # --- authorization ----------------------------------------------------------
 
 _operator_cache = {"ts": 0.0, "set": frozenset()}
-# Rebuilding this scans users+bots and decodes every seckey ON the event loop (is_pubkey_allowed is
-# sync, called from the upload/delete handlers). 5 min keeps that rare; a user who just linked a key
-# and gets a transient 403 can retry. (Reads never call this — it's only on the upload/delete path.)
-_OPERATOR_TTL = 300.0
+# 60s: this set is the upload/delete AUTHORIZATION set, so a long TTL is an auth-freshness regression —
+# a revoked key stays accepted and a newly-added bot key stays rejected (bots aren't User rows, so
+# is_pubkey_allowed has no live-DB fallback for them) until it expires. The rebuild scans users+bots +
+# decodes seckeys on the event loop, but that's only on the (infrequent) upload/delete path — never
+# reads — so 60s is a fine balance. Don't raise it for perf; reads don't touch this.
+_OPERATOR_TTL = 60.0
 
 
 def _operator_pubkeys(db: Session) -> frozenset:
@@ -627,13 +625,13 @@ async def read_blob(db: Session, blob: BlossomBlob):
     are gone. Serves from the in-RAM cache when possible; otherwise reads from the storage
     server (proxy) or disk (local) — small blobs are buffered into the cache, large ones
     stream straight through (never cached, to bound RAM)."""
-    cfg = _cfg(db)
     mime = blob.mime or "application/octet-stream"
 
     cached = _cache_get(blob.sha256)
     if cached is not None:
-        return _aiter_bytes(cached), mime, len(cached)
+        return _aiter_bytes(cached), mime, len(cached)   # hot path: no _cfg, no DB, no network
 
+    cfg = _cfg(db)
     budget = cfg["cache_mb"] * 1024 * 1024
     cacheable = 0 < blob.size <= _CACHE_ITEM_CAP and blob.size <= budget
 
@@ -798,7 +796,8 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
     """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
     cfg = _cfg(db)
     _cache_drop(blob.sha256)
-    _meta_drop(blob.sha256)
+    # NOTE: the metadata cache is dropped by the CALLER *after* it commits the row deletion (drop_meta),
+    # not here — dropping it pre-commit lets a concurrent GET re-query the still-visible row and re-cache.
     try:
         if blob.storage == "proxy" and cfg["storage_url"]:
             from urllib.parse import quote
@@ -867,15 +866,19 @@ def _cleanup_once() -> int:
         if cfg["ttl_days"] > 0:
             conds.append(BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400)
         expired = db.query(BlossomBlob).filter(or_(*conds)).limit(500).all()
+        gone = []
         for blob in expired:
             try:
                 asyncio.run(delete_blob_bytes(db, blob))
             except Exception:
                 pass
+            gone.append(blob.sha256)
             db.delete(blob)
             removed += 1
         if removed:
             db.commit()
+            for sha in gone:
+                _meta_drop(sha)   # evict metadata AFTER the commit (see drop_meta)
             logger.info("[blossom] cleanup removed %d expired blob(s)", removed)
     except Exception as e:
         logger.warning("[blossom] cleanup error: %s", e)
