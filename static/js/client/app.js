@@ -187,6 +187,12 @@
     // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
     // Profile if you want max tippability. Your address is still readable from your kind-0 profile regardless.
     if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !(tags||[]).some(t=>t&&t[0]==='monero_address')) tags=(tags||[]).concat([['monero_address', my]]); }catch(_){} }
+    // NIP-89 client tag: brand every event this client publishes so others can show "via PosterChan AI".
+    // Skipped for legacy NIP-04 DMs (kind 4) — a public client tag on a private message leaks metadata,
+    // and the NIP-17 gift-wrap DM path (which bypasses publish()) is already exempt. Added only if absent
+    // — replaceable lists (kind-3 follows / kind-10000 mutes) preserve their non-p tags across
+    // republishes, so re-adding unconditionally would accumulate duplicate client tags.
+    if(kind!==4 && !(tags||[]).some(t=>t&&t[0]==='client')) tags=(tags||[]).concat([['client','PosterChan AI']]);
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
