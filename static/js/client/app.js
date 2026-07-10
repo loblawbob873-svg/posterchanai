@@ -557,9 +557,6 @@
           // search box, which shouldn't strand a tab on the old build. That tab reloads on its next nav.
           const ae=document.activeElement; if(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()) return;
           _swRefreshing=true; location.reload(); });
-        // Once we're actually RUNNING the build we last tapped Update on, forget the suppression marker so a
-        // genuinely new future build surfaces normally (and a stale marker can't hide a real update).
-        _swVersionOf(navigator.serviceWorker.controller).then(v=>{ if(v && v===_swApplied()){ try{ localStorage.removeItem('pc_sw_applied'); }catch(_){} } });
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
@@ -5607,36 +5604,26 @@
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
-  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false, _updPendingVer='';
-  // Ask a service worker its build id (CACHE constant) over a MessageChannel; '' if it can't answer.
-  function _swVersionOf(worker){
-    return new Promise(res=>{
-      if(!worker){ res(''); return; }
-      let done=false; const ch=new MessageChannel();
-      ch.port1.onmessage=ev=>{ if(!done){ done=true; res(ev.data||''); } };
-      try{ worker.postMessage({type:'GET_VERSION'},[ch.port2]); }catch(_){ res(''); return; }
-      setTimeout(()=>{ if(!done){ done=true; res(''); } }, 1500);
-    });
-  }
-  function _swApplied(){ try{ return localStorage.getItem('pc_sw_applied')||''; }catch(_){ return ''; } }
-  async function _onSwUpdateReady(worker){
+  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
+  // Was Update tapped in the last 30s? (reload imminent, or a worker still lingering right after the tap).
+  // Timestamp-based so it's ALWAYS writable — no dependency on the worker answering a version query, which
+  // can time out on a busy device and defeat the guard. Self-expiring, so a genuinely-stuck build is never
+  // permanently hidden: it re-surfaces after the window (signalling a real problem) instead of looping.
+  function _updTappedRecently(){ try{ return (Date.now() - (+localStorage.getItem('pc_sw_tapped')||0)) < 30000; }catch(_){ return false; } }
+  function _onSwUpdateReady(worker){
     if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced
-    const ver = await _swVersionOf(worker);
-    _updateReady=worker; _updPendingVer=ver;   // a NEWER waiting worker (e.g. a 2nd deploy) supersedes
-    // Suppress a build we've ALREADY tapped Update on: after that reload the same worker can linger
-    // "waiting" (activation slow/blocked) and re-surface every load — the reported "keeps coming back
-    // after I click it" loop. Track it so applyUpdate still works, but don't badge/toast again.
-    if(ver && ver===_swApplied()){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }
-    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // they're already looking at it → the row shows; no badge/toast
+    _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call dedupes on the guard above
+    // Just tapped Update → don't re-badge/re-toast (that's the "keeps coming back after I click it" loop).
+    // Still track the worker + render so the row shows if they're on Notifications.
+    if(_updTappedRecently()){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // already looking at it → the row shows; no badge/toast
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
   function applyUpdate(){
     if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
     _updApplying=true;
-    // Record the build we're activating BEFORE reloading, so if that worker lingers waiting afterwards it's
-    // recognised as "already applied" and won't nag again.
-    try{ if(_updPendingVer) localStorage.setItem('pc_sw_applied', _updPendingVer); }catch(_){}
+    try{ localStorage.setItem('pc_sw_tapped', String(Date.now())); }catch(_){}   // arm the anti-loop window
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
     // Guaranteed landing on fresh code: app JS is network-first, so a plain reload already fetches the new
     // build even if the worker handshake stalls. controllerchange beats this timer when the new worker
