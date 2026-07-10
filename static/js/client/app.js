@@ -5605,17 +5605,9 @@
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
   let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
-  // Was Update tapped in the last 30s? (reload imminent, or a worker still lingering right after the tap).
-  // Timestamp-based so it's ALWAYS writable — no dependency on the worker answering a version query, which
-  // can time out on a busy device and defeat the guard. Self-expiring, so a genuinely-stuck build is never
-  // permanently hidden: it re-surfaces after the window (signalling a real problem) instead of looping.
-  function _updTappedRecently(){ try{ return (Date.now() - (+localStorage.getItem('pc_sw_tapped')||0)) < 30000; }catch(_){ return false; } }
   function _onSwUpdateReady(worker){
-    if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced
-    _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call dedupes on the guard above
-    // Just tapped Update → don't re-badge/re-toast (that's the "keeps coming back after I click it" loop).
-    // Still track the worker + render so the row shows if they're on Notifications.
-    if(_updTappedRecently()){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }
+    if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced this session
+    _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call for the same worker dedupes above
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // already looking at it → the row shows; no badge/toast
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
@@ -5623,18 +5615,20 @@
   function applyUpdate(){
     if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
     _updApplying=true;
-    try{ localStorage.setItem('pc_sw_tapped', String(Date.now())); }catch(_){}   // arm the anti-loop window
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
-    // Guaranteed landing on fresh code: app JS is network-first, so a plain reload already fetches the new
-    // build even if the worker handshake stalls. controllerchange beats this timer when the new worker
-    // activates in time; otherwise this reload fires no matter what (the tap can never silently do nothing).
-    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 2500);
-    // Tell every candidate worker to skipWaiting → activate (so the prompt actually clears). Message BOTH
-    // the live reg.waiting and our tracked _updateReady (either can be the real waiting worker at click).
+    // Ask the waiting worker to activate. skipWaiting → the SW's activate handler calls clients.claim(),
+    // which fires controllerchange (see the listener above) and reloads onto the new build with NO worker
+    // left 'waiting' to re-trigger the prompt — that clean handoff is what makes the prompt actually clear
+    // and the update actually apply. We deliberately DON'T reload eagerly: a reload fired BEFORE the new
+    // worker takes control strands it 'waiting' and reproduces the "prompt keeps coming back" loop.
     const go = w => { if(w){ try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
     if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
       navigator.serviceWorker.getRegistration('/client').then(reg=>{ go(reg&&reg.waiting); go(_updateReady); }).catch(()=> go(_updateReady));
     } else go(_updateReady);
+    // Last-resort reload only if a genuinely stuck worker never fires controllerchange — long enough to let
+    // the normal activate→claim→controllerchange path win first. App JS is network-first, so even this bare
+    // reload lands fresh code; the tap can never silently do nothing.
+    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 6000);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
