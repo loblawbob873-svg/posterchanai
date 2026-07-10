@@ -435,11 +435,10 @@ async def resolve_account(instance_url: str, access_token: str, query: str) -> d
     params = {"q": query, "resolve": "true", "type": "accounts", "limit": 1}
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
         resp = await client.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            return None
+        resp.raise_for_status()   # 401/403 (expired/insufficient token) propagate as HTTPStatusError
         data = resp.json()
     accounts = (data or {}).get("accounts") or []
-    return accounts[0] if accounts else None
+    return accounts[0] if accounts else None   # None = genuinely no match (200 + empty)
 
 
 async def follow_account(instance_url: str, access_token: str, account_id: str) -> dict:

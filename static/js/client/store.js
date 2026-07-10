@@ -186,10 +186,11 @@
         // NOT inside meta — meta is the publishable kind-0 content and editing your own profile spreads
         // it, which would pollute your kind-0 and drop your real emoji tags. Read via profileEmojis().
         const em = {}; for (const t of (ev.tags||[])) { if (t[0]==='emoji' && t[1] && t[2]) em[t[1]] = t[2]; }
-        // NIP-48 proxy tag on a BRIDGED account's kind-0 → the real AP actor URL (e.g. an ActivityPub
-        // user). Kept on the RECORD (like emojis), never on meta, so it can't pollute the user's own
-        // publishable kind-0. Powers the opt-in "follow the bridged account on Pleroma too".
-        const proxy = (ev.tags||[]).find(t => t[0]==='proxy' && t[1]);
+        // NIP-48 proxy tag on a BRIDGED account's kind-0 → the real AP actor URL. Require protocol
+        // 'activitypub' (t[2]) so a non-AP or mislabeled proxy can't be treated as a followable fedi
+        // account. Kept on the RECORD (like emojis), never on meta, so it can't pollute the user's own
+        // publishable kind-0. Powers "follow the bridged account on Pleroma too".
+        const proxy = (ev.tags||[]).find(t => t[0]==='proxy' && t[1] && (t[2]||'').toLowerCase()==='activitypub');
         if (cur && cur.created_at >= ev.created_at) {
           // Not newer — but BACKFILL emoji/proxy if this profile was cached before they were stored
           // (so re-fetching the same kind-0 still surfaces them) instead of returning blind.

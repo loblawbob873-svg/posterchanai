@@ -1108,12 +1108,14 @@
     const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]);
     const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
     const pset = new Set([...FOLLOWS, ...(cur?cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]):[])]);
-    let added=0;
-    for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; } }
+    let added=0; const fresh=[];
+    for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; fresh.push(pk); } }
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
     await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
     _persistFollows();
+    // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)
+    if(_pleromaLinked!==false) for(const pk of fresh){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
     return added;
   }
   async function toggleFollow(pk){
@@ -1128,10 +1130,11 @@
     try{
       const r=await fetch('/api/pleroma/follow-bridged',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor})});
       const j=await r.json().catch(()=>({}));
-      if(j.connected===false){ _pleromaLinked=false; return; }   // no Pleroma → stay silent, don't retry this session
+      if(j.connected===false){ _pleromaLinked=false; return; }   // no Pleroma linked → silent, stop this session
+      if(j.needs_reconnect){ _pleromaLinked=false; toast('Reconnect Pleroma once to enable follow-syncing'); return; }   // shown ONCE/session, then stop
       _pleromaLinked=true;
       if(j.ok) toast('✓ also followed on Pleroma');
-      else if(j.error) toast('Pleroma: '+j.error);               // e.g. the reconnect-scope hint
+      // other errors (couldn't resolve / transient) are silent — never nag on a successful Nostr follow
     }catch(_){}
   }
   // Who follows ME — the authors of kind-3 contact lists that p-tag my pubkey. Loaded once, lazily

@@ -233,19 +233,18 @@ async def follow_bridged(data: FollowBridgedReq, current_user: User = Depends(ge
         return {"ok": False, "connected": False, "error": "Pleroma not connected"}
     try:
         acct = await resolve_account(inst, tok, actor)
-    except Exception as e:
-        logger.warning("[pleroma] follow-bridged resolve failed: %s", e)
-        return {"ok": False, "error": "could not reach your Pleroma instance"}
-    if not acct or not acct.get("id"):
-        return {"ok": False, "error": "couldn't find that account on your instance"}
-    try:
+        if not acct or not acct.get("id"):
+            return {"ok": False, "error": "couldn't find that account on your instance"}
         await follow_account(inst, tok, acct["id"])
     except httpx.HTTPStatusError as e:
-        if e.response is not None and e.response.status_code == 403:
-            return {"ok": False, "error": "reconnect Pleroma to grant follow permission"}
-        logger.warning("[pleroma] follow-bridged follow failed: %s", e)
+        # 401 (expired token) / 403 (token lacks the `follow` scope, granted only on a fresh connect)
+        # → tell the user to reconnect ONCE, from either the resolve or the follow call.
+        if e.response is not None and e.response.status_code in (401, 403):
+            return {"ok": False, "needs_reconnect": True,
+                    "error": "reconnect Pleroma to grant follow permission"}
+        logger.warning("[pleroma] follow-bridged failed: %s", e)
         return {"ok": False, "error": "follow failed"}
     except Exception as e:
-        logger.warning("[pleroma] follow-bridged follow failed: %s", e)
-        return {"ok": False, "error": "follow failed"}
+        logger.warning("[pleroma] follow-bridged failed: %s", e)
+        return {"ok": False, "error": "could not reach your Pleroma instance"}
     return {"ok": True, "acct": acct.get("acct") or acct.get("username") or ""}
