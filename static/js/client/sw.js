@@ -1,13 +1,15 @@
 /* PosterChan Nostr PWA service worker.
- * App code (our JS/CSS + the /client shell) is served NETWORK-FIRST so deploys reach users
- * immediately (cache is only an offline fallback) — caching it cache-first served stale code.
+ * App code (our JS/CSS + the /client shell) is served STALE-WHILE-REVALIDATE: the cached copy paints
+ * instantly (fast cold start when the phone wakes from deep sleep on a slow radio) while a fresh copy is
+ * fetched in the background; a new build reaches the user via the in-app "Update available" prompt (the
+ * SW-version bump), so deploys aren't silently pinned.
  * The large vendor bundle + icons are cache-first (they rarely change; bump CACHE to refresh).
  * Media (same-origin images + small played videos) is cache-first in a SEPARATE cache (MEDIA_CACHE)
  * that survives shell bumps. NOTE: we only cache responses we can TRUST (a real 200) — never an OPAQUE
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v217';
+const CACHE = 'pc-nostr-v218';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
@@ -46,11 +48,17 @@ self.addEventListener('activate', e => {
   )).then(()=>self.clients.claim()));
 });
 
-function networkFirst(req){
-  return fetch(req).then(res => {
-    const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
-    return res;
-  }).catch(() => caches.match(req));
+// Stale-while-revalidate for app code (shell + our JS/CSS): serve the CACHED copy instantly so a cold
+// start — the phone waking from deep sleep, when the OS has killed the PWA and the radio is slow — paints
+// without blocking on the network, then refresh the cache in the background. New builds still reach the
+// user: the SW-version bump surfaces the in-app "Update available" prompt (deploys aren't silently
+// pinned). First-ever load (cache miss) falls through to the network. This is the cold-start speed win.
+function staleWhileRevalidate(req){
+  return caches.open(CACHE).then(cache => cache.match(req).then(hit => {
+    const net = fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); return res; })
+                          .catch(() => hit);   // offline → the cached copy (if any)
+    return hit || net;                          // cache HIT → instant paint; MISS → wait for the network
+  }));
 }
 function cacheFirst(req){
   return caches.match(req).then(hit => hit || fetch(req).then(res => {
@@ -93,7 +101,7 @@ self.addEventListener('fetch', e => {
   const isVendorOrIcon = url.pathname.startsWith('/static/vendor/') ||
     /\/static\/(icon-\d+|posterchan-relay|favicon|apple-touch-icon)\.png$/.test(url.pathname);
 
-  if (isAppCode) e.respondWith(networkFirst(e.request));
+  if (isAppCode) e.respondWith(staleWhileRevalidate(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
   // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia). With
   // preload="none" on timeline videos, a video isn't even fetched until the user taps play.

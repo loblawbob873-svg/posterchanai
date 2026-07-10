@@ -758,6 +758,10 @@
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
     document.body.classList.toggle('guest', GUEST);
+    // Cold-start speed: seed the follow set from its local cache NOW, before the relay connects, so the
+    // Home feed paints from the persisted Store cache instantly (its filter is FOLLOWS) instead of showing
+    // empty until the post-connect kind-3 hydration round-trip. fetchFollows reconciles it from the relay.
+    if(!GUEST && ME){ try{ (ClientSettings.get('followsCache',[])||[]).forEach(p=>FOLLOWS.add(p)); FOLLOWS.add(ME.pubkey); }catch(_){} }
     // ?embed=1 → chrome-less single-note view (for clean screenshots / link-preview captures)
     if(/[?&]embed\b/.test(location.search)) document.body.classList.add('embed');
     updateUserCount();   // refresh the online/WoT count now that we're logged in (id = our pubkey, not anon)
