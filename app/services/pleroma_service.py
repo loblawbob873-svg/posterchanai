@@ -469,6 +469,7 @@ async def _fetch_account_list(instance_url: str, access_token: str, path: str, l
     in the `Link: rel="next"` header — NOT the account id — so follow that header; fall back to max_id
     (account id) only when no Link header is present (older servers)."""
     out: list[dict] = []
+    seen: set = set()   # dedup by account id + detect a stuck/looping cursor (a page that adds nothing new)
     headers = {"Authorization": f"Bearer {access_token}"}
     url = instance_url.rstrip("/") + path
     params: dict = {"limit": limit}
@@ -480,17 +481,37 @@ async def _fetch_account_list(instance_url: str, access_token: str, path: str, l
             batch = resp.json()
             if not isinstance(batch, list) or not batch:
                 break
-            out.extend(batch)
+            added = 0
+            for a in batch:
+                aid = a.get("id") if isinstance(a, dict) else None
+                if aid is not None and aid in seen:
+                    continue
+                if aid is not None:
+                    seen.add(aid)
+                out.append(a)
+                added += 1
+            # No NEW accounts on this page → a stuck/looping cursor (some instances hand back a rel="next"
+            # that never advances, repeating the same window forever). Stop rather than spin to the page
+            # cap. This also naturally ends a healthy list (its final page repeats nothing).
+            if added == 0:
+                break
+            # Follow the rel="next" cursor whenever present — followers/following endpoints page on a
+            # relationship id and legitimately return SHORT pages (fewer than `limit`) that still
+            # continue, so a `len(batch) < limit` break BEFORE this would truncate a large list. Fall
+            # back to short-page + max_id only when the server sent no usable Link header (older servers)
+            # or a cursor that didn't move.
+            nxt = _link_next(resp.headers.get("link") or resp.headers.get("Link"))
+            if nxt and nxt != url:
+                url, params = nxt, {}   # the next URL already carries the correct cursor
+                continue
+            if nxt and nxt == url:
+                break                   # cursor didn't advance → stop
             if len(batch) < limit:
                 break
-            nxt = _link_next(resp.headers.get("link") or resp.headers.get("Link"))
-            if nxt:
-                url, params = nxt, {}   # the next URL already carries the correct cursor
-            else:
-                last = batch[-1].get("id") if isinstance(batch[-1], dict) else None
-                if not last:
-                    break
-                params = {"limit": limit, "max_id": last}
+            last = batch[-1].get("id") if isinstance(batch[-1], dict) else None
+            if not last:
+                break
+            params = {"limit": limit, "max_id": last}
     return out
 
 
