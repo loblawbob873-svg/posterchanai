@@ -15,6 +15,10 @@ PREAMBLE_PATTERNS = [
     re.compile(r'^[^\w]*Just\s+a\s+simple\s+social\s+media\s+post[^:]*:\s*', re.IGNORECASE | re.MULTILINE),
     # "Here is/Here's your/the post" patterns (with optional leading emojis)
     re.compile(r"^[\s\U0001F300-\U0001F9FF\u2600-\u26FF\u2700-\u27BF]*Here['']?s?\s+(is\s+)?(your|the)\s+(requested\s+)?(social\s+media\s+)?post[^:]*:\s*", re.IGNORECASE | re.MULTILINE),
+    # "Here is/Here's your/my/the reply/response/answer/message [as <persona>]" \u2014 the persona-named preamble
+    # leak (e.g. "Here is your reply as Judge Dread:"). Ends at the colon OR the end of the preamble line.
+    # Only strips this clear meta-wrapper; an in-character opener like "As Judge Dread, I sentence\u2026" is left.
+    re.compile(r"^[\s\U0001F300-\U0001F9FF\u2600-\u26FF\u2700-\u27BF]*Here['']?s?\s+(?:is\s+)?(?:your|my|the)\s+(?:requested\s+)?(?:reply|response|answer|message)(?:\s+as\b[^\n:]*)?\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
     # Generic "Here you go" patterns
     re.compile(r'^Here\s+you\s+go[^:]*:\s*', re.IGNORECASE | re.MULTILINE),
     # "As requested" patterns
