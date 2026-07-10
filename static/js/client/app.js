@@ -1119,16 +1119,19 @@
   async function toggleFollow(pk){
     const have=FOLLOWS.has(pk); await _editPList(3, pk, !have);
     have?FOLLOWS.delete(pk):FOLLOWS.add(pk); _persistFollows(); toast(have?'unfollowed':'followed');
-    // Opt-in follow-bridge: if we just FOLLOWED a bridged account (has a NIP-48 proxy = real AP actor),
-    // also follow it on the user's linked Pleroma. Fire-and-forget — never blocks/undoes the Nostr follow.
-    if(!have && _followSyncPleroma){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
+    // Follow-bridge: if we just FOLLOWED a bridged account (has a NIP-48 proxy = a real AP actor), also
+    // follow the real account on the user's linked Pleroma. Fire-and-forget — never blocks/undoes the
+    // Nostr follow. Self-gates: after one "not linked" answer it stops trying for the rest of the session.
+    if(!have && _pleromaLinked!==false){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
   }
   async function _followBridgedPleroma(actor){
     try{
       const r=await fetch('/api/pleroma/follow-bridged',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor})});
       const j=await r.json().catch(()=>({}));
+      if(j.connected===false){ _pleromaLinked=false; return; }   // no Pleroma → stay silent, don't retry this session
+      _pleromaLinked=true;
       if(j.ok) toast('✓ also followed on Pleroma');
-      else if(j.error) toast('Pleroma: '+j.error);
+      else if(j.error) toast('Pleroma: '+j.error);               // e.g. the reconnect-scope hint
     }catch(_){}
   }
   // Who follows ME — the authors of kind-3 contact lists that p-tag my pubkey. Loaded once, lazily
@@ -1377,7 +1380,7 @@
   // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
   // follows across devices (see save/restoreClientPrefsNostr).
   let NO_IMAGES = ClientSettings.get('noImages', false) === true;
-  let _followSyncPleroma = ClientSettings.get('followSyncPleroma', false) === true;   // opt-in: follow bridged accounts on Pleroma too
+  let _pleromaLinked = null;   // follow-bridge gate, learned lazily per session: null=unknown, false=no Pleroma (skip), true=linked
   // Data saver = ONE manual toggle (NO_IMAGES): it holds content images/videos as tap-to-load
   // placeholders — that (not fewer posts) is where the bandwidth actually goes. No connection sniffing:
   // a carrier throttle looks like normal 5G to the browser, so auto-detection was unreliable.
@@ -4501,7 +4504,6 @@
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
-      if(!_prefTouched.has('followSyncPleroma') && typeof pr.followSyncPleroma==='boolean'){ _followSyncPleroma=pr.followSyncPleroma; ClientSettings.set('followSyncPleroma', _followSyncPleroma); }
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
       if(!_prefTouched.has('xmrPresets') && pr.xmrPresets!=null) ClientSettings.set('xmrPresets', String(pr.xmrPresets));
@@ -7608,8 +7610,7 @@
             ${s.pleroma_has_access_token
               ? `<div class="muted small">✓ Connected to ${enc(s.pleroma_instance_url||'')}</div><button class="btn btn-ghost small" id="us-plr-disc" style="color:var(--danger)">Disconnect</button>`
               : `<button class="btn btn-ghost small" id="us-plr-conn">Connect with OAuth</button>`}
-            ${s.pleroma_has_access_token ? `<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Also follow bridged accounts on Pleroma when I follow them on Nostr<label class="switch"><input type="checkbox" id="us-plr-followsync" ${_followSyncPleroma?'checked':''}><span class="slider"></span></label></label>
-            <div class="muted small">Follow a fediverse account that's bridged into Nostr → also follow the real account on your Pleroma. Reconnect Pleroma once so the token can grant follow permission.</div>` : ''}
+            ${s.pleroma_has_access_token ? `<div class="muted small">Following a bridged fediverse account on Nostr also follows the real account here. Reconnect once if follows don't take (grants the follow permission).</div>` : ''}
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Bridge my fedi DMs &amp; notifications to Nostr<label class="switch"><input type="checkbox" id="us-fedi-bridge" ${s.fedi_bridge_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="muted small">Your fediverse DMs arrive as Nostr DMs and your notifications as Nostr events; replying/liking/reposting a bridged post posts back through this account. Needs a NIP-05 name on this instance.</div>
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Cross-post my posts to the Fediverse<label class="switch"><input type="checkbox" id="us-fedi-crosspost" ${s.fedi_crosspost_enabled?'checked':''}><span class="slider"></span></label></label>
@@ -7802,7 +7803,6 @@
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         const h=e=>{ if(e.data==='pleroma_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
     { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
-    { const t=$('#us-plr-followsync'); if(t) t.onchange=()=>{ _followSyncPleroma=t.checked; ClientSettings.set('followSyncPleroma', _followSyncPleroma); _prefTouched.add('followSyncPleroma'); saveClientPrefsNostr({ followSyncPleroma: _followSyncPleroma }); }; }
     // Misskey MiAuth
     { const c=$('#us-mk-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mk-stat'); const url=$('#us-mk-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='starting MiAuth…';
         const r=await fetch('/api/misskey/miauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));

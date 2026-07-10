@@ -230,7 +230,7 @@ async def follow_bridged(data: FollowBridgedReq, current_user: User = Depends(ge
         return {"ok": False, "error": "no account"}
     inst, tok = current_user.pleroma_instance_url, current_user.pleroma_access_token
     if not (inst and tok):
-        return {"ok": False, "error": "Pleroma not connected"}
+        return {"ok": False, "connected": False, "error": "Pleroma not connected"}
     try:
         acct = await resolve_account(inst, tok, actor)
     except Exception as e:
