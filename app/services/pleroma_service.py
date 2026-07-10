@@ -426,6 +426,33 @@ async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict
     return statuses[0] if statuses else None
 
 
+async def resolve_account(instance_url: str, access_token: str, query: str) -> dict | None:
+    """Resolve a remote fediverse account (by AP actor URL or @user@host handle) to the local account
+    on this instance — federating it in if needed. Returns the account dict (has `id`) or None. Mirrors
+    resolve_status but for accounts."""
+    url = instance_url.rstrip("/") + "/api/v2/search"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {"q": query, "resolve": "true", "type": "accounts", "limit": 1}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    accounts = (data or {}).get("accounts") or []
+    return accounts[0] if accounts else None
+
+
+async def follow_account(instance_url: str, access_token: str, account_id: str) -> dict:
+    """Follow a local/remote account by its account id. Returns the relationship dict; raises on
+    non-2xx (e.g. 403 when the token lacks the `follow` scope)."""
+    url = instance_url.rstrip("/") + f"/api/v1/accounts/{account_id}/follow"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.post(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
 def _link_next(link_header: str | None) -> str | None:
     """Extract the rel="next" URL from a Mastodon/Pleroma Link header, or None."""
     if not link_header:

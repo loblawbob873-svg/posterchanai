@@ -4,6 +4,7 @@ import html
 import time
 import uuid
 import logging
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -12,7 +13,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.auth import get_current_user
-from app.services.pleroma_service import register_app, exchange_code, build_auth_url, verify_credentials
+from app.services.pleroma_service import (register_app, exchange_code, build_auth_url, verify_credentials,
+                                          resolve_account, follow_account)
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ async def start_oauth(
     # The bridge read account doubles as the admin account used to create fediverse accounts for new
     # bridge users, so request admin scopes — otherwise the token can't call the Pleroma admin API
     # ("Insufficient permissions: admin:read:accounts"). A non-admin account just won't be granted them.
-    scopes = "read write follow admin:read admin:write" if target == "bridge" else "read write"
+    scopes = "read write follow admin:read admin:write" if target == "bridge" else "read write follow"
 
     try:
         app_data = await register_app(instance_url, redirect_uri, scopes=scopes)
@@ -211,3 +213,39 @@ async def disconnect_pleroma(
     current_user.pleroma_notif_since = None
     db.commit()
     return {"ok": True}
+
+
+class FollowBridgedReq(BaseModel):
+    actor: str = ""
+
+
+@router.post("/follow-bridged")
+async def follow_bridged(data: FollowBridgedReq, current_user: User = Depends(get_current_user)):
+    """Follow, on the user's linked Pleroma, the real fediverse account behind a bridged Nostr account.
+    The web client calls this (opt-in) when the user follows a bridged, proxy-tagged account on Nostr,
+    passing the account's AP actor URL. Best-effort: every failure returns {ok:false, error} — the
+    Nostr follow already happened client-side and must not be undone by a Pleroma hiccup."""
+    actor = (data.actor or "").strip()
+    if not actor:
+        return {"ok": False, "error": "no account"}
+    inst, tok = current_user.pleroma_instance_url, current_user.pleroma_access_token
+    if not (inst and tok):
+        return {"ok": False, "error": "Pleroma not connected"}
+    try:
+        acct = await resolve_account(inst, tok, actor)
+    except Exception as e:
+        logger.warning("[pleroma] follow-bridged resolve failed: %s", e)
+        return {"ok": False, "error": "could not reach your Pleroma instance"}
+    if not acct or not acct.get("id"):
+        return {"ok": False, "error": "couldn't find that account on your instance"}
+    try:
+        await follow_account(inst, tok, acct["id"])
+    except httpx.HTTPStatusError as e:
+        if e.response is not None and e.response.status_code == 403:
+            return {"ok": False, "error": "reconnect Pleroma to grant follow permission"}
+        logger.warning("[pleroma] follow-bridged follow failed: %s", e)
+        return {"ok": False, "error": "follow failed"}
+    except Exception as e:
+        logger.warning("[pleroma] follow-bridged follow failed: %s", e)
+        return {"ok": False, "error": "follow failed"}
+    return {"ok": True, "acct": acct.get("acct") or acct.get("username") or ""}

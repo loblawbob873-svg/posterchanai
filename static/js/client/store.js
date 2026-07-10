@@ -186,20 +186,29 @@
         // NOT inside meta — meta is the publishable kind-0 content and editing your own profile spreads
         // it, which would pollute your kind-0 and drop your real emoji tags. Read via profileEmojis().
         const em = {}; for (const t of (ev.tags||[])) { if (t[0]==='emoji' && t[1] && t[2]) em[t[1]] = t[2]; }
+        // NIP-48 proxy tag on a BRIDGED account's kind-0 → the real AP actor URL (e.g. an ActivityPub
+        // user). Kept on the RECORD (like emojis), never on meta, so it can't pollute the user's own
+        // publishable kind-0. Powers the opt-in "follow the bridged account on Pleroma too".
+        const proxy = (ev.tags||[]).find(t => t[0]==='proxy' && t[1]);
         if (cur && cur.created_at >= ev.created_at) {
-          // Not newer — but BACKFILL emoji if this profile was cached before emoji-tag storage existed
-          // (so re-fetching the same kind-0 still surfaces the shortcodes) instead of returning blind.
-          if (Object.keys(em).length && !cur.emojis) { cur.emojis = em; if (db) try { tx('profiles','readwrite').put(cur); } catch(_){} }
+          // Not newer — but BACKFILL emoji/proxy if this profile was cached before they were stored
+          // (so re-fetching the same kind-0 still surfaces them) instead of returning blind.
+          let ch = false;
+          if (Object.keys(em).length && !cur.emojis) { cur.emojis = em; ch = true; }
+          if (proxy && !cur._proxy) { cur._proxy = proxy[1]; ch = true; }
+          if (ch && db) try { tx('profiles','readwrite').put(cur); } catch(_){}
           return;
         }
         const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta };
         if (Object.keys(em).length) rec.emojis = em;
+        if (proxy) rec._proxy = proxy[1];
         mem.profiles.set(ev.pubkey, rec);
         if (db) try { tx('profiles','readwrite').put(rec); } catch(_){}
       } catch(_){}
     },
     profile(pk){ return (mem.profiles.get(pk)||{}).meta || null; },
     profileEmojis(pk){ return (mem.profiles.get(pk)||{}).emojis || null; },   // NIP-30 name emoji (kept off meta)
+    profileProxy(pk){ return (mem.profiles.get(pk)||{})._proxy || null; },     // NIP-48 AP actor URL of a bridged account
     haveProfile(pk){ return mem.profiles.has(pk); },
     profileList(){ return [...mem.profiles.entries()].map(([pubkey,rec])=>({ pubkey, meta: rec.meta||{} })); },
     async setMeta(k,v){ if(db) try{ await pr(tx('meta','readwrite').put({k,v})); }catch(_){} },
