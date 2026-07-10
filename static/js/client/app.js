@@ -553,9 +553,8 @@
         // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
         // until its next navigation. The tab that clicked isn't typing, so it reloads.
         // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
-        // build, via the shared _swReload (composer guard + single-reload latch). clients.claim() fires this
-        // in EVERY open tab; _swReload keeps a tab mid-compose (unsaved textarea) on the old build until its
-        // next navigation rather than discarding the draft. Plain inputs (search) are NOT guarded.
+        // build via the shared _swReload. clients.claim() fires this in EVERY open tab; an in-progress
+        // composer draft is autosaved on pagehide, so reloading a tab mid-compose never loses text.
         navigator.serviceWorker.addEventListener('controllerchange', ()=> _swReload());
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
@@ -4140,9 +4139,15 @@
       let committed=false;
       const _autoSaveDraft=()=>{ if(committed || !(ta.value||'').trim()) return; committed=true;
         try{ Drafts.save({id:draftId, text:ta.value.trim(), reply, replyPk, quote, ..._cwState()}); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
-      const _closeCmp=()=>{ document.removeEventListener('keydown',_escSave); closeModal(); };
+      // Also persist on ANY page teardown — reload (incl. a service-worker update), navigation, or tab
+      // close — not just Escape/click-outside, and regardless of focus. pagehide is the reliable signal
+      // (beforeunload is flaky on mobile); the isConnected check makes a stale listener a no-op. This is
+      // what lets the SW updater reload freely without a fragile focus-based composer guard.
+      const _pageHideSave=()=>{ if(ta.isConnected) _autoSaveDraft(); };
+      const _closeCmp=()=>{ document.removeEventListener('keydown',_escSave); window.removeEventListener('pagehide',_pageHideSave); closeModal(); };
       const _escSave=e=>{ if(e.key==='Escape'){ e.preventDefault(); _autoSaveDraft(); _closeCmp(); } };
       document.addEventListener('keydown', _escSave);
+      window.addEventListener('pagehide', _pageHideSave);
       { const _bg=root.parentElement; if(_bg) _bg.onclick=e=>{ if(e.target===_bg){ _autoSaveDraft(); _closeCmp(); } }; }   // click-outside → save then close
       const _mh=$('#cmp-mentions',root); ta.addEventListener('input', ()=>updateMentionHint(ta,_mh)); updateMentionHint(ta,_mh);
       ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); const sb=$('#cmp-send',root); if(sb) sb.click(); } });   // Ctrl/⌘+Enter to post
@@ -5605,12 +5610,11 @@
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
   let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
-  // Never reload out from under unsaved compose text (post/DM/article textarea) — losing a draft is worse
-  // than deferring the update, which lands on the next navigation anyway (app JS is network-first).
-  function _hasUnsavedCompose(){ const ae=document.activeElement; return !!(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()); }
-  // The ONE reload path — every trigger (controllerchange, worker-activated, last-resort timer) goes through
-  // here, so the composer guard and the single-reload latch are enforced uniformly (no path can bypass them).
-  function _swReload(){ if(_swRefreshing || _hasUnsavedCompose()) return; _swRefreshing=true; location.reload(); }
+  // Single reload chokepoint for every update trigger (controllerchange, worker-activated, last-resort
+  // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
+  // autosaves on pagehide — so an SW reload never loses in-progress text and needs no (fragile,
+  // focus-based, stuck-update-prone) composer guard here.
+  function _swReload(){ if(_swRefreshing) return; _swRefreshing=true; location.reload(); }
   function _onSwUpdateReady(worker){
     if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced this session
     _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call for the same worker dedupes above
@@ -5628,16 +5632,16 @@
     // prompt. We DON'T reload eagerly: a reload before the worker takes control strands it 'waiting' and
     // reproduces the "prompt keeps coming back" loop.
     const go = x => { if(x){ try{ x.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
-    if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
-      navigator.serviceWorker.getRegistration('/client').then(reg=>{ go(reg&&reg.waiting); go(w); }).catch(()=> go(w));
-    } else go(w);
     // Reload the instant the worker reaches 'activated', in case controllerchange is flaky (some iOS/WebKit
-    // PWAs). Activation-DRIVEN, so it only fires AFTER the worker has taken control — it can never strand a
-    // still-'waiting' worker (which is what re-triggers the loop), unlike a blind timer.
-    try{ if(w && w.addEventListener) w.addEventListener('statechange', ()=>{ if(w.state==='activated') _swReload(); }); }catch(_){}
+    // PWAs). Activation-DRIVEN → fires only AFTER the worker has taken control, so it can never strand a
+    // still-'waiting' worker (unlike a blind timer). Bound to the ACTUAL worker being activated (reg.waiting),
+    // not just the one captured at surface time, which a 2nd queued update could have superseded.
+    const arm = x => { try{ if(x && x.addEventListener) x.addEventListener('statechange', ()=>{ if(x.state==='activated') _swReload(); }); }catch(_){} };
+    if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
+      navigator.serviceWorker.getRegistration('/client').then(reg=>{ const ww=(reg&&reg.waiting)||w; go(ww); arm(ww); }).catch(()=>{ go(w); arm(w); });
+    } else { go(w); arm(w); }
     // True last resort: if nothing reloaded us in 6s (a worker that genuinely won't activate) reload anyway
-    // so the tap always does SOMETHING — network-first means the reload still lands fresh code. Routed
-    // through _swReload so it honours the composer guard (the confirmed draft-loss fix).
+    // so the tap always does SOMETHING — network-first means the reload still lands fresh code.
     setTimeout(_swReload, 6000);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
