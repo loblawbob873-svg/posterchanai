@@ -224,6 +224,7 @@ async def disconnect_pleroma(
 
 # ---- one-time backfill: on connect, follow the bridged accounts the user ALREADY follows on Nostr ----
 _backfill_tasks: set = set()      # strong refs so fire-and-forget tasks aren't GC'd mid-run
+_backfill_inflight: set = set()   # user_ids with a run in flight — a double OAuth callback can't double-run
 _BACKFILL_MAX_FOLLOWS = 2000      # bound the scan (a huge follow list won't hammer the instance)
 
 
@@ -235,72 +236,114 @@ def _proxy_actor(ev: dict) -> str | None:
     return None
 
 
+_BACKFILL_FLAG = "pleroma_followlist_backfilled"
+
+
 async def _backfill_bridged_follows(user_id: int) -> None:
     """One-time per connection: follow, on the user's just-linked Pleroma, every BRIDGED account they
     ALREADY follow on Nostr — so existing follows are covered, not just new ones (the live toggleFollow
-    hook). Best-effort, paced, bounded; runs ONCE (a UserSetting flag, cleared on disconnect). Only
-    touches accounts the user already deliberately follows. Opens its own session (the request's closes)."""
+    hook). Best-effort, paced, bounded. Only touches accounts the user already deliberately follows.
+
+    Session discipline: read creds in a SHORT session and release it BEFORE the long paced loop (so no
+    Postgres transaction is held idle past its timeout), then persist the once-flag in a FRESH session —
+    and ONLY on a confidently-complete run that's still the SAME connection (guards against a transient
+    relay read, a scope-denied token, or a disconnect/reconnect mid-run wrongly marking it done)."""
     from app.database import SessionLocal
     from app.models import UserSetting
     from app.services import settings_store
     from app.services.nostr import nostr_service
     from app.services import fedi_bridge_identity as ident
     from app.services.nostr_store import _ws_query
-    db = SessionLocal()
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not (user.pleroma_instance_url and user.pleroma_access_token):
-            return
-        flag = (db.query(UserSetting)
-                .filter(UserSetting.user_id == user_id, UserSetting.key == "pleroma_followlist_backfilled").first())
-        if flag and flag.value == "1":
-            return   # already backfilled for this connection
-        pk = nostr_service.to_pubkey_hex(user.nostr_npub) if user.nostr_npub else None
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not (user.pleroma_instance_url and user.pleroma_access_token):
+                return
+            if db.query(UserSetting).filter(UserSetting.user_id == user_id,
+                                            UserSetting.key == _BACKFILL_FLAG, UserSetting.value == "1").first():
+                return   # already backfilled for this connection
+            inst, tok = user.pleroma_instance_url, user.pleroma_access_token
+            pk = nostr_service.to_pubkey_hex(user.nostr_npub) if user.nostr_npub else None
+        finally:
+            db.close()                              # release the read session BEFORE the long loop
         if not pk:
             return
         try:
             port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
         except (TypeError, ValueError):
             port = 3052
+
         ok, k3 = await ident.query_one(port, {"authors": [pk], "kinds": [3], "limit": 1})
         if not ok:
             return   # relay read failed → do NOT mark done; a later reconnect retries
         followed = list(dict.fromkeys(
             t[1] for t in ((k3 or {}).get("tags") or []) if t and t[0] == "p" and len(t) >= 2 and t[1]
         ))[:_BACKFILL_MAX_FOLLOWS]
-        # AP actor URLs of the bridged accounts among them (kind-0 read in author batches).
-        actors: list[str] = []
+        # AP actor URLs of the bridged accounts among the follows (kind-0 read in author batches).
+        actors, got_k0 = [], False
         for i in range(0, len(followed), 200):
-            for ev in (await _ws_query(port, [{"kinds": [0], "authors": followed[i:i + 200]}]) or []):
+            evs = await _ws_query(port, [{"kinds": [0], "authors": followed[i:i + 200]}]) or []
+            if evs:
+                got_k0 = True
+            for ev in evs:
                 a = _proxy_actor(ev)
                 if a:
                     actors.append(a)
-        inst, tok = user.pleroma_instance_url, user.pleroma_access_token
-        done = 0
+        actors = list(dict.fromkeys(actors))
+        # If the user HAS follows but zero kind-0s came back, the relay read likely failed (not "no
+        # bridged accounts") → don't mark done, retry next connect.
+        read_ok = (not followed) or got_k0
+
+        done, scope_denied = 0, False
         for i, actor in enumerate(actors):
             try:
                 acct = await resolve_account(inst, tok, actor)
                 if acct and acct.get("id"):
                     await follow_account(inst, tok, acct["id"])
                     done += 1
+            except httpx.HTTPStatusError as e:
+                if e.response is not None and e.response.status_code in (401, 403):
+                    scope_denied = True   # token can't follow → stop; the reconnect that grants it re-runs
+                    break
             except Exception:
-                pass   # best-effort per account (a 403/expired is handled by the live hook + next reconnect)
+                pass   # best-effort per account
             if i % 10 == 9:
                 await asyncio.sleep(1)   # pace so a big list doesn't burst the instance
-        if flag:
-            flag.value = "1"
-        else:
-            db.add(UserSetting(user_id=user_id, key="pleroma_followlist_backfilled", value="1"))
-        db.commit()
-        logger.info("[pleroma] follow-list backfill: followed %d bridged account(s) for user %d", done, user_id)
+
+        # Persist the once-flag ONLY on a confidently-complete run, in a FRESH session, and only if the
+        # connection is unchanged (same token → not disconnected/reconnected mid-run, which re-fired its own).
+        if read_ok and not scope_denied:
+            db2 = SessionLocal()
+            try:
+                u = db2.query(User).filter(User.id == user_id).first()
+                if u and u.pleroma_access_token == tok:
+                    row = (db2.query(UserSetting)
+                           .filter(UserSetting.user_id == user_id, UserSetting.key == _BACKFILL_FLAG).first())
+                    if row:
+                        row.value = "1"
+                    else:
+                        db2.add(UserSetting(user_id=user_id, key=_BACKFILL_FLAG, value="1"))
+                    db2.commit()
+            finally:
+                db2.close()
+        logger.info("[pleroma] follow-list backfill: followed %d bridged account(s) for user %d (done=%s)",
+                    done, user_id, read_ok and not scope_denied)
     except Exception as e:
         logger.warning("[pleroma] follow-list backfill failed: %s", e)
-    finally:
-        db.close()
 
 
 def _fire_backfill(user_id: int) -> None:
-    t = asyncio.ensure_future(_backfill_bridged_follows(user_id))
+    if user_id in _backfill_inflight:
+        return                                       # a run for this user is already in flight (double callback)
+    _backfill_inflight.add(user_id)
+
+    async def _run():
+        try:
+            await _backfill_bridged_follows(user_id)
+        finally:
+            _backfill_inflight.discard(user_id)
+    t = asyncio.ensure_future(_run())
     _backfill_tasks.add(t)
     t.add_done_callback(_backfill_tasks.discard)
 
