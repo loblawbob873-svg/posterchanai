@@ -552,11 +552,11 @@
         // build. clients.claim() fires this in EVERY open tab, not just the one that clicked, so guard the
         // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
         // until its next navigation. The tab that clicked isn't typing, so it reloads.
-        navigator.serviceWorker.addEventListener('controllerchange', ()=>{ if(_swRefreshing) return;
-          // Guard only a COMPOSER (textarea: post/DM/article) with unsaved text — NOT plain inputs like the
-          // search box, which shouldn't strand a tab on the old build. That tab reloads on its next nav.
-          const ae=document.activeElement; if(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()) return;
-          _swRefreshing=true; location.reload(); });
+        // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
+        // build, via the shared _swReload (composer guard + single-reload latch). clients.claim() fires this
+        // in EVERY open tab; _swReload keeps a tab mid-compose (unsaved textarea) on the old build until its
+        // next navigation rather than discarding the draft. Plain inputs (search) are NOT guarded.
+        navigator.serviceWorker.addEventListener('controllerchange', ()=> _swReload());
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
@@ -5605,6 +5605,12 @@
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
   let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
+  // Never reload out from under unsaved compose text (post/DM/article textarea) — losing a draft is worse
+  // than deferring the update, which lands on the next navigation anyway (app JS is network-first).
+  function _hasUnsavedCompose(){ const ae=document.activeElement; return !!(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()); }
+  // The ONE reload path — every trigger (controllerchange, worker-activated, last-resort timer) goes through
+  // here, so the composer guard and the single-reload latch are enforced uniformly (no path can bypass them).
+  function _swReload(){ if(_swRefreshing || _hasUnsavedCompose()) return; _swRefreshing=true; location.reload(); }
   function _onSwUpdateReady(worker){
     if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced this session
     _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call for the same worker dedupes above
@@ -5616,19 +5622,23 @@
     if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
     _updApplying=true;
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
-    // Ask the waiting worker to activate. skipWaiting → the SW's activate handler calls clients.claim(),
-    // which fires controllerchange (see the listener above) and reloads onto the new build with NO worker
-    // left 'waiting' to re-trigger the prompt — that clean handoff is what makes the prompt actually clear
-    // and the update actually apply. We deliberately DON'T reload eagerly: a reload fired BEFORE the new
-    // worker takes control strands it 'waiting' and reproduces the "prompt keeps coming back" loop.
-    const go = w => { if(w){ try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
+    const w = _updateReady;
+    // skipWaiting → the SW's activate handler calls clients.claim() → fires controllerchange (see the
+    // listener above) → clean reload onto the new build with NO worker left 'waiting' to re-trigger the
+    // prompt. We DON'T reload eagerly: a reload before the worker takes control strands it 'waiting' and
+    // reproduces the "prompt keeps coming back" loop.
+    const go = x => { if(x){ try{ x.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
     if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
-      navigator.serviceWorker.getRegistration('/client').then(reg=>{ go(reg&&reg.waiting); go(_updateReady); }).catch(()=> go(_updateReady));
-    } else go(_updateReady);
-    // Last-resort reload only if a genuinely stuck worker never fires controllerchange — long enough to let
-    // the normal activate→claim→controllerchange path win first. App JS is network-first, so even this bare
-    // reload lands fresh code; the tap can never silently do nothing.
-    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 6000);
+      navigator.serviceWorker.getRegistration('/client').then(reg=>{ go(reg&&reg.waiting); go(w); }).catch(()=> go(w));
+    } else go(w);
+    // Reload the instant the worker reaches 'activated', in case controllerchange is flaky (some iOS/WebKit
+    // PWAs). Activation-DRIVEN, so it only fires AFTER the worker has taken control — it can never strand a
+    // still-'waiting' worker (which is what re-triggers the loop), unlike a blind timer.
+    try{ if(w && w.addEventListener) w.addEventListener('statechange', ()=>{ if(w.state==='activated') _swReload(); }); }catch(_){}
+    // True last resort: if nothing reloaded us in 6s (a worker that genuinely won't activate) reload anyway
+    // so the tap always does SOMETHING — network-first means the reload still lands fresh code. Routed
+    // through _swReload so it honours the composer guard (the confirmed draft-loss fix).
+    setTimeout(_swReload, 6000);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
