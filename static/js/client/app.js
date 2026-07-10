@@ -557,6 +557,9 @@
           // search box, which shouldn't strand a tab on the old build. That tab reloads on its next nav.
           const ae=document.activeElement; if(ae && ae.tagName==='TEXTAREA' && ae.value && ae.value.trim()) return;
           _swRefreshing=true; location.reload(); });
+        // Once we're actually RUNNING the build we last tapped Update on, forget the suppression marker so a
+        // genuinely new future build surfaces normally (and a stale marker can't hide a real update).
+        _swVersionOf(navigator.serviceWorker.controller).then(v=>{ if(v && v===_swApplied()){ try{ localStorage.removeItem('pc_sw_applied'); }catch(_){} } });
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
@@ -5604,22 +5607,46 @@
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
-  let _swRefreshing=false, _updateReady=null, _updBadge=false;
-  function _onSwUpdateReady(worker){
+  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false, _updPendingVer='';
+  // Ask a service worker its build id (CACHE constant) over a MessageChannel; '' if it can't answer.
+  function _swVersionOf(worker){
+    return new Promise(res=>{
+      if(!worker){ res(''); return; }
+      let done=false; const ch=new MessageChannel();
+      ch.port1.onmessage=ev=>{ if(!done){ done=true; res(ev.data||''); } };
+      try{ worker.postMessage({type:'GET_VERSION'},[ch.port2]); }catch(_){ res(''); return; }
+      setTimeout(()=>{ if(!done){ done=true; res(''); } }, 1500);
+    });
+  }
+  function _swApplied(){ try{ return localStorage.getItem('pc_sw_applied')||''; }catch(_){ return ''; } }
+  async function _onSwUpdateReady(worker){
     if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced
-    _updateReady=worker;   // a NEWER waiting worker (e.g. a 2nd deploy) supersedes — re-surface it
+    const ver = await _swVersionOf(worker);
+    _updateReady=worker; _updPendingVer=ver;   // a NEWER waiting worker (e.g. a 2nd deploy) supersedes
+    // Suppress a build we've ALREADY tapped Update on: after that reload the same worker can linger
+    // "waiting" (activation slow/blocked) and re-surface every load — the reported "keeps coming back
+    // after I click it" loop. Track it so applyUpdate still works, but don't badge/toast again.
+    if(ver && ver===_swApplied()){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // they're already looking at it → the row shows; no badge/toast
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
   function applyUpdate(){
-    // Reload no matter what after 3s (getRegistration stalling, or the new SW being slow to activate) so
-    // the tap can't silently do nothing — controllerchange normally beats this once the worker activates.
-    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 3000);
-    // Re-read the CURRENT waiting worker at click time (a 2nd deploy could have left _updateReady redundant).
-    const go = w => { if(!w){ location.reload(); return; } try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){ location.reload(); } };
+    if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
+    _updApplying=true;
+    // Record the build we're activating BEFORE reloading, so if that worker lingers waiting afterwards it's
+    // recognised as "already applied" and won't nag again.
+    try{ if(_updPendingVer) localStorage.setItem('pc_sw_applied', _updPendingVer); }catch(_){}
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
+    // Guaranteed landing on fresh code: app JS is network-first, so a plain reload already fetches the new
+    // build even if the worker handshake stalls. controllerchange beats this timer when the new worker
+    // activates in time; otherwise this reload fires no matter what (the tap can never silently do nothing).
+    setTimeout(()=>{ if(!_swRefreshing) location.reload(); }, 2500);
+    // Tell every candidate worker to skipWaiting → activate (so the prompt actually clears). Message BOTH
+    // the live reg.waiting and our tracked _updateReady (either can be the real waiting worker at click).
+    const go = w => { if(w){ try{ w.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
     if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
-      navigator.serviceWorker.getRegistration('/client').then(reg=> go((reg&&reg.waiting)||_updateReady)).catch(()=> go(_updateReady));
+      navigator.serviceWorker.getRegistration('/client').then(reg=>{ go(reg&&reg.waiting); go(_updateReady); }).catch(()=> go(_updateReady));
     } else go(_updateReady);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
@@ -5641,12 +5668,12 @@
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = _updateReady ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>Update available</b> — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div></div></div>` : '';
+    const upd = _updateReady ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>'}</div></div>` : '';
     feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
       : (upd ? '' : '<div class="empty">No notifications here.</div>'));
-    { const un=$('#upd-notif',feed); if(un) un.onclick=applyUpdate; }
+    { const un=$('#upd-notif',feed); if(un && !_updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
