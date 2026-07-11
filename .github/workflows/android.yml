@@ -57,12 +57,7 @@ jobs:
         working-directory: mobile/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease \
-            -PversionCode=$VCODE -PversionName=$VNAME \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/mobile/android/posterchan-release.keystore" \
-            -Pandroid.injected.signing.store.password="posterchan" \
-            -Pandroid.injected.signing.key.alias="android" \
-            -Pandroid.injected.signing.key.password="posterchan"
+          ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
 
       - name: Collect the APK
         run: |
