@@ -674,11 +674,24 @@ async def index(request: Request):
     return RedirectResponse(url="/client", status_code=302)
 
 
+_APK_LOCAL_PATH = "/home/verita84/posterchan-apk/posterchan.apk"
+
+
 @app.get("/apk")
 async def latest_apk():
     """Download the newest PosterChan Android APK. GitHub Actions builds + signs it on each deploy and
-    publishes it to the rolling 'apk-latest' Release; this just redirects to that asset so the URL is
-    stable (poster.place/apk) and always serves the latest build."""
+    publishes it to the rolling 'apk-latest' Release; a small refresh job mirrors that asset to a local
+    path so poster.place/apk serves the bytes **directly from this server, behind Cloudflare** — a CDN
+    edge close to the user, with Range/resume support (Starlette FileResponse honours Range) — which
+    downloads far more reliably on slow/throttled mobile links than bouncing to GitHub's distant CDN.
+    Falls back to the GitHub redirect if the local mirror isn't present yet."""
+    if os.path.exists(_APK_LOCAL_PATH):
+        return FileResponse(
+            _APK_LOCAL_PATH,
+            media_type="application/vnd.android.package-archive",
+            filename="posterchan.apk",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
     return RedirectResponse(
         url="https://github.com/loblawbob873-svg/posterchanai/releases/download/apk-latest/posterchan.apk",
         status_code=302,
