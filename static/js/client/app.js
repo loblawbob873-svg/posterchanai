@@ -536,9 +536,18 @@
   // Android share sheet. The intent launches us with NO web payload (unlike the PWA Web Share Target POST),
   // so read it through the plugin, pull the file bytes, and open the composer prefilled — same end state.
   // Content-URIs don't start with '/', so the bundled-mode fetch shim passes them straight to native fetch.
+  function _b64ToBlob(b64, type){
+    try{ const bin=atob(b64); const len=bin.length; const arr=new Uint8Array(len);
+      for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i); return new Blob([arr], {type:type||'application/octet-stream'}); }
+    catch(_){ return null; }
+  }
   async function _consumeSendIntent(){
     try{
-      const SI = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SendIntent;
+      const cap = window.Capacitor; if(!cap) return false;
+      // The plugin proxy may not be pre-attached to Capacitor.Plugins (we don't import the plugin's JS in the
+      // bundle) — fall back to registerPlugin, which builds the bridge proxy from the native registration.
+      let SI = cap.Plugins && cap.Plugins.SendIntent;
+      if((!SI || !SI.checkSendIntentReceived) && cap.registerPlugin){ try{ SI = cap.registerPlugin('SendIntent'); }catch(_){} }
       if(!SI || !SI.checkSendIntentReceived) return false;
       let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }
       if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
@@ -546,14 +555,20 @@
       const urls=[]; if(res.url) urls.push(res.url);
       if(Array.isArray(res.additionalItems)) res.additionalItems.forEach(it=>{ if(it&&it.url) urls.push(it.url); });
       const files=[];
-      for(const u of urls){ try{ const dec=decodeURIComponent(u); const r=await fetch(dec); const b=await r.blob();
-        const nm=(dec.split('?')[0].split('/').pop())||'shared';
-        files.push(new File([b], nm, { type: b.type||res.type||'application/octet-stream' })); }catch(_){}
+      for(const u of urls){
+        const dec=decodeURIComponent(u); const nm=(dec.split('?')[0].split('/').pop())||'shared'; let blob=null;
+        try{ const r=await fetch(dec); if(r && r.ok) blob=await r.blob(); }catch(_){}
+        if(!blob || !blob.size){
+          // content:// URIs usually can't be read by WebView fetch — read the bytes natively via Filesystem.
+          try{ const FS=cap.Plugins&&cap.Plugins.Filesystem;
+            if(FS&&FS.readFile){ const rf=await FS.readFile({path:u}); if(rf&&rf.data) blob=_b64ToBlob(rf.data, res.type||''); } }catch(_){}
+        }
+        if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||res.type||'application/octet-stream' }));
       }
       // file shares put the filename in `title`; only treat title/description as post TEXT when no file came
       const txt = files.length ? '' : ([res.description, res.title].map(s=>(s||'').trim()).filter(Boolean)[0] || '');
       try{ SI.finish && SI.finish(); }catch(_){}
-      if(!files.length && !txt) return false;
+      if(!files.length && !txt){ try{ toast('Shared item was empty'); }catch(_){} return false; }
       switchView('home'); compose({ text: txt, files: files.length?files:null });
       return true;
     }catch(_){ return false; }
