@@ -53,19 +53,16 @@ jobs:
           echo "VCODE=${{ github.run_number }}" >> "$GITHUB_ENV"
           echo "VNAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
 
-      - name: Decode signing keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$GITHUB_WORKSPACE/mobile/android/release.keystore"
-
       - name: Build & sign release APK
         working-directory: mobile/android
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease \
             -PversionCode=$VCODE -PversionName=$VNAME \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/mobile/android/release.keystore" \
-            -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
-            -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEY_PASSWORD }}"
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/mobile/android/posterchan-release.keystore" \
+            -Pandroid.injected.signing.store.password="posterchan" \
+            -Pandroid.injected.signing.key.alias="android" \
+            -Pandroid.injected.signing.key.password="posterchan"
 
       - name: Collect the APK
         run: |

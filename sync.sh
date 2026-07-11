@@ -1,8 +1,14 @@
 #!/bin/bash
 git commit -a -m fix || true
-# Deploy to PRODUCTION only (origin = git.poster.place). Never push to the public `github`
-# mirror from here — that's a separate, explicit `git push github master:main` step.
+# Deploy to PRODUCTION (origin = git.poster.place).
 git push origin master
+
+# Also push to the public `github` mirror (master → main). This TRIGGERS the Android app build:
+# GitHub Actions (.github/workflows/android.yml) rebuilds the bundled web UI, compiles + signs the APK,
+# and publishes it to the rolling `apk-latest` Release — which poster.place/apk serves. The workflow's
+# `paths` filter only rebuilds when the client / mobile project actually changed, so it's a no-op build
+# on unrelated deploys. NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
+git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 
 # Update router.lan (192.168.0.1) nginx's static checkout. It serves /static from LOCAL files
 # (root /srv/posterchanai → a git clone), decoupling asset loading from server1 so the restart below
