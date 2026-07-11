@@ -574,6 +574,7 @@
     // under pressure — that's what lets a large offline media cache actually stick around. Best-effort;
     // granted silently on an installed PWA, a no-op where unsupported.
     try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(_){}
+    try{ _applyMediaCacheBudget(ClientSettings.get('mediaCacheGB', 4)); }catch(_){}   // push the saved media-cache size to the SW
     if ('serviceWorker' in navigator){
       // Reload once the NEW SW takes control. It only takes control after the USER accepts the update
       // (applyUpdate → postMessage SKIP_WAITING) — the SW no longer skipWaiting()s on its own — so this
@@ -1433,6 +1434,12 @@
   // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
   // follows across devices (see save/restoreClientPrefsNostr).
   let NO_IMAGES = ClientSettings.get('noImages', false) === true;
+  // Media-cache size (GB) → write the chosen byte budget to the SW-read config cache (per-device). The SW's
+  // trimMedia reads pc-config-v1/media-budget to cap the offline media cache; default 4 GB if never set.
+  function _applyMediaCacheBudget(gb){
+    try{ const bytes = Math.round((+gb || 4) * 1024 * 1024 * 1024);
+      caches.open('pc-config-v1').then(c => c.put('/media-budget', new Response(String(bytes)))).catch(()=>{}); }catch(_){}
+  }
   let _pleromaLinked = null;   // follow-bridge gate, learned lazily per session: null=unknown, false=no Pleroma (skip), true=linked
   // Data saver = ONE manual toggle (NO_IMAGES): it holds content images/videos as tap-to-load
   // placeholders — that (not fewer posts) is where the bandwidth actually goes. No connection sniffing:
@@ -7673,6 +7680,10 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
+          <label class="fld">💾 Media cache size
+            <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
+          </label>
+          <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -7861,6 +7872,10 @@
         toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
+    // Media cache size (per-device): persist + push the new byte budget to the service worker.
+    { const mc=$('#set-media-cache'); if(mc) mc.onchange=()=>{
+        const gb=+mc.value||4; ClientSettings.set('mediaCacheGB', gb); _applyMediaCacheBudget(gb);
+        toast('media cache set to '+gb+' GB'); }; }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
     { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{
         ClientSettings.set('hideDmPreview', hd.checked);

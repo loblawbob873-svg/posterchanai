@@ -9,12 +9,13 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v224';
+const CACHE = 'pc-nostr-v225';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
-const MEDIA_MAX = 3000;                   // entry cap; Cache.keys() is insertion-ordered → evict oldest.
-                                          // Raised 500→3000 for a much larger offline media cache (pairs
-                                          // with navigator.storage.persist() in app.js so it isn't evicted).
+const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
+                                          // the configurable BYTE budget below is the real limit. Pairs with
+                                          // navigator.storage.persist() so the cache isn't evicted by the OS.
+const CONFIG_CACHE = 'pc-config-v1';      // client-written config the SW reads (currently: /media-budget bytes)
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
 const SHELL = [
   '/client',
@@ -47,7 +48,7 @@ self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).
   e.waitUntil(caches.keys().then(ks => Promise.all(
-    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== SHARE_CACHE).map(k => caches.delete(k))
+    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== SHARE_CACHE && k !== CONFIG_CACHE).map(k => caches.delete(k))
   )).then(()=>self.clients.claim()));
 });
 
@@ -89,18 +90,24 @@ async function cacheFirstMedia(req){
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;
 }
-const MEDIA_BUDGET_BYTES = 1500 * 1024 * 1024;   // ~1.5 GB soft cap on total origin storage. persist()
-                                                 // disables browser eviction, so WE must bound it — else a
-                                                 // full media cache of small videos could fill the device.
+const MEDIA_DEFAULT_BUDGET = 4 * 1024 * 1024 * 1024;   // 4 GB default (was 1.5) — user-configurable in
+                                                       // Settings → Media cache; the client writes the chosen
+                                                       // byte value to CONFIG_CACHE/media-budget, read below.
+async function mediaBudgetBytes(){
+  try { const c = await caches.open(CONFIG_CACHE); const r = await c.match('/media-budget');
+    if (r){ const n = +(await r.text()); if (n > 0) return n; } } catch (_) {}
+  return MEDIA_DEFAULT_BUDGET;
+}
 async function trimMedia(cache){
   const keys = await cache.keys();
   for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // count cap: evict oldest first
-  // Byte cap: since persist() stops the browser evicting under pressure, bound total storage ourselves.
-  // estimate() is origin-wide (a fine proxy) and cheap; when over budget, drop the oldest ~10% of media.
+  // Byte cap (configurable): persist() stops the browser evicting under pressure, so bound total storage
+  // ourselves. estimate() is origin-wide (a fine proxy) and cheap; over budget → drop the oldest ~10%.
   try {
     if (navigator.storage && navigator.storage.estimate){
+      const budget = await mediaBudgetBytes();
       const { usage } = await navigator.storage.estimate();
-      if (usage && usage > MEDIA_BUDGET_BYTES){
+      if (usage && usage > budget){
         const k2 = await cache.keys();
         const drop = Math.max(1, Math.ceil(k2.length * 0.1));
         for (let i = 0; i < drop; i++) cache.delete(k2[i]);
