@@ -541,35 +541,57 @@
       for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i); return new Blob([arr], {type:type||'application/octet-stream'}); }
     catch(_){ return null; }
   }
+  // Capacitor plugin proxies aren't pre-attached to Capacitor.Plugins when we don't import the plugin JS in
+  // the bundle — build them from the native registration via registerPlugin.
+  function _capPlugin(name, method){
+    const cap = window.Capacitor; if(!cap) return null;
+    let p = cap.Plugins && cap.Plugins[name];
+    if((!p || (method && !p[method])) && cap.registerPlugin){ try{ p = cap.registerPlugin(name); }catch(_){} }
+    return (p && (!method || p[method])) ? p : null;
+  }
+  // Read a shared file into a Blob. The send-intent plugin COPIES the file into the app's Data dir and hands
+  // back a file:// URI — which WebView fetch() is blocked from reading — so use the Filesystem plugin (which
+  // reads file:// / Data natively), trying a few path forms; fetch() is only a last resort (works for http).
+  async function _readSharedFile(uri, type){
+    const dec = decodeURIComponent(uri||'');
+    const name = (dec.split('?')[0].split('/').pop())||'';
+    const FS = _capPlugin('Filesystem', 'readFile');
+    if(FS){
+      for(const attempt of [{path:uri}, {path:dec}, name?{path:name, directory:'DATA'}:null]){
+        if(!attempt) continue;
+        try{ const rf = await FS.readFile(attempt); if(rf && rf.data){ const b=_b64ToBlob(rf.data, type); if(b && b.size) return b; } }catch(_){}
+      }
+    }
+    try{ const r = await fetch(dec); if(r && r.ok){ const b = await r.blob(); if(b && b.size) return b; } }catch(_){}
+    return null;
+  }
   async function _consumeSendIntent(){
     try{
-      const cap = window.Capacitor; if(!cap) return false;
-      // The plugin proxy may not be pre-attached to Capacitor.Plugins (we don't import the plugin's JS in the
-      // bundle) — fall back to registerPlugin, which builds the bridge proxy from the native registration.
-      let SI = cap.Plugins && cap.Plugins.SendIntent;
-      if((!SI || !SI.checkSendIntentReceived) && cap.registerPlugin){ try{ SI = cap.registerPlugin('SendIntent'); }catch(_){} }
-      if(!SI || !SI.checkSendIntentReceived) return false;
+      const SI = _capPlugin('SendIntent', 'checkSendIntentReceived');
+      if(!SI) return false;
       let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }
       if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
       if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} return false; }
+      const type=(res.type||'');
+      // text/plain share → the plugin puts the TEXT (not a file URI) in `url`; don't try to read it as a file.
+      if(type.indexOf('text/')===0){
+        const txt=[res.url, res.title].map(s=>(s||'').trim()).filter(Boolean).join('\n');
+        try{ SI.finish && SI.finish(); }catch(_){}
+        if(!txt){ try{ toast('Shared text was empty'); }catch(_){} return false; }
+        switchView('home'); compose({ text: txt }); return true;
+      }
       const urls=[]; if(res.url) urls.push(res.url);
       if(Array.isArray(res.additionalItems)) res.additionalItems.forEach(it=>{ if(it&&it.url) urls.push(it.url); });
+      try{ toast('Attaching shared file…'); }catch(_){}
       const files=[];
       for(const u of urls){
-        const dec=decodeURIComponent(u); const nm=(dec.split('?')[0].split('/').pop())||'shared'; let blob=null;
-        try{ const r=await fetch(dec); if(r && r.ok) blob=await r.blob(); }catch(_){}
-        if(!blob || !blob.size){
-          // content:// URIs usually can't be read by WebView fetch — read the bytes natively via Filesystem.
-          try{ const FS=cap.Plugins&&cap.Plugins.Filesystem;
-            if(FS&&FS.readFile){ const rf=await FS.readFile({path:u}); if(rf&&rf.data) blob=_b64ToBlob(rf.data, res.type||''); } }catch(_){}
-        }
-        if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||res.type||'application/octet-stream' }));
+        const nm=(decodeURIComponent(u).split('?')[0].split('/').pop())||'shared';
+        const blob=await _readSharedFile(u, type);
+        if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||type||'application/octet-stream' }));
       }
-      // file shares put the filename in `title`; only treat title/description as post TEXT when no file came
-      const txt = files.length ? '' : ([res.description, res.title].map(s=>(s||'').trim()).filter(Boolean)[0] || '');
       try{ SI.finish && SI.finish(); }catch(_){}
-      if(!files.length && !txt){ try{ toast('Shared item was empty'); }catch(_){} return false; }
-      switchView('home'); compose({ text: txt, files: files.length?files:null });
+      if(!files.length){ try{ toast('Couldn’t read the shared file'); }catch(_){} return false; }
+      switchView('home'); compose({ files });
       return true;
     }catch(_){ return false; }
   }
