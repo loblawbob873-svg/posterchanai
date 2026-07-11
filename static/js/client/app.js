@@ -532,6 +532,32 @@
       return true;
     }catch(_){ return false; }
   }
+  // Native share-into-app (Capacitor `send-intent`): another app shared file(s)/text to PosterChan via the
+  // Android share sheet. The intent launches us with NO web payload (unlike the PWA Web Share Target POST),
+  // so read it through the plugin, pull the file bytes, and open the composer prefilled — same end state.
+  // Content-URIs don't start with '/', so the bundled-mode fetch shim passes them straight to native fetch.
+  async function _consumeSendIntent(){
+    try{
+      const SI = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SendIntent;
+      if(!SI || !SI.checkSendIntentReceived) return false;
+      let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }
+      if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
+      if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} return false; }
+      const urls=[]; if(res.url) urls.push(res.url);
+      if(Array.isArray(res.additionalItems)) res.additionalItems.forEach(it=>{ if(it&&it.url) urls.push(it.url); });
+      const files=[];
+      for(const u of urls){ try{ const dec=decodeURIComponent(u); const r=await fetch(dec); const b=await r.blob();
+        const nm=(dec.split('?')[0].split('/').pop())||'shared';
+        files.push(new File([b], nm, { type: b.type||res.type||'application/octet-stream' })); }catch(_){}
+      }
+      // file shares put the filename in `title`; only treat title/description as post TEXT when no file came
+      const txt = files.length ? '' : ([res.description, res.title].map(s=>(s||'').trim()).filter(Boolean)[0] || '');
+      try{ SI.finish && SI.finish(); }catch(_){}
+      if(!files.length && !txt) return false;
+      switchView('home'); compose({ text: txt, files: files.length?files:null });
+      return true;
+    }catch(_){ return false; }
+  }
   function _consumeLaunchParams(){
     let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ return false; }
     if(![...sp.keys()].length) return false;
@@ -967,6 +993,12 @@
     // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
     // blank screen, even if the drain bails.
     try{ _consumeSharedFiles(); }catch(_){}
+    // Native (Capacitor) share sheet → app: handle the cold-start intent, and 'sendIntentReceived' for a
+    // share arriving while the app is already open. No-op in the PWA (window.Capacitor undefined).
+    if(window.Capacitor){ try{ _consumeSendIntent(); }catch(_){}
+      window.addEventListener('sendIntentReceived', ()=>{ try{ _consumeSendIntent(); }catch(_){} });
+      setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
+    }
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
@@ -5685,6 +5717,24 @@
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
   let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
+  // Bundled Android app only: the web assets are FROZEN in the APK and the SW never sees a new build, so the
+  // service-worker "Update available" path can't fire. Instead poll /apk/version (latest published APK build)
+  // and, when it's newer than the build baked into this bundle (__PC_APP_BUILD__), surface the SAME
+  // "Update available" row — but applyUpdate downloads the new APK instead of reloading the SW.
+  let _apkUpdate=false;
+  async function _checkApkUpdate(){
+    if(!window.Capacitor || !window.__PC_API_BASE__) return;   // bundled native app only (no-op in PWA)
+    const mine=+(window.__PC_APP_BUILD__||0); if(!mine) return;
+    try{
+      const r=await fetch('/apk/version'); if(!r.ok) return;
+      const j=await r.json(); const latest=+((j&&j.build)||0);
+      if(latest>mine && !_apkUpdate){
+        _apkUpdate=true;
+        if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
+        else { _updBadge=true; try{ bumpNotif(); }catch(_){} try{ toast('⬆️ App update available — see Notifications'); }catch(_){} }
+      }
+    }catch(_){}
+  }
   // Single reload chokepoint for every update trigger (controllerchange, worker-activated, last-resort
   // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
   // autosaves on pagehide — so an SW reload never loses in-progress text and needs no (fragile,
@@ -5698,6 +5748,11 @@
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
   function applyUpdate(){
+    // Bundled app update = install a new APK, not an SW reload. Open /apk (served directly by the server,
+    // resumable); Capacitor routes the external URL to the system browser → Android download → install.
+    if(_apkUpdate){ const u=(window.__PC_API_BASE__||'')+'/apk';
+      try{ window.open(u,'_blank'); }catch(_){ try{ location.href=u; }catch(e){} }
+      try{ toast('Downloading the app update…'); }catch(_){} return; }
     if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
     _updApplying=true;
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
@@ -5738,7 +5793,7 @@
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = _updateReady ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>'}</div></div>` : '';
+    const upd = (_updateReady || _apkUpdate) ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':(_apkUpdate?' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>')}</div></div>` : '';
     feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
@@ -7647,6 +7702,12 @@
     // Retry with backoff: over a high-latency link (e.g. Thailand→US) the session cookie can lag the
     // first fetch → a 401 → the old one-shot "Couldn't load" (you had to hit Retry). ensureAiSession
     // caches only a GOOD session, so re-calling it re-establishes the cookie after a transient failure.
+    // Perf/robustness (stale-while-revalidate): read the last-good cached settings up front so a slow or
+    // flaky link doesn't strand the user on a spinner or the "Couldn't load" error. We still fetch fresh
+    // and prefer it; the cache is only a FALLBACK when the network fails. It's REAL last-good data (never
+    // an empty object), so rendering + saving from it can't wipe settings with blanks — the hazard is only
+    // an empty form, which we still refuse below.
+    let _cachedS=null; try{ const _c=localStorage.getItem('pc_settings_cache'); if(_c){ const p=JSON.parse(_c); if(p && typeof p==='object') _cachedS=p; } }catch(_){}
     let s=null;
     for(let attempt=0; attempt<3; attempt++){
       await ensureAiSession();
@@ -7658,9 +7719,15 @@
            // no-op and you're stuck on "Couldn't load your settings" until a full reload.
            if(r.status===401) _aiAuth=null;
       }catch(_){}
+      // On a slow link, don't sit through the full backoff schedule if we already have a good cache to fall
+      // back to — one real attempt, then serve the cache instantly (the background isn't re-fetched, but
+      // the next open will get fresh data + re-cache).
+      if(_cachedS && attempt===0) break;
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
     }
     if(!host || VIEW!=='settings') return;
+    if(s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
+    else if(_cachedS){ s=_cachedS; }   // network failed but we have last-good settings → show them, not an error
     if(!s || typeof s!=='object'){
       host.innerHTML='<section class="set-card"><div class="set-body"><div class="muted">Couldn’t load your settings.</div><button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>';
       const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; return;

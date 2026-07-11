@@ -22,18 +22,27 @@ curl -fsSL https://poster.place/client -o www/index.html
 # strip cache-busting ?v= from local asset URLs (served from the bundle, not the network) and drop the
 # manifest link (native app, not a PWA install).
 python3 - <<'PY'
-import re
+import re, os
 p = 'www/index.html'
 html = open(p, encoding='utf-8').read()
+# Bake THIS build's number (GitHub run_number == versionCode, passed as PC_APP_BUILD) into the bundle so the
+# in-app updater can compare it against /apk/version and offer a download when the server has a newer APK.
+_b = (os.environ.get('PC_APP_BUILD', '0') or '0').strip()
+build = _b if _b.isdigit() else '0'
 shim = '''<script>
 window.__PC_API_BASE__ = 'https://poster.place';
+window.__PC_APP_BUILD__ = __BUILD__;
 (function(){
   var B = window.__PC_API_BASE__, W = B.replace(/^http/, 'ws');
   var _f = window.fetch.bind(window);
   window.fetch = function(i, o){
     try {
-      if (typeof i === 'string' && i.charAt(0) === '/') i = B + i;
-      else if (i && i.url && i.url.charAt(0) === '/') i = new Request(B + i.url, i);
+      // Rewrite root-relative URLs to the server AND force credentials:'include' — these are cross-origin
+      // (app origin https://localhost → poster.place), so without it the browser never sends the session
+      // cookie nor stores Set-Cookie, and every authed call 401-loops (settings, etc.). Paired with the
+      // server's SameSite=None cookie + CORS allow-credentials.
+      if (typeof i === 'string' && i.charAt(0) === '/'){ i = B + i; o = Object.assign({}, o, {credentials:'include'}); }
+      else if (i && i.url && i.url.charAt(0) === '/'){ o = Object.assign({}, o, {credentials:'include'}); i = new Request(B + i.url, i); }
     } catch(e){}
     return _f(i, o);
   };
@@ -43,6 +52,7 @@ window.__PC_API_BASE__ = 'https://poster.place';
 })();
 </script>
 '''
+shim = shim.replace('__BUILD__', build)
 html = html.replace('</head>', shim + '</head>', 1)
 # local assets are bundled at their /static/... paths — drop the ?v=NNN query so the local server serves them
 html = re.sub(r'(/static/[^"\'?\s]+)\?v=[0-9]+', r'\1', html)

@@ -40,18 +40,19 @@ jobs:
         working-directory: mobile
         run: npm ci || npm install
 
-      - name: Build web bundle (www)
-        working-directory: mobile
-        run: bash build-www.sh
-
-      - name: Capacitor sync
-        working-directory: mobile
-        run: npx cap sync android
-
       - name: Version from run number
         run: |
           echo "VCODE=${{ github.run_number }}" >> "$GITHUB_ENV"
           echo "VNAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "PC_APP_BUILD=${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Build web bundle (www)
+        working-directory: mobile
+        run: bash build-www.sh      # reads PC_APP_BUILD → bakes __PC_APP_BUILD__ into the bundle for the updater
+
+      - name: Capacitor sync
+        working-directory: mobile
+        run: npx cap sync android
 
       - name: Build & sign release APK
         working-directory: mobile/android

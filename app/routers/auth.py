@@ -25,8 +25,28 @@ from app.services.storage_service import StorageService
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _set_auth_cookie(response: Response, token: str, request: Request = None) -> None:
+    # The session cookie must survive the Capacitor Android app's CROSS-ORIGIN calls (app origin
+    # https://localhost → api at poster.place). That needs SameSite=None, which browsers only accept with
+    # Secure — valid because those requests are HTTPS. We decide per-request from the connection scheme
+    # (X-Forwarded-Proto set by nginx, else request.url.scheme) instead of a static ENV flag: over HTTPS →
+    # SameSite=None; Secure (works same-origin PWA *and* the cross-origin app); over plain http (direct LAN
+    # / dev) → Lax + not-Secure, so those same-origin logins still work (a Secure/None cookie would be
+    # dropped on http). httponly stays False: JS reads the token for the WebSocket auth handshake.
+    secure = False
+    if request is not None:
+        proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower()
+        secure = proto == "https" or request.url.scheme == "https"
+    response.set_cookie(
+        key="access_token", value=token,
+        httponly=False,
+        secure=secure, max_age=30 * 24 * 60 * 60,
+        samesite="none" if secure else "lax", path="/",
+    )
+
+
 @router.post("/login", response_model=Token)
-def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db)):
+def login(user_data: UserLogin, response: Response, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == user_data.username).first()
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(
@@ -35,33 +55,8 @@ def login(user_data: UserLogin, response: Response, db: Session = Depends(get_db
         )
 
     token = create_access_token({"sub": str(user.id)})
-
-    # Set cookie for browser-based auth
-    # Note: httponly=False required for WebSocket auth (JS reads token for ws:// connection)
-    # secure=True in production to prevent cookie transmission over HTTP
-    import os
-    is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=False,  # Required: JS reads token for WebSocket auth handshake
-        secure=is_production,  # HTTPS only in production
-        max_age=30 * 24 * 60 * 60,  # 30 days
-        samesite="lax",
-        path="/"
-    )
-
+    _set_auth_cookie(response, token, request)
     return {"access_token": token, "token_type": "bearer"}
-
-
-def _set_auth_cookie(response: Response, token: str) -> None:
-    import os
-    is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
-    response.set_cookie(
-        key="access_token", value=token,
-        httponly=False,            # JS reads it for the WebSocket auth handshake
-        secure=is_production, max_age=30 * 24 * 60 * 60, samesite="lax", path="/",
-    )
 
 
 class NostrLogin(BaseModel):
@@ -83,7 +78,7 @@ def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
 
 
 @router.post("/nostr-login")
-async def nostr_login(data: NostrLogin, response: Response, db: Session = Depends(get_db)):
+async def nostr_login(data: NostrLogin, response: Response, request: Request, db: Session = Depends(get_db)):
     """Log in / sign up with a Nostr key (NIP-07 / Amber / nsec — signed client-side). Finds the
     user by linked npub or creates a fresh, AI-gated account, then issues the normal session cookie
     so the whole AI app works unchanged. New users have NO AI access until an admin approves."""
@@ -171,7 +166,7 @@ async def nostr_login(data: NostrLogin, response: Response, db: Session = Depend
         logger.warning("[auth] account sync to relay failed for %s: %s", npub[:16], e)
 
     token = create_access_token({"sub": str(user.id)})
-    _set_auth_cookie(response, token)
+    _set_auth_cookie(response, token, request)
     return {
         "access_token": token, "token_type": "bearer",
         "user": {"id": user.id, "username": user.username, "npub": npub,

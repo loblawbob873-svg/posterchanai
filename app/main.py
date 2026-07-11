@@ -698,6 +698,24 @@ async def latest_apk():
     )
 
 
+_APK_VERSION_PATH = "/home/verita84/posterchan-apk/version.txt"
+
+
+@app.get("/apk/version")
+async def apk_version():
+    """Latest published APK build number (the GitHub Actions run_number, == the APK's versionCode), read
+    from a sidecar the refresh job writes. The bundled Android app compares it to its baked-in
+    window.__PC_APP_BUILD__ and, when this is higher, surfaces an in-app 'Update available' that downloads
+    /apk. build:0 means unknown (no sidecar yet) — the app then simply won't prompt."""
+    build = 0
+    try:
+        with open(_APK_VERSION_PATH) as f:
+            build = int((f.read() or "0").strip() or "0")
+    except Exception:
+        build = 0
+    return {"build": build, "versionName": (f"1.0.{build}" if build else "")}
+
+
 @app.get("/login")
 async def login_page(request: Request, next: str = None):
     # Old password login UI retired — log in with your Nostr key in the unified client. (The session
