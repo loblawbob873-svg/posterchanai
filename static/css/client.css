@@ -434,6 +434,11 @@ a.btn.full{display:block}
 /* flex + margin:auto centers the card when it fits but lets it scroll (top-aligned) when the
    content is taller than the screen — place-items:center clipped the tall Amber/nostrconnect pane */
 .auth-gate{position:fixed;inset:0;display:flex;flex-direction:column;overflow-y:auto;padding:calc(18px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));z-index:50}
+/* Native Android app (Capacitor, body.native from the bundle shim): the WebView is edge-to-edge under the
+   system status bar, and tablets report env(safe-area-inset-top)=0, so the login logo and the topbar brand
+   collided with the status-bar clock/date ('date over logo'). Reserve at least a status-bar height up top. */
+body.native .auth-gate{padding-top:calc(18px + max(env(safe-area-inset-top), 28px))}
+body.native .topbar{padding-top:calc(14px + max(env(safe-area-inset-top), 28px))}
 .auth-card{width:min(420px,94vw);border-radius:20px;padding:28px;margin:auto}
 /* Banner ABOVE the login card — Nostr ostrich + headline, to pull new users in. Stacked above the
    modal (not inside it). Theme-aware: surface = --panel2, text = --text (readable on every theme,

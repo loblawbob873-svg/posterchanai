@@ -49,6 +49,10 @@ window.__PC_APP_BUILD__ = __BUILD__;
   var _WS = window.WebSocket;
   window.WebSocket = function(u, p){ if (typeof u === 'string' && u.charAt(0) === '/') u = W + u; return new _WS(u, p); };
   window.WebSocket.prototype = _WS.prototype;
+  // Mark the native app so CSS can reserve the system status-bar height at the top — the WebView is
+  // edge-to-edge and tablets report env(safe-area-inset-top)=0, so the login logo / topbar otherwise sit
+  // under the status-bar clock/date (the 'date over logo' bug).
+  document.addEventListener('DOMContentLoaded', function(){ try{ document.body.classList.add('native'); }catch(e){} });
 })();
 </script>
 '''
