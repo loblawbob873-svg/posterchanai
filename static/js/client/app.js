@@ -1035,7 +1035,11 @@
     // not-yet-synced → keep the seeded cache rather than shrinking to empty.
     if(ev){ FOLLOWS = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); _persistFollows(); }
     FOLLOWS.add(ME.pubkey);
-    [...FOLLOWS].slice(0,300).forEach(needProfile);   // prefetch follows' profiles for @-autocomplete
+    // Prefetch follows' profiles for @-autocomplete — but NOT in data saver: pulling ~hundreds of kind-0
+    // profiles (avatars + bios) up front is a big bandwidth hit on a throttled load, and the whole point of
+    // data saver is to avoid it. They're fetched lazily instead — on scroll (the feed's profile observer)
+    // and on demand (when you actually open the mention autocomplete).
+    if(!NO_IMAGES) [...FOLLOWS].slice(0,300).forEach(needProfile);
     if (VIEW==='home') renderView(true);
   }
   async function fetchMutes(){
