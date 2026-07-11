@@ -512,18 +512,22 @@
   // Drain a file/text shared IN from another app: the SW's handleShare stashed it in the SHARE_CACHE and
   // redirected to /client?shared=1. Read the stash, open the composer with the text, hand it the files to
   // upload + attach, then clear the stash so a later launch doesn't re-open it.
+  const _SHARE_CACHE = 'pc-share-v1';   // MUST match SHARE_CACHE in sw.js (separate JS contexts, one contract)
   async function _consumeSharedFiles(){
     try{
-      const cache = await caches.open('pc-share-v1');
+      const cache = await caches.open(_SHARE_CACHE);
       const metaRes = await cache.match('/__share_meta'); if(!metaRes) return false;
+      // Guest → can't post yet. Show login and LEAVE the stash untouched so the share survives; startApp
+      // re-runs this after login and drains it then (deleting it here lost the shared photo forever).
+      if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} return false; }
       const meta = await metaRes.json();
       const files = [];
-      for(let i=0;i<(meta.n||0);i++){ const r = await cache.match('/__share_file_'+i);
-        if(r){ const blob = await r.blob(); const name = decodeURIComponent(r.headers.get('x-name')||('shared'+i)); files.push(new File([blob], name, { type: blob.type })); } }
-      await cache.delete('/__share_meta'); for(let i=0;i<(meta.n||0);i++) await cache.delete('/__share_file_'+i);
+      try{
+        for(let i=0;i<(meta.n||0);i++){ const r = await cache.match('/__share_file_'+i);
+          if(r){ const blob = await r.blob(); const name = decodeURIComponent(r.headers.get('x-name')||('shared'+i)); files.push(new File([blob], name, { type: blob.type })); } }
+      } finally { try{ await caches.delete(_SHARE_CACHE); }catch(_){} }   // nuke the WHOLE stash → no orphaned blobs even if a read threw mid-drain
       const seen=new Set(), lines=[]; [meta.title, meta.text, meta.url].map(s=>(s||'').trim()).filter(Boolean).forEach(s=>{ if(!seen.has(s)){ seen.add(s); lines.push(s); } });
       if(!lines.length && !files.length) return false;
-      if(GUEST){ _guestPrompt(); return false; }   // sharing needs an account to post
       switchView('home'); compose({ text: lines.join('\n\n'), files });
       return true;
     }catch(_){ return false; }
@@ -531,7 +535,11 @@
   function _consumeLaunchParams(){
     let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ return false; }
     if(![...sp.keys()].length) return false;
-    if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} _consumeSharedFiles(); return true; }
+    // ?shared just marks "a share is waiting" — clean the flag but DON'T take over the view here. The
+    // actual drain runs from startApp (so it works for a fresh launch AND a guest who then logs in), and
+    // letting the normal default view render first means a failed/empty/guest drain never leaves a blank app.
+    if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} }
+    if(![...sp.keys()].filter(k=>k!=='shared').length) return false;
     const view = sp.get('view'), wantCompose = sp.has('compose');
     const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
     const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
@@ -953,6 +961,11 @@
     // profile/note); otherwise land on the global feed immediately.
     if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
     else if(!_consumeLaunchParams()) switchView('global');   // PWA shortcut/share, else land on Nostrverse (global feed)
+    // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
+    // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
+    // empty stash (no-op). Runs AFTER a view is set, so the composer opens over a real backdrop — never a
+    // blank screen, even if the drain bails.
+    try{ _consumeSharedFiles(); }catch(_){}
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills

@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v223';
+const CACHE = 'pc-nostr-v224';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 3000;                   // entry cap; Cache.keys() is insertion-ordered → evict oldest.
@@ -89,9 +89,24 @@ async function cacheFirstMedia(req){
   } catch (_) {}   // quota exceeded / uncacheable → just serve it uncached
   return res;
 }
+const MEDIA_BUDGET_BYTES = 1500 * 1024 * 1024;   // ~1.5 GB soft cap on total origin storage. persist()
+                                                 // disables browser eviction, so WE must bound it — else a
+                                                 // full media cache of small videos could fill the device.
 async function trimMedia(cache){
   const keys = await cache.keys();
-  for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // evict oldest first
+  for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // count cap: evict oldest first
+  // Byte cap: since persist() stops the browser evicting under pressure, bound total storage ourselves.
+  // estimate() is origin-wide (a fine proxy) and cheap; when over budget, drop the oldest ~10% of media.
+  try {
+    if (navigator.storage && navigator.storage.estimate){
+      const { usage } = await navigator.storage.estimate();
+      if (usage && usage > MEDIA_BUDGET_BYTES){
+        const k2 = await cache.keys();
+        const drop = Math.max(1, Math.ceil(k2.length * 0.1));
+        for (let i = 0; i < drop; i++) cache.delete(k2[i]);
+      }
+    }
+  } catch (_) {}
 }
 
 // Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser
