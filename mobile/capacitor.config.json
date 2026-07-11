@@ -1,0 +1,11 @@
+{
+  "appId": "place.poster.app",
+  "appName": "PosterChan",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": false }
+  }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PosterChan</string>
+    <string name="title_activity_main">PosterChan</string>
+    <string name="package_name">place.poster.app</string>
+    <string name="custom_url_scheme">place.poster.app</string>
+</resources>

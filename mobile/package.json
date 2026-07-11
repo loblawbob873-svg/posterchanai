@@ -1,0 +1,22 @@
+{
+  "name": "posterchan-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PosterChan native Android app (Capacitor) — bundles the web client, talks to poster.place",
+  "scripts": {
+    "build": "bash build-www.sh",
+    "sync": "npx cap sync android"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/camera": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.3",
+    "@capacitor/share": "^6.0.3",
+    "send-intent": "^6.0.0"
+  }
+}

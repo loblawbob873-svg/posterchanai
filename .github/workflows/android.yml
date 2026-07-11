@@ -1,0 +1,84 @@
+name: Android APK
+
+# Builds the PosterChan native Android app (Capacitor) on GitHub's runners — this box can't run the
+# Gradle daemon. On every push that touches the client or the app project, it rebuilds the bundled web
+# UI, compiles + signs the APK, and publishes it to a rolling "apk-latest" GitHub Release. poster.place/apk
+# redirects to that asset, so users always get the newest build.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'static/js/client/**'
+      - 'static/css/client.css'
+      - 'templates/client.html'
+      - 'mobile/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor deps
+        working-directory: mobile
+        run: npm ci || npm install
+
+      - name: Build web bundle (www)
+        working-directory: mobile
+        run: bash build-www.sh
+
+      - name: Capacitor sync
+        working-directory: mobile
+        run: npx cap sync android
+
+      - name: Version from run number
+        run: |
+          echo "VCODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "VNAME=1.0.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$GITHUB_WORKSPACE/mobile/android/release.keystore"
+
+      - name: Build & sign release APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -PversionCode=$VCODE -PversionName=$VNAME \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/mobile/android/release.keystore" \
+            -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+            -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
+            -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEY_PASSWORD }}"
+
+      - name: Collect the APK
+        run: |
+          APK=$(find mobile/android -path '*release*' -name '*.apk' | head -1)
+          echo "found: $APK"
+          cp "$APK" posterchan.apk
+          ls -la posterchan.apk
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: PosterChan APK (latest)
+          body: "Latest PosterChan Android APK — auto-built from the web client. Version 1.0.${{ github.run_number }}."
+          files: posterchan.apk
+          make_latest: true

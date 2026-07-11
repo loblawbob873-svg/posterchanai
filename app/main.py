@@ -52,6 +52,18 @@ app = FastAPI(
     json_encoder=BytesSafeJSONEncoder
 )
 
+# CORS for the native app (Capacitor Android WebView): it bundles the web UI locally at the
+# https://localhost origin and calls this server cross-origin for data (relay, API, Blossom). Allow those
+# app origins (browsers on poster.place are same-origin and unaffected).
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://localhost", "http://localhost", "capacitor://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Exception handler for NoHealthyServersError - prevent it from being shown to client
 @app.exception_handler(NoHealthyServersError)
 async def no_healthy_servers_handler(request: FastAPIRequest, exc: NoHealthyServersError):
@@ -660,6 +672,17 @@ async def index(request: Request):
     # Unified UI: the Nostr client is the single face of the app (old index.html chat UI retired).
     # Everyone lands on /client and logs in with their Nostr key; the AI lives in its tab.
     return RedirectResponse(url="/client", status_code=302)
+
+
+@app.get("/apk")
+async def latest_apk():
+    """Download the newest PosterChan Android APK. GitHub Actions builds + signs it on each deploy and
+    publishes it to the rolling 'apk-latest' Release; this just redirects to that asset so the URL is
+    stable (poster.place/apk) and always serves the latest build."""
+    return RedirectResponse(
+        url="https://github.com/loblawbob873-svg/posterchanai/releases/download/apk-latest/posterchan.apk",
+        status_code=302,
+    )
 
 
 @app.get("/login")
