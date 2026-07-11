@@ -1085,7 +1085,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
 .lightbox img,.lightbox video{max-width:100%;max-height:90vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(0,255,255,.4)}
 .lightbox audio{width:min(560px,100%)}
-#toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px}
+/* pointer-events:none — toasts are informational (no taps); the layer sits over the bottom-centre
+   compose ✏️, so without this a visible toast swallows taps on the New Post button (you had to hit an
+   uncovered edge). Toasts never need interaction, so the whole layer stays click-through. */
+#toast-root{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{background:var(--panel2);border:1px solid var(--neon);border-radius:11px;padding:12px 18px;font-size:16px;box-shadow:var(--glow);animation:fade .2s}
 .notif-toast{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px}
 .notif-toast img{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
