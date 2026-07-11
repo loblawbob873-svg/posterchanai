@@ -211,6 +211,31 @@
         }
       }
     },
+    // Interaction-driven keepalive + recovery, for a mobile PWA where setInterval (the heartbeat) is
+    // throttled while the user passively reads. On each call: send a cheap keepalive ping on the trusted
+    // socket (refreshes it → defeats a proxy idle-close, PREVENTING a freeze) and, ONLY if that ping draws
+    // no reply within a grace window, reconnect (recovers a genuinely frozen zombie). Unlike reviveStale's
+    // _lastRx-age test, this can't tear down a merely-quiet-but-healthy socket — a healthy socket answers
+    // the ping, so _lastRx advances and no reconnect happens. A dead/closed socket reopens immediately.
+    pokeAlive(){
+      for (const c of this._conns.values()){
+        // Only PROBE an OPEN, trusted socket. A closed/dead socket already has a backoff reconnect
+        // scheduled (onclose → _retry); force-reopening it here would cancel that backoff and, on repeated
+        // pokes while scrolling, hammer a down relay — so leave dead sockets to _retry. Untrusted relays
+        // aren't guaranteed to answer the ping, so they'd false-positive; skip them too.
+        if (!c.trusted || !c.ws || c.ws.readyState !== 1) continue;
+        const pokeAt = Date.now();
+        try{ c._send(['REQ', '_hb', { ids: ['0000000000000000000000000000000000000000000000000000000000000000'] }]); c._send(['CLOSE', '_hb']); }catch(_){}
+        setTimeout(() => {
+          // Received NOTHING since the poke (the EOSE would set _lastRx >= pokeAt) → genuinely frozen →
+          // reconnect. Comparing against pokeAt (not the prior _lastRx) avoids a same-millisecond false
+          // positive on a fast link, and a fresh _lastRx from an interim reconnect naturally exempts it.
+          if (c.ws && c.ws.readyState === 1 && (c._lastRx || 0) < pokeAt){
+            c._teardownSocket(); c._setStatus('off'); c._retry();
+          }
+        }, 10000);
+      }
+    },
     // one-shot query across all relays -> resolves with a deduped array after every relay EOSEs
     query(filters, timeout=6000){
       return new Promise((res)=>{

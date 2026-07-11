@@ -1534,8 +1534,17 @@
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
   }
   // ---------- infinite scroll-back ----------
+  let _lastRevive=0;
+  // Mobile zombie-socket recovery that survives setInterval throttling. A mobile PWA in the foreground
+  // still gets its timers throttled while you're just reading, so the relay heartbeat can miss its beat and
+  // a frozen socket (Cloudflare/radio idle-close the browser can't see) goes undetected — the timeline
+  // silently stops updating. Any user interaction is a throttle-proof trigger: pokeAlive() pings the socket
+  // (keeping a healthy one alive) and reconnects ONLY if the ping goes unanswered — so, unlike a
+  // reviveStale _lastRx-age check, it never tears down a merely-quiet-but-healthy socket. Throttled once/5s.
+  function _reviveOnInteract(){ if(Date.now()-_lastRevive < 5000) return; _lastRevive=Date.now(); try{ Relay.pokeAlive(); }catch(_){} }
   function onFeedScroll(){
     const feed=$('#feed'); if(!feed) return;
+    if(VIEW==='home'||VIEW==='global') _reviveOnInteract();
     // scrolled back near the top → show the buffered live posts and clear the pill
     if((VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
     if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
@@ -1563,6 +1572,7 @@
     const indicator = ()=>{ if(!ind || !ind.isConnected){ ind=document.createElement('div'); ind.className='ptr-ind'; ind.textContent='↻'; document.body.appendChild(ind); } return ind; };
     const resetInd = ()=>{ if(ind){ ind.style.opacity=''; ind.style.transform=''; ind.classList.remove('ready','spin'); } };
     feed.addEventListener('touchstart', e=>{
+      if(VIEW==='home'||VIEW==='global') _reviveOnInteract();   // any touch on a timeline recovers a frozen socket (throttle-proof)
       if(e.touches.length!==1){ active=false; return; }
       const t=e.touches[0]; sx=t.clientX; sy=t.clientY; axis=''; pulling=false; swiping=false; active=true; startTop=feed.scrollTop;
     }, {passive:true});
