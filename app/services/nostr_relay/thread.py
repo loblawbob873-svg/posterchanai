@@ -516,7 +516,10 @@ async def _main(cfg: dict) -> None:
         server.handle, cfg["bind"], cfg["port"],
         process_request=server.process_request,
         max_size=cfg["max_message_size"],
-        ping_interval=30, ping_timeout=30, max_queue=64,
+        # ping_timeout raised 30→120: a mobile PWA's radio can suspend briefly, delaying the browser's
+        # auto-pong; a 30s timeout dropped those still-alive connections (feed "stops after ~2-3 min").
+        # App-level _keepalive NOTICEs keep the socket genuinely live; pings still reap a truly-dead conn.
+        ping_interval=30, ping_timeout=120, max_queue=64,
     )
     logger.info("[nostr-relay] listening on ws://%s:%d/relay (operator=%d, seeds=%d)",
                 cfg["bind"], cfg["port"], len(cfg["operator"]), len(cfg["seeds"]))

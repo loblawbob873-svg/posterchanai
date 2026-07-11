@@ -155,6 +155,23 @@ class RelayServer:
         except asyncio.QueueFull:
             pass
 
+    async def _keepalive(self, conn) -> None:
+        """Push a tiny application-level NOTICE to the client every ~40s. Unlike a WebSocket PING frame —
+        which a CDN (Cloudflare fronts this relay) may answer at its own edge, and whose idle-timeout
+        accounting can ignore — a data frame traverses the WHOLE proxy chain to the browser: it resets the
+        CDN's idle timer AND refreshes the client's last-received clock, so the connection never silently
+        rots into a 'zombie'. This is what keeps a mobile PWA's feed live when its JS timers are throttled
+        and the radio briefly suspends (the "no new posts after ~2-3 min" symptom). The client ignores an
+        unrecognised NOTICE; one tiny frame per connection per 40s."""
+        try:
+            while True:
+                await asyncio.sleep(40)
+                self._send(conn, ["NOTICE", "keepalive"])
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
     async def _writer(self, conn, q) -> None:
         """Drain one connection's outbound queue at the client's own pace."""
         try:
@@ -344,6 +361,7 @@ class RelayServer:
         q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 8192))
         self._outq[conn] = q
         writer = asyncio.create_task(self._writer(conn, q))
+        keepalive = asyncio.create_task(self._keepalive(conn))
         try:
             async for raw in conn:
                 await self._dispatch(conn, raw)
@@ -352,6 +370,7 @@ class RelayServer:
                 logger.debug("[nostr-relay] connection handler error: %r", e)
         finally:
             writer.cancel()
+            keepalive.cancel()
             self._outq.pop(conn, None)
             self._conn_ips.pop(conn, None)
             self.subs.remove_conn(conn)
