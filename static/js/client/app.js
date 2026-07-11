@@ -1593,6 +1593,10 @@
       if(axis==='y' && pulling){
         const ready = ind && ind.classList.contains('ready');
         if(ready){ ind.classList.add('spin'); ind.style.opacity='1'; ind.style.transform='translateX(-50%) translateY(8px)';
+          // Force a fresh relay connection FIRST: on a throttled carrier the socket is often a zombie
+          // (open but frozen), so re-rendering alone would just re-subscribe over the dead socket and
+          // show nothing new. wake() reopens it; onReconnect re-arms the subs, then the redraw catches up.
+          try{ Relay.wake(); }catch(_){}
           try{ renderView(true); }catch(_){} setTimeout(resetInd, 600); }
         else resetInd();
       } else if(axis==='x' && swiping){
