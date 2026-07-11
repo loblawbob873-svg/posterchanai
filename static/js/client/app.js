@@ -7651,7 +7651,13 @@
     for(let attempt=0; attempt<3; attempt++){
       await ensureAiSession();
       if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
-      try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; } }catch(_){}
+      try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; }
+           // 401 = the cached session is STALE (server session expired / restarted). ensureAiSession
+           // caches _aiAuth forever, so re-calling it would just return the dead session — clear it so
+           // the next attempt re-signs and re-establishes the cookie. Without this the retry loop is a
+           // no-op and you're stuck on "Couldn't load your settings" until a full reload.
+           if(r.status===401) _aiAuth=null;
+      }catch(_){}
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
     }
     if(!host || VIEW!=='settings') return;
