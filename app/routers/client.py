@@ -23,7 +23,7 @@ import secrets
 import time
 
 from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -764,15 +764,40 @@ async def client_manifest(request: Request, db: Session = Depends(get_db)):
             {"name": "Messages", "short_name": "Messages", "url": "/client?view=messages",
              "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
         ],
-        # Web Share Target (GET): share a link/text from any app → opens the composer pre-filled.
-        # GET keeps it backend-free (the shared text rides in the query string the SPA consumes);
-        # file/image sharing would need a POST handler in the service worker — deferred.
+        # Web Share Target (POST, multipart): share a file/image/video AND/OR text/link from any app →
+        # opens the composer with the text pre-filled and the file(s) uploaded + attached. The POST is
+        # intercepted by the service worker (handleShare → stashes the file in a cache, redirects to
+        # /client?shared=1), which the SPA drains on boot (_consumeSharedFiles). POST is required to carry
+        # files; text-only shares still work through the same path.
         "share_target": {
-            "action": "/client",
-            "method": "GET",
-            "params": {"title": "title", "text": "text", "url": "url"},
+            "action": "/client/share",
+            "method": "POST",
+            "enctype": "multipart/form-data",
+            "params": {
+                "title": "title",
+                "text": "text",
+                "url": "url",
+                "files": [{"name": "media", "accept": ["image/*", "video/*", "audio/*", "application/pdf", "text/plain"]}],
+            },
         },
     }, media_type="application/manifest+json")   # not application/json — Samsung Internet's WebAPK install rejects the wrong MIME ("failed to download")
+
+
+@router.post("/share")
+async def client_share(request: Request):
+    """Fallback for the Web Share Target POST when the service worker isn't yet active to intercept it
+    (very first load before the SW installs, or a stale SW). Normally handleShare in the SW handles the
+    whole thing client-side, files included. Here we can only forward the TEXT to the SPA via the query
+    string (a file needs the SW's cache stash), then redirect to the composer so a text/link share still
+    works and never errors."""
+    from urllib.parse import urlencode
+    try:
+        form = await request.form()
+        params = {k: (form.get(k) or "") for k in ("title", "text", "url") if form.get(k)}
+    except Exception:
+        params = {}
+    qs = ("?" + urlencode(params)) if params else "?shared=1"
+    return RedirectResponse(url="/client" + qs, status_code=303)
 
 
 @router.get("/sw.js")

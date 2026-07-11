@@ -509,9 +509,29 @@
   // Target (?title=&text=&url=) arrive as a query string on /client. Consume them once on boot, then
   // strip the query (replaceState) so a refresh/restart doesn't replay — e.g. re-pop the composer.
   // Returns true if it took over the initial view so the default switchView('global') is skipped.
+  // Drain a file/text shared IN from another app: the SW's handleShare stashed it in the SHARE_CACHE and
+  // redirected to /client?shared=1. Read the stash, open the composer with the text, hand it the files to
+  // upload + attach, then clear the stash so a later launch doesn't re-open it.
+  async function _consumeSharedFiles(){
+    try{
+      const cache = await caches.open('pc-share-v1');
+      const metaRes = await cache.match('/__share_meta'); if(!metaRes) return false;
+      const meta = await metaRes.json();
+      const files = [];
+      for(let i=0;i<(meta.n||0);i++){ const r = await cache.match('/__share_file_'+i);
+        if(r){ const blob = await r.blob(); const name = decodeURIComponent(r.headers.get('x-name')||('shared'+i)); files.push(new File([blob], name, { type: blob.type })); } }
+      await cache.delete('/__share_meta'); for(let i=0;i<(meta.n||0);i++) await cache.delete('/__share_file_'+i);
+      const seen=new Set(), lines=[]; [meta.title, meta.text, meta.url].map(s=>(s||'').trim()).filter(Boolean).forEach(s=>{ if(!seen.has(s)){ seen.add(s); lines.push(s); } });
+      if(!lines.length && !files.length) return false;
+      if(GUEST){ _guestPrompt(); return false; }   // sharing needs an account to post
+      switchView('home'); compose({ text: lines.join('\n\n'), files });
+      return true;
+    }catch(_){ return false; }
+  }
   function _consumeLaunchParams(){
     let sp; try{ sp = new URLSearchParams(location.search); }catch(_){ return false; }
     if(![...sp.keys()].length) return false;
+    if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} _consumeSharedFiles(); return true; }
     const view = sp.get('view'), wantCompose = sp.has('compose');
     const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
     const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
@@ -542,6 +562,10 @@
     }
     updateUserCount(); let _ucT=0; setInterval(()=>{ if(NO_IMAGES && (++_ucT % 4)) return; updateUserCount(true); }, 15000);   // online refresh: 15s normally, throttled to 60s in data saver (still current, 1/4 the round trips)
     await Store.init();
+    // Ask the browser for PERSISTENT storage so our caches (SW media cache + IndexedDB) aren't evicted
+    // under pressure — that's what lets a large offline media cache actually stick around. Best-effort;
+    // granted silently on an installed PWA, a no-op where unsupported.
+    try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(_){}
     if ('serviceWorker' in navigator){
       // Reload once the NEW SW takes control. It only takes control after the USER accepts the update
       // (applyUpdate → postMessage SKIP_WAITING) — the SW no longer skipWaiting()s on its own — so this
@@ -4135,7 +4159,7 @@
     lines.forEach((l,i)=>ctx.fillText(l, W/2, y0+i*lh));
     return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason=''}={}){
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null}={}){
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
@@ -4156,6 +4180,14 @@
       </div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
+      // Files shared IN from another app (OS share sheet → _consumeSharedFiles): upload each to Blossom
+      // and append its URL, exactly like paste/attach. Runs async so the composer paints immediately.
+      if(files && files.length){ (async()=>{ const st=$('#cmp-status',root);
+        for(let i=0;i<files.length;i++){ if(st) st.textContent=`uploading shared ${i+1}/${files.length}…`;
+          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
+            else if(st) st.textContent='upload failed: '+((err&&err.message)||err); return; } }
+        if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} })(); }
       // Auto-save as a Draft if the composer is dismissed by ACCIDENT (click-outside / Escape) with
       // unsaved text — leaving the New Post / reply window shouldn't lose what you typed. Posting or the
       // 💾 Draft button set `committed` so they don't double-save; an empty composer saves nothing.

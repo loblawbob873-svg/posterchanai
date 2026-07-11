@@ -9,9 +9,12 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v222';
+const CACHE = 'pc-nostr-v223';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
-const MEDIA_MAX = 500;                    // entry cap; Cache.keys() is insertion-ordered → evict oldest
+const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
+const MEDIA_MAX = 3000;                   // entry cap; Cache.keys() is insertion-ordered → evict oldest.
+                                          // Raised 500→3000 for a much larger offline media cache (pairs
+                                          // with navigator.storage.persist() in app.js so it isn't evicted).
 const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
 const SHELL = [
   '/client',
@@ -44,7 +47,7 @@ self.addEventListener('activate', e => {
   // Drop stale shell caches but KEEP the current shell cache AND the media cache (don't re-download
   // every avatar/image just because the app code was redeployed).
   e.waitUntil(caches.keys().then(ks => Promise.all(
-    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE).map(k => caches.delete(k))
+    ks.filter(k => k !== CACHE && k !== MEDIA_CACHE && k !== SHARE_CACHE).map(k => caches.delete(k))
   )).then(()=>self.clients.claim()));
 });
 
@@ -91,8 +94,29 @@ async function trimMedia(cache){
   for (let i = 0; i < keys.length - MEDIA_MAX; i++) cache.delete(keys[i]);   // evict oldest first
 }
 
+// Web Share Target (POST): another app shared a file/text INTO us via the OS share sheet. The browser
+// POSTs the multipart form here. A not-yet-open client can't receive a File directly, so stash the
+// file(s) + text in a temporary cache and redirect to /client?shared=1 — the app reads the stash on boot
+// (see _consumeSharedFiles), opens the composer with the text, and uploads the files. Then clears it.
+async function handleShare(request){
+  try {
+    const fd = await request.formData();
+    const files = fd.getAll('media').filter(f => f && f.size);
+    const meta = { title: fd.get('title') || '', text: fd.get('text') || '', url: fd.get('url') || '', n: files.length };
+    const cache = await caches.open(SHARE_CACHE);
+    await cache.put('/__share_meta', new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
+    for (let i = 0; i < files.length; i++){
+      await cache.put('/__share_file_' + i, new Response(files[i], {
+        headers: { 'content-type': files[i].type || 'application/octet-stream', 'x-name': encodeURIComponent(files[i].name || ('file' + i)) },
+      }));
+    }
+  } catch (_) {}
+  return Response.redirect('/client?shared=1', 303);
+}
+
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+  if (e.request.method === 'POST' && url.pathname === '/client/share'){ e.respondWith(handleShare(e.request)); return; }
   if (e.request.method !== 'GET') return;
   if (url.pathname === '/relay' || url.pathname.startsWith('/client/config')) return;  // live data / WS
 
