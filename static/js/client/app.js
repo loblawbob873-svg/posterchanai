@@ -6691,7 +6691,11 @@
     if(!host){
       host=document.createElement('div'); host.id='admin-host'; host.style.display='none';
       host.innerHTML='<div class="spinner"></div>';
-      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src='/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
+      // In the bundled app the iframe src is NOT rewritten by the fetch shim, so a bare '/admin' resolves to
+      // https://localhost/admin → Capacitor's SPA fallback serves index.html → the admin frame showed the
+      // main timeline. Load it from the server (cross-origin, cookie is SameSite=None so it authenticates;
+      // /admin sets no X-Frame-Options so framing is allowed). PWA: __PC_API_BASE__ undefined → plain '/admin'.
+      const ifr=document.createElement('iframe'); ifr.className='admin-frame'; ifr.src=(window.__PC_API_BASE__||'')+'/admin?t='+Date.now(); ifr.title='Admin'; ifr.style.opacity='0';
       ifr.addEventListener('load', ()=>{ ifr.dataset.loaded='1'; ifr.style.opacity='1'; const sp=host.querySelector('.spinner'); if(sp) sp.remove(); });
       host.appendChild(ifr);
       (document.querySelector('.main')||document.body).appendChild(host);
