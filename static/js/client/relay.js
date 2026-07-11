@@ -65,33 +65,24 @@
         if (!this.ws || this.ws.readyState !== 1) return;
         if (typeof document !== 'undefined' && document.hidden) return;
         const idle = Date.now() - (this._lastRx || 0);
-        if (this.trusted && this._lastRx && idle > 75000){   // backstop zombie: only the trusted relay is
-          this._teardownSocket(); this._setStatus('off'); this._retry();   // known to reliably answer the beat
+        // Zombie detection. The idle ping below MUST draw an EOSE, which refreshes _lastRx — so on a LIVE
+        // link (even a slow/throttled one) idle stays low because the ping keeps getting answered. Only a
+        // frozen socket (a proxy idle-closed it but the browser still reports "open") lets idle grow
+        // unanswered. Reconnect at 40s (was 75s) so a stalled quiet feed recovers in well under a minute,
+        // WITHOUT false-positiving a slow-but-alive link (which keeps answering the ping). Trusted relay
+        // only — the one guaranteed to answer. (A manual pull-to-refresh recovers instantly via reviveStale.)
+        if (this.trusted && this._lastRx && idle > 40000){
+          this._teardownSocket(); this._setStatus('off'); this._retry();
           return;
         }
         if (idle > 20000){
           // Filter on a non-existent id → guaranteed 0 events + an immediate EOSE (a bare {limit:0} would
           // be read as 500 by the relay — `limit or 500` — and dump events every beat).
           try{ this._send(['REQ', '_hb', { ids: ['0000000000000000000000000000000000000000000000000000000000000000'] }]); this._send(['CLOSE', '_hb']); }catch(_){}
-          // ACTIVE stall check (the key fix for a THROTTLED mobile carrier): that ping MUST draw an EOSE,
-          // which refreshes _lastRx. If nothing arrives within 12s the socket is a throttled/proxied
-          // zombie — open but frozen, no new posts flowing — so reconnect NOW instead of waiting out the
-          // 75s idle backstop. Costs no extra data (verifies a ping already sent), so it's data-saver
-          // friendly. Only the trusted relay is guaranteed to answer, so only it drives the fast path.
-          if (this.trusted){
-            const pingAt = Date.now();
-            clearTimeout(this._hbCheck);
-            this._hbCheck = setTimeout(() => {
-              if (this.ws && this.ws.readyState === 1 && !(typeof document !== 'undefined' && document.hidden)
-                  && (this._lastRx || 0) < pingAt){
-                this._teardownSocket(); this._setStatus('off'); this._retry();
-              }
-            }, 12000);
-          }
         }
       }, 25000);
     }
-    _stopHeartbeat(){ if (this._hb){ clearInterval(this._hb); this._hb = null; } clearTimeout(this._hbCheck); this._hbCheck = null; }
+    _stopHeartbeat(){ if (this._hb){ clearInterval(this._hb); this._hb = null; } }
     _setStatus(s){ this.status = s; this.pool._recomputeStatus(); }
     _retry(){ clearTimeout(this._rt); const cap = this.trusted ? 2500 : 8000;   // our built-in relay is always up → reconnect fast, never wait 8s
               const d = this._backoff || 600; this._backoff = Math.min(d*1.7, cap);

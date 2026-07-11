@@ -1593,10 +1593,11 @@
       if(axis==='y' && pulling){
         const ready = ind && ind.classList.contains('ready');
         if(ready){ ind.classList.add('spin'); ind.style.opacity='1'; ind.style.transform='translateX(-50%) translateY(8px)';
-          // Force a fresh relay connection FIRST: on a throttled carrier the socket is often a zombie
-          // (open but frozen), so re-rendering alone would just re-subscribe over the dead socket and
-          // show nothing new. wake() reopens it; onReconnect re-arms the subs, then the redraw catches up.
-          try{ Relay.wake(); }catch(_){}
+          // Recover a zombie socket FIRST (throttled carrier: open but frozen), so re-rendering isn't just
+          // re-subscribing over a dead socket. reviveStale() reconnects ONLY a stale/silent socket and
+          // leaves a healthy one alone — so a normal refresh over a live connection stays instant (no
+          // needless teardown), while a frozen one reopens and onReconnect re-arms the subs + redraws.
+          try{ Relay.reviveStale(); }catch(_){}
           try{ renderView(true); }catch(_){} setTimeout(resetInd, 600); }
         else resetInd();
       } else if(axis==='x' && swiping){
@@ -8072,8 +8073,13 @@
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
-    // center + flash the clicked post (when it isn't the root)
-    if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`); if(el) el.scrollIntoView({block:'center'}); }
+    // Reveal + flash the clicked post (when it isn't the root). Use 'nearest', NOT 'center': centering
+    // scrolled the root + earlier replies off the top of a short mobile viewport, so tapping a reply
+    // notification looked like it opened "just the reply". 'nearest' scrolls the MINIMUM — a thread that
+    // fits (the common case: your post + a few replies) doesn't scroll at all, so the root stays on screen
+    // and the whole conversation is visible; a long thread still scrolls just enough to reveal the reply.
+    if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
+      if(el){ el.scrollIntoView({block:'nearest'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1400); } }
   }
   // Resolve a post's thread root, returning { rootId, chain } where chain is the clicked post + each
   // fetched ancestor up to (and including, if reachable) the root. Prefers the NIP-10 'root' e-tag (O(1));
