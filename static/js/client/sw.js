@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v234';
+const CACHE = 'pc-nostr-v235';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -77,8 +77,18 @@ async function cacheFirstMedia(req){
   const hit = await cache.match(req);
   if (hit) return hit;
   let res;
-  try { res = await fetch(req); }
-  catch (_) { return Response.error(); }   // network died + nothing cached → let the <img> onerror → LOGO
+  // Cross-origin images (fediverse avatars + custom emoji, other instances' media) come back OPAQUE via the
+  // <img>'s default no-cors mode → status 0 → the guard below refuses to cache them, so they re-download on
+  // every view. Try a CORS fetch first: fedi media is almost always CDN-served with Access-Control-Allow-
+  // Origin:* → a real 200 we CAN cache. Fall back to the normal (opaque) fetch when the host sends no CORS,
+  // so it still displays (just uncached). credentials:'omit' — never send our cookies to third-party hosts.
+  try {
+    if (req.destination === 'image' && new URL(req.url).origin !== self.location.origin) {
+      const c = await fetch(req.url, { mode: 'cors', credentials: 'omit' });
+      if (c && c.status === 200) res = c;
+    }
+  } catch (_) {}
+  if (!res) { try { res = await fetch(req); } catch (_) { return Response.error(); } }  // net died + nothing cached → <img> onerror → LOGO
   try {
     const isVideo = req.destination === 'video';
     const len = +(res.headers.get('content-length') || 0);
