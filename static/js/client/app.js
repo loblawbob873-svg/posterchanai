@@ -4187,7 +4187,7 @@
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['admin','🛠️','Admin'],['logout','⎋','Logout']]
+    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['admin','🛠️','Admin'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai') && !(v==='admin' && !IS_ADMIN));   // hide AI+Translate in Nostr-only; Admin only for admins
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     const _stat=(_wot||_lastOnline||_lastRelay)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}</div>`:'';
