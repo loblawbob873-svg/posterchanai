@@ -530,6 +530,17 @@ class RelayServer:
             # puppet's OWN events (NIP-09), and federates upstream iff bridge broadcast is on (no
             # nofederate tag) — so a fediverse delete propagates everywhere the mirror reached.
             pass
+        elif kind == 25050:
+            # Voice/video CALL signaling (WebRTC over Nostr): ephemeral, always p-tagged to the specific
+            # peer. Either party may be OUTSIDE the local WoT — a brand-new test account, or a cross-instance
+            # caller/callee — so an author-only gate would silently drop every invite/answer to/from them
+            # (symptom: "no ring on the other side"). Accept when EITHER party is trusted: the author is a WoT
+            # member, OR the p-tagged recipient is a WoT member or one of our own relay users. This is the same
+            # recipient-routing DMs/zaps use, so calls work for our users regardless of the peer's WoT status.
+            if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)
+                    or any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))):
+                self._send(conn, ["OK", eid, False, "blocked: call not for a web-of-trust member"])
+                return
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return
