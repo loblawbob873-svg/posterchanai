@@ -74,6 +74,31 @@
     </fieldset>
 
     <fieldset>
+        <legend>🔴 OBS Streaming</legend>
+        <div class="form-group">
+            <label for="stream_enabled">
+                <input type="checkbox" id="stream_enabled" name="stream_enabled"> Run the built-in media server (MediaMTX)
+            </label>
+            <small>Lets users stream from OBS: they publish RTMP here and it appears under Discover → Streams (NIP-53). The MediaMTX binary ships with the install/image; just <strong>forward TCP 1935</strong> to this server and tick this box — the app supervises it automatically (no restart needed).</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_domain">Stream domain</label>
+            <input type="text" id="stream_domain" name="stream_domain" placeholder="stream.poster.place (or leave blank to use the public IP)">
+            <small>The host OBS pushes to (shown to users in the Go Live dialog as <code>rtmp://&lt;this&gt;:1935</code>). Blank = the server's public IP.</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_hls_base">HLS base URL — optional (for scale)</label>
+            <input type="text" id="stream_hls_base" name="stream_hls_base" placeholder="https://stream.poster.place (blank = app reverse-proxy)">
+            <small>Blank = the app reverse-proxies HLS over your existing tunnel (zero-config, fine for a handful of viewers). For many viewers, point a grey-clouded subdomain at the HLS port (8888) and set it here.</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_rtmp_port">RTMP port</label>
+            <input type="text" id="stream_rtmp_port" name="stream_rtmp_port" placeholder="1935" style="max-width:120px;">
+            <small>OBS ingest port — forward this on your router.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>System Health Report (Schedulers)</legend>
         <div class="form-group">
             <label for="logs_scheduler_enabled">

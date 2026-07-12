@@ -234,6 +234,11 @@ main() {
     # Skipped automatically if already present.
     download_u2net_model
 
+    # Step 9d: Install the built-in MediaMTX media server for OBS streaming (prebuilt binary, ~30MB).
+    # Shipped by DEFAULT so streaming is a single Admin toggle (no separate install step). Non-fatal —
+    # a download hiccup just means streaming stays off until retried with ./install.sh --stream.
+    setup_stream_server || print_warning "MediaMTX (streaming) download did not complete; enable later with ./install.sh --stream"
+
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance
 

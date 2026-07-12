@@ -1037,6 +1037,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof .pav{width:92px;height:92px;border-radius:50%;border:3px solid var(--bg);object-fit:cover;background:#1a1230}
 .prof .pbody{padding:14px 22px}
 .prof .phead .btn{font-size:14.5px;padding:10px 17px;border-radius:12px}
+.prof .prof-actions{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.prof .prof-actions .btn{white-space:nowrap}
+.prof .prof-actions .btn .ic{display:none}   /* Settings shows full label on desktop */
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.5;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}
@@ -1175,7 +1178,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .note .av{width:40px;height:40px}
   .acts{max-width:none}
   .prof .phead{padding:0 14px}.prof .pbody{padding:12px 14px}
-  .prof .phead .btn{margin-top:6px}
+  /* Phone: the action buttons wrap as one right-aligned group under the avatar and stay compact so
+     Edit / Settings / ☰ (and Call / Zap / ☰) always fit — Settings collapses to its ⚙ icon. */
+  .prof .phead{flex-wrap:wrap;align-items:flex-start}
+  .prof .prof-actions{width:100%;margin-left:0;justify-content:flex-start;margin-top:8px;gap:6px}
+  .prof .phead .btn{margin-top:0;font-size:13.5px;padding:8px 12px}
+  .prof .prof-actions .btn .lbl{display:none}   /* collapse "⚙ Settings" → "⚙" on phones */
+  .prof .prof-actions .btn .ic{display:inline}
   .files-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;padding:12px}
   .media-grid{gap:3px;padding:3px}   /* tighter phone gallery, still 3 across */
   .media-grid img,.media-grid video{border-radius:6px}
