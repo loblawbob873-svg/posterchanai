@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import subprocess
 import threading
 import time
@@ -45,7 +46,23 @@ _spawn_sig: Optional[str] = None
 
 # Settings whose change requires regenerating the config + respawning mediamtx.
 _SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port",
-             "stream_webrtc_port", "stream_webrtc_udp_port", "stream_domain", "turn_public_ip")
+             "stream_webrtc_port", "stream_webrtc_udp_port", "stream_domain", "turn_public_ip",
+             "stream_auth_secret")
+
+
+def _ensure_hook_secret(cfg: dict) -> str:
+    """Secret the app injects into MediaMTX's auth-hook URL so /api/streams/auth can verify the call came
+    from our MediaMTX (not a forged public request) — robust regardless of proxy/loopback IP quirks."""
+    sec = (cfg.get("stream_auth_secret", "") or "").strip()
+    if sec:
+        return sec
+    sec = secrets.token_hex(24)
+    try:
+        settings_store.put("stream_auth_secret", sec)
+        logger.info("[stream] generated a stream auth-hook secret on first start")
+    except Exception as e:  # pragma: no cover
+        logger.warning("[stream] could not persist auth secret: %s", e)
+    return sec
 
 
 def _app_port() -> str:
@@ -98,7 +115,8 @@ def _write_config(cfg: dict) -> None:
     import re
     pub_host = (cfg.get("stream_domain", "") or "").strip() or (cfg.get("turn_public_ip", "") or "").strip()
     pub_host = re.sub(r"[^A-Za-z0-9.:\-]", "", pub_host)
-    auth_url = f"http://127.0.0.1:{_app_port()}/api/streams/auth"
+    secret = (cfg.get("stream_auth_secret", "") or "").strip()
+    auth_url = f"http://127.0.0.1:{_app_port()}/api/streams/auth?hook={secret}"
     # Config keys target the pinned MediaMTX v1.19.2 (see install.sh / Dockerfile MEDIAMTX_VERSION).
     lines = [
         "logLevel: info",
@@ -187,6 +205,8 @@ def _reconcile() -> None:
             _gaveup_logged = False
             _spawn_sig = None
             return
+        # Resolve (+ persist once) the auth-hook secret so the config + the signature + the endpoint agree.
+        cfg["stream_auth_secret"] = _ensure_hook_secret(cfg)
         sig = _cfg_sig(cfg)
         if _running():
             if sig == _spawn_sig:

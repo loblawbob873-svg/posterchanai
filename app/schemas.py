@@ -148,6 +148,7 @@ class SettingsResponse(BaseModel):
     stream_srt_port: str = ""          # optional SRT ingest port; blank = off
     stream_webrtc_port: str = "8889"   # WebRTC/WHIP ingest (HTTP) — lets a phone go live from the browser
     stream_webrtc_udp_port: str = "8189"  # WebRTC media (UDP/ICE); forward this + set a public IP for remote phones
+    stream_auth_secret: str = ""       # secret the app injects into MediaMTX's auth-hook URL (auto-generated); gates /api/streams/auth
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

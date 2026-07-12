@@ -69,11 +69,12 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     """MediaMTX external-auth hook. Allow playback (reads); gate publishing on a valid API key.
 
     MediaMTX POSTs {action, path, query, protocol, ip, ...}. A 200 authorizes; anything else denies.
-    Locked to loopback: MediaMTX is a local subprocess that only ever calls from 127.0.0.1, so refusing
-    non-local callers stops the public app from being used as an API-key validity oracle / DoS surface.
+    Gated by a secret the app injects into MediaMTX's configured auth-hook URL (?hook=...): only our own
+    MediaMTX knows it, so the public app can't be used as an API-key validity oracle / DoS surface. This is
+    robust regardless of proxy-header / loopback-IP quirks (request.client.host is unreliable behind a proxy).
     """
-    peer = (request.client.host if request.client else "") or ""
-    if peer not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+    secret = (settings_store.get("stream_auth_secret", "") or "").strip()
+    if not secret or request.query_params.get("hook") != secret:
         return JSONResponse({"error": "forbidden"}, status_code=403)
     try:
         body = await request.json()
