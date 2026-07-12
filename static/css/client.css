@@ -439,6 +439,10 @@ a.btn.full{display:block}
    collided with the status-bar clock/date ('date over logo'). Reserve at least a status-bar height up top. */
 body.native .auth-gate{padding-top:calc(18px + max(env(safe-area-inset-top), 28px))}
 body.native .topbar{padding-top:calc(14px + max(env(safe-area-inset-top), 28px))}
+/* Sidebar runs edge-to-edge under BOTH system bars in the app: inset the top (status bar) and the bottom
+   (nav bar) so its first item isn't under the clock and its last item — the Logout button — isn't clipped
+   by the system navigation. max(env, fallback) because tablets report the insets as 0. */
+body.native .sidebar{padding-top:calc(18px + max(env(safe-area-inset-top), 28px));padding-bottom:calc(18px + max(env(safe-area-inset-bottom), 24px))}
 .auth-card{width:min(420px,94vw);border-radius:20px;padding:28px;margin:auto}
 /* Banner ABOVE the login card — Nostr ostrich + headline, to pull new users in. Stacked above the
    modal (not inside it). Theme-aware: surface = --panel2, text = --text (readable on every theme,

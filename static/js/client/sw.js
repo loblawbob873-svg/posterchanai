@@ -9,14 +9,16 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v235';
+const CACHE = 'pc-nostr-v236';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
                                           // the configurable BYTE budget below is the real limit. Pairs with
                                           // navigator.storage.persist() so the cache isn't evicted by the OS.
 const CONFIG_CACHE = 'pc-config-v1';      // client-written config the SW reads (currently: /media-budget bytes)
-const VIDEO_MAX_BYTES = 15 * 1024 * 1024; // only cache a PLAYED video if it's small; stream big ones
+const VIDEO_MAX_BYTES = 60 * 1024 * 1024; // cache a PLAYED video up to this size (raised 15→60MB for more
+                                          // re-watch/bandwidth savings); the 4GB byte budget is the real cap
+                                          // and trimMedia evicts oldest, so bigger clips just get cached too.
 const SHELL = [
   '/client',
   '/static/css/client.css',
