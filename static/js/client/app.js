@@ -1098,6 +1098,18 @@
         document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _reShare(); });
         const _App=_capPlugin('App');
         if(_App && _App.addListener){ try{ _App.addListener('resume', _reShare); _App.addListener('appStateChange', st=>{ if(st && st.isActive) _reShare(); }); }catch(_){} }
+        // Android hardware BACK button → behave like a native app (close the topmost thing, walk the view
+        // stack, and only exit from the home screen after a confirming double-tap). Without this, Back exits
+        // the app outright — the biggest "this is just a webview" tell. No-op in the PWA (no App plugin).
+        if(_App && _App.addListener){ try{ _App.addListener('backButton', ()=>{
+          if(document.getElementById('call-overlay') || document.getElementById('room-overlay')) return;  // never bail mid-call
+          if(document.body.classList.contains('modal-open')){ try{ closeModal(); }catch(_){} return; }     // close an open sheet/modal
+          const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
+          if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView('home'); } return; }
+          if(window.__pcBackArmed){ try{ _App.exitApp && _App.exitApp(); }catch(_){} return; }             // second tap at home → exit
+          window.__pcBackArmed=true; try{ toast('press back again to exit'); }catch(_){}
+          setTimeout(()=>{ window.__pcBackArmed=false; }, 2000);
+        }); }catch(_){} }
       }
       setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
     }
