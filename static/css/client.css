@@ -496,12 +496,16 @@ body.native .sidebar{padding-top:calc(18px + max(env(safe-area-inset-top), 28px)
    (Firefox especially) auto-hide their address bar for a fullscreen feel. 100dvh sizes to the small
    dynamic viewport that RESERVES room for the chrome, so the toolbar stays pinned — a regression. */
 .app{display:grid;grid-template-columns:360px 1fr;height:100vh}
-.sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow-y:auto;
+.sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow:hidden;
   /* Clean flat dark panel — near-opaque so the city skyline does NOT bleed into the navbar (it stays
      in the main background only); keeps the nav labels at full contrast. */
   background:rgba(11,11,18,.95)}
+/* Only the NAV list scrolls; the brand (top) and the me-card→Logout cluster (bottom) are pinned and never
+   shrink — so on a short/tall viewport or the app the Logout button is ALWAYS visible, never clipped or
+   squished by the long nav list. (Previously the whole sidebar scrolled, pushing Logout off the bottom.) */
+.sidebar>.brand,.sidebar>.me,.sidebar>.conn,.sidebar>.usercount,.sidebar>#btn-install,.sidebar>#btn-logout{flex-shrink:0}
 .brand{font-size:26px;font-weight:800;text-align:center;color:var(--neon);margin-bottom:8px}
-.nav{display:flex;flex-direction:column;gap:4px}
+.nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;min-height:0;overflow-y:auto}
 .nav-group{display:flex;flex-direction:column;gap:4px}
 .nav-grouphd .chev{margin-left:auto;font-size:12px;opacity:.65}
 .nav-sub{display:flex;flex-direction:column;gap:4px;overflow:hidden}
