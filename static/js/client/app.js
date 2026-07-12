@@ -541,6 +541,25 @@
       for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i); return new Blob([arr], {type:type||'application/octet-stream'}); }
     catch(_){ return null; }
   }
+  // Native app: capture a photo with the device camera (@capacitor/camera) and attach it to the composer —
+  // same upload path as 📎 Attach / paste / drag-drop. getPhoto handles the runtime permission prompt.
+  async function _captureCamera(ta, root){
+    const Cam = _capPlugin('Camera', 'getPhoto');
+    if(!Cam){ toast('camera not available'); return; }
+    const st = root && $('#cmp-status', root);
+    let photo=null;
+    try{ photo = await Cam.getPhoto({ quality:88, resultType:'base64', source:'CAMERA', saveToGallery:false, allowEditing:false }); }
+    catch(_){ return; }   // user cancelled or denied — no-op
+    if(!photo || !photo.base64String) return;
+    const fmt = String(photo.format||'jpeg').toLowerCase().replace('jpg','jpeg');
+    const blob = _b64ToBlob(photo.base64String, 'image/'+fmt);
+    if(!blob || !blob.size){ toast('camera capture failed'); return; }
+    const file = new File([blob], 'photo.'+(fmt==='jpeg'?'jpg':fmt), { type:'image/'+fmt });
+    if(st) st.textContent='uploading photo…';
+    try{ const url=await uploadBlob(file); ta.value+=(ta.value?'\n':'')+url; if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} }
+    catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
+      else if(st) st.textContent='upload failed: '+((err&&err.message)||err); }
+  }
   // Capacitor plugin proxies aren't pre-attached to Capacitor.Plugins when we don't import the plugin JS in
   // the bundle — build them from the native registration via registerPlugin.
   function _capPlugin(name, method){
@@ -4359,8 +4378,14 @@
         $('#cmp-status',root).textContent='';
       });
       // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
-      $('#cmp-attach',root).onclick=()=>openMenuPopover($('#cmp-attach',root), [['local','💻 Local'],['blossom','🌸 Blossom']], a=>{
-        if(a==='local') $('#cmp-file',root).click(); else if(a==='blossom') blossomPicker(ta); });
+      $('#cmp-attach',root).onclick=()=>{
+        const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
+                                       : [['local','💻 Local'],['blossom','🌸 Blossom']];
+        openMenuPopover($('#cmp-attach',root), opts, a=>{
+          if(a==='camera') _captureCamera(ta, root);
+          else if(a==='local') $('#cmp-file',root).click();
+          else if(a==='blossom') blossomPicker(ta); });
+      };
       // 😀 React → insert an Emoji or a GIF
       $('#cmp-react',root).onclick=(e)=>{ e.stopPropagation();
         const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
