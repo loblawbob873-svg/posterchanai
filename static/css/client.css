@@ -1139,10 +1139,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .dm-list.has-active + .dm-thread{display:flex;flex-direction:column;position:fixed;inset:0;z-index:45;background:var(--bg)}
   .dm-list.has-active + .dm-thread .dm-msgs{flex:1;min-height:0;overflow-y:auto}
   .dm-list.has-active + .dm-thread .dm-compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
-  .mobilenav{display:flex;position:fixed;bottom:0;left:0;right:0;justify-content:space-around;
+  .mobilenav{display:flex;flex-wrap:nowrap;position:fixed;bottom:0;left:0;right:0;justify-content:space-around;
     align-items:center;padding:8px env(safe-area-inset-right) calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
     border-top:1px solid var(--line);z-index:40;background:rgba(10,10,16,.92)}   /* neutral dark, matches the desktop sidebar */
-  .mobilenav .nav-item{flex:1;display:flex;align-items:center;justify-content:center;height:46px;
+  /* flex:1 1 0 + min-width:0 → all items shrink to equal widths and stay on ONE line, so the ☰ never
+     wraps to a second row on narrow phones. */
+  .mobilenav .nav-item{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;height:46px;
     font-size:22px;line-height:1;color:var(--muted);background:transparent;border:none;padding:0;position:relative}
   .mobilenav .nav-item.active{color:var(--neon)}
   .mobilenav .compose{color:var(--neon)}
@@ -2110,3 +2112,15 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .call-contact{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 6px;cursor:pointer;color:var(--text);font-size:12px}
 .call-contact img{width:48px;height:48px;border-radius:50%;object-fit:cover}
 .call-contact span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:78px}
+.call-act{display:flex;flex-direction:column;align-items:center;gap:5px}
+.call-act span{font-size:12px;color:#cdd6e4;font-weight:600}
+.room-hd{position:relative;z-index:2;text-align:center;font-weight:700;margin:6px 0 auto;color:#fff}
+.call-grid{position:relative;z-index:2;display:grid;gap:8px;width:100%;max-width:640px;margin:auto;padding:8px}
+.call-grid[data-n="1"],.call-grid[data-n="2"]{grid-template-columns:1fr}
+.call-grid[data-n="3"],.call-grid[data-n="4"]{grid-template-columns:1fr 1fr}
+.call-grid[data-n="5"],.call-grid[data-n="6"]{grid-template-columns:1fr 1fr 1fr}
+.call-tile{position:relative;aspect-ratio:1;background:#141422;border-radius:14px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.call-tile video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.call-tile.me video{transform:scaleX(-1)}
+.call-tile img{width:64px;height:64px;border-radius:50%;object-fit:cover}
+.call-tile .tl-name{position:absolute;left:6px;bottom:5px;font-size:11px;background:#000a;padding:2px 7px;border-radius:8px;color:#fff}

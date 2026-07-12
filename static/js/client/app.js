@@ -8931,10 +8931,11 @@
     const pc = new RTCPeerConnection({ iceServers: iceServers||[], iceCandidatePoolSize: 1 });
     pc.onicecandidate = e => { if(e.candidate && _call) _callSend(_call.peer, {v:1, callId:_call.id, t:'ice', cand:e.candidate.toJSON()}); };
     pc.ontrack = e => { if(!_call) return; _call.remote = e.streams[0]; _callUI(); };
+    pc.oniceconnectionstatechange = () => { if(_call && _call.pc===pc) _callUI(); };   // surface ICE progress in the status line
     pc.onconnectionstatechange = () => { if(!_call || _call.pc!==pc) return;
       const st=pc.connectionState;
       if(st==='connected'){ _call.state='connected'; _callUI(); }
-      else if(st==='failed'){ _hangup(false); }   // ICE/relay failure → also tell the peer (its side may still think it's up)
+      else if(st==='failed'){ toast('call couldn’t connect (network/firewall)'); _hangup(false); }   // ICE/relay failure → tell the peer too
       else if(st==='closed'){ _hangup(true); }
       else _callUI();
     };
@@ -8981,12 +8982,13 @@
     const ice = await _fetchIceServers();
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
-    local.getTracks().forEach(t=> pc.addTrack(t, local));
     try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
+    local.getTracks().forEach(t=> pc.addTrack(t, local));   // attach our media onto the offer's m-lines (setRemote first)
     for(const c of (_call.pendingIce||[])){ try{ await pc.addIceCandidate(c); }catch(_){} }
     _call.pendingIce=[];
-    const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
-    await _callSend(_call.peer, {v:1, callId:_call.id, t:'answer', sdp: pc.localDescription.sdp});
+    try{ const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+      await _callSend(_call.peer, {v:1, callId:_call.id, t:'answer', sdp: pc.localDescription.sdp}); }
+    catch(_){ _hangup(false); }
   }
   function _declineCall(){ if(_call){ _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
   function _hangup(silent){ if(_call){ if(!silent) _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
@@ -9003,6 +9005,7 @@
     (async()=>{
       let msg; try{ msg = JSON.parse(await signer.nip44dec(ev.pubkey, ev.content)); }catch(_){ return; }
       const from = ev.pubkey;
+      if(msg && msg.room){ try{ _onRoomEvent(from, msg); }catch(_){} return; }   // group-call (mesh) signaling
       if(msg.t==='invite'){
         if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
         if(_call && _call.caller && _call.peer===from && _call.state==='calling'){
@@ -9048,7 +9051,13 @@
       } else { if(_ringOsc){ clearInterval(_ringOsc.iv); try{ _ringOsc.ctx.close(); }catch(_){} _ringOsc=null; } try{ navigator.vibrate && navigator.vibrate(0); }catch(_){} }
     }catch(_){}
   }
-  function _callStatus(){ if(!_call) return ''; return {calling:'calling…', ringing:_call.caller?'ringing…':'📞 incoming call', connecting:'connecting…', connected:'connected'}[_call.state]||_call.state; }
+  function _callStatus(){ if(!_call) return '';
+    const base={calling:'calling…', ringing:_call.caller?'ringing…':'📞 incoming call', connecting:'connecting…', connected:'connected'}[_call.state]||_call.state;
+    if(_call.state==='connecting' && _call.pc){ const ic=_call.pc.iceConnectionState;
+      if(ic==='checking'||ic==='new') return 'connecting… (finding a path)';
+      if(ic==='failed') return 'connection failed'; if(ic==='disconnected') return 'reconnecting…'; }
+    return base;
+  }
   function _callUI(){
     let el=document.getElementById('call-overlay');
     if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); return; }
@@ -9070,9 +9079,12 @@
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=_call.video?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=_call.video?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
     const acts=document.getElementById('call-actions');
+    const act=(id,ic,label,cls)=>`<div class="call-act"><button class="call-btn ${cls||''}" id="${id}">${ic}</button><span>${label}</span></div>`;
     const html = (_call.state==='ringing' && !_call.caller)
-      ? `<button class="call-btn accept" id="call-accept">📞 Accept</button><button class="call-btn decline" id="call-decline">✕ Decline</button>`
-      : `<button class="call-btn" id="call-mute" title="mute">${_call.muted?'🔇':'🎙️'}</button>${_call.video?`<button class="call-btn" id="call-cam" title="camera">${_call.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="call-hang" title="end">✕</button>`;
+      ? act('call-accept','📞','Answer','accept')+act('call-decline','✕','Decline','decline')
+      : act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute')
+        +(_call.video?act('call-cam', _call.camOff?'🚫':'📷', 'Video'):'')
+        +act('call-hang','📵','End','hang');
     if(acts && acts.dataset.k!==html){ acts.dataset.k=html; acts.innerHTML=html;
       const b=id=>document.getElementById(id);
       if(b('call-accept')) b('call-accept').onclick=_acceptCall;
@@ -9100,6 +9112,125 @@
     $('#call-start-btn').onclick=async()=>{ let v=($('#call-npub').value||'').trim(); if(!v) return; let pk=safePk(v); if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} } if(!pk){ toast('could not resolve that address'); return; } go(pk); };
     $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
     contacts.forEach(pk=>needProfile(pk));
+  }
+
+  // ===== Group calls (mesh, ~5 max) — reuses kind-25050 signaling + the TURN relay =====
+  // A room has an id; members are invited via p-tagged encrypted 'ginvite'. Each accepter connects P2P to
+  // EVERY other (mesh). Deterministic offerer (LOWER pubkey offers) avoids glare; 'rhere' presence tells
+  // peers you've joined. Per-peer offer/answer/ice carry the room id. Mutually exclusive with a 1:1 _call.
+  let _room = null;   // { id, video, local, peers:Map<hex,{pc,stream,pendingIce}>, members:Set<hex>, ringing, invite, timeout }
+
+  async function _roomSend(peerHex, obj){
+    try{ const ct=await signer.nip44enc(peerHex, JSON.stringify(obj)); const ev=await sign(CALL_KIND, ct, [['p',peerHex]]); Relay.publish(ev); }catch(_){}
+  }
+  function _roomPeer(hex){ let p=_room.peers.get(hex); if(!p){ p={pc:null,stream:null,pendingIce:[]}; _room.peers.set(hex,p); } return p; }
+  function _roomNewPc(hex, iceServers){
+    const pc=new RTCPeerConnection({iceServers:iceServers||[], iceCandidatePoolSize:1});
+    pc.onicecandidate=e=>{ if(e.candidate && _room) _roomSend(hex,{v:1,room:_room.id,t:'rice',cand:e.candidate.toJSON()}); };
+    pc.ontrack=e=>{ if(!_room) return; _roomPeer(hex).stream=e.streams[0]; _roomUI(); };
+    pc.onconnectionstatechange=()=>{ if(!_room) return; const st=pc.connectionState; if(st==='failed'||st==='closed') _roomDropPeer(hex,false); };
+    return pc;
+  }
+  async function _roomOfferTo(hex){
+    if(!_room || !_room.local || hex===ME.pubkey) return;
+    const p=_roomPeer(hex); if(p.pc) return;   // already connecting (guards the redundant offer paths)
+    const ice=await _fetchIceServers(); if(!_room) return;
+    p.pc=_roomNewPc(hex, ice.iceServers);
+    _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local));
+    try{ const o=await p.pc.createOffer(); if(!_room||_room.peers.get(hex)!==p) return; await p.pc.setLocalDescription(o);
+      await _roomSend(hex,{v:1,room:_room.id,t:'roffer',video:_room.video,sdp:p.pc.localDescription.sdp}); }
+    catch(_){ _roomDropPeer(hex,false); }
+  }
+  async function _roomOnOffer(hex, msg){
+    if(!_room || !_room.local) return;
+    const p=_roomPeer(hex);
+    const ice=await _fetchIceServers(); if(!_room) return;
+    if(!p.pc){ p.pc=_roomNewPc(hex, ice.iceServers); _room.local.getTracks().forEach(t=>p.pc.addTrack(t,_room.local)); }
+    try{ await p.pc.setRemoteDescription({type:'offer',sdp:msg.sdp});
+      for(const c of p.pendingIce){ try{ await p.pc.addIceCandidate(c); }catch(_){} } p.pendingIce=[];
+      const a=await p.pc.createAnswer(); await p.pc.setLocalDescription(a);
+      await _roomSend(hex,{v:1,room:_room.id,t:'ranswer',sdp:p.pc.localDescription.sdp});
+    }catch(_){ _roomDropPeer(hex,false); }
+  }
+  function _roomDropPeer(hex, notify){ if(!_room) return; const p=_room.peers.get(hex); if(!p) return;
+    if(notify) _roomSend(hex,{v:1,room:_room.id,t:'rbye'}); try{ if(p.pc) p.pc.close(); }catch(_){} _room.peers.delete(hex); _roomUI(); }
+  function _roomLeave(){ if(!_room) return; const r=_room; _room=null;
+    for(const hex of r.peers.keys()) _roomSend(hex,{v:1,room:r.id,t:'rbye'});
+    for(const p of r.peers.values()){ try{ p.pc&&p.pc.close(); }catch(_){} }
+    try{ r.local&&r.local.getTracks().forEach(t=>t.stop()); }catch(_){} try{ clearTimeout(r.timeout); }catch(_){}
+    _callWake(false); _ringtone(false); _roomUI();
+  }
+  async function startGroupCall(memberHexes, video){
+    if(GUEST){ _guestPrompt(); return; }
+    if(_call || _room){ toast('already in a call'); return; }
+    const members=[...new Set(memberHexes)].filter(h=>h && h!==ME.pubkey).slice(0,6);
+    if(!members.length) return;
+    const id=_rid();
+    _room={ id, video:!!video, local:null, peers:new Map(), members:new Set([...members, ME.pubkey]), ringing:false };
+    _roomUI();
+    let local; try{ local=await _getMedia(video); }catch(_){ toast('microphone/camera permission needed'); _roomLeave(); return; }
+    if(!_room){ local.getTracks().forEach(t=>t.stop()); return; }
+    _room.local=local; _callWake(true);
+    const memberList=[...members, ME.pubkey];
+    for(const hex of members) _roomSend(hex,{v:1,room:id,t:'ginvite',video:!!video,members:memberList});
+    _roomUI();
+  }
+  function _roomRing(from, msg){
+    if(_call || _room){ _roomSend(from,{v:1,room:msg.room,t:'rbye'}); return; }   // busy
+    if(MUTED.has(from)) return;
+    _room={ id:msg.room, video:!!msg.video, local:null, peers:new Map(), members:new Set([...(msg.members||[]), from, ME.pubkey]), ringing:true, invite:{from} };
+    _room.timeout=setTimeout(()=>{ if(_room && _room.ringing){ _ringtone(false); _roomLeave(); } }, 60000);
+    try{ needProfile(from); }catch(_){}
+    _ringtone(true); _roomUI();
+    try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 Group call · '+(p.name||'invite'), {body:'tap to join', tag:'pc-call'}); } }catch(_){}
+  }
+  async function _roomAccept(){
+    if(!_room || !_room.ringing) return;
+    _room.ringing=false; _ringtone(false); clearTimeout(_room.timeout); _roomUI();
+    let local; try{ local=await _getMedia(_room.video); }catch(_){ toast('microphone/camera permission needed'); _roomDecline(); return; }
+    if(!_room){ local.getTracks().forEach(t=>t.stop()); return; }
+    _room.local=local; _callWake(true);
+    // Announce presence + connect to every member (lower pubkey offers → exactly one offer per pair).
+    for(const hex of [..._room.members]){ if(hex===ME.pubkey) continue; _roomSend(hex,{v:1,room:_room.id,t:'rhere',members:[..._room.members]}); if(ME.pubkey<hex) _roomOfferTo(hex); }
+    _roomUI();
+  }
+  function _roomDecline(){ if(_room){ if(_room.invite) _roomSend(_room.invite.from,{v:1,room:_room.id,t:'rbye'}); _roomLeave(); } }
+  function _onRoomEvent(from, msg){
+    if(msg.t==='ginvite'){ _roomRing(from, msg); return; }
+    if(!_room || msg.room!==_room.id) return;
+    if(Array.isArray(msg.members)) msg.members.forEach(h=>{ if(h) _room.members.add(h); });
+    if(msg.t==='rhere'){ if(_room.local && from!==ME.pubkey && ME.pubkey<from) _roomOfferTo(from); return; }   // they joined → we offer if we're lower
+    if(msg.t==='roffer'){ _roomOnOffer(from, msg); return; }
+    if(msg.t==='ranswer'){ const p=_room.peers.get(from); if(p && p.pc){ p.pc.setRemoteDescription({type:'answer',sdp:msg.sdp}).catch(()=>{});
+      for(const c of p.pendingIce){ try{ p.pc.addIceCandidate(c); }catch(_){} } p.pendingIce=[]; } return; }
+    if(msg.t==='rice'){ const p=_roomPeer(from); if(p.pc && p.pc.remoteDescription){ p.pc.addIceCandidate(msg.cand).catch(()=>{}); } else p.pendingIce.push(msg.cand); return; }
+    if(msg.t==='rbye'){ _roomDropPeer(from, false); return; }
+  }
+  function _roomUI(){
+    let el=document.getElementById('room-overlay');
+    if(!_room){ if(el) el.remove(); return; }
+    if(!el){ el=document.createElement('div'); el.id='room-overlay'; el.className='call-overlay room'; document.body.appendChild(el); }
+    const ringingIn=_room.ringing;
+    const tiles=[{me:true}].concat([..._room.members].filter(h=>h!==ME.pubkey).map(h=>({hex:h})));
+    const n=tiles.length;
+    const inviter = _room.invite ? (profOf(_room.invite.from)||{}) : null;
+    el.innerHTML=`<div class="room-hd">📞 Group call · ${n} ${n===1?'person':'people'}${ringingIn&&inviter?` — ${enc(inviter.name||'invite')}`:''}</div>
+      <div class="call-grid" data-n="${Math.min(n,6)}">${tiles.map(t=>{
+        if(t.me) return `<div class="call-tile me"><video id="room-local" autoplay playsinline muted ${_room.video?'':'style="display:none"'}></video>${_room.video?'':`<img src="${enc((profOf(ME.pubkey)||{}).picture||LOGO)}" onerror="this.src='${LOGO}'">`}<span class="tl-name">You</span></div>`;
+        const p=profOf(t.hex)||{}; const peer=_room.peers.get(t.hex); const conn=peer&&peer.stream;
+        return `<div class="call-tile" data-hex="${t.hex}"><video class="room-remote" data-hex="${t.hex}" autoplay playsinline ${_room.video&&conn?'':'style="display:none"'}></video>${(_room.video&&conn)?'':`<img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`}<span class="tl-name">${enc(p.name||p.display_name||'…')}${conn?'':' <span class="muted">·connecting</span>'}</span></div>`;
+      }).join('')}</div>
+      <div class="call-actions">${ringingIn
+        ? `<button class="call-btn accept" id="room-accept">📞 Join</button><button class="call-btn decline" id="room-decline">✕</button>`
+        : `<button class="call-btn" id="room-mute" title="mute">${_room.muted?'🔇':'🎙️'}</button>${_room.video?`<button class="call-btn" id="room-cam">${_room.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="room-hang">✕</button>`}</div>`;
+    const lv=el.querySelector('#room-local'); if(lv && _room.local && lv.srcObject!==_room.local){ lv.srcObject=_room.local; lv.play&&lv.play().catch(()=>{}); }
+    el.querySelectorAll('.room-remote').forEach(v=>{ const peer=_room.peers.get(v.dataset.hex); if(peer && peer.stream && v.srcObject!==peer.stream){ v.srcObject=peer.stream; v.play&&v.play().catch(()=>{}); } });
+    const b=id=>el.querySelector('#'+id);
+    if(b('room-accept')) b('room-accept').onclick=_roomAccept;
+    if(b('room-decline')) b('room-decline').onclick=_roomDecline;
+    if(b('room-hang')) b('room-hang').onclick=_roomLeave;
+    if(b('room-mute')) b('room-mute').onclick=()=>{ if(_room&&_room.local){ _room.muted=!_room.muted; _room.local.getAudioTracks().forEach(t=>t.enabled=!_room.muted); _roomUI(); } };
+    if(b('room-cam')) b('room-cam').onclick=()=>{ if(_room&&_room.local){ _room.camOff=!_room.camOff; _room.local.getVideoTracks().forEach(t=>t.enabled=!_room.camOff); _roomUI(); } };
   }
 
   window.__PC = {
