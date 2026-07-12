@@ -98,3 +98,6 @@ botframework/stickers/
 assets/depth_anything_v2_vits.onnx
 *.onnx
 nostr.json
+
+# built by install.sh --turn / Dockerfile (not committed)
+turnserver/pion-turn
