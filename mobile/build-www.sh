@@ -30,7 +30,11 @@ html = open(p, encoding='utf-8').read()
 _b = (os.environ.get('PC_APP_BUILD', '0') or '0').strip()
 build = _b if _b.isdigit() else '0'
 shim = '''<script>
-window.__PC_API_BASE__ = 'https://poster.place';
+// The instance this app talks to. Defaults to poster.place, but a user can point a fresh install at ANY
+// self-hosted PosterChan instance (Settings / the login screen's instance field) — stored in localStorage
+// and read here before any request, so the whole app (API, relay, blossom) targets their chosen domain.
+window.__PC_API_BASE__ = (function(){ try{ var s=localStorage.getItem('pc_instance'); if(s) return String(s).replace(/\\/+$/,''); }catch(e){} return 'https://poster.place'; })();
+window.__PC_SET_INSTANCE__ = function(u){ try{ localStorage.setItem('pc_instance', u); }catch(e){} try{ location.reload(); }catch(e){} };
 window.__PC_APP_BUILD__ = __BUILD__;
 (function(){
   var B = window.__PC_API_BASE__, W = B.replace(/^http/, 'ws');

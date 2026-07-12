@@ -472,7 +472,7 @@
     try{ if(location.pathname !== target) history.pushState({}, '', target); }catch(_){}
   }
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
-  function _webLink(entity){ return (location.origin||'') + '/' + entity; }
+  function _webLink(entity){ return _serverOrigin() + '/' + entity; }
   function _entityFromPath(){
     let p; try{ p = decodeURIComponent(location.pathname||'/'); }catch(_){ p = location.pathname||'/'; }
     p = p.replace(/^\/client(?=\/|$)/,'').replace(/^\/+/,'').replace(/\/+$/,'');
@@ -708,7 +708,32 @@
   }
 
   // ---------- auth UI ----------
-  function showAuth(){ $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden'); }
+  function showAuth(){ $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden'); try{ _instancePicker(); }catch(_){} }
+  // Native app only: let a fresh install choose which PosterChan instance to connect to (defaults to
+  // poster.place). Injected into the login screen so it can be set BEFORE logging in (login talks to the
+  // instance). Saving stores it (localStorage pc_instance, read by the bundle shim) and reloads so every
+  // request retargets the new domain. No-op in the PWA (served by its own instance already).
+  function _instancePicker(){
+    if(!window.Capacitor || !window.__PC_API_BASE__) return;
+    const pane=document.getElementById('auth-login'); if(!pane || document.getElementById('instance-row')) return;
+    const cur=window.__PC_API_BASE__;
+    const div=document.createElement('div'); div.id='instance-row'; div.style.marginTop='10px';
+    div.innerHTML='<div class="divider"><span>instance</span></div>'
+      +'<input id="instance-input" class="input" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance">'
+      +'<button id="instance-save" class="btn btn-ghost full" style="margin-top:6px">🔗 Connect to this instance</button>'
+      +'<div class="muted small" id="instance-cur" style="margin-top:4px"></div>';
+    pane.appendChild(div);
+    const inp=document.getElementById('instance-input'); inp.value=cur;
+    document.getElementById('instance-cur').textContent='currently: '+cur;
+    document.getElementById('instance-save').onclick=()=>{
+      let u=(inp.value||'').trim(); if(!u) return;
+      if(!/^https?:\/\//i.test(u)) u='https://'+u; u=u.replace(/\/+$/,'');
+      if(u===cur){ toast('already connected to '+u); return; }
+      // switching instance keeps your Nostr key (portable) but re-establishes the server session on reload
+      if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
+      else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); }
+    };
+  }
   function bindAuth(){
     $('#btn-nip07').onclick = loginNip07;
     $('#btn-nsec-login').onclick = loginNsec;
@@ -4583,7 +4608,11 @@
   // 'nip96' (POST multipart + NIP-98). Priority: the user's own enabled server (proto inferred/stored) →
   // else, if this user has NO built-in Blossom permission, default to nostr.build (NIP-96) so a brand-new
   // user can still upload out of the box → else the built-in /blossom.
-  function _blossomBuiltin(){ return { url:(self.location&&self.location.origin?self.location.origin:'')+'/blossom', proto:'blossom' }; }
+  // Server origin for ABSOLUTE URLs we hand out (blossom media, shareable web links). In the bundled app
+  // self.location.origin is https://localhost — useless off-device (the AI/relay/other users can't fetch it)
+  // — so prefer the real server base injected by the app shim. PWA: __PC_API_BASE__ undefined → own origin.
+  function _serverOrigin(){ return (window.__PC_API_BASE__) || (self.location&&self.location.origin) || ''; }
+  function _blossomBuiltin(){ return { url:_serverOrigin()+'/blossom', proto:'blossom' }; }
   function uploadTarget(){
     if(ClientSettings.get('blossomEnabled')){
       let s=(ClientSettings.get('mediaServer')||'').trim();
