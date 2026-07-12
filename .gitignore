@@ -101,5 +101,6 @@ nostr.json
 
 # built by install.sh --turn / Dockerfile (not committed)
 turnserver/pion-turn
-streamserver/mediamtx
-streamserver/mediamtx.gen.yml
+# streamserver/ holds only generated artifacts (the MediaMTX binary, generated config, and MediaMTX's
+# auto-generated WebRTC/MoQ certs) — never track any of it.
+streamserver/
