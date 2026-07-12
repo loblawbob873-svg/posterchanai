@@ -265,6 +265,8 @@ EXPOSE 3052
 # them on your router; a direct grey-clouded turn.<domain> record is recommended (it can't ride CF Tunnel).
 EXPOSE 3478/udp
 EXPOSE 3478/tcp
+# TURN relayed-media UDP range (PC_TURN_MIN_PORT..MAX_PORT; must match docker-compose's published range).
+EXPOSE 49160-49200/udp
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).

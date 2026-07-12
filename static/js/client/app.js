@@ -8402,6 +8402,7 @@
     inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); if(q) runSearch(q); } });
   }
   async function nip05Resolve(addr){
+    addr=(addr||'').trim().replace(/^@+/,'');   // accept fedi-style "@name@domain" (leading @) too
     let [name, domain] = addr.split('@'); if(!domain){ domain=name; name='_'; }
     // Go through the node's CORS proxy FIRST: most domains' /.well-known/nostr.json lack the
     // Access-Control-Allow-Origin header, so a direct browser fetch fails and the blue check never
@@ -8944,6 +8945,33 @@
   function _getMedia(video){
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
+  function _hasLiveVideo(stream){ return !!(stream && stream.getVideoTracks().some(t=>t.readyState==='live')); }
+  // Renegotiate the existing PeerConnection (used to add/drop video mid-call). Manual offer/answer over the
+  // same Nostr channel with a polite-peer (higher pubkey) rollback so a simultaneous both-add doesn't wedge.
+  async function _renegotiate(){
+    if(!_call || !_call.pc) return;
+    try{ _call.makingOffer=true;
+      const o=await _call.pc.createOffer(); if(!_call||_call.pc.signalingState==='closed') return;
+      await _call.pc.setLocalDescription(o);
+      await _callSend(_call.peer,{v:1,callId:_call.id,t:'reoffer',sdp:_call.pc.localDescription.sdp});
+    }catch(_){}finally{ if(_call) _call.makingOffer=false; }
+  }
+  // Turn the camera on (add a video track + renegotiate) or off (stop + drop it) mid-call — lets an
+  // audio-only call become video with one tap, in either direction.
+  async function _toggleVideo(){
+    if(!_call || !_call.pc || !_call.local) return;
+    if(_hasLiveVideo(_call.local)){
+      _call.local.getVideoTracks().forEach(t=>{ try{ t.stop(); }catch(_){} _call.local.removeTrack(t); });
+      _call.pc.getSenders().filter(s=>s.track && s.track.kind==='video').forEach(s=>{ try{ _call.pc.removeTrack(s); }catch(_){} });
+      _call.camOff=false; _callUI(); await _renegotiate(); return;
+    }
+    let vs; try{ vs=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}}}); }
+    catch(_){ toast('camera permission needed'); return; }
+    if(!_call){ vs.getTracks().forEach(t=>t.stop()); return; }
+    const vt=vs.getVideoTracks()[0]; if(!vt){ vs.getTracks().forEach(t=>t.stop()); return; }
+    _call.local.addTrack(vt); _call.pc.addTrack(vt, _call.local); _call.camOff=false; _callUI();
+    await _renegotiate();
+  }
   async function startCall(peerHex, opts){
     if(GUEST){ _guestPrompt(); return; }
     if(!peerHex || peerHex===ME.pubkey){ return; }
@@ -9032,6 +9060,19 @@
           clearTimeout(_call.timeout); if(_call.state==='calling'){ _call.state='connecting'; _callUI(); }                       // answered → the 45s no-answer timer must not abort ICE negotiation
         }catch(_){} } }
       else if(msg.t==='ice'){ const c=msg.cand; if(_call.pc && _call.pc.remoteDescription){ try{ await _call.pc.addIceCandidate(c); }catch(_){} } else { (_call.pendingIce||(_call.pendingIce=[])).push(c); } }
+      else if(msg.t==='reoffer'){ if(!_call.pc) return;   // mid-call renegotiation (video added/dropped)
+        const polite = ME.pubkey > from;
+        const collision = _call.makingOffer || _call.pc.signalingState!=='stable';
+        if(collision && !polite) return;   // impolite peer keeps its own offer; the polite one rolls back
+        try{
+          if(collision){ try{ await _call.pc.setLocalDescription({type:'rollback'}); }catch(_){} }
+          await _call.pc.setRemoteDescription({type:'offer', sdp:msg.sdp});
+          const ans=await _call.pc.createAnswer(); await _call.pc.setLocalDescription(ans);
+          await _callSend(_call.peer,{v:1,callId:_call.id,t:'reanswer',sdp:_call.pc.localDescription.sdp});
+          _callUI();
+        }catch(_){}
+      }
+      else if(msg.t==='reanswer'){ if(_call.pc){ try{ await _call.pc.setRemoteDescription({type:'answer', sdp:msg.sdp}); _callUI(); }catch(_){} } }
       else if(msg.t==='bye'){ if(_call.state!=='connected') toast('call ended'); _callTeardown(); }
     })();
   }
@@ -9075,15 +9116,20 @@
     const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
     const nm=document.getElementById('call-name'); if(nm) nm.textContent=(p.name||p.display_name||'anon');
     const stx=document.getElementById('call-status'); if(stx) stx.textContent=_callStatus();
-    el.className='call-overlay'+(_call.video?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'');
-    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=_call.video?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
-    const lv=document.getElementById('call-local'); if(lv){ lv.style.display=_call.video?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
+    const hasLocalVid=_hasLiveVideo(_call.local), hasRemoteVid=_hasLiveVideo(_call.remote);
+    const showVid=hasLocalVid||hasRemoteVid;
+    el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'');
+    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
+    const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
     const acts=document.getElementById('call-actions');
     const act=(id,ic,label,cls)=>`<div class="call-act"><button class="call-btn ${cls||''}" id="${id}">${ic}</button><span>${label}</span></div>`;
+    const sendingVid=hasLocalVid&&!_call.camOff;
+    // Show the video button once media is up (i.e. not while merely ringing/calling with no PC yet).
+    const canVid=!!(_call.local && _call.pc);
     const html = (_call.state==='ringing' && !_call.caller)
       ? act('call-accept','📞','Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute')
-        +(_call.video?act('call-cam', _call.camOff?'🚫':'📷', 'Video'):'')
+        +(canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
         +act('call-hang','📵','End','hang');
     if(acts && acts.dataset.k!==html){ acts.dataset.k=html; acts.innerHTML=html;
       const b=id=>document.getElementById(id);
@@ -9091,7 +9137,7 @@
       if(b('call-decline')) b('call-decline').onclick=_declineCall;
       if(b('call-hang')) b('call-hang').onclick=()=>_hangup(false);
       if(b('call-mute')) b('call-mute').onclick=()=>{ if(_call&&_call.local){ _call.muted=!_call.muted; _call.local.getAudioTracks().forEach(t=>t.enabled=!_call.muted); _callUI(); } };
-      if(b('call-cam')) b('call-cam').onclick=()=>{ if(_call&&_call.local){ _call.camOff=!_call.camOff; _call.local.getVideoTracks().forEach(t=>t.enabled=!_call.camOff); _callUI(); } };
+      if(b('call-cam')) b('call-cam').onclick=()=>_toggleVideo();
     }
   }
   function renderCalls(){
