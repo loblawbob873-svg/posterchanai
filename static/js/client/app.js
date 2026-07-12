@@ -541,20 +541,24 @@
       for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i); return new Blob([arr], {type:type||'application/octet-stream'}); }
     catch(_){ return null; }
   }
-  // Native app: capture a photo with the device camera (@capacitor/camera) and attach it to the composer —
-  // same upload path as 📎 Attach / paste / drag-drop. getPhoto handles the runtime permission prompt.
-  async function _captureCamera(ta, root){
+  // Native app: capture one photo with the device camera (@capacitor/camera) → a File. getPhoto handles the
+  // runtime permission prompt; returns null on cancel/deny/failure. Shared by the post composer + AI chat.
+  async function _cameraPhoto(){
     const Cam = _capPlugin('Camera', 'getPhoto');
-    if(!Cam){ toast('camera not available'); return; }
-    const st = root && $('#cmp-status', root);
+    if(!Cam){ toast('camera not available'); return null; }
     let photo=null;
     try{ photo = await Cam.getPhoto({ quality:88, resultType:'base64', source:'CAMERA', saveToGallery:false, allowEditing:false }); }
-    catch(_){ return; }   // user cancelled or denied — no-op
-    if(!photo || !photo.base64String) return;
+    catch(_){ return null; }   // user cancelled or denied — no-op
+    if(!photo || !photo.base64String) return null;
     const fmt = String(photo.format||'jpeg').toLowerCase().replace('jpg','jpeg');
     const blob = _b64ToBlob(photo.base64String, 'image/'+fmt);
-    if(!blob || !blob.size){ toast('camera capture failed'); return; }
-    const file = new File([blob], 'photo.'+(fmt==='jpeg'?'jpg':fmt), { type:'image/'+fmt });
+    if(!blob || !blob.size){ toast('camera capture failed'); return null; }
+    return new File([blob], 'photo.'+(fmt==='jpeg'?'jpg':fmt), { type:'image/'+fmt });
+  }
+  // Camera → attach to the post composer (same upload path as 📎 Attach / paste / drag-drop).
+  async function _captureCamera(ta, root){
+    const file = await _cameraPhoto(); if(!file) return;
+    const st = root && $('#cmp-status', root);
     if(st) st.textContent='uploading photo…';
     try{ const url=await uploadBlob(file); ta.value+=(ta.value?'\n':'')+url; if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} }
     catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
@@ -6882,19 +6886,26 @@
     feed.innerHTML=`<div class="ai-chat">
       <div class="ai-bar"><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
+      <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
         <button class="mini" id="ai-mic" title="Voice input (speech-to-text)">🎤</button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
         <button class="btn btn-neon" id="ai-send">▶</button>
       </div>
-      <div class="ai-attachbar" id="ai-attachbar"></div>
     </div>`;
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
     $('#ai-del').onclick=()=>aiDeleteConversation();
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
-    $('#ai-attach').onclick=()=>$('#ai-file').click();
+    $('#ai-attach').onclick=()=>{
+      if(window.Capacitor){
+        openMenuPopover($('#ai-attach'), [['camera','📷 Camera'],['local','🖼️ Photos / files']], async a=>{
+          if(a==='camera'){ const f=await _cameraPhoto(); if(f) aiAddFiles([f]); }   // AI chat base64-encodes attachments (not blossom)
+          else $('#ai-file').click();
+        });
+      } else $('#ai-file').click();
+    };
     $('#ai-file').onchange=e=>aiAddFiles([...e.target.files]).then(()=>{ e.target.value=''; });
     { const mic=$('#ai-mic'); if(mic) mic.onclick=aiToggleMic; }
     { const tb=$('#ai-tts'); if(tb) tb.onclick=aiToggleTTS; _aiTtsBtn(); }

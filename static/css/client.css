@@ -441,12 +441,13 @@ a.btn.full{display:block}
    "Sign in with extension" button can't work — hide it. Amber / remote signer (NIP-46) is the mobile
    equivalent and stays; nsec + create-identity also work. */
 body.native #btn-nip07{display:none}
-body.native .auth-gate{padding-top:calc(18px + max(env(safe-area-inset-top), 28px))}
-body.native .topbar{padding-top:calc(14px + max(env(safe-area-inset-top), 28px))}
-/* Sidebar runs edge-to-edge under BOTH system bars in the app: inset the top (status bar) and the bottom
-   (nav bar) so its first item isn't under the clock and its last item — the Logout button — isn't clipped
-   by the system navigation. max(env, fallback) because tablets report the insets as 0. */
-body.native .sidebar{padding-top:calc(18px + max(env(safe-area-inset-top), 28px));padding-bottom:calc(18px + max(env(safe-area-inset-bottom), 24px))}
+/* System-bar insets. The app opts OUT of Android-15 edge-to-edge (styles.xml windowOptOutEdgeToEdge...),
+   so Android already insets the WebView below the status/nav bars and env(safe-area-*) is 0 here — these
+   rules add nothing then. They remain as a safety net (plain env(), no fixed fallback → no extra gap) in
+   case a device still renders edge-to-edge, in which case env() clears the bars. */
+body.native .auth-gate{padding-top:calc(18px + env(safe-area-inset-top))}
+body.native .topbar{padding-top:calc(14px + env(safe-area-inset-top))}
+body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-bottom:calc(18px + env(safe-area-inset-bottom))}
 .auth-card{width:min(420px,94vw);border-radius:20px;padding:28px;margin:auto}
 /* Banner ABOVE the login card — Nostr ostrich + headline, to pull new users in. Stacked above the
    modal (not inside it). Theme-aware: surface = --panel2, text = --text (readable on every theme,
