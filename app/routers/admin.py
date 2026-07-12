@@ -317,7 +317,7 @@ def _settings_text_keys() -> set:
             out.add(name)
     # Secret tokens set OUT-OF-BAND (OAuth), never typed into the form: a blank field on Save must
     # mean "leave as-is", NOT clear — otherwise a normal Save wipes the token the admin never sees.
-    out -= {"fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret"}
+    out -= {"fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret", "stream_auth_secret"}
     _TEXT_KEYS_CACHE = out
     return out
 
@@ -333,7 +333,7 @@ def get_settings(
     # Mask secret tokens that are set OUT-OF-BAND (OAuth) so the admin form doesn't pre-fill them and
     # then re-submit a STALE value on Save, clobbering a freshly-connected token. These keys are
     # excluded from the clearable text-keys, so a blank field on Save means "leave as-is".
-    for _k in ("fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret"):
+    for _k in ("fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret", "stream_auth_secret"):
         if getattr(resp, _k, None):
             setattr(resp, _k, "")
     return resp
