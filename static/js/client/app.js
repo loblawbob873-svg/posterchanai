@@ -4780,7 +4780,7 @@
   // sends hang. Skips animated/vector (gif/svg) and anything already small; never upsizes. Pure
   // browser canvas work, so it's cheap and offloads the server.
   async function compressImage(file, opts){
-    const o = opts || {}; const maxDim = o.maxDim || 2560, maxBytes = o.maxBytes || 800*1024;
+    const o = opts || {}; const maxDim = o.maxDim || 2560, maxBytes = o.maxBytes || 800*1024, minQ = o.minQ || 0.45;
     try{
       const t=(file.type||'').toLowerCase();
       if(!/^image\//.test(t) || /gif|svg/.test(t)) return file;     // keep animation/vector intact
@@ -4799,7 +4799,7 @@
       // (was a no-op before: maxBytes only gated the early return, so big photos still uploaded big).
       // PNG has no quality knob, so it's a single lossless pass.
       let blob=await new Promise(r=> cv.toBlob(r, outType, 0.9));
-      if(!isPng){ let q=0.9; while(blob && blob.size>maxBytes && q>0.45){ q-=0.12; blob=await new Promise(r=> cv.toBlob(r,'image/jpeg',q)); } }
+      if(!isPng){ let q=0.9; while(blob && blob.size>maxBytes && q>minQ){ q-=0.12; blob=await new Promise(r=> cv.toBlob(r,'image/jpeg',q)); } }
       if(!blob || blob.size>=file.size) return file;                // never make it bigger
       const ext = isPng ? 'png' : 'jpg';
       return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
@@ -7593,10 +7593,12 @@
       try{
         if(kind==='text'){ _ai.attach.push({kind, name:f.name, text:await f.text()}); }
         else {
-          // Compress images before base64-encoding them into the chat payload — a 17MB photo (or six
-          // at once) otherwise produced a multi-MB base64 blob that stalled the send. No-op for
-          // video/gif/already-small files.
-          const src = kind==='image' ? await compressImage(f) : f;
+          // AI chat sends the ORIGINAL image (NO mandatory compression) — translate/OCR/read-text need full
+          // detail; JPEG artifacts from downscaling smear small text and break OCR. (Compression is for
+          // SOCIAL uploads only.) Safety cap ONLY: a truly huge photo (>8MB) would make a multi-MB base64 WS
+          // payload that stalls the send, so those get a GENTLE reduce (high quality 0.85, 6MB cap); anything
+          // ≤8MB passes through untouched.
+          const src = (kind==='image' && f.size > 8*1024*1024) ? await compressImage(f, {maxBytes: 6*1024*1024, minQ: 0.85}) : f;
           const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]||''); r.onerror=rej; r.readAsDataURL(src); });
           _ai.attach.push({kind, name:f.name, ext, b64});
         }
