@@ -4600,7 +4600,7 @@
     // the Blossom router), so uploads/list/delete need NO CORS preflight. blossom_public_url (e.g.
     // media.poster.place) is only the PUBLIC url the server returns for each blob — used for sharing,
     // not for the API call — so cross-origin CORS can never block an upload again.
-    return (self.location && self.location.origin ? self.location.origin : '') + '/blossom';
+    return _serverOrigin() + '/blossom';   // real instance origin (https://localhost in the bundled app is useless)
   }
   const NOSTR_BUILD='https://nostr.build';   // NIP-96 fallback host (not Blossom — uploads via uploadNip96)
   let _blossomOK=null;   // built-in Blossom upload permission for ME: true/false once checked, null=unknown
@@ -6744,6 +6744,8 @@
   // ---------- AI view (the old PosterChan AI web UI, merged in as a client view) ----------
   let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
   let _aiAuthP=null;
+  let _aiToken='';      // bearer token from nostr-login; needed for the chat WS in the bundled app, where the
+                        // session cookie is on the remote instance and can't be read from document.cookie
   async function ensureAiSession(){
     if(_aiAuth) return _aiAuth;
     if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
@@ -6752,6 +6754,7 @@
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
         const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+        if(r && r.access_token) _aiToken = r.access_token;
         if(r && r.user){ _aiAuth = r.user; return _aiAuth; }   // cache only a GOOD session
         return { can_ai:false, error:!r };                      // transient failure → not cached, retryable
       }catch(_){ return { can_ai:false, error:true }; }
@@ -6977,10 +6980,13 @@
   function aiConnect(id){
     try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } }catch(_){}
     clearTimeout(_ai.wsWatch);
-    const proto = location.protocol==='https:'?'wss':'ws';
-    const tok=_cookie('access_token');
+    // Use the INSTANCE's ws origin (not location.host — that's https://localhost in the bundled app), and
+    // prefer the captured bearer token over the cookie (the cross-origin session cookie isn't readable from
+    // document.cookie in the app). Both resolve to the same server in the PWA.
+    const wsBase = _serverOrigin().replace(/^http/, 'ws');
+    const tok = _aiToken || _cookie('access_token');
     let opened=false;
-    const ws=new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
+    const ws=new WebSocket(`${wsBase}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
     _ai.ws=ws;
     ws.onopen=()=>{ opened=true; _ai.wsBroken=false; clearTimeout(_ai.wsWatch); const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
     ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
