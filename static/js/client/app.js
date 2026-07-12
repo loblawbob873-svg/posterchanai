@@ -570,7 +570,7 @@
     try{
       const SI = _capPlugin('SendIntent', 'checkSendIntentReceived');
       if(!SI) return false;
-      let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }
+      let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }   // rejects when no share intent
       if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
       // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
       // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
@@ -1037,8 +1037,16 @@
     try{ _consumeSharedFiles(); }catch(_){}
     // Native (Capacitor) share sheet → app: handle the cold-start intent, and 'sendIntentReceived' for a
     // share arriving while the app is already open. No-op in the PWA (window.Capacitor undefined).
-    if(window.Capacitor){ try{ _consumeSendIntent(); }catch(_){}
-      window.addEventListener('sendIntentReceived', ()=>{ try{ _consumeSendIntent(); }catch(_){} });
+    if(window.Capacitor){
+      const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} };
+      _reShare();   // cold-start share (app launched by the share intent)
+      // Warm share: the app is already running and gets foregrounded via onNewIntent — the send-intent plugin
+      // fires NO JS event, so re-check whenever we return to the foreground (MainActivity.onNewIntent refreshes
+      // getIntent() so the plugin sees the new file). Dedupe in _consumeSendIntent stops reprocessing.
+      window.addEventListener('sendIntentReceived', _reShare);
+      document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _reShare(); });
+      const _App=_capPlugin('App');
+      if(_App && _App.addListener){ try{ _App.addListener('resume', _reShare); _App.addListener('appStateChange', st=>{ if(st && st.isActive) _reShare(); }); }catch(_){} }
       setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
     }
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
