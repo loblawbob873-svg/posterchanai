@@ -146,6 +146,8 @@ class SettingsResponse(BaseModel):
     stream_hls_port: str = "8888"      # MediaMTX HLS output port (proxied by the app unless stream_hls_base is set)
     stream_hls_base: str = ""          # direct public HLS base (grey-clouded subdomain) for scale; blank = app proxy
     stream_srt_port: str = ""          # optional SRT ingest port; blank = off
+    stream_webrtc_port: str = "8889"   # WebRTC/WHIP ingest (HTTP) — lets a phone go live from the browser
+    stream_webrtc_udp_port: str = "8189"  # WebRTC media (UDP/ICE); forward this + set a public IP for remote phones
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

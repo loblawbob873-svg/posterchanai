@@ -339,6 +339,8 @@ def init_db():
             "stream_hls_port": os.environ.get("POSTERCHANAI_STREAM_HLS_PORT", "8888"),
             "stream_hls_base": os.environ.get("POSTERCHANAI_STREAM_HLS_BASE", ""),
             "stream_srt_port": os.environ.get("POSTERCHANAI_STREAM_SRT_PORT", ""),
+            "stream_webrtc_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_PORT", "8889"),
+            "stream_webrtc_udp_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_UDP_PORT", "8189"),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

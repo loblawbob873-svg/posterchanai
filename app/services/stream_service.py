@@ -44,7 +44,8 @@ _gaveup_logged = False
 _spawn_sig: Optional[str] = None
 
 # Settings whose change requires regenerating the config + respawning mediamtx.
-_SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port")
+_SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port",
+             "stream_webrtc_port", "stream_webrtc_udp_port", "stream_domain", "turn_public_ip")
 
 
 def _app_port() -> str:
@@ -89,7 +90,16 @@ def _write_config(cfg: dict) -> None:
     rtmp_port = (cfg.get("stream_rtmp_port", "") or "1935").strip()
     hls_port = (cfg.get("stream_hls_port", "") or "8888").strip()
     srt_port = (cfg.get("stream_srt_port", "") or "").strip()
+    webrtc_port = (cfg.get("stream_webrtc_port", "") or "8889").strip()
+    webrtc_udp = (cfg.get("stream_webrtc_udp_port", "") or "8189").strip()
+    # Public host advertised in WebRTC ICE candidates so a phone can reach the server's media port.
+    # Sanitize to hostname/IP characters only — it's interpolated into the YAML, so a stray quote/bracket
+    # (accidental or malicious) must not be able to inject config keys or produce an unparseable file.
+    import re
+    pub_host = (cfg.get("stream_domain", "") or "").strip() or (cfg.get("turn_public_ip", "") or "").strip()
+    pub_host = re.sub(r"[^A-Za-z0-9.:\-]", "", pub_host)
     auth_url = f"http://127.0.0.1:{_app_port()}/api/streams/auth"
+    # Config keys target the pinned MediaMTX v1.19.2 (see install.sh / Dockerfile MEDIAMTX_VERSION).
     lines = [
         "logLevel: info",
         "logDestinations: [stdout]",
@@ -103,11 +113,18 @@ def _write_config(cfg: dict) -> None:
         "rtmpEncryption: \"no\"",
         "hls: yes",
         f"hlsAddress: :{hls_port}",
-        "hlsAllowOrigin: \"*\"",
+        "hlsAllowOrigins: [\"*\"]",
         "hlsVariant: mpegts",
         "hlsSegmentCount: 7",
         "hlsSegmentDuration: 2s",
-        "webrtc: no",
+        # WebRTC/WHIP ingest — lets a phone go live straight from the browser (PWA/app) via getUserMedia.
+        "webrtc: yes",
+        f"webrtcAddress: :{webrtc_port}",
+        f"webrtcLocalUDPAddress: :{webrtc_udp}",
+        "webrtcAllowOrigins: [\"*\"]",
+        (f"webrtcAdditionalHosts: [\"{pub_host}\"]" if pub_host else "webrtcAdditionalHosts: []"),
+        # MoQ (new in v1.19) auto-binds :8892 and we don't use it — turn it off so it needs no port.
+        "moq: no",
     ]
     if srt_port:
         lines += ["srt: yes", f"srtAddress: :{srt_port}"]

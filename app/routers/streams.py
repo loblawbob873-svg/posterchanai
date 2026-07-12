@@ -137,13 +137,56 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
         origin = str(request.base_url).rstrip("/")
         hls_url = f"{origin}/api/streams/hls/{token}/index.m3u8"
 
+    origin = str(request.base_url).rstrip("/")
     return {
         "enabled": enabled,
         "rtmp_url": f"rtmp://{host}:{rtmp_port}",
         "stream_key": f"{token}?key={api_key}",
         "token": token,
         "hls_url": hls_url,
+        # Phone/browser go-live: the client publishes WebRTC via WHIP through this same-origin (HTTPS)
+        # proxy — avoids mixed-content and keeps the key server-side (session-authed).
+        "whip_url": f"{origin}/api/streams/whip/{token}",
     }
+
+
+@router.post("/whip/{token}")
+async def stream_whip(token: str, request: Request, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """WHIP ingest proxy — lets the web client (PWA/app) publish a live WebRTC stream from the phone camera.
+
+    The browser POSTs its SDP offer here (same-origin HTTPS, session-authed); we verify the token is the
+    caller's own, then forward the offer to the local MediaMTX WHIP endpoint (appending the user's stream
+    key so MediaMTX's auth hook passes) and relay the SDP answer back. Media then flows phone↔MediaMTX
+    over WebRTC/ICE directly.
+    """
+    if not _stream_enabled():
+        return Response(status_code=404)
+    own = db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
+                                       UserSetting.key == _TOKEN_SETTING).first()
+    if not own or own.value != token:
+        return JSONResponse({"error": "not your stream"}, status_code=403)
+    # Cap the offer body — an SDP is a few KB; refuse anything absurd (authed, but no memory-exhaustion foot-gun).
+    clen = request.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > 262144:
+        return JSONResponse({"error": "offer too large"}, status_code=413)
+    offer = await request.body()
+    if len(offer) > 262144:
+        return JSONResponse({"error": "offer too large"}, status_code=413)
+    key = _obs_key(db, current_user)
+    webrtc_port = (settings_store.get("stream_webrtc_port", "8889") or "8889").strip()
+    upstream = f"http://127.0.0.1:{webrtc_port}/{token}/whip?key={key}"
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
+            r = await client.post(upstream, content=offer,
+                                  headers={"Content-Type": "application/sdp"})
+    except Exception:
+        return Response(status_code=502)
+    # Relay only the SDP answer — NOT MediaMTX's Location header (it points at the internal 127.0.0.1
+    # WebRTC port; leaking it is pointless and confusing). The client tears the stream down by closing its
+    # RTCPeerConnection, which MediaMTX detects as a WebRTC disconnect and cleans up on its own.
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/sdp"))
 
 
 @router.get("/hls/{token}/{path:path}")

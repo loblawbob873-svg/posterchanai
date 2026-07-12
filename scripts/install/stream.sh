@@ -13,11 +13,11 @@ setup_stream_server() {
     stream_dir="$repo_root/streamserver"
     mkdir -p "$stream_dir"
 
-    # Resolve the release version (latest by default; override with MEDIAMTX_VERSION; pinned fallback).
+    # Pinned version — the generated mediamtx config (stream_service._write_config) targets these exact
+    # config keys, so we pin rather than track "latest" (config keys drift between MediaMTX releases).
+    # Override with MEDIAMTX_VERSION only if you also verify the config still parses.
     local ver
-    ver="${MEDIAMTX_VERSION:-$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest 2>/dev/null \
-        | grep -oE '"tag_name" *: *"[^"]+"' | head -1 | cut -d'"' -f4)}"
-    ver="${ver:-v1.11.3}"
+    ver="${MEDIAMTX_VERSION:-v1.19.2}"
 
     # Map uname → MediaMTX asset arch.
     local os arch m
@@ -52,12 +52,16 @@ setup_stream_server() {
     cat <<'EOF'
 
 Next steps to turn it on (Admin → Services → "OBS Streaming"):
-  1. Firewall/router: forward TCP 1935 (RTMP ingest from OBS) to this machine. For many viewers, also
-     forward the HLS port (default 8888) and set "HLS base URL" to a grey-clouded stream.<domain>; otherwise
-     the app reverse-proxies HLS over your existing tunnel (fine for a handful of viewers).
-  2. In Admin: tick "Run the built-in media server", set "Stream domain" (host OBS pushes to), Save.
+  1. Firewall/router: forward to this machine —
+       - TCP 1935            (RTMP ingest from OBS)
+       - UDP 8189            (WebRTC media — needed for "Go live from phone" over the internet)
+     For many viewers, also forward the HLS port (default 8888) and set "HLS base URL" to a grey-clouded
+     stream.<domain>; otherwise the app reverse-proxies HLS over your existing tunnel (fine for a handful).
+  2. In Admin: tick "Run the built-in media server", set "Stream domain" (host OBS/phones reach), Save.
      The app starts + supervises MediaMTX automatically (no restart needed).
-  3. In the web client → Discover → Streams → "Go Live": copy the OBS Server + Stream key, start OBS,
-     then tap Go Live to announce it on Nostr.
+  3. In the web client → Discover → Streams → "Go Live":
+       - Phone: tap "Go live from this phone" to stream straight from the camera (WebRTC/WHIP), OR
+       - OBS: copy the Server + Stream key, start OBS, then tap "Announce".
+     Optionally announce to followers with a watch link.
 EOF
 }

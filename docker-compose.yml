@@ -34,6 +34,10 @@ x-common: &common
     # 1935 (RTMP ingest) on your router; 8888 (HLS) only needed if you serve HLS on a direct subdomain.
     - "${POSTERCHANAI_STREAM_RTMP_PORT:-1935}:1935/tcp"
     - "${POSTERCHANAI_STREAM_HLS_PORT:-8888}:8888/tcp"
+    # WebRTC/WHIP ingest — lets a phone go live from the browser. 8889 = WHIP signaling (proxied by the
+    # app, so only needed for direct use); 8189/udp = WebRTC media (forward this for remote phones).
+    - "${POSTERCHANAI_STREAM_WEBRTC_PORT:-8889}:8889/tcp"
+    - "${POSTERCHANAI_STREAM_WEBRTC_UDP_PORT:-8189}:8189/udp"
   environment:
     - POSTERCHANAI_PORT=3051
     # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the

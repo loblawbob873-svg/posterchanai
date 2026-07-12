@@ -2494,23 +2494,60 @@
     const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
     const url=(e.tags.find(t=>t[0]==='streaming')||[])[1]||(e.tags.find(t=>t[0]==='recording')||[])[1]||'';
     const st=streamStatus(e);
+    const dtag=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
     feed.innerHTML=`<div class="stream-view">
       <button class="btn btn-ghost small" id="st-back">← Streams</button>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
-      ${url?`<video class="stream-player" id="st-video" controls playsinline></video>
-        <div class="muted small" id="st-note"></div>
-        <div class="row">${isDesktop()?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener">▶ Open stream URL</a></div>`:'<div class="empty">No stream URL provided.</div>'}
-      ${summary?`<div class="about">${linkify(summary)}</div>`:''}
+      <div class="stream-layout">
+        <div class="stream-main">
+          ${url?`<video class="stream-player" id="st-video" controls playsinline></video>
+            <div class="muted small" id="st-note"></div>
+            <div class="row">${isDesktop()?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener">▶ Open stream URL</a></div>`:'<div class="empty">No stream URL provided.</div>'}
+          ${summary?`<div class="about">${linkify(summary)}</div>`:''}
+        </div>
+        <div class="stream-chat" id="st-chat">
+          <div class="st-chat-hd">💬 Live chat</div>
+          <div class="scm-list" id="st-chat-msgs"><div class="muted small" style="padding:10px">No messages yet — say hi 👋</div></div>
+          <div class="scm-input"><input class="input" id="st-chat-inp" placeholder="Say something…" maxlength="500" autocomplete="off"><button class="btn btn-neon small" id="st-chat-send">Send</button></div>
+        </div>
+      </div>
     </div>`;
-    $('#st-back').onclick=()=>switchView('streams');
+    $('#st-back').onclick=()=>{ _closeStreamChat(); switchView('streams'); };
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     decorateProfiles();
     if(url) attachStream(url);
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
+    _streamChat(saddr);
+  }
+  // ---------- live stream chat (NIP-53 kind-1311, addressed to the stream's `a` tag) ----------
+  let _streamChatSub=null;
+  function _closeStreamChat(){ if(_streamChatSub){ try{ Relay.close(_streamChatSub); }catch(_){} _streamChatSub=null; } }
+  function _streamChat(saddr){
+    _closeStreamChat();
+    const box=$('#st-chat-msgs'); if(!box) return;
+    const seen=new Set(); const msgs=[];
+    const render=()=>{ if(!msgs.length) return;
+      box.innerHTML=msgs.slice(-200).map(m=>{ const pr=profOf(m.pubkey)||{}; needProfile(m.pubkey);
+        return `<div class="scm"><img class="scm-av" data-prof="${m.pubkey}" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><div class="scm-body"><b class="scm-name" data-prof="${m.pubkey}">${enc(pr.name||pr.display_name||'anon')}</b> <span class="scm-txt">${linkify(m.content||'')}</span></div></div>`; }).join('');
+      box.scrollTop=box.scrollHeight;
+      box.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof)); };
+    const onEv=ev=>{ if(!ev || ev.kind!==1311 || seen.has(ev.id)) return; seen.add(ev.id);
+      msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at); if(VIEW==='stream') render(); };
+    try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':[saddr], limit:100}], {onEvent:onEv, live:true}); }catch(_){}
+    const inp=$('#st-chat-inp'), send=$('#st-chat-send');
+    const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;
+      if(GUEST){ _guestPrompt(); return; } inp.value='';
+      try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]); if(r&&r.ev) onEv(r.ev); }
+      catch(_){ toast('couldn’t send'); } };
+    if(send) send.onclick=doSend;
+    if(inp) inp.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); doSend(); } };
   }
   // ---------- Go Live (OBS streaming) — publish a NIP-53 kind-30311 pointing at the built-in MediaMTX HLS ----------
   let _liveStream=null;   // { token, title, hls } while this device is announcing a live stream
+  let _phoneStream=null;  // { pc, local, token } while streaming from the phone camera via WHIP
+  let _goingLive=false;   // re-entrancy guard while a phone go-live is mid-handshake (before _phoneStream is set)
   let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
   function _copyFrom(el){  // copy WITHOUT unmasking a password field (temp textarea) — never expose the key
     const val=(el&&el.value)||'';
@@ -2541,43 +2578,122 @@
   }
   async function _goLive(){
     if(GUEST){ _guestPrompt(); return; }
+    if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); switchView('streams'); return; }
     try{ await ensureAiSession(); }catch(_){}
     let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
     if(!info || info.enabled===false || !info.rtmp_url){ toast('streaming isn’t enabled on this server'); return; }
+    const canPhone = !!(info.whip_url && navigator.mediaDevices && window.RTCPeerConnection);
     modal(`<h3>🔴 Go Live</h3>
-      <p class="muted small">Stream from OBS (or any RTMP encoder). In OBS → Settings → Stream, pick Service: <b>Custom</b> and paste:</p>
+      <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
+      <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
+      ${canPhone
+        ? `<button class="btn btn-neon full" id="gl-phone">📱 Go live from this phone (camera)</button>
+           <div class="gl-or">— or stream from a computer with OBS —</div>`
+        : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
-      <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
-      <p class="muted small">1) Start streaming in OBS. 2) Then tap <b>Go Live</b> to announce it on Nostr — it appears under Discover → Streams.</p>
-      <div class="row"><button class="btn btn-neon" id="gl-go">📡 Go Live</button><button class="btn btn-ghost" id="gl-cancel">Cancel</button></div>`, root=>{
+      <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
+      const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
+      const announce=()=>!!($('#gl-announce',root)||{}).checked;
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       $('#gl-cancel',root).onclick=closeModal;
+      { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _phoneGoLive(info, t, a); }; }
       $('#gl-go',root).onclick=async()=>{
-        const title=($('#gl-title',root).value||'').trim()||'Live stream';
-        try{
-          await publish(30311, '', [
-            ['d', info.token], ['title', title], ['streaming', info.hls_url],
-            ['status', 'live'], ['starts', String(Math.floor(Date.now()/1000))],
-            ['p', ME.pubkey, '', 'host'],
-          ]);
-          _liveStream={ token:info.token, title, hls:info.hls_url };
-          _startLiveHb();
+        const t=title(), a=announce();
+        try{ await _publishLive(info, t); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
+          if(a) await _announceStreamPost(info, t);
           closeModal(); toast('🔴 you’re live — announced on Nostr'); switchView('streams');
         }catch(_){ toast('couldn’t announce the stream'); }
       };
     });
   }
+  // Publish the NIP-53 kind-30311 "live" event + track it locally. Sets _liveStream FIRST so a relay
+  // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
+  async function _publishLive(info, title){
+    _liveStream={ token:info.token, title, hls:info.hls_url };
+    await publish(30311, '', [
+      ['d', info.token], ['title', title], ['streaming', info.hls_url],
+      ['status', 'live'], ['starts', String(Math.floor(Date.now()/1000))],
+      ['p', ME.pubkey, '', 'host'],
+    ]);
+  }
+  // Optional kind-1 announcement to followers, carrying a clickable WATCH LINK (nostr:naddr → the stream).
+  async function _announceStreamPost(info, title){
+    try{
+      const relays=[CFG && CFG.relay_url].filter(Boolean);   // include our relay so external clients can resolve the naddr
+      const naddr=NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays});
+      await publish(1, `🔴 I’m live now: ${title}\n\n▶ Watch: nostr:${naddr}`,
+        [['t','livestream'], ['a', `30311:${ME.pubkey}:${info.token}`, '', 'root']]);
+    }catch(_){}
+  }
+  // WebRTC gathers ICE, then we send the complete offer (non-trickle WHIP). Bounded so it never hangs;
+  // cleans up its listener + timeout on every path.
+  function _iceGatherComplete(pc){
+    return new Promise(res=>{
+      if(pc.iceGatheringState==='complete') return res();
+      let done=false, to=null;
+      const finish=()=>{ if(done) return; done=true; if(to) clearTimeout(to); pc.removeEventListener('icegatheringstatechange',chk); res(); };
+      function chk(){ if(pc.iceGatheringState==='complete') finish(); }
+      pc.addEventListener('icegatheringstatechange',chk); to=setTimeout(finish, 3000);
+    });
+  }
+  // Go live straight from the phone/browser camera via WHIP (WebRTC ingest to the built-in MediaMTX).
+  async function _phoneGoLive(info, title, doAnnounce){
+    if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
+    _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
+    let local=null, pc=null;
+    try{ local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:true}); }
+    catch(_){ toast('camera/mic permission needed'); _goingLive=false; return; }
+    toast('connecting…');
+    try{
+      let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
+      pc=new RTCPeerConnection({iceServers:ice, iceCandidatePoolSize:1});
+      local.getTracks().forEach(t=>pc.addTrack(t,local));
+      const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+      await _iceGatherComplete(pc);
+      try{ await ensureAiSession(); }catch(_){}
+      const r=await fetch(info.whip_url, { method:'POST',
+        headers:Object.assign({'Content-Type':'application/sdp'}, _aiToken?{'Authorization':'Bearer '+_aiToken}:{}),
+        body:pc.localDescription.sdp });
+      if(!r.ok) throw new Error('whip '+r.status);
+      await pc.setRemoteDescription({type:'answer', sdp:await r.text()});
+      // Bandwidth saving: the browser already hardware-encodes; cap the upload bitrate/framerate so a
+      // phone on mobile data doesn't blast a huge stream (and viewers get a lighter feed).
+      try{ const vs=pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+        if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
+          pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
+    }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
+    _phoneStream={ pc, local, token:info.token };
+    // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
+    // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
+    pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
+    _goingLive=false;
+    try{ await _publishLive(info, title); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
+    _phoneLiveOverlay(); toast('🔴 you’re live from your phone');
+  }
+  function _phoneLiveOverlay(){
+    let el=document.getElementById('phone-live'); if(el) el.remove();
+    el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
+    el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button>`;
+    document.body.appendChild(el);
+    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
+    $('#pl-stop',el).onclick=()=>_endLive();
+  }
   async function _endLive(){
-    if(!_liveStream) return;
+    if(!_liveStream && !_phoneStream) return;
     _stopLiveHb();
-    const s=_liveStream;
-    try{ await publish(30311, '', [
+    if(_phoneStream){ const ps=_phoneStream; _phoneStream=null;
+      try{ ps.pc&&ps.pc.close(); }catch(_){} try{ ps.local&&ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
+      const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
+    const s=_liveStream; _liveStream=null;
+    if(s){ try{ await publish(30311, '', [
       ['d', s.token], ['title', s.title], ['streaming', s.hls],
       ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
       ['p', ME.pubkey, '', 'host'],
-    ]); }catch(_){}
-    _liveStream=null; toast('stream ended'); if(VIEW==='streams') renderStreams();
+    ]); }catch(_){} }
+    toast('stream ended'); if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
   async function renderCommunities(){

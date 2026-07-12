@@ -52,7 +52,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pion-turn .
 # --- Download stage: the built-in MediaMTX media server for OBS streaming (prebuilt binary, no build) ---
 FROM alpine:3.20 AS streamdl
 ARG TARGETARCH
-ARG MEDIAMTX_VERSION=v1.11.3
+ARG MEDIAMTX_VERSION=v1.19.2
 # Best-effort: a yanked/renamed upstream release must NOT break the whole image build. On failure we
 # leave an empty /mediamtx placeholder; stream_service treats a 0-byte binary as "not installed" (no-op),
 # and the operator can install it later via install.sh --stream. Streaming is opt-in anyway.
@@ -291,6 +291,9 @@ EXPOSE 49160-49200/udp
 # output (the app reverse-proxies it unless stream_hls_base points at a direct subdomain).
 EXPOSE 1935/tcp
 EXPOSE 8888/tcp
+# WebRTC/WHIP ingest (phone go-live): 8889 = WHIP signaling, 8189/udp = WebRTC media (forward for remote phones).
+EXPOSE 8889/tcp
+EXPOSE 8189/udp
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).
