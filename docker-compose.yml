@@ -30,6 +30,10 @@ x-common: &common
     - "${POSTERCHANAI_TURN_PORT:-3478}:3478/udp"
     - "${POSTERCHANAI_TURN_PORT:-3478}:3478/tcp"
     - "49160-49200:49160-49200/udp"
+    # Built-in MediaMTX media server for OBS streaming (only used with POSTERCHANAI_STREAM=1). Forward
+    # 1935 (RTMP ingest) on your router; 8888 (HLS) only needed if you serve HLS on a direct subdomain.
+    - "${POSTERCHANAI_STREAM_RTMP_PORT:-1935}:1935/tcp"
+    - "${POSTERCHANAI_STREAM_HLS_PORT:-8888}:8888/tcp"
   environment:
     - POSTERCHANAI_PORT=3051
     # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
@@ -58,6 +62,10 @@ x-common: &common
     - POSTERCHANAI_TURN=${POSTERCHANAI_TURN:-0}
     - POSTERCHANAI_TURN_PUBLIC_IP=${POSTERCHANAI_TURN_PUBLIC_IP:-}
     - POSTERCHANAI_TURN_DOMAIN=${POSTERCHANAI_TURN_DOMAIN:-}
+    # Turnkey OBS streaming: set POSTERCHANAI_STREAM=1 and the app runs the built-in MediaMTX media server
+    # (binary baked into the image). Forward 1935 (RTMP). Set STREAM_DOMAIN to the host OBS pushes to.
+    - POSTERCHANAI_STREAM=${POSTERCHANAI_STREAM:-0}
+    - POSTERCHANAI_STREAM_DOMAIN=${POSTERCHANAI_STREAM_DOMAIN:-}
     # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
     # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
     - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay

@@ -49,6 +49,21 @@ RUN go mod download
 COPY turnserver/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pion-turn .
 
+# --- Download stage: the built-in MediaMTX media server for OBS streaming (prebuilt binary, no build) ---
+FROM alpine:3.20 AS streamdl
+ARG TARGETARCH
+ARG MEDIAMTX_VERSION=v1.11.3
+# Best-effort: a yanked/renamed upstream release must NOT break the whole image build. On failure we
+# leave an empty /mediamtx placeholder; stream_service treats a 0-byte binary as "not installed" (no-op),
+# and the operator can install it later via install.sh --stream. Streaming is opt-in anyway.
+RUN apk add --no-cache curl tar && { \
+      case "${TARGETARCH:-amd64}" in \
+        amd64) MTXARCH=amd64 ;; arm64) MTXARCH=arm64 ;; arm) MTXARCH=armv7 ;; *) MTXARCH=amd64 ;; \
+      esac && \
+      curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_${MTXARCH}.tar.gz" -o /tmp/m.tgz && \
+      tar -xzf /tmp/m.tgz -C /tmp mediamtx && install -m 0755 /tmp/mediamtx /mediamtx ; \
+    } || { echo "WARN: mediamtx download failed — streaming disabled in this image (install.sh --stream to add it)"; : > /mediamtx ; }
+
 FROM ${BASE_IMAGE} AS app
 ARG GPU
 ARG ROCM_VERSION
@@ -209,6 +224,10 @@ COPY . /app
 # when POSTERCHANAI_TURN=1 + a public IP is set; it's a no-op otherwise.
 COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn
 
+# Built-in MediaMTX media server (downloaded in the streamdl stage). The app supervises it
+# (stream_service.py) when POSTERCHANAI_STREAM=1; it's a no-op otherwise.
+COPY --from=streamdl /mediamtx /app/streamserver/mediamtx
+
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
 # (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
@@ -267,6 +286,11 @@ EXPOSE 3478/udp
 EXPOSE 3478/tcp
 # TURN relayed-media UDP range (PC_TURN_MIN_PORT..MAX_PORT; must match docker-compose's published range).
 EXPOSE 49160-49200/udp
+
+# OBS streaming (MediaMTX). OFF unless POSTERCHANAI_STREAM=1. 1935 = RTMP ingest (from OBS); 8888 = HLS
+# output (the app reverse-proxies it unless stream_hls_base points at a direct subdomain).
+EXPOSE 1935/tcp
+EXPOSE 8888/tcp
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).

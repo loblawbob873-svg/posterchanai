@@ -36,6 +36,7 @@ source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
 source "$INSTALL_DIR/turn.sh"
+source "$INSTALL_DIR/stream.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -67,6 +68,12 @@ fi
 # Add-on: build the built-in Pion TURN relay for voice/video calls (needs the Go toolchain).
 if [ "$1" = "--turn" ]; then
     setup_turn_server
+    exit $?
+fi
+
+# Add-on: install the built-in MediaMTX media server for OBS streaming (downloads a prebuilt binary).
+if [ "$1" = "--stream" ]; then
+    setup_stream_server
     exit $?
 fi
 

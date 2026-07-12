@@ -2465,8 +2465,13 @@
     if(VIEW!=='streams') return;
     const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
     const streams=_dedupAddr(evs).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
-    feed.innerHTML = streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No streams found yet.</div>';
+    _adoptOwnLive(streams);   // re-adopt our own still-live stream after a reload so it isn't stranded as LIVE
+    const top=`<div class="streams-top">${_liveStream
+      ? `<span class="live-badge">● LIVE</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
+      : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive">🔴 Go Live (OBS)</button>` : '')}</div>`;
+    feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No streams yet — tap “Go Live” to stream from OBS.</div>');
     decorateProfiles();
+    { const gl=$('#stream-golive',feed); if(gl) gl.onclick=_goLive; const ge=$('#stream-end',feed); if(ge) ge.onclick=_endLive; }
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
   }
   function streamCard(e){
@@ -2503,6 +2508,76 @@
     decorateProfiles();
     if(url) attachStream(url);
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
+  }
+  // ---------- Go Live (OBS streaming) — publish a NIP-53 kind-30311 pointing at the built-in MediaMTX HLS ----------
+  let _liveStream=null;   // { token, title, hls } while this device is announcing a live stream
+  let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
+  function _copyFrom(el){  // copy WITHOUT unmasking a password field (temp textarea) — never expose the key
+    const val=(el&&el.value)||'';
+    const fb=()=>{ try{ const ta=document.createElement('textarea'); ta.value=val; ta.style.cssText='position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); toast('copied'); }catch(_){ toast('copy failed — long-press to select'); } };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
+  }
+  function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
+  function _startLiveHb(){   // if the HLS 404s repeatedly, OBS stopped → mark the stream ended so it doesn't orphan as LIVE
+    _stopLiveHb(); let miss=0;
+    _liveHb=setInterval(async()=>{
+      if(!_liveStream){ _stopLiveHb(); return; }
+      let ok=false; try{ const r=await fetch(_liveStream.hls,{cache:'no-store'}); ok=r.ok; }catch(_){ ok=false; }
+      miss = ok ? 0 : miss+1;
+      if(miss>=3){ _stopLiveHb(); toast('stream stopped (OBS ended) — marking it ended'); _endLive(); }
+    }, 45000);
+  }
+  // On (re)opening Streams, re-adopt our OWN still-live announcement so a reload doesn't strand it as
+  // permanently LIVE (the End button reappears + the heartbeat resumes).
+  function _adoptOwnLive(streams){
+    if(_liveStream || GUEST || !ME) return;
+    const mine=(streams||[]).find(e=>e.pubkey===ME.pubkey && streamStatus(e)==='live');
+    if(!mine) return;
+    const tok=(mine.tags.find(t=>t[0]==='d')||[])[1];
+    if(!tok) return;
+    _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
+                  hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'' };
+    if(_liveStream.hls) _startLiveHb();
+  }
+  async function _goLive(){
+    if(GUEST){ _guestPrompt(); return; }
+    try{ await ensureAiSession(); }catch(_){}
+    let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
+    if(!info || info.enabled===false || !info.rtmp_url){ toast('streaming isn’t enabled on this server'); return; }
+    modal(`<h3>🔴 Go Live</h3>
+      <p class="muted small">Stream from OBS (or any RTMP encoder). In OBS → Settings → Stream, pick Service: <b>Custom</b> and paste:</p>
+      <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
+      <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
+      <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
+      <p class="muted small">1) Start streaming in OBS. 2) Then tap <b>Go Live</b> to announce it on Nostr — it appears under Discover → Streams.</p>
+      <div class="row"><button class="btn btn-neon" id="gl-go">📡 Go Live</button><button class="btn btn-ghost" id="gl-cancel">Cancel</button></div>`, root=>{
+      $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
+      $('#gl-cancel',root).onclick=closeModal;
+      $('#gl-go',root).onclick=async()=>{
+        const title=($('#gl-title',root).value||'').trim()||'Live stream';
+        try{
+          await publish(30311, '', [
+            ['d', info.token], ['title', title], ['streaming', info.hls_url],
+            ['status', 'live'], ['starts', String(Math.floor(Date.now()/1000))],
+            ['p', ME.pubkey, '', 'host'],
+          ]);
+          _liveStream={ token:info.token, title, hls:info.hls_url };
+          _startLiveHb();
+          closeModal(); toast('🔴 you’re live — announced on Nostr'); switchView('streams');
+        }catch(_){ toast('couldn’t announce the stream'); }
+      };
+    });
+  }
+  async function _endLive(){
+    if(!_liveStream) return;
+    _stopLiveHb();
+    const s=_liveStream;
+    try{ await publish(30311, '', [
+      ['d', s.token], ['title', s.title], ['streaming', s.hls],
+      ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
+      ['p', ME.pubkey, '', 'host'],
+    ]); }catch(_){}
+    _liveStream=null; toast('stream ended'); if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
   async function renderCommunities(){
@@ -6492,6 +6567,10 @@
       if(!_prof.followers || !_prof.followers.length){
         const fe=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]);
         _prof.followers=[...new Set(fe.map(e=>e.pubkey))];
+        // Sync the headline count to the ACTUAL deduped list — the NIP-45 COUNT is approximate (or 0 when
+        // the relay doesn't support COUNT), which is why the number disagreed with the opened list. Keep
+        // the larger of the two so a >1000-cap list doesn't undercount a relay that DID report a real total.
+        const fr=$('#show-followers b'); if(fr){ const shown=parseInt(fr.textContent,10)||0; fr.textContent=Math.max(shown, _prof.followers.length); }
       }
       peopleModal('Followers', _prof.followers||[]);
     };
@@ -9160,7 +9239,8 @@
       <h2 style="margin:0 0 4px">📞 Calls</h2>
       <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
       <div class="call-start">
-        <input id="call-npub" class="input" placeholder="npub1… or name@domain to call" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <input id="call-npub" class="input" placeholder="type a name, npub1…, or name@domain" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <div id="call-ac" class="mention-box hidden"></div>
         <button class="btn btn-neon full" id="call-start-btn">📞 Call</button>
         <button class="btn full" id="grp-toggle" style="margin-top:8px">👥 Start a group call</button>
       </div>
@@ -9172,7 +9252,24 @@
       <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
     const go=async(pk)=>{ if(pk) startCall(pk, {video:false}); };   // audio-first; add video mid-call with the in-call button
-    $('#call-start-btn').onclick=async()=>{ let v=($('#call-npub').value||'').trim(); if(!v) return; let pk=safePk(v); if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} } if(!pk){ toast('could not resolve that address'); return; } go(pk); };
+    // Autocomplete: as you type a name, suggest known profiles (like the DM composer); click one to call.
+    { const inp=$('#call-npub',feed), ac=$('#call-ac',feed);
+      if(inp && ac){ inp.addEventListener('input', ()=>{ const v=inp.value.trim();
+        if(safePk(v)){ ac.classList.add('hidden'); return; }   // a full npub/hex needs no suggestions
+        const q=v.replace(/^@/,'').toLowerCase(); if(q.length<2){ ac.classList.add('hidden'); return; }
+        const matches=Store.profileList().filter(p=>p.pubkey!==ME.pubkey && (((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(q))).slice(0,6);
+        if(!matches.length){ ac.classList.add('hidden'); return; }
+        ac.classList.remove('hidden');
+        ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b>${p.meta.nip05?`<span class="muted small">${enc(niceNip05(p.meta.nip05)||'')}</span>`:''}</div>`).join('');
+        $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); ac.classList.add('hidden'); inp.value=''; go(el.dataset.pk); });
+      });
+      inp.addEventListener('blur', ()=>setTimeout(()=>ac.classList.add('hidden'), 150)); } }
+    $('#call-start-btn').onclick=async()=>{ let v=($('#call-npub').value||'').trim(); if(!v) return; let pk=safePk(v);
+      if(!pk){ const q=v.replace(/^@/,'').toLowerCase();   // no npub → try a name match first, then NIP-05
+        const m=Store.profileList().find(p=>p.pubkey!==ME.pubkey && (p.meta.name||'').toLowerCase()===q) || Store.profileList().find(p=>p.pubkey!==ME.pubkey && (((p.meta.name||'')+(p.meta.display_name||'')).toLowerCase().includes(q)));
+        if(m) pk=m.pubkey; }
+      if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} }
+      if(!pk){ toast('could not find that person'); return; } go(pk); };
     $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
     const gt=$('#grp-toggle'), gp=$('#grp-panel'); if(gt&&gp) gt.onclick=()=>{ const on=gp.style.display==='none'; gp.style.display=on?'':'none'; gt.textContent=on?'✕ Cancel group call':'👥 Start a group call'; };
     if($('#grp-start')) $('#grp-start').onclick=()=>{ const pks=$$('.grp-pick',feed).filter(c=>c.checked).map(c=>c.value); if(!pks.length){ toast('pick at least one person'); return; } startGroupCall(pks, false); };

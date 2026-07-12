@@ -138,6 +138,14 @@ class SettingsResponse(BaseModel):
     turn_relay_min_port: str = "49160"  # relay UDP port range (small = few ports to forward; widen to scale)
     turn_relay_max_port: str = "49200"
     stun_fallback_urls: str = ""       # optional public STUN (comma list) used when turn_enabled is off
+    # OBS streaming — bundled MediaMTX (stream_service.py) ingests RTMP from OBS + remuxes to HLS for the
+    # NIP-53 Streams tab. Publish auth reuses the per-user API key; see app/routers/streams.py.
+    stream_enabled: str = "false"      # run the built-in MediaMTX media server (needs a public RTMP port)
+    stream_domain: str = ""            # host OBS pushes to (e.g. stream.poster.place → this server); blank = public IP
+    stream_rtmp_port: str = "1935"     # RTMP ingest port (open/forward this for OBS)
+    stream_hls_port: str = "8888"      # MediaMTX HLS output port (proxied by the app unless stream_hls_base is set)
+    stream_hls_base: str = ""          # direct public HLS base (grey-clouded subdomain) for scale; blank = app proxy
+    stream_srt_port: str = ""          # optional SRT ingest port; blank = off
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

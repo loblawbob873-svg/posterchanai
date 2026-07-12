@@ -2133,3 +2133,8 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .grp-contact img{width:32px;height:32px;border-radius:50%;object-fit:cover;flex:none}
 .grp-contact span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .grp-contact .grp-pick{flex:none;width:18px;height:18px}
+
+/* Go Live (OBS streaming) controls */
+.streams-top{display:flex;align-items:center;gap:10px;margin:0 0 12px;min-height:34px}
+.copyrow{display:flex;gap:6px;align-items:center}
+.copyrow .input{flex:1;min-width:0;font-family:ui-monospace,monospace;font-size:.86em}

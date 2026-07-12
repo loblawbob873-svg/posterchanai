@@ -101,3 +101,5 @@ nostr.json
 
 # built by install.sh --turn / Dockerfile (not committed)
 turnserver/pion-turn
+streamserver/mediamtx
+streamserver/mediamtx.gen.yml

@@ -332,6 +332,13 @@ def init_db():
             "turn_relay_min_port": "49160",
             "turn_relay_max_port": "49200",
             "stun_fallback_urls": "",
+            # OBS streaming (MediaMTX). Env-seeded for turnkey Docker via POSTERCHANAI_STREAM.
+            "stream_enabled": ("true" if os.environ.get("POSTERCHANAI_STREAM", "0") in ("1", "true") else "false"),
+            "stream_domain": os.environ.get("POSTERCHANAI_STREAM_DOMAIN", ""),
+            "stream_rtmp_port": os.environ.get("POSTERCHANAI_STREAM_RTMP_PORT", "1935"),
+            "stream_hls_port": os.environ.get("POSTERCHANAI_STREAM_HLS_PORT", "8888"),
+            "stream_hls_base": os.environ.get("POSTERCHANAI_STREAM_HLS_BASE", ""),
+            "stream_srt_port": os.environ.get("POSTERCHANAI_STREAM_SRT_PORT", ""),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

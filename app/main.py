@@ -20,7 +20,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
-from app.routers import fourchan, youtube_thumb, bots, push, calls
+from app.routers import fourchan, youtube_thumb, bots, push, calls, streams
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -186,6 +186,7 @@ app.include_router(fourchan.router)
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
+app.include_router(streams.router)  # /api/streams/* (OBS streaming: MediaMTX auth hook, ingest info, HLS proxy)
 app.include_router(storage.router)
 app.include_router(telegram_router)
 app.include_router(misskey_router)
@@ -292,6 +293,20 @@ async def startup():
                 logging.info("TURN relay seeded from POSTERCHANAI_TURN env")
             except Exception as e:
                 logging.error(f"Error seeding TURN settings: {e}")
+
+        # Turnkey Docker OBS streaming: when POSTERCHANAI_STREAM=1, enable the built-in MediaMTX server and
+        # seed its public host from env. The app supervises the bundled binary; needs an open RTMP port.
+        if os.environ.get("POSTERCHANAI_STREAM", "0") in ("1", "true"):
+            try:
+                from app.services import settings_store as _ss
+                if not _ss.exists("stream_enabled"):
+                    _ss.put("stream_enabled", "true")
+                _sdom = os.environ.get("POSTERCHANAI_STREAM_DOMAIN")
+                if _sdom and not _ss.exists("stream_domain"):
+                    _ss.put("stream_domain", _sdom)
+                logging.info("MediaMTX streaming seeded from POSTERCHANAI_STREAM env")
+            except Exception as e:
+                logging.error(f"Error seeding streaming settings: {e}")
 
         # Turnkey Docker Blossom server: when POSTERCHANAI_BLOSSOM=1, ENABLE the built-in Blossom
         # media server. `blossom_enabled` is FORCE-set on every boot — the env flag is a declarative
@@ -405,6 +420,14 @@ async def startup():
                 start_turn_server()
             except Exception as e:
                 logging.error(f"Error starting TURN server: {e}", exc_info=True)
+
+            try:
+                # Supervise the built-in MediaMTX server for OBS streaming (subprocess; no-op unless
+                # stream_enabled + the binary is installed)
+                from app.services.stream_service import start_stream_server
+                start_stream_server()
+            except Exception as e:
+                logging.error(f"Error starting stream server: {e}", exc_info=True)
 
             try:
                 # Settings read-path: hydrate the local Setting cache from the relay (the
@@ -666,6 +689,12 @@ async def shutdown():
         try:
             from app.services.turn_service import stop_turn_server
             stop_turn_server()
+        except Exception:
+            pass
+        try:
+            # Stop the built-in MediaMTX streaming server supervisor + terminate mediamtx
+            from app.services.stream_service import stop_stream_server
+            stop_stream_server()
         except Exception:
             pass
 
