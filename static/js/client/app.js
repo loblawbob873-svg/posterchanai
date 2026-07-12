@@ -1485,6 +1485,7 @@
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
     if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
     if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
+    if(VIEW!=='stream' && _streamChatSub){ _closeStreamChat(); }   // leaving a live stream → drop its 1311 chat sub (+ its buffers)
     feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
@@ -2534,7 +2535,9 @@
       box.scrollTop=box.scrollHeight;
       box.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof)); };
     const onEv=ev=>{ if(!ev || ev.kind!==1311 || seen.has(ev.id)) return; seen.add(ev.id);
-      msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at); if(VIEW==='stream') render(); };
+      msgs.push(ev); msgs.sort((a,b)=>a.created_at-b.created_at);
+      if(msgs.length>500) msgs.splice(0, msgs.length-500);   // bound memory on a long, busy chat
+      if(VIEW==='stream') render(); };
     try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':[saddr], limit:100}], {onEvent:onEv, live:true}); }catch(_){}
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');
     const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;

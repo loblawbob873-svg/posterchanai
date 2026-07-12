@@ -15,6 +15,7 @@ system, per the design decision.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import secrets
 from urllib.parse import parse_qs
@@ -74,7 +75,8 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     robust regardless of proxy-header / loopback-IP quirks (request.client.host is unreliable behind a proxy).
     """
     secret = (settings_store.get("stream_auth_secret", "") or "").strip()
-    if not secret or request.query_params.get("hook") != secret:
+    hook = request.query_params.get("hook") or ""
+    if not secret or not hmac.compare_digest(hook, secret):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     try:
         body = await request.json()
