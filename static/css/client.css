@@ -2124,3 +2124,12 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .call-tile.me video{transform:scaleX(-1)}
 .call-tile img{width:64px;height:64px;border-radius:50%;object-fit:cover}
 .call-tile .tl-name{position:absolute;left:6px;bottom:5px;font-size:11px;background:#000a;padding:2px 7px;border-radius:8px;color:#fff}
+
+/* Group-call picker (Calls view) */
+.call-group{margin:10px 0;padding:10px;border:1px solid var(--line,#2a2a3a);border-radius:10px}
+.grp-list{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow-y:auto}
+.grp-contact{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer}
+.grp-contact:hover{background:rgba(255,255,255,.05)}
+.grp-contact img{width:32px;height:32px;border-radius:50%;object-fit:cover;flex:none}
+.grp-contact span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-contact .grp-pick{flex:none;width:18px;height:18px}
