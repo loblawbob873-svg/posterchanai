@@ -1064,14 +1064,18 @@
     // share arriving while the app is already open. No-op in the PWA (window.Capacitor undefined).
     if(window.Capacitor){
       const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} };
-      _reShare();   // cold-start share (app launched by the share intent)
+      _reShare();   // cold-start share (app launched by the share intent) — runs each startApp (cheap; deduped)
+      // Register the foreground/resume listeners ONCE per page-load — startApp can re-run (guest→login without
+      // reload), and without this guard each run leaks another set of listeners → duplicate share re-checks.
       // Warm share: the app is already running and gets foregrounded via onNewIntent — the send-intent plugin
       // fires NO JS event, so re-check whenever we return to the foreground (MainActivity.onNewIntent refreshes
       // getIntent() so the plugin sees the new file). Dedupe in _consumeSendIntent stops reprocessing.
-      window.addEventListener('sendIntentReceived', _reShare);
-      document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _reShare(); });
-      const _App=_capPlugin('App');
-      if(_App && _App.addListener){ try{ _App.addListener('resume', _reShare); _App.addListener('appStateChange', st=>{ if(st && st.isActive) _reShare(); }); }catch(_){} }
+      if(!window.__pcNativeBound){ window.__pcNativeBound=true;
+        window.addEventListener('sendIntentReceived', _reShare);
+        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _reShare(); });
+        const _App=_capPlugin('App');
+        if(_App && _App.addListener){ try{ _App.addListener('resume', _reShare); _App.addListener('appStateChange', st=>{ if(st && st.isActive) _reShare(); }); }catch(_){} }
+      }
       setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
     }
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
@@ -1085,7 +1089,9 @@
         if(NO_IMAGES){ const r=el.getBoundingClientRect(); if(r.bottom<-600 || r.top>vh+600) return; }
         needProfile(el.dataset.pk); n++; }); }, 12000);
   }
-  function logout(){ Session.clear(); Relay.worker.call('clearKey',{}); location.reload(); }
+  function logout(){ Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
+    try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
+    Relay.worker.call('clearKey',{}); location.reload(); }
 
   // Decide which relays to connect: the user's own list when they've enabled it (untrusted, so the
   // pool verifies signatures), otherwise the single built-in WoT relay (trusted).
@@ -1847,7 +1853,11 @@
   // Everything is HTML-escaped FIRST, so author content can't inject markup; the markdown
   // transforms then run over the escaped text. URLs in links/images are scheme-checked so a
   // `javascript:` payload can never become an href/src.
-  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? _absUrl(u) : ''; }
+  // Do NOT _absUrl here: _mdUrl renders UNTRUSTED note markdown. Absolutizing a note author's `![](/path)`
+  // to the viewer's authenticated instance origin would make the app issue an authed cross-origin GET to an
+  // attacker-chosen path. Real Nostr notes use absolute URLs; a root-relative one just won't load — safe.
+  // (AI-chat media, which IS trusted server output, is absolutized explicitly in aiFormat, not here.)
+  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
   function mdInline(s){
     s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
     s=s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,alt,url)=>{ const u=_mdUrl(url); return u?`<img src="${u}" alt="${alt}" loading="lazy">`:m; });
@@ -7815,10 +7825,10 @@
            // no-op and you're stuck on "Couldn't load your settings" until a full reload.
            if(r.status===401) _aiAuth=null;
       }catch(_){}
-      // On a slow link, don't sit through the full backoff schedule if we already have a good cache to fall
-      // back to — one real attempt, then serve the cache instantly (the background isn't re-fetched, but
-      // the next open will get fresh data + re-cache).
-      if(_cachedS && attempt===0) break;
+      // NOTE: we do NOT short-circuit on the first attempt when a cache exists — the retry loop is what
+      // recovers from a transient 401 (cookie lag on a high-latency link). Breaking early would serve STALE
+      // settings that a later Save then writes back, reverting changes made on another device. The cache is
+      // a genuine-offline fallback only (used below after all attempts fail).
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
     }
     if(!host || VIEW!=='settings') return;

@@ -25,23 +25,35 @@ from app.services.storage_service import StorageService
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _set_auth_cookie(response: Response, token: str, request: Request = None) -> None:
-    # The session cookie must survive the Capacitor Android app's CROSS-ORIGIN calls (app origin
-    # https://localhost → api at poster.place). That needs SameSite=None, which browsers only accept with
-    # Secure — valid because those requests are HTTPS. We decide per-request from the connection scheme
-    # (X-Forwarded-Proto set by nginx, else request.url.scheme) instead of a static ENV flag: over HTTPS →
-    # SameSite=None; Secure (works same-origin PWA *and* the cross-origin app); over plain http (direct LAN
-    # / dev) → Lax + not-Secure, so those same-origin logins still work (a Secure/None cookie would be
-    # dropped on http). httponly stays False: JS reads the token for the WebSocket auth handshake.
+_APP_ORIGINS = {"https://localhost", "http://localhost", "capacitor://localhost", "ionic://localhost"}
+
+
+def _cookie_attrs(request: Request):
+    """(samesite, secure) for the auth cookie, chosen by the request's ORIGIN — NOT blanket by scheme.
+    The Capacitor app (Origin https://localhost) calls the API cross-origin, which needs SameSite=None;
+    Secure or the cookie is never sent. But the same-origin PWA (Origin https://poster.place) MUST keep
+    SameSite=Lax: it's our only CSRF defense (the CSRF middleware is disabled, relying on SameSite), and
+    None would let the session cookie ride cross-site POSTs. So: known app origin → None+Secure; everything
+    else (the PWA, direct LAN http) → Lax (+ Secure only when the connection is HTTPS)."""
     secure = False
+    origin = ""
     if request is not None:
         proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower()
         secure = proto == "https" or request.url.scheme == "https"
+        origin = (request.headers.get("origin", "") or "").strip().lower().rstrip("/")
+    if origin in _APP_ORIGINS:
+        return "none", True   # cross-origin native app; None requires Secure (app is HTTPS)
+    return "lax", secure
+
+
+def _set_auth_cookie(response: Response, token: str, request: Request = None) -> None:
+    # httponly stays False: JS reads the token for the WebSocket auth handshake.
+    samesite, secure = _cookie_attrs(request)
     response.set_cookie(
         key="access_token", value=token,
         httponly=False,
         secure=secure, max_age=30 * 24 * 60 * 60,
-        samesite="none" if secure else "lax", path="/",
+        samesite=samesite, path="/",
     )
 
 
@@ -237,8 +249,11 @@ async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
 
 
 @router.post("/logout")
-def logout(response: Response):
-    response.delete_cookie("access_token")
+def logout(response: Response, request: Request):
+    # Clear with the SAME SameSite/Secure the cookie was set with (Origin-aware) — a cross-origin app
+    # cookie is SameSite=None; Secure, and a Lax delete won't clear it in that context.
+    samesite, secure = _cookie_attrs(request)
+    response.delete_cookie("access_token", path="/", samesite=samesite, secure=secure)
     return {"message": "Logged out"}
 
 

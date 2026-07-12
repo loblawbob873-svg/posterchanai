@@ -58,7 +58,9 @@ app = FastAPI(
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://localhost", "http://localhost", "capacitor://localhost"],
+    # Capacitor app origins only (androidScheme=https → https://localhost). NOT http://localhost: with
+    # allow_credentials it would let any plaintext-http localhost page read the victim's authed responses.
+    allow_origins=["https://localhost", "capacitor://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
