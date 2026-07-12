@@ -1847,7 +1847,7 @@
   // Everything is HTML-escaped FIRST, so author content can't inject markup; the markdown
   // transforms then run over the escaped text. URLs in links/images are scheme-checked so a
   // `javascript:` payload can never become an href/src.
-  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
+  function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? _absUrl(u) : ''; }
   function mdInline(s){
     s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
     s=s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,alt,url)=>{ const u=_mdUrl(url); return u?`<img src="${u}" alt="${alt}" loading="lazy">`:m; });
@@ -4612,6 +4612,10 @@
   // self.location.origin is https://localhost — useless off-device (the AI/relay/other users can't fetch it)
   // — so prefer the real server base injected by the app shim. PWA: __PC_API_BASE__ undefined → own origin.
   function _serverOrigin(){ return (window.__PC_API_BASE__) || (self.location&&self.location.origin) || ''; }
+  // Absolutize a root-relative URL to the instance origin. Critical in the bundled app: an <img>/<video>
+  // src resolves against the PAGE origin (https://localhost), NOT through the fetch shim — so a server URL
+  // like /api/files/… or /blossom/… would load from localhost. No-op for already-absolute URLs and in the PWA.
+  function _absUrl(u){ u=(u==null?'':String(u)); return (u.charAt(0)==='/' && u.charAt(1)!=='/') ? _serverOrigin()+u : u; }
   function _blossomBuiltin(){ return { url:_serverOrigin()+'/blossom', proto:'blossom' }; }
   function uploadTarget(){
     if(ClientSettings.get('blossomEnabled')){
@@ -6952,7 +6956,7 @@
       if(!msgs.length) box.innerHTML = _aiWelcomeHtml();   // fresh chat → friendly splash with starter commands
       for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
-        if(m.image_path) html += `<div class="ai-media"><img src="${enc(m.image_path)}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
+        if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
         aiAddMessage(m.role, html);
       }
       aiScroll();
@@ -7377,11 +7381,14 @@
       } }catch(_){}
       return '';
     });
-    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(u)}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u)));
-    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(u)}"></audio></div>`+_aiFileActions(u)));
+    // src attributes are absolutized to the instance origin (_absUrl) so a /api/files/… artifact loads from
+    // the server, not https://localhost, in the bundled app. The URL passed to _aiFileActions stays relative
+    // so its fetch (re-upload) goes through the shim, which adds credentials for the authed /api/files/ call.
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u)));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
-    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(u)}" data-full="${enc(u)}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u)));
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u)));
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
