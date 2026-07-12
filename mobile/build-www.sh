@@ -13,6 +13,10 @@ mkdir -p www/static/js/client www/static/css www/static/vendor/nostr
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
 cp "$SRC"/static/vendor/nostr/nostr.bundle.js www/static/vendor/nostr/
+# hls.js — loaded on demand by the Streams tab (loadHls injects <script src>, which the bundled-mode fetch
+# shim does NOT rewrite), so it must be bundled locally or in-app HLS playback 404s.
+mkdir -p www/static/vendor/hls
+cp "$SRC"/static/vendor/hls/hls.min.js www/static/vendor/hls/ 2>/dev/null || true
 cp "$SRC"/static/*.png                www/static/ 2>/dev/null || true
 
 # The rendered shell (auth gate + app scaffold) — take the LIVE one so the app matches the site exactly.

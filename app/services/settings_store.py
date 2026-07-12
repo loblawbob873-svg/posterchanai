@@ -39,9 +39,16 @@ _RUNTIME_KEYS = frozenset({"nitter_seen", "autopost_last_runs", "autopost_daily_
                            "fedi_timeline_since"})
 _RUNTIME_SUFFIXES = ("_since", "_seen", "_cursor", "_last_runs", "_next_batch")
 
+# Per-node infrastructure config that must NEVER sync to the (public, shared) relay: TURN settings are
+# node-specific (public IP, domain, cert/key paths) and turn_shared_secret is a SECRET — hydrating a
+# shared relay copy would both leak the secret and clobber each node's own IP. So turn_* stays local,
+# like the relay-plumbing keys. (calls_* — the feature toggle + default-video pref — DO sync via the relay.)
+_LOCAL_PREFIXES = ("turn_",)
+
 
 def _is_local_only(key: str) -> bool:
-    return key in _PLUMBING_KEYS or key in _RUNTIME_KEYS or key.endswith(_RUNTIME_SUFFIXES)
+    return (key in _PLUMBING_KEYS or key in _RUNTIME_KEYS
+            or key.endswith(_RUNTIME_SUFFIXES) or key.startswith(_LOCAL_PREFIXES))
 
 
 # ============================================================================================

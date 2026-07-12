@@ -41,6 +41,14 @@ ARG BASE_IMAGE=ubuntu:24.04
 # (__hip_fp8_e4m3) that don't exist in ROCm 6.2 (the HIP build fails to compile).
 ARG ROCM_VERSION=6.3.4
 
+# --- Go build stage: the built-in Pion TURN/STUN relay for voice/video calls (tiny static binary) ---
+FROM golang:1.23-alpine AS turnbuild
+WORKDIR /build
+COPY turnserver/go.mod turnserver/go.sum ./
+RUN go mod download
+COPY turnserver/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pion-turn .
+
 FROM ${BASE_IMAGE} AS app
 ARG GPU
 ARG ROCM_VERSION
@@ -197,6 +205,10 @@ RUN if [ "$GPU" = "nostr" ]; then \
 # --- app source ---------------------------------------------------------------
 COPY . /app
 
+# Built-in TURN relay binary (compiled in the turnbuild stage). The app supervises it (turn_service.py)
+# when POSTERCHANAI_TURN=1 + a public IP is set; it's a no-op otherwise.
+COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn
+
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
 # (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
@@ -247,6 +259,12 @@ EXPOSE 3051
 # Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which
 # seeds it on + binds 0.0.0.0 so the published port is reachable. See docs/RELAY.md.
 EXPOSE 3052
+
+# Built-in TURN/STUN relay for voice/video calls. OFF unless POSTERCHANAI_TURN=1 + a public IP is set.
+# For calls behind NAT this port (and the relay UDP range) must be reachable — publish them and forward
+# them on your router; a direct grey-clouded turn.<domain> record is recommended (it can't ride CF Tunnel).
+EXPOSE 3478/udp
+EXPOSE 3478/tcp
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).

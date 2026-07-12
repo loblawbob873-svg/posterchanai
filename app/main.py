@@ -20,7 +20,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
-from app.routers import fourchan, youtube_thumb, bots, push
+from app.routers import fourchan, youtube_thumb, bots, push, calls
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -185,6 +185,7 @@ app.include_router(torrent.router)
 app.include_router(fourchan.router)
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
+app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
 app.include_router(storage.router)
 app.include_router(telegram_router)
 app.include_router(misskey_router)
@@ -273,6 +274,24 @@ async def startup():
                 logging.info("Nostr relay seeded from POSTERCHANAI_NOSTR_RELAY env")
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
+
+        # Turnkey Docker calls/TURN: when POSTERCHANAI_TURN=1, enable the built-in Pion TURN relay and
+        # seed its public IP + optional domain from env. The app supervises the bundled binary; still needs
+        # one open public port (3478 and/or a TLS port). Only seeds keys the admin hasn't set.
+        if os.environ.get("POSTERCHANAI_TURN", "0") == "1":
+            try:
+                from app.services import settings_store as _ss
+                if not _ss.exists("turn_enabled"):
+                    _ss.put("turn_enabled", "true")
+                _ip = os.environ.get("POSTERCHANAI_TURN_PUBLIC_IP")
+                if _ip and not _ss.exists("turn_public_ip"):
+                    _ss.put("turn_public_ip", _ip)
+                _dom = os.environ.get("POSTERCHANAI_TURN_DOMAIN")
+                if _dom and not _ss.exists("turn_domain"):
+                    _ss.put("turn_domain", _dom)
+                logging.info("TURN relay seeded from POSTERCHANAI_TURN env")
+            except Exception as e:
+                logging.error(f"Error seeding TURN settings: {e}")
 
         # Turnkey Docker Blossom server: when POSTERCHANAI_BLOSSOM=1, ENABLE the built-in Blossom
         # media server. `blossom_enabled` is FORCE-set on every boot — the env flag is a declarative
@@ -378,6 +397,14 @@ async def startup():
                 start_nostr_relay()
             except Exception as e:
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
+
+            try:
+                # Supervise the built-in Pion TURN relay for voice/video calls (subprocess; no-op unless
+                # turn_enabled + the binary is built + a public IP is set)
+                from app.services.turn_service import start_turn_server
+                start_turn_server()
+            except Exception as e:
+                logging.error(f"Error starting TURN server: {e}", exc_info=True)
 
             try:
                 # Settings read-path: hydrate the local Setting cache from the relay (the
@@ -632,6 +659,13 @@ async def shutdown():
         try:
             from app.services.nostr_relay import stop_nostr_relay
             stop_nostr_relay()
+        except Exception:
+            pass
+
+        # Stop the built-in TURN relay supervisor + terminate pion-turn
+        try:
+            from app.services.turn_service import stop_turn_server
+            stop_turn_server()
         except Exception:
             pass
 

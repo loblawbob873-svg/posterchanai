@@ -2083,3 +2083,30 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .media-row .img-hold, .media-grid .img-hold, .txt .img-hold, .note-preview .img-hold{ min-height:130px; }
 .img-hold:active{ opacity:.75; }
 @media(hover:hover){ .img-hold:hover{ border-color:var(--neon); color:var(--text); } }
+
+/* ===== Voice/Video calls ===== */
+@keyframes callpulse{0%,100%{opacity:1}50%{opacity:.45}}
+.call-overlay{position:fixed;inset:0;z-index:400;background:radial-gradient(circle at 50% 28%,#1a1a2e,#08040e);display:flex;flex-direction:column;align-items:center;color:#fff;padding:calc(26px + env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom))}
+.call-remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:0}
+.call-overlay.aud .call-remote{display:none}
+.call-head{position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;margin:auto 0}
+.call-overlay.vid .call-head{position:absolute;top:calc(18px + env(safe-area-inset-top));left:0;right:0;margin:0;flex-direction:row;justify-content:center;align-items:center;gap:10px;background:linear-gradient(#000a,transparent);padding:12px}
+.call-head img{width:118px;height:118px;border-radius:50%;object-fit:cover;border:2px solid var(--neon,#0ff);box-shadow:0 0 30px rgba(0,240,255,.4)}
+.call-overlay.vid .call-head img{width:44px;height:44px;box-shadow:none}
+.call-name{font-size:22px;font-weight:800}
+.call-overlay.vid .call-name{font-size:16px}
+.call-status{font-size:14px;color:#9fb3c8}
+.call-overlay.ring .call-status{color:var(--neon,#0ff);animation:callpulse 1.2s infinite}
+.call-local{position:absolute;bottom:calc(100px + env(safe-area-inset-bottom));right:16px;width:104px;height:150px;object-fit:cover;border-radius:12px;border:1px solid #ffffff33;z-index:3;background:#000;transform:scaleX(-1)}
+.call-overlay.aud .call-local{display:none}
+.call-actions{position:relative;z-index:3;margin-top:auto;display:flex;gap:16px;align-items:center;justify-content:center}
+.call-btn{width:60px;height:60px;border-radius:50%;border:none;font-size:22px;cursor:pointer;background:#2a2a3e;color:#fff;display:flex;align-items:center;justify-content:center;transition:filter .15s;-webkit-tap-highlight-color:transparent}
+.call-btn:hover{filter:brightness(1.15)}
+.call-btn.accept{background:#1db954;width:72px;height:72px}
+.call-btn.decline,.call-btn.hang{background:#e0245e;width:72px;height:72px}
+.calls-view{max-width:560px;margin:0 auto;padding:22px 18px}
+.call-start{margin:14px 0 22px}
+.call-contacts{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
+.call-contact{display:flex;flex-direction:column;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 6px;cursor:pointer;color:var(--text);font-size:12px}
+.call-contact img{width:48px;height:48px;border-radius:50%;object-fit:cover}
+.call-contact span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:78px}

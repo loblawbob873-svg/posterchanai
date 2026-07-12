@@ -120,6 +120,24 @@ class SettingsResponse(BaseModel):
     music_format: str = "mp3"  # mp3 | wav | flac | opus | aac
     music_timeout: str = "300000"  # music request timeout in ms (mirrors image_timeout)
     music_watermark_enabled: str = "true"  # append the branded end-card outro to the song video
+    # Voice/video calls (WebRTC, P2P-first, Nostr-signaled) + the built-in Pion TURN/STUN relay. The
+    # relay is a bundled Go binary the app supervises (turn_service.py); FastAPI mints short-lived TURN
+    # REST creds from turn_shared_secret. TURN is opt-in and needs one open public port + a grey-clouded
+    # turn.<domain>. calls_* gate the client feature. See docs + app/routers/calls.py.
+    calls_enabled: str = "true"        # show the Calls feature in the web client
+    calls_default_video: str = "false"  # audio-first; video is opt-in per call (bandwidth/battery)
+    turn_enabled: str = "false"        # run the built-in TURN relay + advertise it in ICE (needs a public port)
+    turn_domain: str = ""              # e.g. turn.poster.place (grey-clouded A record → this server)
+    turn_public_ip: str = ""           # public IP advertised in relay candidates (required when turn_enabled)
+    turn_port: str = "3478"            # STUN+TURN UDP+TCP port
+    turn_tls_port: str = ""            # TURN-over-TLS port (443 recommended for restrictive nets); blank = off
+    turn_tls_cert: str = ""            # PEM cert path for turns:// (blank = no TLS listener)
+    turn_tls_key: str = ""             # PEM key path for turns://
+    turn_realm: str = "posterchan"
+    turn_shared_secret: str = ""       # HMAC secret shared by the minted creds + the Pion server (auto-generated)
+    turn_relay_min_port: str = "49160"  # relay UDP port range (small = few ports to forward; widen to scale)
+    turn_relay_max_port: str = "49200"
+    stun_fallback_urls: str = ""       # optional public STUN (comma list) used when turn_enabled is off
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

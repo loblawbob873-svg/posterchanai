@@ -35,6 +35,7 @@ source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
+source "$INSTALL_DIR/turn.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -60,6 +61,12 @@ fi
 # Add-on: install just the video generation (videogeni) deps into the existing image venv.
 if [ "$1" = "--video" ]; then
     setup_video_deps
+    exit $?
+fi
+
+# Add-on: build the built-in Pion TURN relay for voice/video calls (needs the Go toolchain).
+if [ "$1" = "--turn" ]; then
+    setup_turn_server
     exit $?
 fi
 

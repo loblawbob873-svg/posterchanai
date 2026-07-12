@@ -643,7 +643,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','settings','translate']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','calls','settings','translate']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -1048,7 +1048,7 @@
       restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
-      watchNotifications(); watchDeletions();
+      watchNotifications(); watchDeletions(); startCallSignaling();
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       // is published lazily on first DM use (renderMessages / send), NOT here — see ensureDmInboxList.
     };
@@ -1460,7 +1460,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
     renderView(true);
@@ -1493,6 +1493,7 @@
     if (VIEW==='articles') return renderArticles();
     if (VIEW==='market') return renderMarket();
     if (VIEW==='streams') return renderStreams();
+    if (VIEW==='calls') return renderCalls();
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
     if (VIEW==='chat') return renderChatrooms();
@@ -4186,8 +4187,8 @@
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI + Translate in Nostr-only deployments
+    const items=[['ai','🤖','PosterChan AI'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['admin','🛠️','Admin'],['logout','⎋','Logout']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai') && !(v==='admin' && !IS_ADMIN));   // hide AI+Translate in Nostr-only; Admin only for admins
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     const _stat=(_wot||_lastOnline||_lastRelay)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}</div>`:'';
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
@@ -4201,7 +4202,7 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
+    const items=[['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
@@ -6427,6 +6428,7 @@
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div style="flex:1"></div>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button> <button class="btn btn-ghost small" id="open-settings">⚙ Settings</button> <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`:`
+          <button class="btn btn-ghost small" id="call-prof" title="voice/video call">📞 Call</button>
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div>
@@ -6482,7 +6484,8 @@
       peopleModal('Followers', _prof.followers||[]);
     };
     if(mine){ $('#edit-prof').onclick=()=>editProfile(p); $('#open-settings').onclick=()=>switchView('settings'); }
-    else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk); }
+    else { const z=$('#zap-prof'); if(z)z.onclick=()=>doZap(null,pk);
+      const cb=$('#call-prof'); if(cb)cb.onclick=()=>startCall(pk, {video:false}); }
     { const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn); }   // ☰ on own + others' profiles
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
@@ -8886,6 +8889,219 @@
 
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
+  // ===== Voice/Video calls (WebRTC, P2P-first, signaled over Nostr) =====
+  // Signaling = ephemeral kind-25050 events, NIP-44-encrypted {v,callId,t,sdp|cand|video} to the peer's
+  // p-tag (federates over Nostr → works CROSS-INSTANCE). Media = RTCPeerConnection with ICE servers from
+  // /api/calls/turn-credentials (STUN → direct P2P; the built-in TURN relay is only the NAT fallback).
+  // 1:1, no mid-call renegotiation: media (audio ± video) is fixed at call start; mute/camera just toggle
+  // track.enabled. Audio-first — video is opt-in per call.
+  const CALL_KIND = 25050;
+  let _call = null;               // { id, peer, pc, local, remote, video, state, caller, invite, pendingIce, muted, camOff, timeout }
+  let _callSub = null;            // global signaling subscription id
+  const _callSeen = new Set();    // processed signaling event ids (dedup on reconnect re-arm)
+  let _ringOsc = null;
+  let _wakeLock = null;
+  function _rid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  // Screen Wake Lock — keep the screen (and the call) alive during a call; re-acquired on foreground since
+  // the OS drops it when hidden. Pure JS (no native plugin); background-with-screen-off audio is a follow-up.
+  async function _callWake(on){
+    try{
+      if(on){ if(!_wakeLock && navigator.wakeLock){ _wakeLock = await navigator.wakeLock.request('screen'); if(_wakeLock.addEventListener) _wakeLock.addEventListener('release', ()=>{ _wakeLock=null; }); } }
+      else if(_wakeLock){ const w=_wakeLock; _wakeLock=null; try{ await w.release(); }catch(_){} }
+    }catch(_){}
+  }
+  document.addEventListener('visibilitychange', ()=>{ if(_call && document.visibilityState==='visible') _callWake(true); });
+
+  async function _fetchIceServers(){
+    try{ await ensureAiSession(); }catch(_){}
+    try{
+      const r = await fetch('/api/calls/turn-credentials', { headers: _aiToken?{'Authorization':'Bearer '+_aiToken}:{} });
+      if(r.ok) return await r.json();
+    }catch(_){}
+    return { iceServers: [], defaultVideo:false };
+  }
+  async function _callSend(peerHex, obj){
+    try{
+      const ct = await signer.nip44enc(peerHex, JSON.stringify(obj));
+      const ev = await sign(CALL_KIND, ct, [['p', peerHex]]);   // ephemeral, not stored, no client tag
+      Relay.publish(ev);
+    }catch(_){}
+  }
+  function _newPc(iceServers){
+    const pc = new RTCPeerConnection({ iceServers: iceServers||[], iceCandidatePoolSize: 1 });
+    pc.onicecandidate = e => { if(e.candidate && _call) _callSend(_call.peer, {v:1, callId:_call.id, t:'ice', cand:e.candidate.toJSON()}); };
+    pc.ontrack = e => { if(!_call) return; _call.remote = e.streams[0]; _callUI(); };
+    pc.onconnectionstatechange = () => { if(!_call || _call.pc!==pc) return;
+      const st=pc.connectionState;
+      if(st==='connected'){ _call.state='connected'; _callUI(); }
+      else if(st==='failed'){ _hangup(false); }   // ICE/relay failure → also tell the peer (its side may still think it's up)
+      else if(st==='closed'){ _hangup(true); }
+      else _callUI();
+    };
+    return pc;
+  }
+  function _getMedia(video){
+    return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
+  }
+  async function startCall(peerHex, opts){
+    if(GUEST){ _guestPrompt(); return; }
+    if(!peerHex || peerHex===ME.pubkey){ return; }
+    if(_call){ toast('already in a call'); return; }
+    const video = !!(opts && opts.video);
+    _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, state:'calling', caller:true, pendingIce:[] };
+    _callUI();
+    let local;
+    try{ local = await _getMedia(video); }catch(_){ toast('microphone/camera permission needed'); _callTeardown(); return; }
+    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
+    _call.local = local;
+    const ice = await _fetchIceServers();
+    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    const pc = _newPc(ice.iceServers); _call.pc = pc;
+    local.getTracks().forEach(t=> pc.addTrack(t, local));
+    // Guard the SDP dance: a createOffer/setLocalDescription rejection (SDP/codec/hardware quirk) or a
+    // hangup during these awaits must tear down cleanly, not wedge _call in 'calling' forever.
+    try{
+      const offer = await pc.createOffer();
+      if(!_call || _call.pc!==pc){ return; }
+      await pc.setLocalDescription(offer);
+      if(!_call || _call.pc!==pc){ return; }
+    }catch(_){ toast('couldn’t start the call'); _hangup(false); return; }
+    _callUI();
+    await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, sdp: pc.localDescription.sdp});
+    if(_call) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
+  }
+  async function _acceptCall(){
+    if(!_call || _call.state!=='ringing') return;
+    _call.state='connecting'; _ringtone(false); clearTimeout(_call.timeout); _callUI();   // sync guard: a 2nd Accept tap now fails the state check
+    const invite = _call.invite;
+    let local;
+    try{ local = await _getMedia(_call.video); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
+    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    _call.local = local; _callUI();
+    const ice = await _fetchIceServers();
+    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    const pc = _newPc(ice.iceServers); _call.pc = pc;
+    local.getTracks().forEach(t=> pc.addTrack(t, local));
+    try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
+    for(const c of (_call.pendingIce||[])){ try{ await pc.addIceCandidate(c); }catch(_){} }
+    _call.pendingIce=[];
+    const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+    await _callSend(_call.peer, {v:1, callId:_call.id, t:'answer', sdp: pc.localDescription.sdp});
+  }
+  function _declineCall(){ if(_call){ _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
+  function _hangup(silent){ if(_call){ if(!silent) _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
+  function _callTeardown(){
+    if(!_call) return;
+    try{ clearTimeout(_call.timeout); }catch(_){}
+    try{ if(_call.pc) _call.pc.close(); }catch(_){}
+    try{ if(_call.local) _call.local.getTracks().forEach(t=>t.stop()); }catch(_){}
+    _call = null; _callUI();
+  }
+  function _onCallEvent(ev){
+    if(!ev || _callSeen.has(ev.id)) return; _callSeen.add(ev.id);
+    if(_callSeen.size>500){ _callSeen.clear(); _callSeen.add(ev.id); }
+    (async()=>{
+      let msg; try{ msg = JSON.parse(await signer.nip44dec(ev.pubkey, ev.content)); }catch(_){ return; }
+      const from = ev.pubkey;
+      if(msg.t==='invite'){
+        if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
+        if(_call && _call.caller && _call.peer===from && _call.state==='calling'){
+          // GLARE — we're both calling each other. Deterministic tiebreak by pubkey so it doesn't fail:
+          // the LOWER pubkey keeps its outgoing offer (ignore the incoming); the HIGHER drops its outgoing
+          // and rings/answers theirs. Both sides converge on the lower-pubkey's single call.
+          if(ME.pubkey < from) return;
+          try{ clearTimeout(_call.timeout); if(_call.pc) _call.pc.close(); if(_call.local) _call.local.getTracks().forEach(t=>t.stop()); }catch(_){}
+          _call = null;   // yield → fall through and ring their invite
+        }
+        if(_call){ _callSend(from, {v:1, callId:msg.callId, t:'bye'}); return; }   // busy with someone else → auto-decline
+        _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video, state:'ringing', caller:false, invite:msg, pendingIce:[] };
+        // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
+        _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _callTeardown(); } }, 60000);
+        try{ needProfile(from); }catch(_){}
+        _ringtone(true); _callUI();
+        try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 '+(p.name||'Incoming call'), {body:'tap to answer', tag:'pc-call'}); } }catch(_){}
+        return;
+      }
+      if(!_call || from!==_call.peer || msg.callId!==_call.id) return;
+      if(msg.t==='answer'){ if(_call.pc){ try{
+          await _call.pc.setRemoteDescription({type:'answer', sdp:msg.sdp});
+          for(const c of (_call.pendingIce||[])){ try{ await _call.pc.addIceCandidate(c); }catch(_){} } _call.pendingIce=[];   // drain ICE that beat the answer (relays don't order events)
+          clearTimeout(_call.timeout); if(_call.state==='calling'){ _call.state='connecting'; _callUI(); }                       // answered → the 45s no-answer timer must not abort ICE negotiation
+        }catch(_){} } }
+      else if(msg.t==='ice'){ const c=msg.cand; if(_call.pc && _call.pc.remoteDescription){ try{ await _call.pc.addIceCandidate(c); }catch(_){} } else { (_call.pendingIce||(_call.pendingIce=[])).push(c); } }
+      else if(msg.t==='bye'){ if(_call.state!=='connected') toast('call ended'); _callTeardown(); }
+    })();
+  }
+  function startCallSignaling(){
+    if(_callSub || !ME || !window.RTCPeerConnection) return;
+    try{ _callSub = Relay.subscribe([{ '#p':[ME.pubkey], kinds:[CALL_KIND], since: Math.floor(Date.now()/1000)-5 }], { onEvent:_onCallEvent, live:true }); }catch(_){}
+  }
+  function _ringtone(on){
+    try{
+      if(on){
+        if(!_ringOsc){ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return; const ctx=new AC();
+          const beep=()=>{ try{ const o=ctx.createOscillator(), g=ctx.createGain(); o.frequency.value=480; o.connect(g); g.connect(ctx.destination);
+            g.gain.setValueAtTime(0.0001,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.14,ctx.currentTime+0.05); g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.5);
+            o.start(); o.stop(ctx.currentTime+0.55); }catch(_){} };
+          beep(); _ringOsc={ctx, iv:setInterval(beep,1400)}; }
+        try{ navigator.vibrate && navigator.vibrate([400,200,400]); }catch(_){}
+      } else { if(_ringOsc){ clearInterval(_ringOsc.iv); try{ _ringOsc.ctx.close(); }catch(_){} _ringOsc=null; } try{ navigator.vibrate && navigator.vibrate(0); }catch(_){} }
+    }catch(_){}
+  }
+  function _callStatus(){ if(!_call) return ''; return {calling:'calling…', ringing:_call.caller?'ringing…':'📞 incoming call', connecting:'connecting…', connected:'connected'}[_call.state]||_call.state; }
+  function _callUI(){
+    let el=document.getElementById('call-overlay');
+    if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); return; }
+    _callWake(true);
+    if(_call.state!=='ringing') _ringtone(false);
+    if(!el){
+      el=document.createElement('div'); el.id='call-overlay';
+      el.innerHTML=`<video id="call-remote" class="call-remote" autoplay playsinline></video>
+        <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div></div>
+        <video id="call-local" class="call-local" autoplay playsinline muted></video>
+        <div class="call-actions" id="call-actions"></div>`;
+      document.body.appendChild(el);
+    }
+    const p=profOf(_call.peer)||{};
+    const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
+    const nm=document.getElementById('call-name'); if(nm) nm.textContent=(p.name||p.display_name||'anon');
+    const stx=document.getElementById('call-status'); if(stx) stx.textContent=_callStatus();
+    el.className='call-overlay'+(_call.video?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'');
+    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=_call.video?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
+    const lv=document.getElementById('call-local'); if(lv){ lv.style.display=_call.video?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
+    const acts=document.getElementById('call-actions');
+    const html = (_call.state==='ringing' && !_call.caller)
+      ? `<button class="call-btn accept" id="call-accept">📞 Accept</button><button class="call-btn decline" id="call-decline">✕ Decline</button>`
+      : `<button class="call-btn" id="call-mute" title="mute">${_call.muted?'🔇':'🎙️'}</button>${_call.video?`<button class="call-btn" id="call-cam" title="camera">${_call.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="call-hang" title="end">✕</button>`;
+    if(acts && acts.dataset.k!==html){ acts.dataset.k=html; acts.innerHTML=html;
+      const b=id=>document.getElementById(id);
+      if(b('call-accept')) b('call-accept').onclick=_acceptCall;
+      if(b('call-decline')) b('call-decline').onclick=_declineCall;
+      if(b('call-hang')) b('call-hang').onclick=()=>_hangup(false);
+      if(b('call-mute')) b('call-mute').onclick=()=>{ if(_call&&_call.local){ _call.muted=!_call.muted; _call.local.getAudioTracks().forEach(t=>t.enabled=!_call.muted); _callUI(); } };
+      if(b('call-cam')) b('call-cam').onclick=()=>{ if(_call&&_call.local){ _call.camOff=!_call.camOff; _call.local.getVideoTracks().forEach(t=>t.enabled=!_call.camOff); _callUI(); } };
+    }
+  }
+  function renderCalls(){
+    const feed=$('#feed'); if(!feed) return;
+    if(GUEST){ feed.innerHTML='<div class="empty">Log in to make calls.</div>'; return; }
+    const contacts=[...FOLLOWS].slice(0,60);
+    feed.innerHTML=`<div class="calls-view">
+      <h2 style="margin:0 0 4px">📞 Calls</h2>
+      <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
+      <div class="call-start">
+        <input id="call-npub" class="input" placeholder="npub1… or name@domain to call" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <label class="muted small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="call-start-video"> start with video</label>
+        <button class="btn btn-neon full" id="call-start-btn">📞 Call</button>
+      </div>
+      <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
+    </div>`;
+    const go=async(pk)=>{ if(pk) startCall(pk, {video: (document.getElementById('call-start-video')||{}).checked}); };
+    $('#call-start-btn').onclick=async()=>{ let v=($('#call-npub').value||'').trim(); if(!v) return; let pk=safePk(v); if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} } if(!pk){ toast('could not resolve that address'); return; } go(pk); };
+    $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
+    contacts.forEach(pk=>needProfile(pk));
+  }
+
   window.__PC = {
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     ensureProfile: _ensureProfile, NT,

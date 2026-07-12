@@ -2,6 +2,78 @@
 <div class="tab-content" id="tab-services">
 
     <fieldset>
+        <legend>📞 Voice/Video Calls + Built-in TURN Relay</legend>
+        <div class="form-group">
+            <label for="calls_enabled">
+                <input type="checkbox" id="calls_enabled" name="calls_enabled"> Enable calls in the client
+            </label>
+            <small>Shows the 📞 Calls feature (WebRTC, P2P-first, signaled over Nostr — works across instances). Media is peer-to-peer when possible; the TURN relay below is only the NAT fallback.</small>
+        </div>
+        <div class="form-group">
+            <label for="calls_default_video">
+                <input type="checkbox" id="calls_default_video" name="calls_default_video"> Start calls with video by default
+            </label>
+            <small>Off = audio-first (recommended: saves bandwidth/battery; video is a per-call toggle).</small>
+        </div>
+        <hr>
+        <div class="form-group">
+            <label for="turn_enabled">
+                <input type="checkbox" id="turn_enabled" name="turn_enabled"> Run the built-in TURN relay
+            </label>
+            <small><strong>Needs one open public port</strong> and a grey-clouded <code>turn.&lt;domain&gt;</code> DNS record. Build the relay once with <code>./install.sh --turn</code> (or the Docker image). Enables calls for users behind strict NAT.</small>
+        </div>
+        <div class="form-group">
+            <label for="turn_domain">TURN domain</label>
+            <input type="text" id="turn_domain" name="turn_domain" placeholder="turn.poster.place">
+            <small>Grey-clouded (DNS-only, NOT proxied) A record pointing at this server's public IP. Used in ICE URLs + must match the TLS cert.</small>
+        </div>
+        <div class="form-group">
+            <label for="turn_public_ip">Public IP</label>
+            <input type="text" id="turn_public_ip" name="turn_public_ip" placeholder="203.0.113.10">
+            <small>The server's public IP, advertised in relay candidates. <strong>Required</strong> when the relay is enabled.</small>
+        </div>
+        <div class="form-group">
+            <label for="turn_port">Port (UDP+TCP)</label>
+            <input type="text" id="turn_port" name="turn_port" placeholder="3478">
+        </div>
+        <div class="form-group">
+            <label for="turn_tls_port">TLS port (turns://) — optional</label>
+            <input type="text" id="turn_tls_port" name="turn_tls_port" placeholder="443 (blank = off)">
+            <small>TURN-over-TLS traverses restrictive/mobile networks that only allow 443. Needs a cert/key below.</small>
+        </div>
+        <div class="form-group">
+            <label for="turn_tls_cert">TLS cert path</label>
+            <input type="text" id="turn_tls_cert" name="turn_tls_cert" placeholder="/etc/letsencrypt/live/turn.poster.place/fullchain.pem">
+        </div>
+        <div class="form-group">
+            <label for="turn_tls_key">TLS key path</label>
+            <input type="text" id="turn_tls_key" name="turn_tls_key" placeholder="/etc/letsencrypt/live/turn.poster.place/privkey.pem">
+        </div>
+        <div class="form-group">
+            <label for="turn_relay_min_port">Relay port range</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input type="text" id="turn_relay_min_port" name="turn_relay_min_port" placeholder="49160" style="max-width:120px;">
+                <span>–</span>
+                <input type="text" id="turn_relay_max_port" name="turn_relay_max_port" placeholder="49200" style="max-width:120px;">
+            </div>
+            <small>UDP range for relayed media. Small = few ports to forward; widen for many concurrent relays. Forward this range too.</small>
+        </div>
+        <div class="form-group">
+            <label for="turn_shared_secret">Shared secret (auto-generated)</label>
+            <input type="text" id="turn_shared_secret" name="turn_shared_secret" placeholder="(auto-generated on first start)">
+            <small>HMAC secret shared by the credential minter + the Pion relay. Leave blank to auto-generate; changing it invalidates active credentials.</small>
+        </div>
+        <div class="form-group">
+            <label for="stun_fallback_urls">Public STUN fallback (when relay is off)</label>
+            <input type="text" id="stun_fallback_urls" name="stun_fallback_urls" placeholder="stun:stun.l.google.com:19302">
+            <small>Optional. Only used when the built-in relay is disabled, so P2P can still gather reflexive candidates.</small>
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+            <small><strong>Note:</strong> the app supervises the relay automatically — toggling "Run the built-in TURN relay" takes effect within a few seconds (no restart needed), provided the binary is built and a Public IP is set.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>System Health Report (Schedulers)</legend>
         <div class="form-group">
             <label for="logs_scheduler_enabled">

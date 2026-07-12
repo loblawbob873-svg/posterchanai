@@ -316,6 +316,22 @@ def init_db():
             # (local acestep / the Docker `music` profile / install.sh --music). The GPU swap
             # (prepare_for_music) frees other models first, so it's safe to leave enabled.
             "music_enabled": "true",
+            # Voice/video calls + built-in Pion TURN relay. Calls (P2P-first WebRTC) are ON in the client;
+            # the TURN relay is OFF by default (needs one open public port + a grey-clouded turn.<domain>).
+            # turn_shared_secret stays blank here and is auto-generated on first TURN start (turn_service).
+            "calls_enabled": ("false" if os.environ.get("POSTERCHANAI_CALLS", "1") in ("0", "false") else "true"),
+            "calls_default_video": "false",
+            # POSTERCHANAI_TURN is a Docker on/off flag ("1"); map it to the "true"/"false" the code checks.
+            "turn_enabled": ("true" if os.environ.get("POSTERCHANAI_TURN", "0") in ("1", "true") else "false"),
+            "turn_domain": os.environ.get("POSTERCHANAI_TURN_DOMAIN", ""),
+            "turn_public_ip": os.environ.get("POSTERCHANAI_TURN_PUBLIC_IP", ""),
+            "turn_port": os.environ.get("POSTERCHANAI_TURN_PORT", "3478"),
+            "turn_tls_port": os.environ.get("POSTERCHANAI_TURN_TLS_PORT", ""),
+            "turn_realm": "posterchan",
+            "turn_shared_secret": "",
+            "turn_relay_min_port": "49160",
+            "turn_relay_max_port": "49200",
+            "stun_fallback_urls": "",
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

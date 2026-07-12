@@ -25,6 +25,11 @@ x-common: &common
     - "${POSTERCHANAI_PORT:-3051}:3051"
     # Built-in Nostr relay (NIP-01). Only useful with POSTERCHANAI_NOSTR_RELAY=1 (binds 0.0.0.0).
     - "${POSTERCHANAI_NOSTR_RELAY_PORT:-3052}:3052"
+    # Built-in TURN/STUN relay for voice/video calls (only used with POSTERCHANAI_TURN=1 + a public IP).
+    # Also forward these on your router. Widen the relay UDP range for many concurrent relays.
+    - "${POSTERCHANAI_TURN_PORT:-3478}:3478/udp"
+    - "${POSTERCHANAI_TURN_PORT:-3478}:3478/tcp"
+    - "49160-49200:49160-49200/udp"
   environment:
     - POSTERCHANAI_PORT=3051
     # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
@@ -47,6 +52,12 @@ x-common: &common
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
     - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
     - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
+    # Turnkey voice/video calls: set POSTERCHANAI_TURN=1 + your PUBLIC IP and the app runs the built-in
+    # TURN relay (the binary is baked into the image). Calls work P2P for most users without it; it's the
+    # NAT fallback. Needs the ports above reachable (a grey-clouded turn.<domain> record is recommended).
+    - POSTERCHANAI_TURN=${POSTERCHANAI_TURN:-0}
+    - POSTERCHANAI_TURN_PUBLIC_IP=${POSTERCHANAI_TURN_PUBLIC_IP:-}
+    - POSTERCHANAI_TURN_DOMAIN=${POSTERCHANAI_TURN_DOMAIN:-}
     # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
     # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
     - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
