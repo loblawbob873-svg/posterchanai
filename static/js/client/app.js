@@ -9161,7 +9161,6 @@
       <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
       <div class="call-start">
         <input id="call-npub" class="input" placeholder="npub1… or name@domain to call" autocapitalize="none" autocorrect="off" spellcheck="false">
-        <label class="muted small" style="display:flex;gap:6px;align-items:center;margin:8px 0"><input type="checkbox" id="call-start-video"> start with video</label>
         <button class="btn btn-neon full" id="call-start-btn">📞 Call</button>
         <button class="btn full" id="grp-toggle" style="margin-top:8px">👥 Start a group call</button>
       </div>
@@ -9172,11 +9171,11 @@
       </div>
       <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
-    const go=async(pk)=>{ if(pk) startCall(pk, {video: (document.getElementById('call-start-video')||{}).checked}); };
+    const go=async(pk)=>{ if(pk) startCall(pk, {video:false}); };   // audio-first; add video mid-call with the in-call button
     $('#call-start-btn').onclick=async()=>{ let v=($('#call-npub').value||'').trim(); if(!v) return; let pk=safePk(v); if(!pk && v.includes('@')){ try{ pk=await nip05Resolve(v.toLowerCase()); }catch(_){} } if(!pk){ toast('could not resolve that address'); return; } go(pk); };
     $$('.call-contact',feed).forEach(b=> b.onclick=()=> go(b.dataset.pk));
     const gt=$('#grp-toggle'), gp=$('#grp-panel'); if(gt&&gp) gt.onclick=()=>{ const on=gp.style.display==='none'; gp.style.display=on?'':'none'; gt.textContent=on?'✕ Cancel group call':'👥 Start a group call'; };
-    if($('#grp-start')) $('#grp-start').onclick=()=>{ const pks=$$('.grp-pick',feed).filter(c=>c.checked).map(c=>c.value); if(!pks.length){ toast('pick at least one person'); return; } startGroupCall(pks, (document.getElementById('call-start-video')||{}).checked); };
+    if($('#grp-start')) $('#grp-start').onclick=()=>{ const pks=$$('.grp-pick',feed).filter(c=>c.checked).map(c=>c.value); if(!pks.length){ toast('pick at least one person'); return; } startGroupCall(pks, false); };
     contacts.forEach(pk=>needProfile(pk));
   }
 
