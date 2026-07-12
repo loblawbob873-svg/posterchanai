@@ -565,18 +565,24 @@
     try{ const r = await fetch(dec); if(r && r.ok){ const b = await r.blob(); if(b && b.size) return b; } }catch(_){}
     return null;
   }
+  let _lastShareSig='';
   async function _consumeSendIntent(){
     try{
       const SI = _capPlugin('SendIntent', 'checkSendIntentReceived');
       if(!SI) return false;
       let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }
       if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
-      if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} return false; }
+      // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
+      // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
+      // with the composer instead. Because the intent then persists, checkSendIntentReceived keeps returning
+      // the same share on every startup/resume — so dedupe by signature and process each share once.
+      const sig=(res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0);
+      if(sig===_lastShareSig) return false; _lastShareSig=sig;
+      if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} _lastShareSig=''; return false; }  // retry after login
       const type=(res.type||'');
       // text/plain share → the plugin puts the TEXT (not a file URI) in `url`; don't try to read it as a file.
       if(type.indexOf('text/')===0){
         const txt=[res.url, res.title].map(s=>(s||'').trim()).filter(Boolean).join('\n');
-        try{ SI.finish && SI.finish(); }catch(_){}
         if(!txt){ try{ toast('Shared text was empty'); }catch(_){} return false; }
         switchView('home'); compose({ text: txt }); return true;
       }
@@ -589,7 +595,6 @@
         const blob=await _readSharedFile(u, type);
         if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||type||'application/octet-stream' }));
       }
-      try{ SI.finish && SI.finish(); }catch(_){}
       if(!files.length){ try{ toast('Couldn’t read the shared file'); }catch(_){} return false; }
       switchView('home'); compose({ files });
       return true;
