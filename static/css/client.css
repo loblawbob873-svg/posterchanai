@@ -437,6 +437,10 @@ a.btn.full{display:block}
 /* Native Android app (Capacitor, body.native from the bundle shim): the WebView is edge-to-edge under the
    system status bar, and tablets report env(safe-area-inset-top)=0, so the login logo and the topbar brand
    collided with the status-bar clock/date ('date over logo'). Reserve at least a status-bar height up top. */
+/* Native app: a WebView has no NIP-07 browser extension (window.nostr is never injected), so the
+   "Sign in with extension" button can't work — hide it. Amber / remote signer (NIP-46) is the mobile
+   equivalent and stays; nsec + create-identity also work. */
+body.native #btn-nip07{display:none}
 body.native .auth-gate{padding-top:calc(18px + max(env(safe-area-inset-top), 28px))}
 body.native .topbar{padding-top:calc(14px + max(env(safe-area-inset-top), 28px))}
 /* Sidebar runs edge-to-edge under BOTH system bars in the app: inset the top (status bar) and the bottom
