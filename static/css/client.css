@@ -2151,14 +2151,16 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 /* Phone live-stream overlay (WHIP go-live from the camera) */
 .phone-live{position:fixed;inset:0;z-index:9600;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
 .phone-live video{max-width:100%;max-height:78vh;transform:scaleX(-1);border-radius:10px}
+.phone-live video.rear{transform:none}   /* only the front (selfie) camera is mirrored */
 .phone-live .pl-badge{position:absolute;top:calc(env(safe-area-inset-top,0) + 14px);left:16px;background:#e0245e;color:#fff;font-weight:700;padding:5px 12px;border-radius:20px;letter-spacing:.5px}
-.phone-live #pl-stop{position:absolute;bottom:calc(env(safe-area-inset-bottom,0) + 24px)}
+.phone-live .pl-actions{position:absolute;bottom:calc(env(safe-area-inset-bottom,0) + 24px);display:flex;gap:10px;align-items:center}
 
 /* Go Live divider */
 .gl-or{text-align:center;margin:12px 0;color:var(--muted,#8a8db3);font-size:13px}
 
 /* Live stream chat (NIP-53 kind-1311) — beside the player on desktop, below on mobile */
 .stream-layout{display:flex;gap:16px;align-items:flex-start}
+.stream-layout.chat-hidden .stream-chat{display:none}
 .stream-main{flex:1;min-width:0}
 .stream-chat{width:330px;flex:none;display:flex;flex-direction:column;border:1px solid var(--line,#2a2a3a);border-radius:12px;overflow:hidden;height:70vh}
 .st-chat-hd{padding:10px 12px;font-weight:700;border-bottom:1px solid var(--line,#2a2a3a);background:rgba(255,255,255,.03)}

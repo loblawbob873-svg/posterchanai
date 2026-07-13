@@ -2523,10 +2523,10 @@
     const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
     const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
-      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</div>
+      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button><span style="display:flex;gap:6px"><button class="btn btn-ghost small" id="st-chat-toggle">💬 Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
-      <div class="stream-layout">
+      <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
         <div class="stream-main">
           ${url?`<video class="stream-player" id="st-video" controls playsinline></video>
             <div class="muted small" id="st-note"></div>
@@ -2541,12 +2541,17 @@
       </div>
     </div>`;
     $('#st-back').onclick=()=>{ _closeStreamChat(); switchView('streams'); };
+    { const ct=$('#st-chat-toggle'); if(ct) ct.onclick=()=>{ const lay=feed.querySelector('.stream-layout'); if(!lay) return;
+        const hidden=lay.classList.toggle('chat-hidden'); ClientSettings.set('streamChatHidden', hidden);
+        // Actually stop the kind-1311 sub + poll when hidden (not just CSS-hide it) so 'hidden' means 'off'
+        // — no background relay traffic — and re-open it when shown again.
+        if(hidden) _closeStreamChat(); else _streamChat(saddr); }; }
     { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     decorateProfiles();
     if(url) attachStream(url);
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
-    _streamChat(saddr);
+    if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr);   // don't start the sub if chat is hidden
   }
   // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
   async function _deleteStream(e){
@@ -2744,8 +2749,8 @@
   async function _phoneGoLive(info, title, doAnnounce){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
     _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
-    let local=null, pc=null;
-    try{ local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:true}); }
+    let local=null, pc=null; let facing='user';
+    try{ local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:facing},audio:true}); }
     catch(_){ toast('camera/mic permission needed'); _goingLive=false; return; }
     toast('connecting…');
     try{
@@ -2777,7 +2782,7 @@
         if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
           pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
     }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
-    _phoneStream={ pc, local, token:info.token };
+    _phoneStream={ pc, local, token:info.token, facing };
     // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
@@ -2789,10 +2794,48 @@
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
-    el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button>`;
+    el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
-    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
+    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.classList.toggle('rear', _phoneStream.facing==='environment'); v.play&&v.play().catch(()=>{}); }
     $('#pl-stop',el).onclick=()=>_endLive();
+    $('#pl-flip',el).onclick=()=>_flipCamera();
+  }
+  let _flipping=false;
+  // Switch between the front ('user') and rear ('environment') camera WITHOUT renegotiating: grab a new
+  // video track from the other camera and replaceTrack() it onto the existing WHIP sender, so viewers see
+  // the cut seamlessly. Audio and the peer connection are untouched.
+  async function _flipCamera(){
+    if(!_phoneStream || _flipping) return;
+    _flipping=true;
+    const ps=_phoneStream; const want = ps.facing==='environment' ? 'user' : 'environment';
+    const bail=(t)=>{ if(t) toast(t); _flipping=false; };
+    let ns=null;
+    try{ ns=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:want}},audio:false}); }
+    catch(_){ return bail('couldn’t switch camera'); }
+    const nt=ns.getVideoTracks()[0];
+    // The stream may have ended (Stop tapped, or the pc dropped → _endLive) while we were acquiring the
+    // camera. If so _phoneStream is no longer ps and _endLive never saw this new track — stop it, or its
+    // LED/camera stays on with no UI to kill it (a privacy leak until reload).
+    if(_phoneStream!==ps || !nt){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail(); }
+    const sender=ps.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+    if(!sender){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail('couldn’t switch camera'); }
+    try{ await sender.replaceTrack(nt); }
+    catch(_){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail('couldn’t switch camera'); }
+    // replaceTrack succeeded — nt is now the OUTGOING track, so from here nothing may stop it. If the stream
+    // ended mid-swap, _endLive closed the pc already; just drop this now-orphan track.
+    if(_phoneStream!==ps){ try{ nt.stop(); }catch(_){} return bail(); }
+    // Swap the preview track + stop the OLD camera. Guarded so a preview hiccup can never stop the live nt.
+    try{ const old=ps.local.getVideoTracks()[0];
+      if(old){ ps.local.removeTrack(old); try{ old.stop(); }catch(_){} }
+      ps.local.addTrack(nt); }catch(_){}
+    // Trust the camera we ACTUALLY got, not what we asked for: a single-camera device returns the same
+    // front cam, so keying the mirror off `want` would un-mirror a still-selfie preview. Fall back to `want`
+    // only when the browser doesn't report facingMode.
+    let got=want; try{ const fm=nt.getSettings&&nt.getSettings().facingMode; if(fm) got=fm; }catch(_){}
+    ps.facing=got;
+    const v=$('#pl-vid'); if(v){ v.srcObject=ps.local; v.classList.toggle('rear', got==='environment'); v.play&&v.play().catch(()=>{}); }
+    _flipping=false;
   }
   async function _endLive(){
     if(!_liveStream && !_phoneStream) return;
