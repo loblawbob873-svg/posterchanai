@@ -29,9 +29,10 @@ any new file before running it, or it ships a broken (ImportError) tree to every
 (`git.poster.place`, Gitea) is what `sync.sh`/`git push` deploys to **production**, so push
 there **first**. The `github` remote (`github.com/loblawbob873-svg/posterchanai`) is a **public
 mirror** whose default branch is `main`, mapped from local `master`: push to it explicitly with
-`git push github master:main`. **Always prompt/confirm before pushing to GitHub** — it's public,
-so never push there automatically as part of a normal deploy. Keep local `master` tracking
-`origin` (so plain `git push` deploys, not publishes).
+`git push github master:main`. **Both remotes get every push, with no prompting** — finish a change
+by committing and pushing to `origin` first (deploy), then mirroring the same commits to `github`,
+so the public mirror never falls behind production. Keep local `master` tracking `origin` (so plain
+`git push` deploys, not publishes).
 
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 
