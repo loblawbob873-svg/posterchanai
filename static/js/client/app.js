@@ -2697,8 +2697,10 @@
   // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
   async function _publishLive(info, title){
     _endedStreams.delete(info.token);   // going live again with this token — allow adoption once more
-    _liveStream={ token:info.token, title, hls:info.hls_url };
     const starts=String(Math.floor(Date.now()/1000));
+    // `starts` is kept because the 30311 is REPLACEABLE: the viewer-count update re-signs this same event, and
+    // an update that omitted `starts` would silently erase the stream's start time for every client.
+    _liveStream={ token:info.token, title, hls:info.hls_url, starts };
     await publish(30311, '', [
       ['d', info.token], ['title', title], ['streaming', info.hls_url],
       ['status', 'live'], ['starts', starts],
@@ -2807,16 +2809,23 @@
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
-    el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
+    el.innerHTML=`<div class="pl-badge">● LIVE</div><div class="pl-viewers" id="pl-viewers">👁 0</div>
+      <video id="pl-vid" autoplay playsinline muted></video>
       <div class="pl-note" id="pl-note" hidden>🖥 Sharing your screen</div>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-chat">💬 Chat</button><button class="btn btn-ghost" id="pl-mute">🎤 Mute</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
+    _startViewerPoll();
     // A native screen share is captured OUTSIDE the WebView (MediaProjection), so there's no MediaStream to
     // preview here — previewing it in-app would be a hall of mirrors anyway. Show a placard instead.
     const v=$('#pl-vid',el);
     if(v && _phoneStream && !_phoneStream.native){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
     $('#pl-stop',el).onclick=e=>{ e.stopPropagation(); _endLive(); };
     $('#pl-flip',el).onclick=e=>{ e.stopPropagation(); _flipCamera(); };
+    // Read the chat WITHOUT dropping the broadcast: the overlay is full-screen, so the only way to reach the
+    // stream's chat used to be to stop streaming. Minimize to the thumbnail (the PeerConnection / capture
+    // service are untouched by this — the broadcast lives outside the DOM) and open the stream view.
+    $('#pl-chat',el).onclick=e=>{ e.stopPropagation(); _setMiniLive(true); switchView('streams'); };
+    $('#pl-mute',el).onclick=e=>{ e.stopPropagation(); _toggleMute(); };
     // The button is ALWAYS shown: hiding it on a browser without getDisplayMedia (mobile Chrome/Firefox, iOS
     // Safari — none of them implement screen capture) just looks like the feature is missing/broken. Say why.
     $('#pl-screen',el).onclick=e=>{ e.stopPropagation();
@@ -2827,6 +2836,53 @@
     $('#pl-min',el).onclick=e=>{ e.stopPropagation(); _setMiniLive(true); };
     el.onclick=()=>{ if(el.classList.contains('pl-mini')) _setMiniLive(false); };   // tap the thumbnail to come back
     _syncOverlayButtons();
+  }
+  // Mute the mic mid-broadcast, without interrupting the video. Two different mutes under one button: a camera
+  // stream's audio is a WebRTC track we can simply disable (the sender keeps running, it just sends silence),
+  // while a native screen share's mic is captured outside the WebView, so the plugin has to do it.
+  async function _toggleMute(){
+    const ps=_phoneStream; if(!ps) return;
+    const want=!ps.muted;
+    if(ps.native){
+      const SS=_capPlugin('ScreenShare','setMuted'); if(!SS){ toast('can’t mute this stream'); return; }
+      try{ const r=await SS.setMuted({ muted:want }); ps.muted=!!(r&&r.muted); }
+      catch(_){ toast('couldn’t mute the mic'); return; }
+    }else{
+      const t=(ps.local&&ps.local.getAudioTracks&&ps.local.getAudioTracks()[0])||null;
+      if(!t){ toast('this stream has no mic'); return; }
+      t.enabled=!want; ps.muted=want;
+    }
+    const b=$('#pl-mute'); if(b) b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute';
+    toast(ps.muted?'mic muted — viewers can’t hear you':'mic on');
+  }
+  // How many people are actually watching. MediaMTX counts the readers on the path; the app just asks. Also
+  // written back to the kind-30311 as `current_participants` (the NIP-53 tag other clients read to show
+  // "N watching"), but only when it CHANGES — the event is replaceable, and re-signing it on a timer for an
+  // unchanged number would be pointless relay churn.
+  let _viewerPoll=null, _viewersLast=-1;
+  function _startViewerPoll(){
+    _stopViewerPoll(); _viewersLast=-1;
+    const tick=async()=>{
+      const s=_liveStream||_phoneStream; if(!s||!s.token) return;
+      let n=0;
+      try{ const r=await fetch('/api/streams/viewers/'+encodeURIComponent(s.token)); if(!r.ok) return; n=(await r.json()).viewers||0; }
+      catch(_){ return; }
+      const el=document.getElementById('pl-viewers'); if(el) el.textContent='👁 '+n;
+      if(n!==_viewersLast){ _viewersLast=n; _publishViewers(n); }
+    };
+    tick(); _viewerPoll=setInterval(tick, 20000);
+  }
+  function _stopViewerPoll(){ if(_viewerPoll){ clearInterval(_viewerPoll); _viewerPoll=null; } }
+  // Re-sign the live 30311 with the current headcount, so viewers on ANY NIP-53 client (zap.stream, Amethyst)
+  // see it too — not just this app. Best-effort: a failure here must never disturb the broadcast.
+  async function _publishViewers(n){
+    const s=_liveStream; if(!s||!s.token||!ME) return;
+    try{ await publish(30311, '', [
+      ['d', s.token], ['title', s.title], ['streaming', s.hls],
+      ['status','live'], ['starts', s.starts||String(Math.floor(Date.now()/1000))],
+      ['current_participants', String(n)],
+      ['p', ME.pubkey, '', 'host'],
+    ]); }catch(_){}
   }
   // NB: the class is `pl-mini`, NOT `mini` — `.mini` is the global small-button class (and the winxp theme
   // overrides it with !important), which would hijack the thumbnail's styling.
@@ -3176,6 +3232,7 @@
   function _teardownPhoneStream(){
     const ps=_phoneStream; if(!ps) return;
     _phoneStream=null;
+    _stopViewerPoll();
     if(ps.native){ const SS=_screenPlugin(); try{ SS && SS.stop(); }catch(_){} _dropNativeScreen(); }
     try{ if(ps.pc) ps.pc.onconnectionstatechange=null; }catch(_){}
     try{ ps.pc && ps.pc.close(); }catch(_){}

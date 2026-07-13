@@ -131,6 +131,17 @@ public class ScreenSharePlugin extends Plugin {
     call.resolve();
   }
 
+  /** Mute/unmute the mic without interrupting the screen capture. */
+  @PluginMethod
+  public void setMuted(PluginCall call) {
+    ScreenShareService svc = ScreenShareService.INSTANCE;
+    boolean muted = Boolean.TRUE.equals(call.getBoolean("muted", false));
+    if (svc != null) svc.setMuted(muted);
+    JSObject ret = new JSObject();
+    ret.put("muted", svc != null && svc.isMuted());
+    call.resolve(ret);
+  }
+
   @PluginMethod
   public void isStreaming(PluginCall call) {
     ScreenShareService svc = ScreenShareService.INSTANCE;

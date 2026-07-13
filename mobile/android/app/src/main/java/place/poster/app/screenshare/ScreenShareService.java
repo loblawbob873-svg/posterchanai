@@ -67,8 +67,10 @@ public class ScreenShareService extends Service implements ConnectChecker {
   public static volatile ScreenShareService INSTANCE;
 
   private RtmpStream stream;
+  private MicrophoneSource mic;
   private MediaProjection projection;
   private boolean prepared = false;
+  private boolean muted = false;
 
   private static final int FPS = 30;
   private static final int V_BITRATE = 4_000_000;
@@ -99,8 +101,8 @@ public class ScreenShareService extends Service implements ConnectChecker {
     }
     // Start with NoVideoSource: the real ScreenSource needs a MediaProjection, which we may not create until
     // we're in the foreground (see onStartCommand). The source is swapped in once we have it.
-    stream = new RtmpStream(getApplicationContext(), this,
-        new NoVideoSource(), new MicrophoneSource(MediaRecorder.AudioSource.DEFAULT));
+    mic = new MicrophoneSource(MediaRecorder.AudioSource.DEFAULT);
+    stream = new RtmpStream(getApplicationContext(), this, new NoVideoSource(), mic);
     // MediaProjection only produces a frame when the screen CHANGES. On a static screen the encoder starves
     // and the RTMP feed stalls (no HLS segments, viewers see nothing) — force a floor of 15fps.
     stream.getGlInterface().setForceRender(true, 15);
@@ -215,6 +217,15 @@ public class ScreenShareService extends Service implements ConnectChecker {
   }
 
   public boolean isStreaming() { return stream != null && stream.isStreaming(); }
+
+  /** Mute/unmute the voiceover mid-broadcast. The capture keeps running; the mic just stops being encoded. */
+  public void setMuted(boolean value) {
+    if (mic == null) return;
+    if (value) mic.mute(); else mic.unMute();
+    muted = value;
+  }
+
+  public boolean isMuted() { return muted; }
 
   private void fail(String reason) {
     emit("error", reason);

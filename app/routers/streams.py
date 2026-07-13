@@ -329,6 +329,34 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
                     media_type=r.headers.get("content-type", "application/sdp"))
 
 
+@router.get("/viewers/{token}")
+async def stream_viewers(token: str):
+    """How many people are actually watching, straight from MediaMTX.
+
+    Each HLS reader on the path is one viewer. Nothing here is secret — the token already rides the public
+    kind-30311 and the HLS url — so this needs no auth; it just reports what the media server already knows.
+    (The NIP-53 `current_participants` tag can only be written by the streamer's own client, which is what
+    consumes this.) Any failure reports "not live" rather than an error: a viewer count is decoration, and it
+    must never be able to break the page that shows it.
+    """
+    if not _stream_enabled():
+        return {"live": False, "viewers": 0}
+    if not token.isalnum():
+        return JSONResponse({"error": "bad token"}, status_code=400)
+    api_port = (settings_store.get("stream_api_port", "9997") or "9997").strip()
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=2.0)) as client:
+            r = await client.get(f"http://127.0.0.1:{api_port}/v3/paths/get/{token}")
+        if r.status_code != 200:
+            return {"live": False, "viewers": 0}
+        data = r.json()
+    except Exception:
+        return {"live": False, "viewers": 0}
+    readers = [x for x in (data.get("readers") or []) if isinstance(x, dict)]
+    return {"live": bool(data.get("ready")), "viewers": len(readers)}
+
+
 @router.get("/hls/{token}/{path:path}")
 async def stream_hls_proxy(token: str, path: str, request: Request):
     """Reverse-proxy HLS playlists/segments from the local MediaMTX HLS server.
