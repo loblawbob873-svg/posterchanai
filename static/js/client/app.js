@@ -986,7 +986,12 @@
       if(Date.now() - _hiddenAt > 6000) _resumeRelay();
       // Also: if an AI reply was still pending when we backgrounded, kick the recovery poll now (a slow
       // effect/video can finish while hidden where the timed recoverWatch is throttled). aiRecover self-guards.
-      if(VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId); });
+      if(VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId);
+      // Re-check for an APK update on every foreground. Native users background/foreground far more than
+      // they cold-restart, and a new APK is usually published while the app is open — a once-at-startup
+      // check would never surface it until a full restart. _checkApkUpdate self-guards (native-only, one-shot
+      // latch once found). Throttled so a burst of resume signals doesn't spam /apk/version.
+      if(Date.now() - _lastApkCheck > 300000){ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} } });
     // visibilitychange alone is unreliable on a phone waking from OFF: it can fire BEFORE the radio is
     // back, so wake()'s reconnect fails and the feed hangs on "request timeout" with no new posts. The
     // `online` event (network actually returned) and `pageshow` w/ persisted (restored from bfcache)
@@ -1112,6 +1117,7 @@
         }); }catch(_){} }
       }
       setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
+      setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
     }
     window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
@@ -6158,19 +6164,25 @@
   // service-worker "Update available" path can't fire. Instead poll /apk/version (latest published APK build)
   // and, when it's newer than the build baked into this bundle (__PC_APP_BUILD__), surface the SAME
   // "Update available" row — but applyUpdate downloads the new APK instead of reloading the SW.
-  let _apkUpdate=false;
+  let _apkUpdate=false, _lastApkCheck=0;
   async function _checkApkUpdate(){
     if(!window.Capacitor || !window.__PC_API_BASE__) return;   // bundled native app only (no-op in PWA)
+    if(_apkUpdate) return;                                      // already found one — the row/badge is up
     const mine=+(window.__PC_APP_BUILD__||0); if(!mine) return;
-    try{
-      const r=await fetch('/apk/version'); if(!r.ok) return;
-      const j=await r.json(); const latest=+((j&&j.build)||0);
-      if(latest>mine && !_apkUpdate){
-        _apkUpdate=true;
-        if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
-        else { _updBadge=true; try{ bumpNotif(); }catch(_){} try{ toast('⬆️ App update available — see Notifications'); }catch(_){} }
-      }
-    }catch(_){}
+    let latest=0;
+    // One retry: this often runs seconds after a cold start / resume, when the radio is still waking and the
+    // first fetch throws. The old single-shot swallowed that and never looked again until the next trigger.
+    for(let attempt=0; attempt<2 && !latest; attempt++){
+      try{
+        const r=await fetch('/apk/version'); if(!r.ok){ if(attempt) return; await new Promise(rs=>setTimeout(rs,3000)); continue; }
+        const j=await r.json(); latest=+((j&&j.build)||0);
+      }catch(_){ if(attempt) return; await new Promise(rs=>setTimeout(rs,3000)); }
+    }
+    if(latest>mine && !_apkUpdate){
+      _apkUpdate=true;
+      if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }
+      else { _updBadge=true; try{ bumpNotif(); }catch(_){} try{ toast('⬆️ App update available — see Notifications'); }catch(_){} }
+    }
   }
   // Single reload chokepoint for every update trigger (controllerchange, worker-activated, last-resort
   // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
