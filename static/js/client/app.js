@@ -567,9 +567,14 @@
   // Hand a share to the AI chat. Parked on _ai and consumed by aiMount once the chat has finished mounting
   // (the same handoff the Effects studio uses): attaching before the conversation load settles would have the
   // box re-render wipe the attachment straight back off.
+  // Returns false when the AI view can't take it, so the caller can fall back to the composer rather than
+  // park a payload on a view that will never mount: switchView('ai') silently redirects to 'home' on a
+  // Nostr-only deployment, which would swallow the share entirely (no attachment, no error).
   function _aiShare(share){
+    if(window.PC_NOSTR_ONLY){ toast('AI chat isn’t enabled on this server'); return false; }
     _ai.pendingShare=share;
     switchView('ai');
+    return true;
   }
   async function startAiShare(share){
     try{
@@ -613,24 +618,26 @@
       if(!SI) return false;
       let res=null; try{ res = await SI.checkSendIntentReceived(); }catch(_){ return false; }   // rejects when no share intent
       if(!res || (!res.url && !res.title && !res.description && !(res.additionalItems&&res.additionalItems.length))) return false;
+      // Which of the app's two share-sheet entries did they pick — "PosterChan" (compose a post) or
+      // "PosterChan AI" (hand it to the assistant)? The send-intent plugin only carries the payload; the
+      // choice lives in the launch intent's component, which ShareTarget reads. Resolved BEFORE the dedupe
+      // because it's part of the share's identity: sharing the same photo to the OTHER entry is a NEW share,
+      // and keying only on the payload would swallow it as a duplicate (app foregrounds, nothing happens).
+      let toAi=false;
+      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); } }catch(_){}
       // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
       // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
       // with the composer instead. Because the intent then persists, checkSendIntentReceived keeps returning
       // the same share on every startup/resume — so dedupe by signature and process each share once.
-      const sig=(res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0);
+      const sig=(res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0)+'|'+(toAi?'ai':'post');
       if(sig===_lastShareSig) return false; _lastShareSig=sig;
       if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} _lastShareSig=''; return false; }  // retry after login
-      // Which of the app's two share-sheet entries did they pick — "PosterChan" (compose a post) or
-      // "PosterChan AI" (hand it to the assistant)? The send-intent plugin only carries the payload; the
-      // choice lives in the launch intent's component, which ShareTarget reads.
-      let toAi=false;
-      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); } }catch(_){}
       const type=(res.type||'');
       // text/plain share → the plugin puts the TEXT (not a file URI) in `url`; don't try to read it as a file.
       if(type.indexOf('text/')===0){
         const txt=[res.url, res.title].map(s=>(s||'').trim()).filter(Boolean).join('\n');
         if(!txt){ try{ toast('Shared text was empty'); }catch(_){} return false; }
-        if(toAi){ _aiShare({ text: txt }); return true; }
+        if(toAi && _aiShare({ text: txt })) return true;   // falls through to the composer if AI is unavailable
         switchView('home'); compose({ text: txt }); return true;
       }
       const urls=[]; if(res.url) urls.push(res.url);
@@ -643,7 +650,7 @@
         if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||type||'application/octet-stream' }));
       }
       if(!files.length){ try{ toast('Couldn’t read the shared file'); }catch(_){} return false; }
-      if(toAi){ _aiShare({ files }); return true; }
+      if(toAi && _aiShare({ files })) return true;   // falls through to the composer if AI is unavailable
       switchView('home'); compose({ files });
       return true;
     }catch(_){ return false; }
@@ -2675,13 +2682,16 @@
     if(!mine) return;
     const tok=(mine.tags.find(t=>t[0]==='d')||[])[1];
     if(!tok || _endedStreams.has(tok)) return;
+    // Carry `starts` over from the adopted event. Without it every later republish of this replaceable 30311
+    // (the viewer count, the ended event) would invent a new start time — the stream would look like it began
+    // seconds ago and its duration would reset for every client.
+    const starts=(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at);
     _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
-                  hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'' };
+                  hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'', starts };
     if(_liveStream.hls) _startLiveHb();
     // Re-park the end-of-stream fallback: this stream may predate it, or the original park may have failed.
     // Harmless if one is already stored — the server keeps the "went live" state across a re-park.
-    _parkEndSentinel(tok, _liveStream.title, _liveStream.hls,
-                     (mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at));
+    _parkEndSentinel(tok, _liveStream.title, _liveStream.hls, starts);
   }
   async function _goLive(){
     if(GUEST){ _guestPrompt(); return; }
@@ -2914,6 +2924,11 @@
       ['current_participants', String(n)],
       ['p', ME.pubkey, '', 'host'],
     ]); }catch(_){ return; }
+    // The stream can END while that publish is in flight. Re-parking afterwards would POST a fresh sentinel
+    // (created_at = now+5, carrying NO `ends`) for a stream that's already over — outranking the accurate
+    // ended event _endLive just published and erasing its end time. Only re-park if this is STILL the live
+    // stream we started with.
+    if(_liveStream!==s) return;
     // CRITICAL: the parked "ended" sentinel was signed at go-live with created_at = start+5, and this
     // republish is NEWER — so on a replaceable address it now outranks the sentinel, and the server's
     // ghost-LIVE fallback would be dropped by relays as stale. The stream would sit "● LIVE" forever over a
@@ -3234,13 +3249,12 @@
     _syncOverlayButtons();
     // The camera is already gone, so a failure here leaves nothing to fall back to: end the stream rather
     // than strand viewers on a frozen frame.
-    try{ await SS.start({ url:ps.info.rtmp_native_url }); await connected; }
+    // Carry the mute across, IN the start call. The native mic is a different capture from the camera stream's
+    // audio track and starts unmuted, so muting it afterwards would put the user on air for the length of the
+    // round-trip — real audio from someone who believes they're muted, which is the worst failure this feature
+    // has. Passing it to start() means the service is already muted before it ever publishes a frame.
+    try{ await SS.start({ url:ps.info.rtmp_native_url, muted: !!ps.muted }); await connected; }
     catch(e){ if(_phoneStream===ps){ toast((e&&e.message)||'couldn’t start the screen stream'); _endLive(); } return release(false); }
-    // Carry the mute across. The native mic is a DIFFERENT capture from the camera stream's audio track, and
-    // it starts unmuted — so without this, muting the camera and then sharing your screen put your microphone
-    // back on air while the button still read "🔇 Unmute". Silently broadcasting someone who believes they're
-    // muted is the worst failure this feature has.
-    if(ps.muted){ try{ await SS.setMuted({ muted:true }); }catch(_){ ps.muted=false; toast('couldn’t keep the mic muted — it is LIVE'); } }
     { const b=$('#pl-mute'); if(b) b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute'; }
     return release(true);
   }

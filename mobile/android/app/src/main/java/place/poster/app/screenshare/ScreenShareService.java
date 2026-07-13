@@ -50,6 +50,7 @@ public class ScreenShareService extends Service implements ConnectChecker {
   public static final String EXTRA_RESULT_CODE = "resultCode";
   public static final String EXTRA_RESULT_DATA = "resultData";
   public static final String EXTRA_URL = "url";
+  public static final String EXTRA_MUTED = "muted";
 
   private static final String TAG = "ScreenShare";
   private static final String CHANNEL_ID = "screen_share";
@@ -173,6 +174,10 @@ public class ScreenShareService extends Service implements ConnectChecker {
       // Registering a MediaProjection.Callback is mandatory on Android 14+ — createVirtualDisplay() throws
       // IllegalStateException without one.
       stream.changeVideoSource(new ScreenSource(getApplicationContext(), projection, projectionCallback, null));
+      // Apply the mute BEFORE going on air. Muting after startStream would put the mic live for the length of
+      // the round-trip — real audio from someone who already told us they were muted (they muted the camera
+      // stream, then switched to the screen).
+      setMuted(intent.getBooleanExtra(EXTRA_MUTED, false));
       stream.startStream(url);
       emit("starting", "");
     } catch (Exception e) {

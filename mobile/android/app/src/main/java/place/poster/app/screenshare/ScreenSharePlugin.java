@@ -118,6 +118,8 @@ public class ScreenSharePlugin extends Plugin {
     svc.putExtra(ScreenShareService.EXTRA_RESULT_CODE, consentCode);
     svc.putExtra(ScreenShareService.EXTRA_RESULT_DATA, consentData);
     svc.putExtra(ScreenShareService.EXTRA_URL, url);
+    // Start muted when the user already was: applying it afterwards would broadcast them first.
+    svc.putExtra(ScreenShareService.EXTRA_MUTED, Boolean.TRUE.equals(call.getBoolean("muted", false)));
     consentData = null;       // one MediaProjection per consent — never reuse it
     ContextCompat.startForegroundService(getContext(), svc);
     call.resolve();           // 'connected'/'error' follow asynchronously on the screenShareStatus listener
