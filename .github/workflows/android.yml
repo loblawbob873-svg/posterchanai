@@ -116,7 +116,12 @@ jobs:
           keytool -importkeystore -noprompt \
             -srckeystore mobile/android/posterchan-release.keystore -srcstorepass posterchan \
             -destkeystore /tmp/release.p12 -deststoretype PKCS12 -deststorepass posterchan
-          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 \
-            || echo "::warning title=Zapstore::certificate linking failed — the listing may warn about the signer key"
+          # Surface zsp's ACTUAL error — a bare "|| echo failed" hid why, which cost a round-trip.
+          if ! KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 >/tmp/cert.log 2>&1; then
+            echo "::warning title=Zapstore::certificate linking failed: $(tr '\n' ' ' < /tmp/cert.log | cut -c1-400)"
+          else
+            echo "::notice title=Zapstore::signing certificate linked to the npub (kind 30509)."
+          fi
+          cat /tmp/cert.log || true
           /tmp/zsp publish -q zapstore.yaml
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
