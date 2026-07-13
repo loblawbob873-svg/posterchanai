@@ -3,6 +3,11 @@
 # Publishing is AUTOMATED: every APK built by .github/workflows/android.yml is published from that same job,
 # so a Zapstore release ships with every APK build. Nothing to run by hand.
 #
+# Publishing needs ONE thing set by hand: a GitHub **repository** secret (Settings → Secrets and variables →
+# Actions → Secrets tab) named exactly `ZAPSTORE_SIGN_WITH`, holding the nsec of the `pubkey` below. A
+# *variable*, a Dependabot/Codespaces secret, or an *environment* secret will NOT reach the workflow — the run
+# then annotates "Zapstore skipped" and ships the APK to GitHub Releases only.
+#
 # `pubkey` is load-bearing twice over:
 #   - it MUST match the key in the CI secret SIGN_WITH, or `zsp` refuses to publish;
 #   - the Zapstore relay fetches THIS file from the repo to confirm the app really belongs to that npub,
