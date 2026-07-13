@@ -73,7 +73,12 @@ check_dependencies() {
     else
         # OCR/translate of non-Latin images needs the matching traineddata; base tesseract ships eng only.
         _langs="$(tesseract --list-langs 2>/dev/null | tail -n +2 | tr '\n' ' ')"
-        if ! echo " $_langs " | grep -q " tha "; then
+        if [ -z "$_langs" ]; then
+            # Couldn't enumerate languages (older tesseract, permissions, or genuinely no traineddata
+            # installed). Don't claim all-good and don't misdirect a provisioned host into reinstalling —
+            # just note it so the operator can confirm the packs are present.
+            print_success "tesseract found (OCR available — could not list languages; ensure eng + non-Latin packs are installed)"
+        elif ! echo " $_langs " | grep -q " tha "; then
             print_warning "tesseract found but only English data - non-Latin OCR/translate (Thai, Chinese, …) will fail"
             case "$DISTRO" in
                 gentoo) echo "  Add language data via LINGUAS (e.g. LINGUAS=\"th zh-CN zh-TW ja ko ar ru hi es fr de\") then re-emerge app-text/tesseract" ;;

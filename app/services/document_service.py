@@ -87,36 +87,25 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             image.save(tmp_path, format='BMP')
 
         try:
-            # TWO-PASS OCR. English is the overwhelmingly common case, so run it ALONE first — fast, and no
-            # mixed-script mis-segmentation. Only if that finds little text (a non-Latin image: Thai, Chinese,
-            # Arabic, …) do we retry across every OTHER installed language pack. This fixes the "translate
-            # returned the source language" bug (eng-only OCR read nothing on a Thai image) WITHOUT slowing or
-            # degrading the English case, and every tesseract call is guarded so one corrupt/version-mismatched
-            # traineddata can never break OCR — it just falls back to the eng result.
-            def _ocr(lang):
-                try:
-                    return pytesseract.image_to_string(tmp_path, lang=lang) or ""
-                except pytesseract.TesseractError as e:
-                    logger.warning(f"Tesseract OCR error (lang={lang}): {e}")
-                    return None
-            text = _ocr("eng")
-            # Only retry when eng read essentially NOTHING (a genuinely non-Latin image). A legible short
-            # English image ("STOP", "LOL") gives eng text and must NOT trigger the multi-script pass —
-            # that pass can emit longer garbage glyphs that would win a naive length compare. eng is kept
-            # IN the retry set too, so even an edge-case trigger can't lose real English to garbage.
-            if len((text or "").strip()) < 2:
-                try:
-                    others = [l for l in pytesseract.get_languages(config="") if l not in ("osd", "eng")]
-                except Exception:
-                    others = []
-                if others:
-                    _pref = ["eng", "tha", "chi_sim", "chi_tra", "jpn", "kor", "ara", "rus", "hin", "spa", "fra", "deu"]
-                    ordered = ["eng"] + [l for l in _pref if l in others] + [l for l in others if l not in _pref]
-                    alt = _ocr("+".join(ordered))
-                    if alt and len(alt.strip()) > len((text or "").strip()):
-                        text = alt
-            if text is None:
-                text = ""
+            # ONE OCR pass across every installed language (eng + Thai/Chinese/Arabic/… when their packs are
+            # present). tesseract handles a multi-script lang string fine — it reads plain English, a short
+            # English sign, AND non-Latin text all correctly in a single pass — so there's no threshold to
+            # tune and no way for a "which pass wins" heuristic to pick garbage. This is the fix for the
+            # "translate returned the source language" bug: eng-only OCR read nothing on a Thai image; now
+            # the Thai pack is in the pass. If the combined pass errors (e.g. one corrupt/version-mismatched
+            # traineddata), fall back to eng-only so OCR still works. 'osd' is orientation data, not a language.
+            try:
+                langs = [l for l in pytesseract.get_languages(config="") if l != "osd"]
+            except Exception:
+                langs = ["eng"]
+            _pref = ["eng", "tha", "chi_sim", "chi_tra", "jpn", "kor", "ara", "rus", "hin", "spa", "fra", "deu"]
+            ordered = [l for l in _pref if l in langs] + [l for l in langs if l not in _pref]
+            lang = "+".join(ordered) or "eng"
+            try:
+                text = pytesseract.image_to_string(tmp_path, lang=lang)
+            except pytesseract.TesseractError as e:
+                logger.warning(f"Tesseract OCR error (lang={lang}), falling back to eng: {e}")
+                text = pytesseract.image_to_string(tmp_path, lang="eng")
         except pytesseract.TesseractNotFoundError:
             logger.warning("Tesseract OCR executable not found - OCR unavailable")
             return None

@@ -1312,9 +1312,10 @@
     if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
     if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
     if(relay>0) parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
-    // Live activity — shown only when there IS activity, so the ticker never reads "0 live / 0 in call".
-    if(streams>0) parts.push(`<span class="uc-stat uc-live" title="Live streams right now"><span class="uc-dot"></span>${STREAM_ICON} ${streams.toLocaleString()} live</span>`);
-    if(calls>0) parts.push(`<span class="uc-stat" title="People in a call right now">${CALL_ICON} ${calls.toLocaleString()} in call</span>`);
+    // Live activity — ALWAYS shown (even 0) so the streamers/callers counts are always visible; the
+    // pulsing red dot only appears when a stream is actually live.
+    parts.push(`<span class="uc-stat uc-live" title="Live streams right now">${streams>0?'<span class="uc-dot"></span>':''}${STREAM_ICON} ${streams.toLocaleString()} live</span>`);
+    parts.push(`<span class="uc-stat" title="People in a call right now">${CALL_ICON} ${calls.toLocaleString()} in call</span>`);
     if(parts.length){ uc.innerHTML=parts.join(''); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
