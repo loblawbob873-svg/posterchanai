@@ -117,25 +117,6 @@ class SubscriptionManager:
     def count(self, conn) -> int:
         return len(self._subs.get(conn, {}))
 
-    def has_listener(self, pubkey: str, kind: int) -> bool:
-        """Is anyone connected RIGHT NOW waiting for `kind` events addressed to `pubkey`?
-
-        Used to gate NIP-46 signer traffic, whose participants are ephemeral keys that can't be checked
-        against the web of trust. "Someone here is subscribed for this" is the honest test of whether an
-        event is wanted, rather than who signed it.
-        """
-        for subs in list(self._subs.values()):
-            for filters in list(subs.values()):
-                for f in (filters or []):
-                    if not f:
-                        continue
-                    kinds = f.get("kinds")
-                    if kinds and kind not in kinds:
-                        continue
-                    if pubkey in (f.get("#p") or ()):
-                        return True
-        return False
-
     def fanout(self, ev: dict, send) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
         non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
@@ -559,18 +540,17 @@ class RelayServer:
             # handshake ("blocked: signer traffic not for a web-of-trust member") and bunker login dies on our
             # own relay.
             #
-            # So gate on WANTEDNESS instead of identity: accept only if someone connected to this relay is
-            # actually subscribed for signer traffic addressed to that pubkey. That is exactly our own login in
-            # progress (the client subscribes for its app key before showing the QR; Amber subscribes for its
-            # signer key when it connects), and it refuses signer traffic aimed at nobody — so this is a
-            # transport for handshakes happening HERE, not an open ephemeral message bus.
-            _peers = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
-            _trusted = (self.gate.is_member(ev.get("pubkey", ""))
-                        or any(self.gate.is_member(p) for p in _peers))
-            _awaited = any(self.subs.has_listener(p, 24133) for p in _peers)
-            if _wot and not (_trusted or _awaited):
-                self._send(conn, ["OK", eid, False, "blocked: no one here is waiting for that signer traffic"])
-                return
+            # ACCEPT IT. Gating this on "is someone subscribed for that pubkey right now" was a mistake I made
+            # and it broke signing: the client sends its sign-request the instant you hit Post, and if the
+            # signer's socket happens to be down at that moment (phone dozing, Amber backgrounded, or simply
+            # connecting a second later) nobody is listening yet — so the relay REJECTED the request, signing
+            # failed, and the post was never even created. An identity gate is no better: the client side is an
+            # ephemeral app key and Amber signs with a per-app key, so neither party is in the web of trust.
+            #
+            # A kind-24133 is ephemeral: NOTHING is stored, it is only fanned out to whoever is subscribed. An
+            # event addressed to nobody is dropped by the fan-out anyway — refusing it bought us no safety and
+            # cost us the ordering hazard above. This is what public signer relays do.
+            pass
         elif kind == 25050:
             # Voice/video CALL signaling (WebRTC over Nostr): ephemeral, always p-tagged to the specific
             # peer. Either party may be OUTSIDE the local WoT — a brand-new test account, or a cross-instance
