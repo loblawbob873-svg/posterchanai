@@ -2511,8 +2511,9 @@
     const st=streamStatus(e);
     const dtag=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
+    const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
-      <button class="btn btn-ghost small" id="st-back">← Streams</button>
+      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
       <div class="stream-layout">
@@ -2530,11 +2531,25 @@
       </div>
     </div>`;
     $('#st-back').onclick=()=>{ _closeStreamChat(); switchView('streams'); };
+    { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     decorateProfiles();
     if(url) attachStream(url);
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     _streamChat(saddr);
+  }
+  // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
+  async function _deleteStream(e){
+    if(!ME || e.pubkey!==ME.pubkey){ toast('you can only delete your own stream'); return; }
+    if(!confirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
+    const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    try{
+      await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']]);
+      try{ if(Store.delete) Store.delete(e.id); }catch(_){}
+      if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
+      if(_phoneStream && _phoneStream.token===d){ try{ _phoneStream.pc.close(); _phoneStream.local.getTracks().forEach(t=>t.stop()); }catch(_){} _phoneStream=null; const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
+      _closeStreamChat(); toast('stream deleted'); switchView('streams');
+    }catch(_){ toast('couldn’t delete the stream'); }
   }
   // ---------- live stream chat (NIP-53 kind-1311, addressed to the stream's `a` tag) ----------
   let _streamChatSub=null;
