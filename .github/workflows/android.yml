@@ -97,10 +97,14 @@ jobs:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Surface the skip as a run ANNOTATION, not just a log line: this step exits 0 either way (a fork
+          # with no key must still build an APK), so a silent skip renders as a green tick and reads exactly
+          # like a successful publish. Say which one actually happened.
           if [ -z "$SIGN_WITH" ]; then
-            echo "ZAPSTORE_SIGN_WITH is not set — skipping the Zapstore publish (the APK release above still shipped)."
+            echo "::warning title=Zapstore skipped::ZAPSTORE_SIGN_WITH is not set — the APK shipped to GitHub Releases but was NOT published to Zapstore."
             exit 0
           fi
           curl -sSfLo /tmp/zsp https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
           chmod +x /tmp/zsp
           /tmp/zsp publish -q zapstore.yaml
+          echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
