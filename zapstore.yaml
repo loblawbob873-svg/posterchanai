@@ -1,0 +1,40 @@
+# Zapstore (https://zapstore.dev) — the Nostr-native app store.
+#
+# Publishing is AUTOMATED: every APK built by .github/workflows/android.yml is published from that same job,
+# so a Zapstore release ships with every APK build. Nothing to run by hand.
+#
+# `pubkey` is load-bearing twice over:
+#   - it MUST match the key in the CI secret SIGN_WITH, or `zsp` refuses to publish;
+#   - the Zapstore relay fetches THIS file from the repo to confirm the app really belongs to that npub,
+#     which is what gets the developer whitelisted. So it has to stay committed.
+name: PosterChan
+pubkey: npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr
+repository: https://github.com/loblawbob873-svg/posterchanai
+website: https://poster.place
+license: GPL-3.0-or-later
+
+# The APK the workflow just built and signed (the job copies it here before publishing).
+release_source: ./posterchan.apk
+
+summary: Nostr client with AI chat, image/music/video generation and live streaming
+description: |
+  PosterChan is the Android client for a self-hosted PosterChanAI instance — a Nostr social client with a
+  built-in AI assistant.
+
+  - **Nostr social**: feeds, threads, profiles, DMs, communities and a web-of-trust relay.
+  - **AI chat**: streaming LLM chat, with image, music and video generation.
+  - **Live streaming**: go live from your camera or share your screen (NIP-53), and watch other people's streams.
+  - **Voice and video calls**: 1:1 and group calls over WebRTC.
+  - **Self-hostable**: point the app at your own instance — the default is poster.place.
+
+tags:
+  - nostr
+  - social
+  - ai
+  - chat
+  - streaming
+
+icon: ./static/icon-512.png
+images:
+  - ./static/screenshot-mobile.png
+  - ./static/screenshot-wide.png
