@@ -121,18 +121,94 @@ async def _poll():
         db.close()
 
 
+# ---- Ring-a-closed-app: push incoming voice/video call (kind-25050) invites to a closed PWA. -------------
+# Call signaling is EPHEMERAL (not stored), so we can't poll for it — keep a LIVE subscription to the local
+# relay and push the p-tagged callee. A per-(caller,callee) cooldown collapses the offer/ice/bye burst into
+# one ring, and the SW suppresses the notification when the app is focused (it rings itself) — so only a
+# genuinely backgrounded/closed client gets the OS notification. (Web Push → PWA/web; the native APK's
+# WebView can't Web Push, so closed-app ringing there still needs a native piece.)
+_CALL_KIND = 25050
+_CALL_COOLDOWN = 30.0
+_call_stop = None
+_call_task = None
+_call_recent: dict = {}   # (caller, callee) -> last-push monotonic time
+
+
+async def _call_handler(ev: dict):
+    from app.database import SessionLocal
+    from app.models import PushSubscription
+    author = ev.get("pubkey", "")
+    ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
+    recips = [pk for pk in ptags if pk and pk != author]
+    if not recips:
+        return
+    now = time.monotonic()
+    # prune the cooldown map so it can't grow unbounded on a busy relay
+    if len(_call_recent) > 500:
+        for k in [k for k, v in _call_recent.items() if now - v > 300]:
+            _call_recent.pop(k, None)
+    db = SessionLocal()
+    try:
+        name = None
+        for pk in recips:
+            key = (author, pk)
+            if now - _call_recent.get(key, 0.0) < _CALL_COOLDOWN:
+                continue   # already rang this pair recently (offer/ice/bye of the same call)
+            subs = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
+            if not subs:
+                continue
+            _call_recent[key] = now
+            if name is None:
+                name = await _name_for(author)
+            payload = {"title": "📞 Incoming call", "body": f"{name} is calling…",
+                       "type": "call", "author": author}
+            for s in subs:
+                await asyncio.to_thread(
+                    push_service.send,
+                    {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}, payload)
+    except Exception as e:
+        logger.warning(f"[nostr-push] call handler error: {e}")
+    finally:
+        db.close()
+
+
+async def _call_sub_loop():
+    try:
+        await relay.subscribe(_local_relay()[0], [{"kinds": [_CALL_KIND]}], _call_handler,
+                              _call_stop, since_now=True)
+    except Exception as e:
+        logger.warning(f"[nostr-push] call subscription ended: {e}")
+
+
 def start_nostr_push_scheduler():
-    global _sched
+    global _sched, _call_stop, _call_task
     if _sched:
         return
     _sched = AsyncIOScheduler()
     _sched.add_job(_poll, "interval", seconds=_POLL_SECS, max_instances=1, coalesce=True)
     _sched.start()
-    logger.info("[nostr-push] scheduler started (every %ss)", _POLL_SECS)
+    try:
+        if _local_relay():
+            _call_stop = asyncio.Event()
+            _call_task = asyncio.create_task(_call_sub_loop())
+    except Exception as e:
+        logger.warning(f"[nostr-push] could not start call subscription: {e}")
+    logger.info("[nostr-push] scheduler started (every %ss) + call-invite push subscription", _POLL_SECS)
 
 
 def stop_nostr_push_scheduler():
-    global _sched
+    global _sched, _call_stop, _call_task
+    if _call_stop:
+        try:
+            _call_stop.set()
+        except Exception:
+            pass
+    if _call_task:
+        try:
+            _call_task.cancel()
+        except Exception:
+            pass
+    _call_task = None
     if _sched:
         try:
             _sched.shutdown(wait=False)

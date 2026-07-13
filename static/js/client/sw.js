@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v258';
+const CACHE = 'pc-nostr-v259';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -172,12 +172,27 @@ self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: (e.data && e.data.text()) || 'New activity' }; }
   const title = d.title || 'PosterChan';
-  e.waitUntil(self.registration.showNotification(title, {
+  const isCall = d.type === 'call';
+  const opts = {
     body: d.body || 'New activity',
     icon: '/static/icon-192.png', badge: '/static/icon-192.png',
-    tag: d.eid || undefined,        // collapse duplicate pushes for the same event
-    data: d, vibrate: [40, 30, 40],
-  }));
+    tag: isCall ? ('call-' + (d.author || '')) : (d.eid || undefined),   // collapse dup pushes
+    data: d,
+    vibrate: isCall ? [400, 200, 400, 200, 400] : [40, 30, 40],
+    requireInteraction: isCall,     // an incoming call stays up until you act on it
+    renotify: isCall || undefined,
+  };
+  // For a call, if the app is already OPEN + focused it rings itself (and both peers exchange kind-25050
+  // during a call, which would otherwise spam the CALLER) — only show the OS notification when nothing's
+  // focused (backgrounded / closed), which is exactly the ring-a-closed-app case.
+  e.waitUntil(
+    (isCall
+      ? clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+          if (cs.some(c => c.focused || c.visibilityState === 'visible')) return;
+          return self.registration.showNotification(title, opts);
+        })
+      : self.registration.showNotification(title, opts))
+  );
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
