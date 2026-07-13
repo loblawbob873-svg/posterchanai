@@ -2836,11 +2836,12 @@
   // success — callers (the screen-end fallback) rely on this to recover instead of freezing on a dead track.
   // Hardened against a concurrent _endLive: every await is followed by a `_phoneStream===ps` re-check, and
   // once replaceTrack commits, nt (now live) is never stopped.
-  async function _swapPhoneVideo(acquire, apply){
+  async function _swapPhoneVideo(acquire, apply, opts){
     if(!_phoneStream || _swapping) return 'busy';
     _swapping=true;
+    const silent=!!(opts&&opts.silent);   // probe mode: caller has a fallback, so don't toast on failure
     const ps=_phoneStream;
-    const done=(v,t)=>{ if(t) toast(t); _swapping=false; return v; };
+    const done=(v,t)=>{ if(t && !silent) toast(t); _swapping=false; return v; };
     let ns=null;
     try{ ns=await acquire(); }
     catch(e){ const cancelled=e&&(e.name==='NotAllowedError'||e.name==='AbortError'); return done(false, cancelled?'':'couldn’t switch video'); }
@@ -2868,9 +2869,12 @@
     _syncOverlayButtons();
     return done(true);
   }
-  const _camConstraints=(facing)=>({video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:facing}},audio:false});
-  // Record which camera we actually landed on. Trust getSettings() over what we asked for — a single-camera
-  // device hands back the same cam, and a tablet may not report facingMode at all — so we don't mislabel it.
+  const _SIZE={width:{ideal:1280},height:{ideal:720}};
+  const _camByFacing=(facing,exact)=>({video:Object.assign({}, _SIZE, {facingMode: exact?{exact:facing}:{ideal:facing}}), audio:false});
+  const _camById=(id,exact)=>({video:Object.assign({}, _SIZE, {deviceId: exact?{exact:id}:{ideal:id}}), audio:false});
+  // Record which camera we actually landed on. Trust getSettings() first, but fall back to what we ASKED for
+  // — a device that reports no facingMode would otherwise keep a stale `facing` and render the rear camera
+  // mirrored (and later restore the wrong camera).
   function _applyCamera(nt, wantFacing, wantId){
     const ps=_phoneStream; if(!ps) return;
     const s=(nt.getSettings&&nt.getSettings())||{};
@@ -2878,27 +2882,44 @@
     ps.deviceId = s.deviceId || wantId || ps.deviceId;
     ps.facing = s.facingMode || wantFacing || ps.facing;
   }
-  // Restore a camera by facing (used by the screen→camera fallback, where we just need any camera back).
+  // Restore the camera after a screen share. Prefer the EXACT camera that was live before (by deviceId,
+  // `ideal` so a vanished device degrades instead of failing) — falling back to facing alone would drop the
+  // user onto the selfie cam when they'd been on the rear one.
   function _toCamera(want){
-    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camConstraints(want)), nt=>_applyCamera(nt, want, null));
+    const ps=_phoneStream; const id=ps&&ps.deviceId;
+    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(id?_camById(id,false):_camByFacing(want,false)),
+                           nt=>_applyCamera(nt, want, id||null));
   }
-  // Flip cameras. Cycle by deviceId — facingMode is phone-centric and tablets/laptops often ignore it,
-  // handing back the SAME camera (the "flip did nothing on my tablet" bug). Only fall back to the
-  // front/back facingMode toggle when we can't enumerate two cameras.
+  // Flip cameras — front ↔ rear.
+  // 1) Ask for the opposite facingMode with `exact`. On a phone that's a deterministic ONE-TAP selfie↔rear.
+  //    `exact` matters twice over: it won't silently hand back the same camera, and its FAILURE is precisely
+  //    how we detect a device that doesn't really implement facingMode.
+  // 2) Only then fall back to cycling by deviceId (tablets/laptops, where facingMode is ignored — the
+  //    "flip did nothing on my tablet" bug). Doing this FIRST would be wrong: phones expose several rear
+  //    lenses (wide/ultrawide/tele/depth), so blind deviceId cycling turns Flip into a lens carousel.
   async function _flipCamera(){
     const ps=_phoneStream; if(!ps) return;
+    const want = ps.facing==='environment' ? 'user' : 'environment';
+    const r = await _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camByFacing(want,true)),
+                                    nt=>_applyCamera(nt, want, null), {silent:true});
+    if(r!==false) return r;                 // true = flipped, 'busy' = another swap in flight
+    if(_phoneStream!==ps) return false;
     let nextId=null;
     try{
       const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
-      if(cams.length>=2){ const i=Math.max(0, cams.findIndex(c=>c.deviceId===ps.deviceId));
-        nextId=cams[(i+1)%cams.length].deviceId; }   // move to a DIFFERENT camera
+      if(cams.length>=2){
+        const i=cams.findIndex(c=>c.deviceId && c.deviceId===ps.deviceId);
+        // Unknown current camera → just take one that isn't the one we think we're on.
+        nextId = i<0 ? (cams.find(c=>c.deviceId && c.deviceId!==ps.deviceId)||cams[0]).deviceId
+                     : cams[(i+1)%cams.length].deviceId;
+      }
     }catch(_){}
-    if(_phoneStream!==ps) return;   // ended while enumerating
-    const want = ps.facing==='environment' ? 'user' : 'environment';
-    const acquire = nextId
-      ? ()=>navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:nextId},width:{ideal:1280},height:{ideal:720}},audio:false})
-      : ()=>navigator.mediaDevices.getUserMedia(_camConstraints(want));
-    return _swapPhoneVideo(acquire, nt=>_applyCamera(nt, nextId?null:want, nextId));
+    if(_phoneStream!==ps) return false;
+    if(!nextId){ toast('no other camera found'); return false; }
+    // No facingMode on this device, so we can't read the new camera's facing — assume the flip landed on the
+    // opposite one, which keeps the mirror (and a later restore) right on a normal 2-camera tablet.
+    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camById(nextId,true)),
+                           nt=>_applyCamera(nt, want, nextId));
   }
   // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
   // it's screen + voiceover.
