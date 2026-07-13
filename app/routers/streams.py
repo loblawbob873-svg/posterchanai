@@ -211,15 +211,17 @@ async def stream_hls_proxy(token: str, path: str):
     # (the query param + matching cookie), which MediaMTX accepts and serves the playlist/segment straight.
     upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
     import httpx
+    client = None
     try:
         client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
         req = client.build_request("GET", upstream, headers={"Cookie": "cookieCheck=1"})
         resp = await client.send(req, stream=True)
     except Exception:
-        try:
-            await client.aclose()
-        except Exception:
-            pass
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
         return Response(status_code=502)
     if resp.status_code != 200:
         code = resp.status_code

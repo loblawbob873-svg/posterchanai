@@ -131,45 +131,56 @@ _CALL_KIND = 25050
 _CALL_COOLDOWN = 30.0
 _call_stop = None
 _call_task = None
-_call_recent: dict = {}   # (caller, callee) -> last-push monotonic time
+# Rate limit is keyed on the CALLEE (not the caller/callee pair): the relay accepts a kind-25050 whenever
+# the p-tagged RECIPIENT is a WoT member, so an attacker could otherwise flood a victim by re-signing each
+# event with a throwaway key (defeating a per-pair cooldown). Per-callee → at most one ring per _CALL_COOLDOWN
+# regardless of who "sent" it. Legit offer/ice/bye of a real call also collapse to one ring.
+_call_recent: dict = {}   # callee pubkey -> last-considered monotonic time
 
 
 async def _call_handler(ev: dict):
-    from app.database import SessionLocal
-    from app.models import PushSubscription
     author = ev.get("pubkey", "")
     ptags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
     recips = [pk for pk in ptags if pk and pk != author]
     if not recips:
         return
     now = time.monotonic()
-    # prune the cooldown map so it can't grow unbounded on a busy relay
-    if len(_call_recent) > 500:
+    if len(_call_recent) > 2000:   # prune (belt-and-suspenders; the per-callee key bounds cardinality anyway)
         for k in [k for k, v in _call_recent.items() if now - v > 300]:
             _call_recent.pop(k, None)
-    db = SessionLocal()
+    # Per-callee rate limit FIRST — in-memory, BEFORE any DB work — so a key-rotation flood is dropped here
+    # (no DB query, no event-loop blocking) and every callee (subscribed or not) is stamped immediately.
+    fresh = [pk for pk in recips if now - _call_recent.get(pk, 0.0) >= _CALL_COOLDOWN]
+    if not fresh:
+        return
+    for pk in fresh:
+        _call_recent[pk] = now
+
+    def _lookup_subs():
+        from app.database import SessionLocal
+        from app.models import PushSubscription
+        db = SessionLocal()
+        try:
+            out = {}
+            for pk in fresh:
+                rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
+                if rows:
+                    out[pk] = [{"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}} for r in rows]
+            return out
+        finally:
+            db.close()
+
     try:
-        name = None
-        for pk in recips:
-            key = (author, pk)
-            if now - _call_recent.get(key, 0.0) < _CALL_COOLDOWN:
-                continue   # already rang this pair recently (offer/ice/bye of the same call)
-            subs = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all()
-            if not subs:
-                continue
-            _call_recent[key] = now
-            if name is None:
-                name = await _name_for(author)
-            payload = {"title": "📞 Incoming call", "body": f"{name} is calling…",
-                       "type": "call", "author": author}
-            for s in subs:
-                await asyncio.to_thread(
-                    push_service.send,
-                    {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}, payload)
+        targets = await asyncio.to_thread(_lookup_subs)   # off the event loop
+        if not targets:
+            return
+        name = await _name_for(author)
+        payload = {"title": "📞 Incoming call", "body": f"{name} is calling…", "type": "call", "author": author}
+        for subs in targets.values():
+            for sub in subs:
+                await asyncio.to_thread(push_service.send, sub, payload)
     except Exception as e:
         logger.warning(f"[nostr-push] call handler error: {e}")
-    finally:
-        db.close()
 
 
 async def _call_sub_loop():

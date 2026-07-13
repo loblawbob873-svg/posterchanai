@@ -2481,11 +2481,15 @@
       $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
     };
     paint();
-    // Merge in streams from the wider network (background — the local list already painted).
+    // Merge in streams from the wider network (background — the local list already painted). External
+    // relays are UNTRUSTED, so VERIFY each event's signature before saving/rendering — an unverified
+    // forgery could spoof a host or (addressable) shadow a real user's stream in the local cache.
     Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }]).then(ext=>{
       if(!ext || !ext.length || VIEW!=='streams') return;
       const have=new Set(evs.map(e=>e.id)); let added=false;
-      ext.forEach(e=>{ if(!have.has(e.id)){ evs.push(e); Store.saveEvent(e); needProfile(e.pubkey); added=true; } });
+      ext.forEach(e=>{ if(have.has(e.id)) return;
+        try{ if(!NT().verifyEvent(e)) return; }catch(_){ return; }   // drop unsigned/forged events
+        evs.push(e); Store.saveEvent(e); needProfile(e.pubkey); added=true; });
       if(added) paint();
     }).catch(()=>{});
   }
@@ -2545,7 +2549,7 @@
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     try{
       await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']]);
-      try{ if(Store.delete) Store.delete(e.id); }catch(_){}
+      try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
       if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
       if(_phoneStream && _phoneStream.token===d){ try{ _phoneStream.pc.close(); _phoneStream.local.getTracks().forEach(t=>t.stop()); }catch(_){} _phoneStream=null; const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
       _closeStreamChat(); toast('stream deleted'); switchView('streams');
