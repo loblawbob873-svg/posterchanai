@@ -193,11 +193,17 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
 
 
 @router.get("/hls/{token}/{path:path}")
-async def stream_hls_proxy(token: str, path: str):
+async def stream_hls_proxy(token: str, path: str, request: Request):
     """Reverse-proxy HLS playlists/segments from the local MediaMTX HLS server.
 
     Lets viewers watch over the existing tunnel with no extra port/subdomain (turnkey). Operators who
     expect many viewers should set stream_hls_base to a direct grey-clouded subdomain instead.
+
+    Cookie handling: MediaMTX gates HLS with a `?cookieCheck=1` redirect AND an `hlsSession` session
+    cookie set by the master playlist that the variant/segment requests MUST carry (else 401). Both cookies
+    are *Secure*, so they can't survive our internal plain-HTTP hop untouched — so we forward the browser's
+    cookies upstream (+ assert cookieCheck), and relay MediaMTX's Set-Cookie back to the browser so it
+    carries the hlsSession on follow-up requests. The whole HLS session then rides our HTTPS origin.
     """
     if not _stream_enabled():
         return Response(status_code=404)
@@ -206,15 +212,20 @@ async def stream_hls_proxy(token: str, path: str):
     if ".." in safe or safe != f"{token}/{path}":
         return Response(status_code=400)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
-    # MediaMTX gates HLS with a `?cookieCheck=1` redirect that sets a *Secure* cookie — that cookie can't
-    # survive our internal plain-HTTP hop, so instead of following the redirect we assert the check directly
-    # (the query param + matching cookie), which MediaMTX accepts and serves the playlist/segment straight.
     upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
+    # Forward ONLY the HLS session cookie upstream (never the app's auth/session cookies), always asserting
+    # cookieCheck. The browser sends back the hlsSession we relayed from the master playlist response.
+    fwd = ["cookieCheck=1"]
+    for c in (request.headers.get("cookie", "") or "").split(";"):
+        c = c.strip()
+        if c.startswith("hlsSession="):
+            fwd.append(c)
+    up_cookie = "; ".join(fwd)
     import httpx
     client = None
     try:
         client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
-        req = client.build_request("GET", upstream, headers={"Cookie": "cookieCheck=1"})
+        req = client.build_request("GET", upstream, headers={"Cookie": up_cookie})
         resp = await client.send(req, stream=True)
     except Exception:
         if client is not None:
@@ -228,6 +239,14 @@ async def stream_hls_proxy(token: str, path: str):
         await resp.aclose(); await client.aclose()
         return Response(status_code=code)
     media_type = resp.headers.get("content-type", "application/octet-stream")
+    # Relay MediaMTX's Set-Cookie(s) (the hlsSession) so the browser carries it on the variant + segments.
+    set_cookies = []
+    try:
+        set_cookies = resp.headers.get_list("set-cookie")
+    except Exception:
+        sc = resp.headers.get("set-cookie")
+        if sc:
+            set_cookies = [sc]
 
     async def _body():
         try:
@@ -237,5 +256,18 @@ async def stream_hls_proxy(token: str, path: str):
             await resp.aclose()
             await client.aclose()
 
-    return StreamingResponse(_body(), media_type=media_type,
-                             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
+    response = StreamingResponse(_body(), media_type=media_type,
+                                 headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
+    # Re-emit MediaMTX's session cookie as a clean FIRST-party cookie scoped to this stream's HLS path
+    # (drop MediaMTX's Secure/SameSite=None/Partitioned cross-site attrs — here it's same-origin on our
+    # domain), so the browser returns it on the variant + segment requests.
+    for sc in set_cookies:
+        nv = (sc.split(";", 1)[0] or "").strip()   # "hlsSession=<uuid>"
+        if not nv or "=" not in nv:
+            continue
+        cookie = f"{nv}; Path=/api/streams/hls/{token}/; HttpOnly; SameSite=Lax"
+        try:
+            response.raw_headers.append((b"set-cookie", cookie.encode("latin-1")))
+        except Exception:
+            pass
+    return response
