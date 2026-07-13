@@ -196,9 +196,39 @@
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();
     const r = await Relay.publish(ev);
-    if (!r.ok) toast('relay: ' + (r.msg||'rejected'));
+    if (!r.ok){
+      // The socket drops the message on the floor when it isn't open (a relay restart, a flaky link), and
+      // publish() just timed out — so a note the user had already "sent" was gone, composer cleared, with
+      // nothing but a toast. It is SIGNED, so it can be re-sent verbatim later: park it and retry. (Signed
+      // already matters for a remote signer — a retry must never mean asking Amber to approve it again.)
+      Outbox.add(ev);
+      toast('relay unreachable — saved, will send when it reconnects');
+    }
     return { ev, ...r };
   }
+  // Signed-but-unsent events, kept across reloads. Retried whenever the relay is reachable again.
+  const Outbox = {
+    KEY: 'pc_outbox', MAX: 50, _busy: false,
+    list(){ try{ return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }catch(_){ return []; } },
+    _save(a){ try{ localStorage.setItem(this.KEY, JSON.stringify(a.slice(-this.MAX))); }catch(_){} },
+    add(ev){ const a=this.list(); if(!a.some(e=>e.id===ev.id)){ a.push(ev); this._save(a); } },
+    drop(id){ this._save(this.list().filter(e=>e.id!==id)); },
+    async flush(){
+      if(this._busy) return;
+      const pending=this.list(); if(!pending.length) return;
+      this._busy=true;
+      let sent=0;
+      try{
+        for(const ev of pending){
+          let r=null; try{ r=await Relay.publish(ev); }catch(_){ r=null; }
+          if(r && r.ok){ this.drop(ev.id); Store.saveEvent(ev); sent++; }
+          else break;   // still unreachable — keep the rest and try again on the next tick
+        }
+      } finally { this._busy=false; }
+      if(sent){ toast(`sent ${sent} queued post${sent>1?'s':''}`); invalidateCounts();
+        if(VIEW==='home'||VIEW==='global') try{ renderTimeline(VIEW, true); }catch(_){} }
+    },
+  };
   // A guest tried to do something that needs an account → drop the guest chrome and show login.
   function _guestPrompt(){ toast('Log in to interact'); const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); }
 
@@ -1238,7 +1268,14 @@
     const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
     if (list.length) Relay.configure({ urls: list, verify: true });
     else Relay.connect(CFG.relay_url);
+    // Retry anything that couldn't be sent (relay restarting, phone offline). Once now, then on a timer —
+    // the pool reconnects on its own, so polling is simpler and safer than hooking every socket's onopen.
+    if(!_outboxTimer){
+      _outboxTimer=setInterval(()=>{ try{ Outbox.flush(); }catch(_){} }, 20000);
+      setTimeout(()=>{ try{ Outbox.flush(); }catch(_){} }, 3000);
+    }
   }
+  let _outboxTimer=null;
 
   function renderConn(s){
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
