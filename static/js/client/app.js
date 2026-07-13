@@ -209,7 +209,12 @@
   const Nip46 = {
     ws:null, relay:null, appSk:null, appPk:null, remotePk:null, userPk:null,
     _pending:new Map(), _subId:null, _onEvent:null,
-    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null; this._pending.clear(); this._onEvent=null; },
+    reset(){ this._wantOpen=false; try{ if(this.ws){ this.ws.onclose=null; this.ws.close(); } }catch(_){} this.ws=null;
+      this._pending.forEach(p=>{ try{ p.rej(new Error('signer disconnected')); }catch(_){} }); this._pending.clear();
+      // Fail the queued work too — otherwise jobs waiting for a slot hang on a socket that's gone.
+      const q=this._queue||[]; this._queue=[]; this._inflight=0;
+      q.forEach(j=>{ try{ j.rej(new Error('signer disconnected')); }catch(_){} });
+      this._onEvent=null; },
     // NIP-46 transport is NIP-04 by default, but some signers reply with NIP-44 — try each scheme
     // through to a valid JSON payload (a wrong scheme may return garbage rather than throw).
     async _decode(peer, ct){
@@ -253,7 +258,36 @@
       const p=this._pending.get(payload.id);
       if(p){ this._pending.delete(payload.id); payload.error ? p.rej(new Error(payload.error)) : p.res(payload.result); }
     },
-    async _send(method, params){
+    // Every request here is answered by a phone, over a relay. Restoring a DM history fires one unwrap per
+    // gift-wrap — and each unwrap is TWO decryptions — so a few hundred messages meant a few hundred
+    // simultaneous requests at Amber, which drops/rate-limits them; the failures were swallowed and the DMs
+    // simply never appeared ("most of my DMs didn't restore"). With a local key this never showed, because the
+    // worker decrypts instantly.
+    //
+    // So the transport is a QUEUE: a few in flight at a time, each retried once. Slower, but it finishes.
+    _cap: 3, _inflight: 0, _queue: [],
+    _pump(){
+      while(this._inflight < this._cap && this._queue.length){
+        const job=this._queue.shift();
+        this._inflight++;
+        job.run().then(job.res, job.rej).finally(()=>{ this._inflight--; this._pump(); });
+      }
+    },
+    _send(method, params){
+      return new Promise((res, rej)=>{
+        const run=async()=>{
+          try{ return await this._rpc(method, params); }
+          catch(e){
+            // one retry: a dropped/throttled request is common under load and is not a real failure
+            await new Promise(r=>setTimeout(r, 600));
+            return await this._rpc(method, params);
+          }
+        };
+        this._queue.push({ run, res, rej });
+        this._pump();
+      });
+    },
+    async _rpc(method, params){
       if(!this.remotePk || !this.ws) throw new Error('signer not connected');
       const id='r'+Math.random().toString(36).slice(2,10);
       const ct=(await Relay.worker.call('nip04enc',{peer:this.remotePk, text:JSON.stringify({ id, method, params })})).ct;
