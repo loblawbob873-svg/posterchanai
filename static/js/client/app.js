@@ -2795,16 +2795,17 @@
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
-    // Screen share needs getDisplayMedia — absent on iOS Safari and some in-app WebViews, so only offer it
-    // where it exists rather than show a button that always fails.
-    const canScreen=!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button>${canScreen?`<button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button>`:''}<button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
     const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
     $('#pl-stop',el).onclick=e=>{ e.stopPropagation(); _endLive(); };
     $('#pl-flip',el).onclick=e=>{ e.stopPropagation(); _flipCamera(); };
-    { const sb=$('#pl-screen',el); if(sb) sb.onclick=e=>{ e.stopPropagation(); _toggleScreen(); }; }
+    // The button is ALWAYS shown: hiding it on a browser without getDisplayMedia (mobile Chrome/Firefox, iOS
+    // Safari — none of them implement screen capture) just looks like the feature is missing/broken. Say why.
+    $('#pl-screen',el).onclick=e=>{ e.stopPropagation();
+      if(!_canScreenShare()){ toast('this browser can’t share a screen — mobile/tablet browsers don’t allow screen capture; go live from a desktop browser'); return; }
+      _toggleScreen(); };
     // Minimize to a floating thumbnail so the app stays usable WHILE broadcasting. This is purely visual —
     // the broadcast lives in the PeerConnection, not the DOM, so shrinking the overlay never interrupts it.
     $('#pl-min',el).onclick=e=>{ e.stopPropagation(); _setMiniLive(true); };
@@ -2949,6 +2950,17 @@
                  : cams[(i+1)%cams.length].deviceId;
     }catch(_){ return null; }
   }
+  // Name the camera we just landed on. A flip that "did nothing" is indistinguishable from a flip that
+  // worked-but-looks-similar (two cameras pointing at the same room), so always say which one we're on.
+  async function _toastCamera(fallbackFacing){
+    const ps=_phoneStream; if(!ps) return;
+    let label='';
+    try{ const cams=await navigator.mediaDevices.enumerateDevices();
+      const c=cams.find(d=>d.kind==='videoinput' && d.deviceId && d.deviceId===ps.deviceId);
+      label=(c&&c.label)||''; }catch(_){}
+    if(!label) label=((ps.facing||fallbackFacing)==='environment')?'rear camera':'front camera';
+    toast('📷 '+label);
+  }
   // Flip cameras — front ↔ rear. The acquire thunk is the whole preference ladder, so _swapPhoneVideo can
   // re-run it verbatim after releasing the camera (see opts.release — the phone case, where the other camera
   // can't be opened while this one is live).
@@ -2972,8 +2984,11 @@
     };
     // On the deviceId path we can't read the new camera's facing, so `want` is the assumption — which keeps the
     // mirror (and a later restore) right on a normal 2-camera tablet.
-    return _swapPhoneVideo(acquire, nt=>_applyCamera(nt, want, landedId), {release:true});
+    const r = await _swapPhoneVideo(acquire, nt=>_applyCamera(nt, want, landedId), {release:true});
+    if(r===true) _toastCamera(want);
+    return r;
   }
+  const _canScreenShare=()=>!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
   // it's screen + voiceover.
   function _toggleScreen(){
