@@ -3215,7 +3215,9 @@
     if(isHls && !v.canPlayType('application/vnd.apple.mpegurl')){
       loadHls().then(()=>{
         if(window.Hls && window.Hls.isSupported()){
-          const h=new window.Hls({ maxBufferLength:30 }); _streamHls=h;
+          // withCredentials: our HLS proxy uses an hlsSession cookie; the native app plays cross-origin,
+          // so hls.js must send credentials or the variant/segment requests 401 (blank video).
+          const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=true; }catch(_){} } }); _streamHls=h;
           h.loadSource(url); h.attachMedia(v);
           h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal){ const n=$('#st-note'); if(n) n.textContent='Could not play this stream here — try the “Open stream URL” link below.'; } });
         } else { v.src=url; }

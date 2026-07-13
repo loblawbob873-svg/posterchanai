@@ -256,16 +256,21 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
             await resp.aclose()
             await client.aclose()
 
+    # CORS: the native app plays HLS cross-origin WITH credentials (to carry the session cookie), and a
+    # credentialed request may NOT use `Access-Control-Allow-Origin: *` — echo the caller's Origin instead.
+    origin = request.headers.get("origin")
+    cors = {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"} if origin \
+        else {"Access-Control-Allow-Origin": "*"}
     response = StreamingResponse(_body(), media_type=media_type,
-                                 headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
-    # Re-emit MediaMTX's session cookie as a clean FIRST-party cookie scoped to this stream's HLS path
-    # (drop MediaMTX's Secure/SameSite=None/Partitioned cross-site attrs — here it's same-origin on our
-    # domain), so the browser returns it on the variant + segment requests.
+                                 headers={"Cache-Control": "no-cache", **cors})
+    # Re-emit MediaMTX's session cookie scoped to this stream's HLS path. SameSite=None; Secure so the
+    # NATIVE app (cross-site https://localhost → our HTTPS origin) also returns it on variant/segment
+    # requests; same-origin PWA works too. (Requires HTTPS, which prod is.)
     for sc in set_cookies:
         nv = (sc.split(";", 1)[0] or "").strip()   # "hlsSession=<uuid>"
         if not nv or "=" not in nv:
             continue
-        cookie = f"{nv}; Path=/api/streams/hls/{token}/; HttpOnly; SameSite=Lax"
+        cookie = f"{nv}; Path=/api/streams/hls/{token}/; HttpOnly; Secure; SameSite=None"
         try:
             response.raw_headers.append((b"set-cookie", cookie.encode("latin-1")))
         except Exception:
