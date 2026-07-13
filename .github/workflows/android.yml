@@ -110,7 +110,13 @@ jobs:
           # can't tie the app to a developer key and warns users it "cannot reach signer key" — and `publish -q`
           # auto-SKIPS this step, so it has to be run explicitly. The keystore + its password are already in the
           # repo (see app/build.gradle): this key signs a public APK, it isn't a secret.
-          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key mobile/android/posterchan-release.keystore \
+          #
+          # zsp rejects a Java KeyStore ("JKS format is not supported directly") and wants PKCS12, so convert a
+          # throwaway copy first. Gradle keeps signing from the original JKS — nothing about the APK changes.
+          keytool -importkeystore -noprompt \
+            -srckeystore mobile/android/posterchan-release.keystore -srcstorepass posterchan \
+            -destkeystore /tmp/release.p12 -deststoretype PKCS12 -deststorepass posterchan
+          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 \
             || echo "::warning title=Zapstore::certificate linking failed — the listing may warn about the signer key"
           /tmp/zsp publish -q zapstore.yaml
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
