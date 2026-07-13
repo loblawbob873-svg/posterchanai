@@ -206,13 +206,14 @@ async def stream_hls_proxy(token: str, path: str):
     if ".." in safe or safe != f"{token}/{path}":
         return Response(status_code=400)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
-    upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}"
+    # MediaMTX gates HLS with a `?cookieCheck=1` redirect that sets a *Secure* cookie — that cookie can't
+    # survive our internal plain-HTTP hop, so instead of following the redirect we assert the check directly
+    # (the query param + matching cookie), which MediaMTX accepts and serves the playlist/segment straight.
+    upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
     import httpx
     try:
-        # follow_redirects: MediaMTX's HLS does a one-time `?cookieCheck=1` set-cookie + redirect; httpx
-        # keeps a per-client cookie jar across the redirect, so it transparently resolves to the playlist.
-        client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0), follow_redirects=True)
-        req = client.build_request("GET", upstream)
+        client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
+        req = client.build_request("GET", upstream, headers={"Cookie": "cookieCheck=1"})
         resp = await client.send(req, stream=True)
     except Exception:
         try:
