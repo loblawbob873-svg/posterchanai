@@ -116,12 +116,13 @@ jobs:
           keytool -importkeystore -noprompt \
             -srckeystore mobile/android/posterchan-release.keystore -srcstorepass posterchan \
             -destkeystore /tmp/release.p12 -deststoretype PKCS12 -deststorepass posterchan
-          # Surface zsp's ACTUAL error — a bare "|| echo failed" hid why, which cost a round-trip.
-          if ! KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 >/tmp/cert.log 2>&1; then
-            echo "::warning title=Zapstore::certificate linking failed: $(tr '\n' ' ' < /tmp/cert.log | cut -c1-400)"
-          else
-            echo "::notice title=Zapstore::signing certificate linked to the npub (kind 30509)."
-          fi
-          cat /tmp/cert.log || true
+          # `zsp identity` has NO non-interactive flag: it prints a "private key found in environment" warning
+          # and waits at a confirmation prompt, which in CI just hangs up and exits non-zero. So take the path
+          # its own docs give for automation — --offline emits the SIGNED kind-30509 and we publish it
+          # ourselves (their example pipes it to `nak event`).
+          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 --offline \
+            > /tmp/cert.json 2>/tmp/cert.err || true
+          pip install -q websockets
+          python3 scripts/publish_cert_proof.py /tmp/cert.json /tmp/cert.err
           /tmp/zsp publish -q zapstore.yaml
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."
