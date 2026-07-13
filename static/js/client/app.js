@@ -564,6 +564,24 @@
     catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
       else if(st) st.textContent='upload failed: '+((err&&err.message)||err); }
   }
+  // Hand a share to the AI chat. Parked on _ai and consumed by aiMount once the chat has finished mounting
+  // (the same handoff the Effects studio uses): attaching before the conversation load settles would have the
+  // box re-render wipe the attachment straight back off.
+  function _aiShare(share){
+    _ai.pendingShare=share;
+    switchView('ai');
+  }
+  async function startAiShare(share){
+    try{
+      if(share.files && share.files.length) await aiAddFiles(share.files);
+      const ta=$('#ai-input');
+      if(ta){
+        if(share.text) ta.value=share.text;
+        ta.focus(); ta.dispatchEvent(new Event('input'));
+      }
+      toast(share.files && share.files.length ? 'attached — tell the AI what to do with it' : 'shared to the AI chat');
+    }catch(_){ toast('couldn’t hand that to the AI chat'); }
+  }
   // Capacitor plugin proxies aren't pre-attached to Capacitor.Plugins when we don't import the plugin JS in
   // the bundle — build them from the native registration via registerPlugin.
   function _capPlugin(name, method){
@@ -602,16 +620,22 @@
       const sig=(res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0);
       if(sig===_lastShareSig) return false; _lastShareSig=sig;
       if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} _lastShareSig=''; return false; }  // retry after login
+      // Which of the app's two share-sheet entries did they pick — "PosterChan" (compose a post) or
+      // "PosterChan AI" (hand it to the assistant)? The send-intent plugin only carries the payload; the
+      // choice lives in the launch intent's component, which ShareTarget reads.
+      let toAi=false;
+      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); } }catch(_){}
       const type=(res.type||'');
       // text/plain share → the plugin puts the TEXT (not a file URI) in `url`; don't try to read it as a file.
       if(type.indexOf('text/')===0){
         const txt=[res.url, res.title].map(s=>(s||'').trim()).filter(Boolean).join('\n');
         if(!txt){ try{ toast('Shared text was empty'); }catch(_){} return false; }
+        if(toAi){ _aiShare({ text: txt }); return true; }
         switchView('home'); compose({ text: txt }); return true;
       }
       const urls=[]; if(res.url) urls.push(res.url);
       if(Array.isArray(res.additionalItems)) res.additionalItems.forEach(it=>{ if(it&&it.url) urls.push(it.url); });
-      try{ toast('Attaching shared file…'); }catch(_){}
+      try{ toast(toAi?'Sending to AI chat…':'Attaching shared file…'); }catch(_){}
       const files=[];
       for(const u of urls){
         const nm=(decodeURIComponent(u).split('?')[0].split('/').pop())||'shared';
@@ -619,6 +643,7 @@
         if(blob && blob.size) files.push(new File([blob], nm, { type: blob.type||type||'application/octet-stream' }));
       }
       if(!files.length){ try{ toast('Couldn’t read the shared file'); }catch(_){} return false; }
+      if(toAi){ _aiShare({ files }); return true; }
       switchView('home'); compose({ files });
       return true;
     }catch(_){ return false; }
@@ -2888,7 +2913,12 @@
       ['status','live'], ['starts', s.starts||String(Math.floor(Date.now()/1000))],
       ['current_participants', String(n)],
       ['p', ME.pubkey, '', 'host'],
-    ]); }catch(_){}
+    ]); }catch(_){ return; }
+    // CRITICAL: the parked "ended" sentinel was signed at go-live with created_at = start+5, and this
+    // republish is NEWER — so on a replaceable address it now outranks the sentinel, and the server's
+    // ghost-LIVE fallback would be dropped by relays as stale. The stream would sit "● LIVE" forever over a
+    // dead url if this tab died. Re-park a sentinel that outranks what we just published.
+    await _parkEndSentinel(s.token, s.title, s.hls, s.starts||'');
   }
   // NB: the class is `pl-mini`, NOT `mini` — `.mini` is the global small-button class (and the winxp theme
   // overrides it with !important), which would hijack the thumbnail's styling.
@@ -3206,6 +3236,12 @@
     // than strand viewers on a frozen frame.
     try{ await SS.start({ url:ps.info.rtmp_native_url }); await connected; }
     catch(e){ if(_phoneStream===ps){ toast((e&&e.message)||'couldn’t start the screen stream'); _endLive(); } return release(false); }
+    // Carry the mute across. The native mic is a DIFFERENT capture from the camera stream's audio track, and
+    // it starts unmuted — so without this, muting the camera and then sharing your screen put your microphone
+    // back on air while the button still read "🔇 Unmute". Silently broadcasting someone who believes they're
+    // muted is the worst failure this feature has.
+    if(ps.muted){ try{ await SS.setMuted({ muted:true }); }catch(_){ ps.muted=false; toast('couldn’t keep the mic muted — it is LIVE'); } }
+    { const b=$('#pl-mute'); if(b) b.textContent=ps.muted?'🔇 Unmute':'🎤 Mute'; }
     return release(true);
   }
   const _canScreenShare=()=>!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || !!_screenPlugin();
@@ -3254,6 +3290,9 @@
       try{ await publish(30311, '', [
       ['d', s.token], ['title', s.title], ['streaming', s.hls],
       ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
+      // Keep `starts`: this replaces the live event on a replaceable address, so dropping it would erase the
+      // stream's start time for every client — no start, no duration, for a stream that just ran.
+      ...(s.starts ? [['starts', s.starts]] : []),
       ['p', ME.pubkey, '', 'host'],
     ]); _clearEndSentinel(); }catch(_){} }
     toast('stream ended'); if(VIEW==='streams') renderStreams();
@@ -7685,7 +7724,7 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, awaiting:false };
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   async function aiMount(feed){
@@ -7769,6 +7808,8 @@
     // 🎬 Effect handoff: if we entered the AI view to apply an effect to a post's image, set it up now
     // that the chat is fully mounted (fixes the race where the conv load wiped the attached image).
     if(_ai.pendingFx){ const fx=_ai.pendingFx; _ai.pendingFx=null; await startEffectStudio(fx.url); }
+    // Same handoff for a share that came in through the "PosterChan AI" share-sheet entry.
+    if(_ai.pendingShare){ const sh=_ai.pendingShare; _ai.pendingShare=null; await startAiShare(sh); }
   }
   async function aiLoadConversations(){
     let convs=[]; try{ convs=await fetch('/api/conversations').then(r=>r.json()); }catch(_){}

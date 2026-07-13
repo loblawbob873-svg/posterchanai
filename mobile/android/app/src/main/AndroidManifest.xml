@@ -44,6 +44,34 @@
 
         </activity>
 
+        <!-- A SECOND entry in the OS share sheet: "PosterChan AI". Same activity, different door — Android
+             shows one target per exported component, so an alias is how one app offers two share destinations.
+             Which one the user picked is read back from the launch intent's component (ShareTargetPlugin):
+             the default target composes a post, this one drops the file/text into the AI chat. -->
+        <activity-alias
+            android:name=".ShareToAi"
+            android:targetActivity=".MainActivity"
+            android:label="PosterChan AI"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+            </intent-filter>
+        </activity-alias>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

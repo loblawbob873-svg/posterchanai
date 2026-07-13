@@ -40,6 +40,7 @@ tags:
   - streaming
 
 icon: ./static/icon-512.png
-images:
-  - ./static/screenshot-mobile.png
-  - ./static/screenshot-wide.png
+# NO `images:` on purpose. static/screenshot-*.png are blank dark-blue PWA-manifest PLACEHOLDERS, not real
+# screenshots — pointing Zapstore at them listed the app with two empty blue rectangles. An app with no
+# screenshots reads as "none yet"; an app with blank ones reads as broken. Add real captures here when we
+# have them (Streams, AI chat, the feed).

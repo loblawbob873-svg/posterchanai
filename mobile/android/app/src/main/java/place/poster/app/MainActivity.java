@@ -5,6 +5,7 @@ import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
 import place.poster.app.screenshare.ScreenSharePlugin;
+import place.poster.app.share.ShareTargetPlugin;
 
 public class MainActivity extends BridgeActivity {
     // A plugin that lives IN this app (rather than in an npm package) is not auto-registered by Capacitor —
@@ -12,6 +13,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ScreenSharePlugin.class);
+        registerPlugin(ShareTargetPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

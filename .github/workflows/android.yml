@@ -106,5 +106,11 @@ jobs:
           fi
           curl -sSfLo /tmp/zsp https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
           chmod +x /tmp/zsp
+          # Prove the APK's signing certificate belongs to this npub (NIP-C1, kind 30509). Without it Zapstore
+          # can't tie the app to a developer key and warns users it "cannot reach signer key" — and `publish -q`
+          # auto-SKIPS this step, so it has to be run explicitly. The keystore + its password are already in the
+          # repo (see app/build.gradle): this key signs a public APK, it isn't a secret.
+          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key mobile/android/posterchan-release.keystore \
+            || echo "::warning title=Zapstore::certificate linking failed — the listing may warn about the signer key"
           /tmp/zsp publish -q zapstore.yaml
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."

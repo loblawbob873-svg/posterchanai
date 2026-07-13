@@ -135,10 +135,14 @@ public class ScreenSharePlugin extends Plugin {
   @PluginMethod
   public void setMuted(PluginCall call) {
     ScreenShareService svc = ScreenShareService.INSTANCE;
+    // REJECT rather than report success when there's no capture service: resolving {muted:false} made the JS
+    // take its success path and tell the user "mic on" after a mute that never happened. A mute that silently
+    // does nothing is how someone gets broadcast believing they're muted.
+    if (svc == null) { call.reject("the screen share isn't running"); return; }
     boolean muted = Boolean.TRUE.equals(call.getBoolean("muted", false));
-    if (svc != null) svc.setMuted(muted);
+    svc.setMuted(muted);
     JSObject ret = new JSObject();
-    ret.put("muted", svc != null && svc.isMuted());
+    ret.put("muted", svc.isMuted());
     call.resolve(ret);
   }
 
