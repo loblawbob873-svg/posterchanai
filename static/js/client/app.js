@@ -2799,13 +2799,24 @@
     // where it exists rather than show a button that always fails.
     const canScreen=!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button>${canScreen?`<button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button>`:''}<button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button>${canScreen?`<button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button>`:''}<button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
     const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
-    $('#pl-stop',el).onclick=()=>_endLive();
-    $('#pl-flip',el).onclick=()=>_flipCamera();
-    { const sb=$('#pl-screen',el); if(sb) sb.onclick=()=>_toggleScreen(); }
+    $('#pl-stop',el).onclick=e=>{ e.stopPropagation(); _endLive(); };
+    $('#pl-flip',el).onclick=e=>{ e.stopPropagation(); _flipCamera(); };
+    { const sb=$('#pl-screen',el); if(sb) sb.onclick=e=>{ e.stopPropagation(); _toggleScreen(); }; }
+    // Minimize to a floating thumbnail so the app stays usable WHILE broadcasting. This is purely visual —
+    // the broadcast lives in the PeerConnection, not the DOM, so shrinking the overlay never interrupts it.
+    $('#pl-min',el).onclick=e=>{ e.stopPropagation(); _setMiniLive(true); };
+    el.onclick=()=>{ if(el.classList.contains('pl-mini')) _setMiniLive(false); };   // tap the thumbnail to come back
     _syncOverlayButtons();
+  }
+  // NB: the class is `pl-mini`, NOT `mini` — `.mini` is the global small-button class (and the winxp theme
+  // overrides it with !important), which would hijack the thumbnail's styling.
+  function _setMiniLive(on){
+    const el=document.getElementById('phone-live'); if(!el) return;
+    el.classList.toggle('pl-mini', !!on);
+    if(on) toast('still live — tap the thumbnail to come back');
   }
   // Reflect the current source in the overlay: flip only makes sense for the camera, and the screen button
   // is a toggle back to camera while sharing.

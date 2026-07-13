@@ -2153,7 +2153,17 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .phone-live video{max-width:100%;max-height:78vh;transform:scaleX(-1);border-radius:10px}
 .phone-live video.rear{transform:none}   /* only the front (selfie) camera is mirrored */
 .phone-live .pl-badge{position:absolute;top:calc(env(safe-area-inset-top,0) + 14px);left:16px;background:#e0245e;color:#fff;font-weight:700;padding:5px 12px;border-radius:20px;letter-spacing:.5px}
-.phone-live .pl-actions{position:absolute;bottom:calc(env(safe-area-inset-bottom,0) + 24px);display:flex;gap:10px;align-items:center}
+.phone-live .pl-actions{position:absolute;bottom:calc(env(safe-area-inset-bottom,0) + 24px);display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;padding:0 10px}
+/* Minimized: a floating thumbnail so the rest of the app stays usable while you're still broadcasting.
+   inset:auto is what un-blocks the page — the full-screen overlay no longer covers (and eats clicks on) it. */
+.phone-live.pl-mini{inset:auto;right:14px;bottom:20px;width:132px;height:196px;padding:0;gap:0;border-radius:12px;
+  border:2px solid var(--neon,#0ff);box-shadow:0 8px 26px rgba(0,0,0,.55);overflow:hidden;cursor:pointer}
+.phone-live.pl-mini video{width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;border-radius:0}
+.phone-live.pl-mini .pl-actions{display:none}
+.phone-live.pl-mini .pl-badge{top:5px;left:5px;font-size:10px;padding:2px 7px;border-radius:12px}
+@media (max-width:820px){
+  .phone-live.pl-mini{bottom:calc(env(safe-area-inset-bottom,0) + 76px);width:112px;height:168px}   /* clear the mobile nav */
+}
 
 /* Go Live divider */
 .gl-or{text-align:center;margin:12px 0;color:var(--muted,#8a8db3);font-size:13px}
