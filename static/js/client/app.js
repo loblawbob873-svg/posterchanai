@@ -2459,21 +2459,35 @@
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
   function streamHost(e){ const h=e.tags.find(t=>t[0]==='p'&&(t[3]||'').toLowerCase()==='host'); return (h&&h[1])||e.pubkey; }
+  // Public live-streaming relays (zap.stream et al.) so Discover → Streams shows the WIDER Nostr network,
+  // not just what our local WoT relay happens to hold.
+  const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io'];
   async function renderStreams(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], limit:80 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='streams') return;
-    const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
-    const streams=_dedupAddr(evs).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
-    _adoptOwnLive(streams);   // re-adopt our own still-live stream after a reload so it isn't stranded as LIVE
-    const top=`<div class="streams-top">${_liveStream
-      ? `<span class="live-badge">● LIVE</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
-      : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive">🔴 Go Live (OBS)</button>` : '')}</div>`;
-    feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No streams yet — tap “Go Live” to stream from OBS.</div>');
-    decorateProfiles();
-    { const gl=$('#stream-golive',feed); if(gl) gl.onclick=_goLive; const ge=$('#stream-end',feed); if(ge) ge.onclick=_endLive; }
-    $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
+    const paint=()=>{
+      if(VIEW!=='streams') return;
+      const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
+      const streams=_dedupAddr(evs).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
+      try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
+      const top=`<div class="streams-top">${_liveStream
+        ? `<span class="live-badge">● LIVE</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
+        : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive">🔴 Go Live</button>` : '')}</div>`;
+      feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No live streams right now.</div>');
+      decorateProfiles();
+      { const gl=$('#stream-golive',feed); if(gl) gl.onclick=_goLive; const ge=$('#stream-end',feed); if(ge) ge.onclick=_endLive; }
+      $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
+    };
+    paint();
+    // Merge in streams from the wider network (background — the local list already painted).
+    Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }]).then(ext=>{
+      if(!ext || !ext.length || VIEW!=='streams') return;
+      const have=new Set(evs.map(e=>e.id)); let added=false;
+      ext.forEach(e=>{ if(!have.has(e.id)){ evs.push(e); Store.saveEvent(e); needProfile(e.pubkey); added=true; } });
+      if(added) paint();
+    }).catch(()=>{});
   }
   function streamCard(e){
     const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
