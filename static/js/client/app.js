@@ -842,14 +842,22 @@
     catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); }
     finally{ btn.disabled=false; btn.textContent='Connect'; }
   }
-  // Relays the Amber/remote-signer handshake can meet on, in preference order — the FIRST one that opens is
-  // used. relay.nsec.app is the signer-native one and stays first, but it must never again be the only option:
-  // while it was 502ing, remote-signer login was impossible everywhere (app and every browser).
-  const NC_RELAYS=['wss://relay.nsec.app','wss://relay.damus.io','wss://relay.primal.net','wss://relay.snort.social'];
+  // Relays the Amber/remote-signer handshake can meet on, in preference order — the FIRST one that opens wins.
+  //
+  // OUR OWN relay goes first: it's the one place nobody rate-limits you and nobody can take offline from under
+  // us. The public signer relays are the reason bunker login kept breaking — relay.nsec.app 502'd (login
+  // impossible everywhere), and the fallbacks then rate-limited Amber. NIP-46 traffic (kind 24133) is
+  // ephemeral, so our relay carries it without storing anything; it accepts it whenever either party is a
+  // web-of-trust member (same rule DMs and calls use). The public relays stay as a fallback — a brand-new
+  // account that isn't in our WoT yet still needs somewhere to meet its signer.
+  function _ncRelays(){
+    const own=(CFG && CFG.relay_url) || '';
+    return [own, 'wss://relay.nsec.app', 'wss://relay.damus.io', 'wss://relay.primal.net'].filter(Boolean);
+  }
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
     try{
-      const { uri, done }=await Nip46.beginNostrConnect(NC_RELAYS, 'PosterChan');
+      const { uri, done }=await Nip46.beginNostrConnect(_ncRelays(), 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       // QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).

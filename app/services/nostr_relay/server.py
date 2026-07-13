@@ -530,6 +530,18 @@ class RelayServer:
             # puppet's OWN events (NIP-09), and federates upstream iff bridge broadcast is on (no
             # nofederate tag) — so a fediverse delete propagates everywhere the mirror reached.
             pass
+        elif kind == 24133:
+            # NIP-46 remote-signer transport (Amber / nsecbunker). Ephemeral (never stored, see below) and
+            # always p-tagged to the specific peer. One side of the exchange is an EPHEMERAL app key that is
+            # in nobody's web of trust by construction, so an author-only gate would drop every request the
+            # client sends and make bunker login impossible on our own relay — which is exactly what we want
+            # it to be usable for: the public signer relays rate-limit (and go down, taking Amber login with
+            # them). Accept when EITHER party is trusted, the same recipient-routing rule DMs, zaps and calls
+            # already use.
+            if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)
+                    or any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))):
+                self._send(conn, ["OK", eid, False, "blocked: signer traffic not for a web-of-trust member"])
+                return
         elif kind == 25050:
             # Voice/video CALL signaling (WebRTC over Nostr): ephemeral, always p-tagged to the specific
             # peer. Either party may be OUTSIDE the local WoT — a brand-new test account, or a cross-instance
