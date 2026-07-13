@@ -5276,8 +5276,23 @@
       // unsaved text — leaving the New Post / reply window shouldn't lose what you typed. Posting or the
       // 💾 Draft button set `committed` so they don't double-save; an empty composer saves nothing.
       let committed=false;
+      // Autosave WHILE TYPING, into one draft that keeps being updated (autoId), and drop it once the post
+      // actually lands. The close/Escape/pagehide hooks below only fire on a graceful teardown — a crash, an
+      // OOM-killed tab or a phone reaping the app in the background took the text with it. Silent (no toast):
+      // this runs constantly.
+      let autoId = draftId || null;
+      const _draftFields=()=>({ id:autoId, text:ta.value.trim(), reply, replyPk, quote, ..._cwState() });
+      const _saveDraftNow=()=>{ try{ autoId = Drafts.save(_draftFields()) || autoId; }catch(_){} };
+      let _autoT=null;
+      const _autosaveTick=()=>{ clearTimeout(_autoT); _autoT=setTimeout(()=>{
+        if(committed || !(ta.value||'').trim()) return;
+        _saveDraftNow();
+      }, 1200); };
+      ta.addEventListener('input', _autosaveTick);
+      // The post landed — remove the draft it came from (whether the user opened one, or autosave made one).
+      const _dropDraft=()=>{ clearTimeout(_autoT); const id=autoId||draftId; if(id) try{ Drafts.remove(id); }catch(_){} };
       const _autoSaveDraft=()=>{ if(committed || !(ta.value||'').trim()) return; committed=true;
-        try{ Drafts.save({id:draftId, text:ta.value.trim(), reply, replyPk, quote, ..._cwState()}); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
+        try{ _saveDraftNow(); toast('saved to drafts 💾'); if(VIEW==='drafts') renderView(true); }catch(_){} };
       // Also persist on ANY page teardown — reload (incl. a service-worker update), navigation, or tab
       // close — not just Escape/click-outside, and regardless of focus. pagehide is the reliable signal
       // (beforeunload is flaky on mobile); the isConnected check makes a stale listener a no-op. This is
@@ -5443,7 +5458,7 @@
             $('#cmp-status',root).textContent='uploading…';
             const url=await uploadBlob(new File([blob], 'post.png', {type:'image/png'}));
             const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
-            closeModal(); await publish(1, url, btags); if(draftId) Drafts.remove(draftId);
+            closeModal(); await publish(1, url, btags); _dropDraft();
             toast('posted 🎨'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
           }catch(err){ committed=false; const sb2=$('#cmp-send',root); if(sb2) sb2.disabled=false;
             if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; }
@@ -5456,7 +5471,7 @@
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
         imetaTagsFor(text).forEach(t=>tags.push(t));
         _applyCw(tags);
-        closeModal(); await publish(1, content, tags); if(draftId) Drafts.remove(draftId);
+        closeModal(); await publish(1, content, tags); _dropDraft();
         toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
       ta.focus();
