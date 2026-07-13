@@ -56,8 +56,24 @@ app = FastAPI(
 # https://localhost origin and calls this server cross-origin for data (relay, API, Blossom). Allow those
 # app origins (browsers on poster.place are same-origin and unaffected).
 from fastapi.middleware.cors import CORSMiddleware
+
+
+class _ScopedCORS(CORSMiddleware):
+    """App-wide CORS for the Capacitor app — but NEVER for /blossom. Blossom sets its own wide-open
+    (Access-Control-Allow-Origin: *) CORS per-route and must accept ANY origin: it's fetched/uploaded
+    cross-origin by arbitrary Nostr clients AND by our own web client (served on poster.place but
+    hitting media.poster.place — a different origin). Letting this narrow, credentialed allowlist
+    handle the preflight 400'd every browser upload/list ('blossom broken'). Skipping /blossom here
+    hands the request straight to Blossom's own OPTIONS handler, restoring the pre-Capacitor behavior."""
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path", "").startswith("/blossom"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 app.add_middleware(
-    CORSMiddleware,
+    _ScopedCORS,
     # Capacitor app origins only (androidScheme=https → https://localhost). NOT http://localhost: with
     # allow_credentials it would let any plaintext-http localhost page read the victim's authed responses.
     allow_origins=["https://localhost", "capacitor://localhost"],

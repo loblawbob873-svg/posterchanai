@@ -87,8 +87,32 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
             image.save(tmp_path, format='BMP')
 
         try:
-            # Run OCR on the temp file
-            text = pytesseract.image_to_string(tmp_path)
+            # TWO-PASS OCR. English is the overwhelmingly common case, so run it ALONE first — fast, and no
+            # mixed-script mis-segmentation. Only if that finds little text (a non-Latin image: Thai, Chinese,
+            # Arabic, …) do we retry across every OTHER installed language pack. This fixes the "translate
+            # returned the source language" bug (eng-only OCR read nothing on a Thai image) WITHOUT slowing or
+            # degrading the English case, and every tesseract call is guarded so one corrupt/version-mismatched
+            # traineddata can never break OCR — it just falls back to the eng result.
+            def _ocr(lang):
+                try:
+                    return pytesseract.image_to_string(tmp_path, lang=lang) or ""
+                except pytesseract.TesseractError as e:
+                    logger.warning(f"Tesseract OCR error (lang={lang}): {e}")
+                    return None
+            text = _ocr("eng")
+            if len(((text or "").strip())) < 8:   # eng found ~nothing → probably another script
+                try:
+                    others = [l for l in pytesseract.get_languages(config="") if l not in ("osd", "eng")]
+                except Exception:
+                    others = []
+                if others:
+                    _pref = ["tha", "chi_sim", "chi_tra", "jpn", "kor", "ara", "rus", "hin", "spa", "fra", "deu"]
+                    ordered = [l for l in _pref if l in others] + [l for l in others if l not in _pref]
+                    alt = _ocr("+".join(ordered))
+                    if alt and len(alt.strip()) > len((text or "").strip()):
+                        text = alt
+            if text is None:
+                text = ""
         except pytesseract.TesseractNotFoundError:
             logger.warning("Tesseract OCR executable not found - OCR unavailable")
             return None

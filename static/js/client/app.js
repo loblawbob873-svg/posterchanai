@@ -1040,7 +1040,7 @@
     if(!GUEST) checkBlossomAccess();   // learn Blossom permission (→ nostr.build if none); restoreMediaServer runs on relay-ready (hydrateUser)
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
-    { const na=$('#nav-admin'); if(na) na.classList.toggle('hidden', !IS_ADMIN); }   // in-app Admin (admins only)
+    // Admin now lives inside User Settings (admins only) — it was moved out of the sidebar nav to save room.
     // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends
     // base.html, whose script unregisters ALL service workers for the origin — including THIS PWA's —
     // forcing a reload that (on Firefox) reveals the browser toolbar and made code-updates churn. The
@@ -1084,6 +1084,7 @@
         apply(ClientSettings.get('gamesOpen', false));
         gt.onclick=()=>{ const o=!ClientSettings.get('gamesOpen', false); ClientSettings.set('gamesOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
+    { const dd=$('#btn-drafts-d'); if(dd) dd.onclick = ()=>switchView('drafts'); }   // desktop Drafts button (next to New post; hidden on mobile via CSS)
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     bindSearch();
@@ -1623,6 +1624,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
+    { const dd=$('#btn-drafts-d'); if(dd) dd.classList.toggle('active', v==='drafts'); }   // desktop Drafts topbar btn is not a .nav-item — highlight it explicitly
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
@@ -5148,8 +5150,9 @@
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
-    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['admin','🛠️','Admin'],['logout','⎋','Logout']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai') && !(v==='admin' && !IS_ADMIN));   // hide AI+Translate in Nostr-only; Admin only for admins
+    // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
+    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI+Translate in Nostr-only
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     const _stat=(_wot||_lastOnline||_lastRelay||_lastStreams||_lastCalls)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}${_lastStreams?`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span>`:''}${_lastCalls?`<span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`:''}</div>`:'';
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
@@ -8825,6 +8828,7 @@
         <div class="set-body">
           <div class="set-actions">
             <button class="btn btn-ghost small" id="set-copy-npub">🔑 Copy npub</button>
+            ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin" style="color:var(--neon,#0ff)">🛠️ Admin panel</button>`:''}
             ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
@@ -8880,6 +8884,7 @@
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
+    { const ad=$('#set-admin'); if(ad) ad.onclick=()=>switchView('admin'); }   // Admin panel (moved here from the nav; admins only)
     { const lo=$('#set-logout'); if(lo) lo.onclick=()=>{ if(confirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';

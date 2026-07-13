@@ -537,13 +537,23 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 #btn-logout{align-self:center;margin:6px 0;font-size:15px;padding:9px 22px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.35);transition:.15s}
 #btn-logout:hover{filter:brightness(1.08);box-shadow:0 0 22px rgba(255,0,255,.45)}
 .conn{display:flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);padding:6px 8px 10px}
-.usercount{text-align:center;font-size:15.5px;font-weight:700;line-height:1.7;letter-spacing:.4px;color:#bdfcff;text-shadow:0 0 8px rgba(0,255,255,.6);padding:2px 8px 12px;margin-top:-2px}
+/* Stats WRAP horizontally (flex) rather than each on its own line — with 5 stats (users/online/relay/live/
+   call) the old stacked layout grew tall enough that the fixed-height, overflow-hidden sidebar clipped the
+   bottom ones on a short (tablet-landscape) viewport. Wrapping keeps them to ~2 compact lines and never clips.
+   `flex-shrink:0` on the whole block keeps it from being squeezed to nothing by a tall scrolling nav above. */
+.usercount{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:2px 10px;flex-shrink:0;
+  font-size:13.5px;font-weight:700;line-height:1.45;letter-spacing:.3px;color:#bdfcff;text-shadow:0 0 8px rgba(0,255,255,.6);padding:2px 8px 10px;margin-top:-2px}
 .usercount .uc-dot{color:var(--muted);text-shadow:none;margin:0 2px}
-.usercount .wot-ico{width:19px;height:19px;vertical-align:-4px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,255,.75))}
-.usercount .live-ico{width:15px;height:15px;color:var(--neon2);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(255,0,255,.9));animation:conn-pulse 1.6s ease-in-out infinite}
-/* each stat on its own line (was <br>-joined); nowrap keeps the icon+number together. */
-.usercount .uc-stat{display:block;white-space:nowrap}
+.usercount .wot-ico{width:17px;height:17px;vertical-align:-4px;margin-right:2px;filter:drop-shadow(0 0 6px rgba(0,255,255,.75))}
+.usercount .live-ico{width:14px;height:14px;color:var(--neon2);vertical-align:-2px;margin-right:2px;filter:drop-shadow(0 0 6px rgba(255,0,255,.9));animation:conn-pulse 1.6s ease-in-out infinite}
+.usercount .uc-stat{white-space:nowrap}
 .usercount .relay-ico{width:15px;height:15px;color:var(--green);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,136,.6))}
+/* Desktop Drafts button (topbar, beside New post) — saves a nav row on desktop; mobile keeps Drafts in the
+   ☰ More sheet, so this button is hidden ≤820px. Its draft-count badge sits at the top-right corner. */
+.drafts-btn-d{position:relative;padding:0 12px;font-size:17px;line-height:1}
+.drafts-btn-d.active{color:var(--neon);background:linear-gradient(135deg,rgba(0,255,255,.22),rgba(255,0,255,.14));box-shadow:inset 0 0 0 1px var(--line)}
+.drafts-btn-d .badge{position:absolute;top:-4px;right:-4px}
+@media (max-width:820px){ .drafts-btn-d{display:none} }
 /* Instance quick-pick chips (User Settings → Media, native app). Wrap on small screens. */
 .instance-pick{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .instance-chip{background:var(--panel2,#1a1a2e);border:1px solid var(--line,#333);color:var(--text,#eee);border-radius:16px;

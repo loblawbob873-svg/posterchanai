@@ -110,7 +110,6 @@
             <button class="nav-item" data-view="notifications"><span class="ic">🔔</span><span>Notifications<i id="notif-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="messages"><span class="ic">✉️</span><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="calls"><span class="ic">📞</span><span>Calls</span></button>
-            <button class="nav-item" data-view="drafts"><span class="ic">📝</span><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="bookmarks"><span class="ic">🔖</span><span>Bookmarks</span></button>
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="disc-toggle"><span class="ic">🧭</span><span>Discover</span><span class="chev" id="disc-chev">▾</span></button>
@@ -145,7 +144,6 @@
                 </div>
             </div>
             <button class="nav-item" data-view="settings"><span class="ic">⚙️</span><span>Settings</span></button>
-            <button class="nav-item hidden" id="nav-admin" data-view="admin"><span class="ic">🛠️</span><span>Admin</span></button>
         </nav>
         <div class="me" id="me-card"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
@@ -159,6 +157,7 @@
             <h2 id="view-title">Home</h2>
             <button id="tl-media" class="mini hidden" title="Toggle media grid (this feed, images only)">▦</button>
             <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 search posts &amp; profiles…"></div>
+            <button id="btn-drafts-d" class="btn btn-ghost drafts-btn-d" title="Drafts">📝<i id="draft-badge" class="badge hidden"></i></button>
             <button id="btn-compose" class="btn btn-cyan compose-btn">✎ New post</button>
         </header>
         <div id="feed" class="feed"></div>

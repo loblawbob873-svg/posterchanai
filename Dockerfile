@@ -114,6 +114,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config patchelf \
         ca-certificates curl gnupg \
         ffmpeg tesseract-ocr \
+        tesseract-ocr-tha tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-jpn \
+        tesseract-ocr-kor tesseract-ocr-ara tesseract-ocr-rus tesseract-ocr-hin \
+        tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-deu \
         libgl1 libglib2.0-0 libjpeg-turbo8 zlib1g \
         fonts-dejavu fonts-liberation fonts-noto-color-emoji fontconfig \
         python3-libtorrent tor tor-geoipdb \
