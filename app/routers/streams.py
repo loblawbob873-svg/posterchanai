@@ -224,6 +224,50 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     }
 
 
+def _prefer_h264(sdp: str) -> str:
+    """Force the video m-section to negotiate H264 by dropping every other video codec from the OFFER.
+
+    A browser WHIP offer usually lists VP8 first, so MediaMTX negotiates VP8 — but HLS can only carry
+    H264/H265/AV1, so a VP8 phone stream produces NO playlist and viewers get 404 (the whole "can't watch a
+    phone stream" bug). Every real phone (Android WebView / iOS Safari) hardware-encodes H264, so we keep
+    ONLY the H264 payload types (plus their RTX retransmission companions) in the video m-line. If the offer
+    somehow has no H264, we leave it untouched rather than break ingest. Audio (Opus) is never touched.
+    """
+    import re
+    lines = sdp.replace("\r\n", "\n").split("\n")
+    # Locate the video m-section span.
+    v_start = next((i for i, l in enumerate(lines) if l.startswith("m=video ")), -1)
+    if v_start < 0:
+        return sdp
+    v_end = next((i for i in range(v_start + 1, len(lines)) if lines[i].startswith("m=")), len(lines))
+    section = lines[v_start:v_end]
+    # payload-type → codec name, and rtx apt→ its referenced pt.
+    codec_of, rtx_apt = {}, {}
+    for l in section:
+        m = re.match(r"a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)/", l)
+        if m:
+            codec_of[m.group(1)] = m.group(2).upper()
+        m = re.match(r"a=fmtp:(\d+)\s+apt=(\d+)", l)
+        if m:
+            rtx_apt[m.group(1)] = m.group(2)
+    h264 = {pt for pt, c in codec_of.items() if c == "H264"}
+    if not h264:
+        return sdp
+    keep = set(h264) | {pt for pt, apt in rtx_apt.items() if apt in h264}
+    # Rewrite the m= line's payload list, preserving its original order.
+    parts = section[0].split()
+    header, pts = parts[:3], [p for p in parts[3:] if p in keep]
+    if not pts:
+        return sdp
+    new_section = [" ".join(header + pts)]
+    for l in section[1:]:
+        m = re.match(r"a=(?:rtpmap|fmtp|rtcp-fb):(\d+)", l)
+        if m and m.group(1) not in keep:
+            continue        # drop attributes for the codecs we removed
+        new_section.append(l)
+    return "\r\n".join(lines[:v_start] + new_section + lines[v_end:])
+
+
 @router.post("/whip/{token}")
 async def stream_whip(token: str, request: Request, current_user: User = Depends(get_current_user), db=Depends(get_db)):
     """WHIP ingest proxy — lets the web client (PWA/app) publish a live WebRTC stream from the phone camera.
@@ -246,6 +290,12 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
     offer = await request.body()
     if len(offer) > 262144:
         return JSONResponse({"error": "offer too large"}, status_code=413)
+    # Force H264 so the stream is HLS-viewable (a VP8 phone stream produces no playlist). Best-effort —
+    # if munging fails for any reason, forward the original offer rather than drop the go-live.
+    try:
+        offer = _prefer_h264(offer.decode("utf-8", "ignore")).encode("utf-8")
+    except Exception:
+        pass
     key = _obs_key(db, current_user)
     webrtc_port = (settings_store.get("stream_webrtc_port", "8889") or "8889").strip()
     upstream = f"http://127.0.0.1:{webrtc_port}/{token}/whip?key={key}"

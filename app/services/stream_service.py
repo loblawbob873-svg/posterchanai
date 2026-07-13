@@ -137,7 +137,12 @@ def _write_config(cfg: dict) -> None:
         "hls: yes",
         f"hlsAddress: :{hls_port}",
         "hlsAllowOrigins: [\"*\"]",
-        "hlsVariant: mpegts",
+        # fmp4, NOT mpegts. A phone goes live over WebRTC/WHIP, which produces Opus audio (and, unless we
+        # force H264, VP8 video) — the mpegts HLS variant supports ONLY H264 + AAC, so its muxer was
+        # destroyed on creation ("supports MPEG-4 Audio only") and viewers got 500/404 with no playlist.
+        # fmp4 carries Opus + H264, so both the phone (H264+Opus) and OBS (H264+AAC) paths remux to a
+        # playlist hls.js can play. (The client always plays via hls.js, which supports fmp4+Opus.)
+        "hlsVariant: fmp4",
         "hlsSegmentCount: 7",
         "hlsSegmentDuration: 2s",
         # WebRTC/WHIP ingest — lets a phone go live straight from the browser (PWA/app) via getUserMedia.

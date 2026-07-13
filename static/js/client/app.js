@@ -2559,6 +2559,7 @@
       // Drop the parked "ended" event too — otherwise the server publishes it when the feed stops and
       // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
       _clearEndSentinel();
+      if(d) _endedStreams.add(d);   // don't let _adoptOwnLive resurrect a deleted stream from stale cache
       if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
       if(_phoneStream && _phoneStream.token===d){ try{ _phoneStream.pc.close(); _phoneStream.local.getTracks().forEach(t=>t.stop()); }catch(_){} _phoneStream=null; const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
       _closeStreamChat(); toast('stream deleted'); switchView('streams');
@@ -2607,6 +2608,11 @@
   let _liveStream=null;   // { token, title, hls } while this device is announcing a live stream
   let _phoneStream=null;  // { pc, local, token } while streaming from the phone camera via WHIP
   let _goingLive=false;   // re-entrancy guard while a phone go-live is mid-handshake (before _phoneStream is set)
+  // Tokens we've explicitly ENDED (or deleted) this session. _adoptOwnLive must never re-adopt these: after
+  // End, the still-'live' 30311 lingers in cache and comes back from the external stream relays for a while
+  // (the ended event hasn't federated there yet), so without this the next render silently re-adopts it and
+  // the user is stuck on "End stream" with no way back to "Go Live". Cleared when they genuinely go live again.
+  let _endedStreams=new Set();
   let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
   function _copyFrom(el){  // copy WITHOUT unmasking a password field (temp textarea) — never expose the key
     const val=(el&&el.value)||'';
@@ -2627,10 +2633,11 @@
   // permanently LIVE (the End button reappears + the heartbeat resumes).
   function _adoptOwnLive(streams){
     if(_liveStream || GUEST || !ME) return;
-    const mine=(streams||[]).find(e=>e.pubkey===ME.pubkey && streamStatus(e)==='live');
+    const mine=(streams||[]).find(e=>e.pubkey===ME.pubkey && streamStatus(e)==='live'
+                                     && !_endedStreams.has((e.tags.find(t=>t[0]==='d')||[])[1]));
     if(!mine) return;
     const tok=(mine.tags.find(t=>t[0]==='d')||[])[1];
-    if(!tok) return;
+    if(!tok || _endedStreams.has(tok)) return;
     _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
                   hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'' };
     if(_liveStream.hls) _startLiveHb();
@@ -2674,6 +2681,7 @@
   // Publish the NIP-53 kind-30311 "live" event + track it locally. Sets _liveStream FIRST so a relay
   // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
   async function _publishLive(info, title){
+    _endedStreams.delete(info.token);   // going live again with this token — allow adoption once more
     _liveStream={ token:info.token, title, hls:info.hls_url };
     const starts=String(Math.floor(Date.now()/1000));
     await publish(30311, '', [
@@ -2744,6 +2752,17 @@
       let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
       pc=new RTCPeerConnection({iceServers:ice, iceCandidatePoolSize:1});
       local.getTracks().forEach(t=>pc.addTrack(t,local));
+      // Prefer H264 for the video: MediaMTX can only remux H264/H265/AV1 to HLS, so a VP8 stream is
+      // unwatchable (no playlist). The server also enforces this by munging the offer, but setting it here
+      // means the phone hardware-encodes H264 from the start. Best-effort — unsupported browsers just skip it.
+      try{
+        const caps=(window.RTCRtpSender&&RTCRtpSender.getCapabilities)?RTCRtpSender.getCapabilities('video'):null;
+        if(caps&&caps.codecs){
+          const h=caps.codecs.filter(c=>/h264/i.test(c.mimeType||'')), rest=caps.codecs.filter(c=>!/h264/i.test(c.mimeType||''));
+          const vt=pc.getTransceivers().find(t=>t.sender&&t.sender.track&&t.sender.track.kind==='video');
+          if(vt&&vt.setCodecPreferences&&h.length) vt.setCodecPreferences(h.concat(rest));
+        }
+      }catch(_){}
       const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
       await _iceGatherComplete(pc);
       try{ await ensureAiSession(); }catch(_){}
@@ -2782,7 +2801,8 @@
       try{ ps.pc&&ps.pc.close(); }catch(_){} try{ ps.local&&ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
       const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
     const s=_liveStream; _liveStream=null;
-    if(s){ try{ await publish(30311, '', [
+    if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
+      try{ await publish(30311, '', [
       ['d', s.token], ['title', s.title], ['streaming', s.hls],
       ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
       ['p', ME.pubkey, '', 'host'],
