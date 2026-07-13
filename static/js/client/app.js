@@ -2737,12 +2737,18 @@
     const headers=Object.assign({}, opts.headers||{}, _aiToken?{'Authorization':'Bearer '+_aiToken}:{});
     return fetch(url, Object.assign({}, opts, { headers }));
   }
-  // Optional kind-1 announcement to followers, carrying a clickable WATCH LINK (nostr:naddr → the stream).
+  // Optional kind-1 announcement to followers, carrying a WATCH LINK that actually works.
+  //
+  // A bare `nostr:naddr` was NOT that link. Other clients resolve a kind-30311 naddr by handing the viewer off
+  // to zap.stream — which then can't play the stream (it reads the `streaming` url, which lives on OUR
+  // instance) — and anyone without a Nostr client sees an opaque `nostr:naddr1…` string and nothing to click.
+  // So lead with a plain https link to the stream on this instance (poster.place/<naddr>, which the client
+  // resolves straight into the player) and keep the naddr AFTER it, for native clients that embed it properly.
   async function _announceStreamPost(info, title){
     try{
       const relays=[CFG && CFG.relay_url].filter(Boolean);   // include our relay so external clients can resolve the naddr
       const naddr=NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays});
-      await publish(1, `🔴 I’m live now: ${title}\n\n▶ Watch: nostr:${naddr}`,
+      await publish(1, `🔴 I’m live now: ${title}\n\n▶ Watch: ${_webLink(naddr)}\n\nnostr:${naddr}`,
         [['t','livestream'], ['a', `30311:${ME.pubkey}:${info.token}`, '', 'root']]);
     }catch(_){}
   }
@@ -4043,7 +4049,11 @@
     const ev=evs.sort((a,b)=>b.created_at-a.created_at)[0];
     if(!ev){ toast('referenced post not found on the relay'); return; }
     Store.saveEvent(ev); needProfile(ev.pubkey);
-    if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev); else renderThread(ev.id);
+    // A stream link must open the PLAYER. Without this a shared stream naddr fell through to renderThread and
+    // rendered a live broadcast as an ordinary post — the link "didn't point to the stream".
+    if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev);
+    else if(kind===30311) openStream(ev);
+    else renderThread(ev.id);
   }
   function quoteHtml(ev){
     const q=(ev.tags.find(t=>t[0]==='q')||[])[1]; if(!q) return '';

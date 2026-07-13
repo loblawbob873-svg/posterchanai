@@ -37,6 +37,22 @@ _OBS_KEY_NAME = "OBS Stream"
 _TOKEN_SETTING = "stream_token"
 
 
+def _public_origin(request: Request) -> str:
+    """The origin as the OUTSIDE world sees it, not as uvicorn sees it.
+
+    We sit behind a reverse proxy that terminates TLS, so request.base_url is `http://…`. That url ends up in
+    the kind-30311's `streaming` tag — a PUBLIC, cross-client link — and every serious client (zap.stream, the
+    PWA, anything on https) refuses to load an http playlist from an https page as mixed content. The stream
+    then looks broken everywhere but here. Trust the proxy's X-Forwarded-* (only this app is exposed through
+    it), falling back to what the request itself claims.
+    """
+    fwd_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    fwd_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    proto = fwd_proto or request.url.scheme or "https"
+    host = fwd_host or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}".rstrip("/")
+
+
 def _stream_enabled() -> bool:
     return (settings_store.get("stream_enabled", "false") or "").strip().lower() == "true"
 
@@ -212,14 +228,13 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
 
     # HLS playback URL: a configured direct base (grey-clouded stream subdomain, scales best) or the
     # app's reverse-proxy path (zero-config — rides the existing tunnel).
+    origin = _public_origin(request)
     hls_base = (cfg.get("stream_hls_base", "") or "").strip().rstrip("/")
     if hls_base:
         hls_url = f"{hls_base}/{token}/index.m3u8"
     else:
-        origin = str(request.base_url).rstrip("/")
         hls_url = f"{origin}/api/streams/hls/{token}/index.m3u8"
 
-    origin = str(request.base_url).rstrip("/")
     return {
         "enabled": enabled,
         "rtmp_url": f"rtmp://{host}:{rtmp_port}",
