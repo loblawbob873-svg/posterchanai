@@ -117,6 +117,25 @@ class SubscriptionManager:
     def count(self, conn) -> int:
         return len(self._subs.get(conn, {}))
 
+    def has_listener(self, pubkey: str, kind: int) -> bool:
+        """Is anyone connected RIGHT NOW waiting for `kind` events addressed to `pubkey`?
+
+        Used to gate NIP-46 signer traffic, whose participants are ephemeral keys that can't be checked
+        against the web of trust. "Someone here is subscribed for this" is the honest test of whether an
+        event is wanted, rather than who signed it.
+        """
+        for subs in list(self._subs.values()):
+            for filters in list(subs.values()):
+                for f in (filters or []):
+                    if not f:
+                        continue
+                    kinds = f.get("kinds")
+                    if kinds and kind not in kinds:
+                        continue
+                    if pubkey in (f.get("#p") or ()):
+                        return True
+        return False
+
     def fanout(self, ev: dict, send) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
         non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
@@ -531,16 +550,26 @@ class RelayServer:
             # nofederate tag) — so a fediverse delete propagates everywhere the mirror reached.
             pass
         elif kind == 24133:
-            # NIP-46 remote-signer transport (Amber / nsecbunker). Ephemeral (never stored, see below) and
-            # always p-tagged to the specific peer. One side of the exchange is an EPHEMERAL app key that is
-            # in nobody's web of trust by construction, so an author-only gate would drop every request the
-            # client sends and make bunker login impossible on our own relay — which is exactly what we want
-            # it to be usable for: the public signer relays rate-limit (and go down, taking Amber login with
-            # them). Accept when EITHER party is trusted, the same recipient-routing rule DMs, zaps and calls
-            # already use.
-            if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)
-                    or any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))):
-                self._send(conn, ["OK", eid, False, "blocked: signer traffic not for a web-of-trust member"])
+            # NIP-46 remote-signer transport (Amber / nsecbunker). Ephemeral — never stored (see below) — and
+            # always p-tagged to the specific peer.
+            #
+            # The web of trust CANNOT gate this: NEITHER party is necessarily a member. The client side is an
+            # ephemeral app key by construction, and Amber signs with a per-application signer key rather than
+            # the user's identity key — so a WoT check on author-or-recipient rejects Amber's half of every
+            # handshake ("blocked: signer traffic not for a web-of-trust member") and bunker login dies on our
+            # own relay.
+            #
+            # So gate on WANTEDNESS instead of identity: accept only if someone connected to this relay is
+            # actually subscribed for signer traffic addressed to that pubkey. That is exactly our own login in
+            # progress (the client subscribes for its app key before showing the QR; Amber subscribes for its
+            # signer key when it connects), and it refuses signer traffic aimed at nobody — so this is a
+            # transport for handshakes happening HERE, not an open ephemeral message bus.
+            _peers = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"]
+            _trusted = (self.gate.is_member(ev.get("pubkey", ""))
+                        or any(self.gate.is_member(p) for p in _peers))
+            _awaited = any(self.subs.has_listener(p, 24133) for p in _peers)
+            if _wot and not (_trusted or _awaited):
+                self._send(conn, ["OK", eid, False, "blocked: no one here is waiting for that signer traffic"])
                 return
         elif kind == 25050:
             # Voice/video CALL signaling (WebRTC over Nostr): ephemeral, always p-tagged to the specific
