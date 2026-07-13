@@ -2782,7 +2782,8 @@
         if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
           pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
     }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
-    _phoneStream={ pc, local, token:info.token, facing, source:'camera' };
+    let devId=null; try{ const s=local.getVideoTracks()[0].getSettings(); devId=s.deviceId||null; if(s.facingMode) facing=s.facingMode; }catch(_){}
+    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:'camera' };
     // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
@@ -2857,20 +2858,36 @@
     return done(true);
   }
   const _camConstraints=(facing)=>({video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:facing}},audio:false});
-  // Switch the source to a camera (front/rear). Shared by the flip button and the screen→camera fallback.
-  function _toCamera(want){
-    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camConstraints(want)), nt=>{
-      const ps=_phoneStream; if(!ps) return;
-      // Trust the camera we ACTUALLY got (a single-camera device returns the same front cam), so we don't
-      // un-mirror a still-selfie preview by keying the mirror off what we merely requested.
-      let got=want; try{ const fm=nt.getSettings&&nt.getSettings().facingMode; if(fm) got=fm; }catch(_){}
-      ps.source='camera'; ps.facing=got;
-    });
-  }
-  // Flip front ('user') ↔ rear ('environment') camera.
-  function _flipCamera(){
+  // Record which camera we actually landed on. Trust getSettings() over what we asked for — a single-camera
+  // device hands back the same cam, and a tablet may not report facingMode at all — so we don't mislabel it.
+  function _applyCamera(nt, wantFacing, wantId){
     const ps=_phoneStream; if(!ps) return;
-    return _toCamera(ps.facing==='environment' ? 'user' : 'environment');
+    const s=(nt.getSettings&&nt.getSettings())||{};
+    ps.source='camera';
+    ps.deviceId = s.deviceId || wantId || ps.deviceId;
+    ps.facing = s.facingMode || wantFacing || ps.facing;
+  }
+  // Restore a camera by facing (used by the screen→camera fallback, where we just need any camera back).
+  function _toCamera(want){
+    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camConstraints(want)), nt=>_applyCamera(nt, want, null));
+  }
+  // Flip cameras. Cycle by deviceId — facingMode is phone-centric and tablets/laptops often ignore it,
+  // handing back the SAME camera (the "flip did nothing on my tablet" bug). Only fall back to the
+  // front/back facingMode toggle when we can't enumerate two cameras.
+  async function _flipCamera(){
+    const ps=_phoneStream; if(!ps) return;
+    let nextId=null;
+    try{
+      const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+      if(cams.length>=2){ const i=Math.max(0, cams.findIndex(c=>c.deviceId===ps.deviceId));
+        nextId=cams[(i+1)%cams.length].deviceId; }   // move to a DIFFERENT camera
+    }catch(_){}
+    if(_phoneStream!==ps) return;   // ended while enumerating
+    const want = ps.facing==='environment' ? 'user' : 'environment';
+    const acquire = nextId
+      ? ()=>navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:nextId},width:{ideal:1280},height:{ideal:720}},audio:false})
+      : ()=>navigator.mediaDevices.getUserMedia(_camConstraints(want));
+    return _swapPhoneVideo(acquire, nt=>_applyCamera(nt, nextId?null:want, nextId));
   }
   // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
   // it's screen + voiceover.
