@@ -280,8 +280,21 @@
       return { userPk, session:{ mode:'nip46', sk:this.appSk, relay:this.relay, remotePk:remote, userPk } };
     },
     // nostrconnect://<app-pubkey>?relay=…&secret=…  (WE present this; the signer connects to us)
-    async beginNostrConnect(relay, name){
-      await this._ensureAppKey(); await this._openRelay(relay);
+    //
+    // `relays` is a LIST and we take the first one that actually opens. It used to be a single hard-coded
+    // relay, which made signing in with Amber a single point of failure: when relay.nsec.app went down
+    // (HTTP 502) nobody could log in with a remote signer, in any browser or the app — the login just said
+    // "cannot reach signer relay" and there was nothing the user could do.
+    async beginNostrConnect(relays, name){
+      const list=(Array.isArray(relays)?relays:[relays]).filter(Boolean);
+      await this._ensureAppKey();
+      let opened=false;
+      for(const r of list){
+        try{ await this._openRelay(r); opened=true; break; }
+        catch(_){ this.reset(); }   // that relay is down — drop the socket and try the next
+      }
+      if(!opened) throw new Error('no signer relay is reachable right now — try again in a minute');
+      const relay=this.relay;
       const secret=Math.random().toString(36).slice(2,12);
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
       // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
@@ -829,10 +842,14 @@
     catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); }
     finally{ btn.disabled=false; btn.textContent='Connect'; }
   }
+  // Relays the Amber/remote-signer handshake can meet on, in preference order — the FIRST one that opens is
+  // used. relay.nsec.app is the signer-native one and stays first, but it must never again be the only option:
+  // while it was 502ing, remote-signer login was impossible everywhere (app and every browser).
+  const NC_RELAYS=['wss://relay.nsec.app','wss://relay.damus.io','wss://relay.primal.net','wss://relay.snort.social'];
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
     try{
-      const { uri, done }=await Nip46.beginNostrConnect('wss://relay.nsec.app', 'PosterChan');
+      const { uri, done }=await Nip46.beginNostrConnect(NC_RELAYS, 'PosterChan');
       $('#amber-nc-uri').textContent=uri;
       const open=$('#amber-nc-open'); if(open) open.href=uri;
       // QR of the nostrconnect:// URI → scan it with a phone signer (Primal-style mobile login).
