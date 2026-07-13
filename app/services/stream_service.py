@@ -47,7 +47,7 @@ _spawn_sig: Optional[str] = None
 # Settings whose change requires regenerating the config + respawning mediamtx.
 _SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port",
              "stream_webrtc_port", "stream_webrtc_udp_port", "stream_domain", "turn_public_ip",
-             "stream_auth_secret")
+             "stream_auth_secret", "stream_api_port")
 
 
 def _ensure_hook_secret(cfg: dict) -> str:
@@ -118,10 +118,15 @@ def _write_config(cfg: dict) -> None:
     secret = (cfg.get("stream_auth_secret", "") or "").strip()
     auth_url = f"http://127.0.0.1:{_app_port()}/api/streams/auth?hook={secret}"
     # Config keys target the pinned MediaMTX v1.19.2 (see install.sh / Dockerfile MEDIAMTX_VERSION).
+    api_port = (cfg.get("stream_api_port", "") or "9997").strip()
     lines = [
         "logLevel: info",
         "logDestinations: [stdout]",
-        "api: no",
+        # Control API, bound to LOOPBACK only: stream_end_service asks it whether a path is still publishing.
+        # It's the only liveness signal that's correct for BOTH ingests — the HLS playlist 404s for a
+        # WebRTC/WHIP (phone) stream that hasn't warmed up, and a dead MediaMTX 404s for everything.
+        "api: yes",
+        f"apiAddress: 127.0.0.1:{api_port}",
         "metrics: no",
         "pprof: no",
         "playback: no",
@@ -148,16 +153,30 @@ def _write_config(cfg: dict) -> None:
         lines += ["srt: yes", f"srtAddress: :{srt_port}"]
     else:
         lines += ["srt: no"]
+    # The instant the publisher (OBS / the phone) drops, tell the app so it can publish the streamer's parked
+    # "ended" event — their kind-30311 is signed in the browser, so a closed tab would otherwise leave the
+    # stream announced as ● LIVE forever (see app/services/stream_end_service.py). MediaMTX runs this through
+    # `sh -c`, so $MTX_PATH (the stream token) expands. curl ships with every supported install (it's what
+    # fetches MediaMTX itself); if it's ever missing, the reaper sweep still ends the stream.
+    # NOTE the key: MediaMTX v1 renamed runOnPublish/runOnUnpublish → runOnReady/runOnNotReady, and it
+    # REJECTS an unknown field outright ("json: unknown field") — a wrong name here is a crash-loop, not a
+    # silently-ignored setting.
+    end_url = f"http://127.0.0.1:{_app_port()}/api/streams/unpublish?hook={secret}&path=$MTX_PATH"
     # External HTTP auth: MediaMTX POSTs {action, path, query, ...}; the app allows reads, gates publishes.
     lines += [
         "authMethod: http",
         f"authHTTPAddress: {auth_url}",
         "authHTTPExclude:",
+        # The control API is bound to 127.0.0.1 only and is what stream_end_service probes for liveness.
+        # Without this it inherits authMethod:http, our hook denies the unknown "api" action, and every probe
+        # comes back 401 — which the probe (correctly) reports as "can't tell", so no stream would ever end.
+        "  - action: api",
         "  - action: metrics",
         "  - action: pprof",
         "",
         "paths:",
         "  all_others:",
+        f"    runOnNotReady: 'curl -sS -m 5 -o /dev/null -X POST \"{end_url}\"'",
         "",
     ]
     _STREAM_CFG.write_text("\n".join(lines) + "\n")

@@ -16,6 +16,7 @@ system, per the design decision.
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import secrets
 from urllib.parse import parse_qs
@@ -26,7 +27,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import APIKey, User, UserSetting
-from app.services import settings_store
+from app.services import settings_store, stream_end_service
+from app.services.nostr.event import verify_event
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/streams", tags=["streams"])
@@ -113,7 +115,76 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     if not own or not own.value or path != own.value:
         logger.info("[stream] publish denied (path %r is not the key owner's token)", path)
         return JSONResponse({"error": "not your stream"}, status_code=403)
+    # The feed is really flowing now — let the reaper end this stream if it later disappears.
+    try:
+        stream_end_service.mark_publishing(db, row.user_id)
+    except Exception as e:
+        logger.debug("[stream] could not mark %s publishing: %s", path, e)
     return Response(status_code=200)
+
+
+@router.post("/unpublish")
+async def stream_unpublish(request: Request, db=Depends(get_db)):
+    """MediaMTX `runOnUnpublish` hook — OBS/the phone dropped, so the stream is over.
+
+    The kind-30311 can only be signed in the streamer's browser, so we can't author an "ended" event here;
+    we publish the one they parked at go-live (see stream_end_service). Gated by the same ?hook=<secret> as
+    /auth. Returns immediately — MediaMTX is waiting on this call — and the actual end is graced + re-probed
+    in the background so an OBS reconnect blip doesn't end a stream that's still running.
+    """
+    secret = (settings_store.get("stream_auth_secret", "") or "").strip()
+    hook = request.query_params.get("hook") or ""
+    if not secret or not hmac.compare_digest(hook, secret):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    token = (request.query_params.get("path") or "").strip()
+    if not token:
+        return JSONResponse({"error": "missing path"}, status_code=400)
+    user_id = stream_end_service.user_by_token(db, token)
+    if user_id is None:
+        return Response(status_code=200)   # unknown token — nothing of ours to end
+    stream_end_service.schedule_end(token, user_id)
+    return Response(status_code=200)
+
+
+@router.post("/sentinel")
+async def stream_sentinel(request: Request, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Park the client's pre-signed "ended" kind-30311 so the server can end the stream if the browser dies.
+
+    We never sign this — the streamer's key never leaves their browser. We only store what they already
+    signed and publish it verbatim when MediaMTX says the feed is gone (see stream_end_service).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    event = (body or {}).get("event")
+    if not isinstance(event, dict):
+        return JSONResponse({"error": "bad event"}, status_code=400)
+    if len(json.dumps(event)) > 8192:      # a 30311 is a few hundred bytes; refuse anything absurd
+        return JSONResponse({"error": "event too large"}, status_code=413)
+    if event.get("kind") != 30311 or not verify_event(event):
+        return JSONResponse({"error": "bad event"}, status_code=400)
+
+    def _tag(name: str) -> str:
+        for t in (event.get("tags") or []):
+            if isinstance(t, list) and len(t) >= 2 and t[0] == name:
+                return str(t[1])
+        return ""
+
+    if _tag("status") != "ended":
+        return JSONResponse({"error": "not an ended event"}, status_code=400)
+    # It may only end the caller's OWN stream: the `d` tag has to be their publish token.
+    if _tag("d") != _user_token(db, current_user):
+        return JSONResponse({"error": "not your stream"}, status_code=403)
+    stream_end_service.save_sentinel(db, current_user.id, event)
+    return {"ok": True}
+
+
+@router.delete("/sentinel")
+def stream_sentinel_clear(current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """The client ended its own stream (stamping an accurate `ends`) — drop the parked fallback."""
+    stream_end_service.clear_sentinel(db, current_user.id)
+    return {"ok": True}
 
 
 @router.get("/ingest")

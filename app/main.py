@@ -430,6 +430,15 @@ async def startup():
                 logging.error(f"Error starting stream server: {e}", exc_info=True)
 
             try:
+                # Safety net that publishes a live stream's parked "ended" event when its feed is gone —
+                # covers the ends MediaMTX's runOnUnpublish hook can't deliver (app restarted mid-stream,
+                # mediamtx killed). Streams would otherwise stay announced as ● LIVE forever.
+                from app.services.stream_end_service import start_stream_end_reaper
+                start_stream_end_reaper()
+            except Exception as e:
+                logging.error(f"Error starting stream-end reaper: {e}", exc_info=True)
+
+            try:
                 # Settings read-path: hydrate the local Setting cache from the relay (the
                 # authoritative datastore). Deferred so the relay's WS is up first. Runs in the
                 # background so startup isn't blocked.
@@ -695,6 +704,11 @@ async def shutdown():
             # Stop the built-in MediaMTX streaming server supervisor + terminate mediamtx
             from app.services.stream_service import stop_stream_server
             stop_stream_server()
+        except Exception:
+            pass
+        try:
+            from app.services.stream_end_service import stop_stream_end_reaper
+            stop_stream_end_reaper()
         except Exception:
             pass
 

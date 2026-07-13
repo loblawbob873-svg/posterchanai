@@ -2550,14 +2550,25 @@
     try{
       await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']]);
       try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
+      // Drop the parked "ended" event too — otherwise the server publishes it when the feed stops and
+      // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
+      _clearEndSentinel();
       if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
       if(_phoneStream && _phoneStream.token===d){ try{ _phoneStream.pc.close(); _phoneStream.local.getTracks().forEach(t=>t.stop()); }catch(_){} _phoneStream=null; const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
       _closeStreamChat(); toast('stream deleted'); switchView('streams');
     }catch(_){ toast('couldn’t delete the stream'); }
   }
   // ---------- live stream chat (NIP-53 kind-1311, addressed to the stream's `a` tag) ----------
-  let _streamChatSub=null;
-  function _closeStreamChat(){ if(_streamChatSub){ try{ Relay.close(_streamChatSub); }catch(_){} _streamChatSub=null; } }
+  // Interop: the chat format is already spec (kind-1311, `a`-tagged to the 30311 with a root marker), but a
+  // local-relay-only sub could only ever see OUR users — you could watch a zap.stream broadcast from the
+  // Streams tab and its chat would look empty, while your own messages never reached the people watching it
+  // elsewhere. So the chat also READS the public stream relays (poll — there's no live external sub) and
+  // MIRRORS each send to them. Any NIP-53 client (zap.stream, Amethyst, …) is then in the same room.
+  let _streamChatSub=null, _streamChatPoll=null;
+  function _closeStreamChat(){
+    if(_streamChatSub){ try{ Relay.close(_streamChatSub); }catch(_){} _streamChatSub=null; }
+    if(_streamChatPoll){ clearInterval(_streamChatPoll); _streamChatPoll=null; }
+  }
   function _streamChat(saddr){
     _closeStreamChat();
     const box=$('#st-chat-msgs'); if(!box) return;
@@ -2572,10 +2583,16 @@
       if(msgs.length>500) msgs.splice(0, msgs.length-500);   // bound memory on a long, busy chat
       if(VIEW==='stream') render(); };
     try{ _streamChatSub=Relay.subscribe([{kinds:[1311], '#a':[saddr], limit:100}], {onEvent:onEv, live:true}); }catch(_){}
+    // Pull the same room from the public stream relays — this is what makes the chat cross-client rather
+    // than poster.place-only. queryFrom is one-shot (no live external sub exists), so poll while it's open.
+    const pull=()=>{ Relay.queryFrom(STREAM_RELAYS, [{kinds:[1311], '#a':[saddr], limit:100}])
+      .then(evs=>(evs||[]).forEach(onEv)).catch(()=>{}); };
+    pull(); _streamChatPoll=setInterval(()=>{ if(VIEW!=='stream'){ _closeStreamChat(); return; } pull(); }, 10000);
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');
     const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;
       if(GUEST){ _guestPrompt(); return; } inp.value='';
-      try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]); if(r&&r.ev) onEv(r.ev); }
+      try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]); if(r&&r.ev){ onEv(r.ev);
+        Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); } }   // so viewers on other clients see it too
       catch(_){ toast('couldn’t send'); } };
     if(send) send.onclick=doSend;
     if(inp) inp.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); doSend(); } };
@@ -2611,6 +2628,10 @@
     _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
                   hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'' };
     if(_liveStream.hls) _startLiveHb();
+    // Re-park the end-of-stream fallback: this stream may predate it, or the original park may have failed.
+    // Harmless if one is already stored — the server keeps the "went live" state across a re-park.
+    _parkEndSentinel(tok, _liveStream.title, _liveStream.hls,
+                     (mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at));
   }
   async function _goLive(){
     if(GUEST){ _guestPrompt(); return; }
@@ -2648,11 +2669,42 @@
   // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
   async function _publishLive(info, title){
     _liveStream={ token:info.token, title, hls:info.hls_url };
+    const starts=String(Math.floor(Date.now()/1000));
     await publish(30311, '', [
       ['d', info.token], ['title', title], ['streaming', info.hls_url],
-      ['status', 'live'], ['starts', String(Math.floor(Date.now()/1000))],
+      ['status', 'live'], ['starts', starts],
       ['p', ME.pubkey, '', 'host'],
     ]);
+    _parkEndSentinel(info.token, title, info.hls_url, starts);
+  }
+  // Ghost-LIVE guard. Our 30311 can only be signed HERE (the key never leaves the browser), so if this tab
+  // dies mid-stream — closed, crashed, phone asleep — nothing would ever mark the stream ended and it would
+  // sit "● LIVE" forever pointing at a dead HLS URL. So sign the "ended" twin NOW and park it with the
+  // server, which publishes it once MediaMTX reports the feed is gone (app/services/stream_end_service.py).
+  // No `ends` tag: this signature is fixed at go-live, so any end time it named would be a lie. _endLive()
+  // still stamps an accurate one on the normal path, and being newer it wins the replaceable-event race.
+  async function _parkEndSentinel(token, title, hls, starts){
+    try{
+      const ev=await signer.signEvent({ kind:30311, content:'', pubkey:ME.pubkey,
+        created_at: Math.floor(Date.now()/1000)+5,   // must outrank the "live" event we just published
+        tags:[ ['d', token], ['title', title], ['streaming', hls], ['status','ended'],
+               ['starts', starts], ['p', ME.pubkey, '', 'host'], ['client','PosterChan AI'] ] });
+      const res=await _streamFetch('/api/streams/sentinel', { method:'POST', headers:{'Content-Type':'application/json'},
+                                                              body: JSON.stringify({ event: ev }) });
+      // fetch only rejects on a network error, so a 401/403/400 would sail through unnoticed and leave the
+      // ghost-LIVE hole wide open while looking fine. Say so.
+      if(!res || !res.ok) throw new Error('sentinel rejected: '+((res&&res.status)||'no response'));
+    }catch(e){ console.warn('could not park the end-of-stream event', e);
+      toast('heads up: if this tab closes mid-stream, the stream may stay marked LIVE'); }
+  }
+  function _clearEndSentinel(){   // we ended it ourselves — the server's fallback isn't needed
+    try{ _streamFetch('/api/streams/sentinel', { method:'DELETE' }); }catch(_){}
+  }
+  async function _streamFetch(url, opts){   // /api/streams/* is app-authed (bearer), unlike the relay
+    opts=opts||{};
+    try{ await ensureAiSession(); }catch(_){}
+    const headers=Object.assign({}, opts.headers||{}, _aiToken?{'Authorization':'Bearer '+_aiToken}:{});
+    return fetch(url, Object.assign({}, opts, { headers }));
   }
   // Optional kind-1 announcement to followers, carrying a clickable WATCH LINK (nostr:naddr → the stream).
   async function _announceStreamPost(info, title){
@@ -2728,7 +2780,7 @@
       ['d', s.token], ['title', s.title], ['streaming', s.hls],
       ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
       ['p', ME.pubkey, '', 'host'],
-    ]); }catch(_){} }
+    ]); _clearEndSentinel(); }catch(_){} }
     toast('stream ended'); if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
@@ -6001,7 +6053,16 @@
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
-  function _notifTs(e){ return e.kind===3 ? (_followSeen[e.pubkey] || e.created_at) : e.created_at; }
+  // Pin a follower we're meeting from HISTORY (the seed, the relay's pre-EOSE backlog, the Store cache) —
+  // never at their kind-3's created_at, which is just their last contact-list SAVE. Keep them at/below the
+  // seen line so an old follower re-saving their list can't float to the top as a brand-new "followed you".
+  function _followTsOld(pk, created){ return _followTs(pk, seenNotif.last ? Math.min(created, seenNotif.last) : created); }
+  // Unpinned kind-3 (seed missed them / storage cleared) gets the same conservative time, so the ORDER is
+  // right even when nothing has been recorded yet — the pin is a cache, not the thing correctness rests on.
+  function _notifTs(e){
+    if(e.kind!==3) return e.created_at;
+    return _followSeen[e.pubkey] || (seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at);
+  }
   async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
     // Seed the known-follower set from the FULL current follower list BEFORE going live. kind-3 is the
@@ -6019,14 +6080,25 @@
         // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
         if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
+      // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
+      // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
+      // followers keep resurfacing: notifList would then pin them at their fresh re-save time. (Harmless if
+      // you genuinely have no followers: there's no kind-3 to mis-pin.)
+      _followSeeded = (followers||[]).length>0;
     }catch(_){}
-    _followSeeded=true;   // now notifList may persist pins for followers the seed didn't cover
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
+          FOLLOWERS.add(ev.pubkey);
+          // Before EOSE this is the relay's BACKLOG — history the seed should have covered, not news. A
+          // kind-3 carries no "when did they follow you" (it's their whole contact list, re-saved whenever
+          // they follow ANYONE), so pinning backlog at its created_at is exactly what kept showing an old
+          // follower as a fresh "followed you" every time they edited their list. Only a kind-3 that lands
+          // AFTER EOSE is a genuinely new follow.
           const firstTime = !_followSeen[ev.pubkey];
-          const ts = _followTs(ev.pubkey, ev.created_at);
-          if(firstTime && ts>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }   // genuinely new follower only
+          const live = _notifReady;
+          const ts = live ? _followTs(ev.pubkey, ev.created_at) : _followTsOld(ev.pubkey, ev.created_at);
+          if(live && firstTime && ts>seenNotif.last) bumpNotif();
           if(VIEW==='notifications') renderNotifications();
           return;                                  // a re-saved contact list never re-notifies
         }
@@ -6067,9 +6139,10 @@
     // PIN each follower's notification time on FIRST sight (persisted) BEFORE sorting — otherwise a
     // re-saved contact list (a NEW kind-3 with a fresh created_at) keeps sorting to the top and re-shows
     // an old follower as "followed you" over and over. _followTs records once; _notifTs then reads it.
-    // ONLY after the seed has run — else an early render (during the seed's await) would pin a re-saved
-    // follower to their fresh created_at and the seed's min(created_at, seen) would then be skipped.
-    if(_followSeeded) for(const e of evs){ if(e.kind===3) _followTs(e.pubkey, e.created_at); }
+    // Everything in the Store is history (a genuinely new follow was already pinned at its real time by the
+    // live subscription), so pin it as history — never at the re-save time. ONLY after a seed that actually
+    // read the follower list, else an early/cold render would persist a pin we can't yet stand behind.
+    if(_followSeeded) for(const e of evs){ if(e.kind===3) _followTsOld(e.pubkey, e.created_at); }
     evs.sort((a,b)=>_notifTs(b)-_notifTs(a));
     // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
     const seen3=new Set(); const out=[];
