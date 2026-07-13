@@ -2829,45 +2829,92 @@
     const v=$('#pl-vid'); if(v) v.classList.toggle('rear', screen || ps.facing==='environment');
   }
   let _swapping=false;
-  // Swap the OUTGOING video track without renegotiating: acquire a new source, replaceTrack() it onto the
-  // existing WHIP sender (viewers see a seamless cut), then swap the preview + stop the old track. Audio and
-  // the peer connection are untouched — so a screen share keeps your mic. `apply(nt)` records source-specific
-  // state once the swap commits. Returns 'busy' if another swap is in flight, false on failure/cancel, true on
-  // success — callers (the screen-end fallback) rely on this to recover instead of freezing on a dead track.
-  // Hardened against a concurrent _endLive: every await is followed by a `_phoneStream===ps` re-check, and
-  // once replaceTrack commits, nt (now live) is never stopped.
+  // Commit an acquired video track onto the live stream: replaceTrack() it onto the existing WHIP sender
+  // (viewers see a seamless cut, no renegotiation), then swap the preview + stop the old track. Audio and the
+  // peer connection are untouched. `apply(nt)` records source-specific state once the swap commits.
+  // Once replaceTrack commits, nt (now the outgoing track) is never stopped by us.
+  async function _commitPhoneVideo(ps, nt, apply){
+    const sender=ps.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+    if(!sender){ try{ nt.stop(); }catch(_){} return false; }
+    try{ await sender.replaceTrack(nt); }
+    catch(_){ try{ nt.stop(); }catch(_){} return false; }
+    // Committed. If the stream ended mid-swap, _endLive already closed the pc; just drop this orphan.
+    if(_phoneStream!==ps){ try{ nt.stop(); }catch(_){} return false; }
+    try{ const old=ps.local.getVideoTracks()[0];
+      if(old && old!==nt){ try{ old.onended=null; }catch(_){}   // clear any source's end-handler before WE stop it, so an intentional swap doesn't trigger a fallback
+        ps.local.removeTrack(old); try{ old.stop(); }catch(_){} }
+      if(!ps.local.getVideoTracks().includes(nt)) ps.local.addTrack(nt); }catch(_){}
+    try{ apply && apply(nt); }catch(_){}
+    const v=$('#pl-vid'); if(v){ v.srcObject=ps.local; v.play&&v.play().catch(()=>{}); }
+    _syncOverlayButtons();
+    return true;
+  }
+  // Take the first video track from an acquired stream and stop every other one. getDisplayMedia can return a
+  // system/tab AUDIO track even with audio:false (some Chromium builds); we only use the video track, so that
+  // capture would otherwise leak for the page's life.
+  function _soleVideoTrack(ns){
+    const nt=ns && ns.getVideoTracks()[0];
+    try{ ns && ns.getTracks().forEach(t=>{ if(t!==nt){ try{ t.stop(); }catch(_){} } }); }catch(_){}
+    return nt||null;
+  }
+  // Swap the OUTGOING video track without renegotiating. Returns 'busy' if another swap is in flight, false on
+  // failure/cancel, true on success — callers (the screen-end fallback) rely on this to recover instead of
+  // freezing on a dead track. Hardened against a concurrent _endLive: every await is followed by a
+  // `_phoneStream===ps` re-check, and a stream that ended mid-acquire has its orphan track stopped (else the
+  // camera/screen-capture stays live with no UI to end it — a privacy leak until reload).
+  //
+  // opts.release — camera→camera swaps only. MOST PHONES CANNOT HOLD TWO CAMERAS OPEN AT ONCE: the live track
+  // owns the hardware, so acquiring the other one fails (NotReadableError/OverconstrainedError/NotFoundError)
+  // while we're still streaming from it — that's the "couldn't switch video" flip failure. We still TRY the
+  // concurrent acquire first (seamless where it works: desktops, some Androids), and only on failure release
+  // the outgoing track and retry. If that retry also fails we must put the ORIGINAL camera back, or we've
+  // killed the only video source and the broadcast is stuck on a dead track with no way out but Stop.
   async function _swapPhoneVideo(acquire, apply, opts){
     if(!_phoneStream || _swapping) return 'busy';
     _swapping=true;
     const silent=!!(opts&&opts.silent);   // probe mode: caller has a fallback, so don't toast on failure
+    const release=!!(opts&&opts.release);
     const ps=_phoneStream;
     const done=(v,t)=>{ if(t && !silent) toast(t); _swapping=false; return v; };
+    const fatal=e=>e&&(e.name==='NotAllowedError'||e.name==='AbortError');   // user cancelled/denied — a retry can't help
+    const nocam=e=>e&&e.name==='PcNoCamera';                                 // caller already knows there's nothing to switch to
     let ns=null;
     try{ ns=await acquire(); }
-    catch(e){ const cancelled=e&&(e.name==='NotAllowedError'||e.name==='AbortError'); return done(false, cancelled?'':'couldn’t switch video'); }
-    const nt=ns && ns.getVideoTracks()[0];
-    // The stream may have ended while we were acquiring (Stop tapped / pc dropped → _endLive). If so the new
-    // track has no owner and _endLive never saw it — stop it, or its camera/screen-capture stays live with no
-    // UI to end it (a privacy leak until reload).
+    catch(e){
+      if(fatal(e)) return done(false, '');
+      if(nocam(e)) return done(false, 'no other camera found');
+      if(!release || _phoneStream!==ps) return done(false, 'couldn’t switch video');
+      // Free the camera, then retry. Viewers freeze on the last frame for the moment this takes; audio is
+      // unaffected (separate track), and the sender keeps its now-dead track until we replace it.
+      const old=ps.local.getVideoTracks()[0];
+      if(!old) return done(false, 'couldn’t switch video');
+      try{ old.onended=null; }catch(_){}
+      try{ old.stop(); }catch(_){}
+      try{ ns=await acquire(); }catch(_){ ns=null; }
+      if(_phoneStream!==ps){ try{ ns&&ns.getTracks().forEach(t=>t.stop()); }catch(_){} return done(false); }
+      if(!ns){
+        const back=await _reacquireCamera(ps);
+        if(back && await _commitPhoneVideo(ps, back, nt=>_applyCamera(nt, ps.facing, ps.deviceId))) return done(false, 'couldn’t switch video');
+        // The camera is gone entirely — end the broadcast rather than leave viewers on a frozen dead frame.
+        _swapping=false; toast('camera unavailable — stream ended'); _endLive(); return false;
+      }
+    }
+    const nt=_soleVideoTrack(ns);
     if(_phoneStream!==ps || !nt){ try{ ns&&ns.getTracks().forEach(t=>t.stop()); }catch(_){} return done(false); }
-    // getDisplayMedia can return a system/tab AUDIO track even with audio:false (some Chromium builds). We
-    // only use the video track, so stop every other track now — else that capture leaks for the page's life.
-    try{ ns.getTracks().forEach(t=>{ if(t!==nt){ try{ t.stop(); }catch(_){} } }); }catch(_){}
-    const sender=ps.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
-    if(!sender){ try{ nt.stop(); }catch(_){} return done(false, 'couldn’t switch video'); }
-    try{ await sender.replaceTrack(nt); }
-    catch(_){ try{ nt.stop(); }catch(_){} return done(false, 'couldn’t switch video'); }
-    // Committed — nt is the outgoing track now, so nothing below may stop it. If the stream ended mid-swap,
-    // _endLive already closed the pc; just drop this orphan.
-    if(_phoneStream!==ps){ try{ nt.stop(); }catch(_){} return done(false); }
-    try{ const old=ps.local.getVideoTracks()[0];
-      if(old){ try{ old.onended=null; }catch(_){}   // clear any source's end-handler before WE stop it, so an intentional swap doesn't trigger a fallback
-        ps.local.removeTrack(old); try{ old.stop(); }catch(_){} }
-      ps.local.addTrack(nt); }catch(_){}
-    try{ apply && apply(nt); }catch(_){}
-    const v=$('#pl-vid'); if(v){ v.srcObject=ps.local; v.play&&v.play().catch(()=>{}); }
-    _syncOverlayButtons();
+    if(!await _commitPhoneVideo(ps, nt, apply)) return done(false, _phoneStream===ps ? 'couldn’t switch video' : '');
     return done(true);
+  }
+  // Re-open the camera we were just streaming from (used to undo a failed release-and-retry flip). `ideal`, not
+  // `exact`, so a device that renumbered its cameras degrades to *a* camera instead of failing outright.
+  async function _reacquireCamera(ps){
+    const tries=[];
+    if(ps.deviceId) tries.push(_camById(ps.deviceId,false));
+    tries.push(_camByFacing(ps.facing||'user',false));
+    tries.push({video:true, audio:false});
+    for(const c of tries){
+      try{ const s=await navigator.mediaDevices.getUserMedia(c); const t=_soleVideoTrack(s); if(t) return t; }catch(_){}
+    }
+    return null;
   }
   const _SIZE={width:{ideal:1280},height:{ideal:720}};
   const _camByFacing=(facing,exact)=>({video:Object.assign({}, _SIZE, {facingMode: exact?{exact:facing}:{ideal:facing}}), audio:false});
@@ -2890,36 +2937,42 @@
     return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(id?_camById(id,false):_camByFacing(want,false)),
                            nt=>_applyCamera(nt, want, id||null));
   }
-  // Flip cameras — front ↔ rear.
+  // The next camera along, by deviceId — for devices where facingMode is ignored (tablets/laptops: the "flip
+  // did nothing on my tablet" bug). Null when there's genuinely nothing to switch to.
+  async function _otherCamId(ps){
+    try{
+      const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+      if(cams.length<2) return null;
+      const i=cams.findIndex(c=>c.deviceId && c.deviceId===ps.deviceId);
+      // Unknown current camera → just take one that isn't the one we think we're on.
+      return i<0 ? (cams.find(c=>c.deviceId && c.deviceId!==ps.deviceId)||cams[0]).deviceId
+                 : cams[(i+1)%cams.length].deviceId;
+    }catch(_){ return null; }
+  }
+  // Flip cameras — front ↔ rear. The acquire thunk is the whole preference ladder, so _swapPhoneVideo can
+  // re-run it verbatim after releasing the camera (see opts.release — the phone case, where the other camera
+  // can't be opened while this one is live).
   // 1) Ask for the opposite facingMode with `exact`. On a phone that's a deterministic ONE-TAP selfie↔rear.
   //    `exact` matters twice over: it won't silently hand back the same camera, and its FAILURE is precisely
   //    how we detect a device that doesn't really implement facingMode.
-  // 2) Only then fall back to cycling by deviceId (tablets/laptops, where facingMode is ignored — the
-  //    "flip did nothing on my tablet" bug). Doing this FIRST would be wrong: phones expose several rear
-  //    lenses (wide/ultrawide/tele/depth), so blind deviceId cycling turns Flip into a lens carousel.
+  // 2) Only then cycle by deviceId. Doing this FIRST would be wrong: phones expose several rear lenses
+  //    (wide/ultrawide/tele/depth), so blind deviceId cycling turns Flip into a lens carousel.
   async function _flipCamera(){
     const ps=_phoneStream; if(!ps) return;
     const want = ps.facing==='environment' ? 'user' : 'environment';
-    const r = await _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camByFacing(want,true)),
-                                    nt=>_applyCamera(nt, want, null), {silent:true});
-    if(r!==false) return r;                 // true = flipped, 'busy' = another swap in flight
-    if(_phoneStream!==ps) return false;
-    let nextId=null;
-    try{
-      const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
-      if(cams.length>=2){
-        const i=cams.findIndex(c=>c.deviceId && c.deviceId===ps.deviceId);
-        // Unknown current camera → just take one that isn't the one we think we're on.
-        nextId = i<0 ? (cams.find(c=>c.deviceId && c.deviceId!==ps.deviceId)||cams[0]).deviceId
-                     : cams[(i+1)%cams.length].deviceId;
-      }
-    }catch(_){}
-    if(_phoneStream!==ps) return false;
-    if(!nextId){ toast('no other camera found'); return false; }
-    // No facingMode on this device, so we can't read the new camera's facing — assume the flip landed on the
-    // opposite one, which keeps the mirror (and a later restore) right on a normal 2-camera tablet.
-    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camById(nextId,true)),
-                           nt=>_applyCamera(nt, want, nextId));
+    let landedId=null;
+    const acquire = async () => {
+      landedId=null;
+      try{ return await navigator.mediaDevices.getUserMedia(_camByFacing(want,true)); }
+      catch(e){ if(e&&(e.name==='NotAllowedError'||e.name==='AbortError')) throw e; }
+      const nextId=await _otherCamId(ps);
+      if(!nextId){ const e=new Error('no other camera'); e.name='PcNoCamera'; throw e; }
+      landedId=nextId;
+      return navigator.mediaDevices.getUserMedia(_camById(nextId,true));
+    };
+    // On the deviceId path we can't read the new camera's facing, so `want` is the assumption — which keeps the
+    // mirror (and a later restore) right on a normal 2-camera tablet.
+    return _swapPhoneVideo(acquire, nt=>_applyCamera(nt, want, landedId), {release:true});
   }
   // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
   // it's screen + voiceover.
