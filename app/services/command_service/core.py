@@ -31,7 +31,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
         "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
-        "compress": "Compress attached image(s) or video(s)",
+        "compress": "Compress attached image(s), video(s) or PDF(s)",
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",

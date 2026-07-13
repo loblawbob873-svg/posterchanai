@@ -1091,6 +1091,10 @@
     // Native (Capacitor) share sheet → app: handle the cold-start intent, and 'sendIntentReceived' for a
     // share arriving while the app is already open. No-op in the PWA (window.Capacitor undefined).
     if(window.Capacitor){
+      // A screen capture runs in a foreground service and OUTLIVES this WebView, so if Android killed the
+      // Activity mid-share we'd come back with the user's screen still being broadcast and nothing in the UI
+      // to stop it. Reconcile on every startup.
+      try{ _reconcileNativeScreen(); }catch(_){}
       const _reShare=()=>{ try{ _consumeSendIntent(); }catch(_){} };
       _reShare();   // cold-start share (app launched by the share intent) — runs each startApp (cheap; deduped)
       // Register the foreground/resume listeners ONCE per page-load — startApp can re-run (guest→login without
@@ -2566,7 +2570,10 @@
       _clearEndSentinel();
       if(d) _endedStreams.add(d);   // don't let _adoptOwnLive resurrect a deleted stream from stale cache
       if(_liveStream && _liveStream.token===d){ _stopLiveHb(); _liveStream=null; }
-      if(_phoneStream && _phoneStream.token===d){ try{ _phoneStream.pc.close(); _phoneStream.local.getTracks().forEach(t=>t.stop()); }catch(_){} _phoneStream=null; const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
+      // Same teardown as _endLive: a deleted stream must still release the camera / native screen capture.
+      // (The old inline version deref'd .pc unconditionally, which threw for a native share — leaving the
+      // screen capture running with no overlay left to stop it.)
+      if(_phoneStream && _phoneStream.token===d) _teardownPhoneStream();
       _closeStreamChat(); toast('stream deleted'); switchView('streams');
     }catch(_){ toast('couldn’t delete the stream'); }
   }
@@ -2658,11 +2665,13 @@
     let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
     if(!info || info.enabled===false || !info.rtmp_url){ toast('streaming isn’t enabled on this server'); return; }
     const canPhone = !!(info.whip_url && navigator.mediaDevices && window.RTCPeerConnection);
+    const canScreen = !!_screenPlugin();   // native app only — no mobile browser can capture a screen
     modal(`<h3>🔴 Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
-      ${canPhone
-        ? `<button class="btn btn-neon full" id="gl-phone">📱 Go live from this phone (camera)</button>
+      ${canPhone || canScreen
+        ? `${canPhone ? `<button class="btn btn-neon full" id="gl-phone">📱 Go live from this phone (camera)</button>` : ''}
+           ${canScreen ? `<button class="btn btn-neon full" id="gl-screen">🖥 Go live sharing this screen</button>` : ''}
            <div class="gl-or">— or stream from a computer with OBS —</div>`
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
@@ -2674,6 +2683,7 @@
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       $('#gl-cancel',root).onclick=closeModal;
       { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _phoneGoLive(info, t, a); }; }
+      { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _screenGoLive(info, t, a); }; }
       $('#gl-go',root).onclick=async()=>{
         const t=title(), a=announce();
         try{ await _publishLive(info, t); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
@@ -2783,7 +2793,9 @@
           pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
     }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
     let devId=null; try{ const s=local.getVideoTracks()[0].getSettings(); devId=s.deviceId||null; if(s.facingMode) facing=s.facingMode; }catch(_){}
-    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:'camera' };
+    // `info` is kept so a later switch to the native screen share can build its RTMP target from the same
+    // ingest (same token ⇒ same kind-30311, so viewers never have to re-open the stream).
+    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:'camera', info };
     // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
@@ -2796,15 +2808,19 @@
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
     el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
+      <div class="pl-note" id="pl-note" hidden>🖥 Sharing your screen</div>
       <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
-    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
+    // A native screen share is captured OUTSIDE the WebView (MediaProjection), so there's no MediaStream to
+    // preview here — previewing it in-app would be a hall of mirrors anyway. Show a placard instead.
+    const v=$('#pl-vid',el);
+    if(v && _phoneStream && !_phoneStream.native){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
     $('#pl-stop',el).onclick=e=>{ e.stopPropagation(); _endLive(); };
     $('#pl-flip',el).onclick=e=>{ e.stopPropagation(); _flipCamera(); };
     // The button is ALWAYS shown: hiding it on a browser without getDisplayMedia (mobile Chrome/Firefox, iOS
     // Safari — none of them implement screen capture) just looks like the feature is missing/broken. Say why.
     $('#pl-screen',el).onclick=e=>{ e.stopPropagation();
-      if(!_canScreenShare()){ toast('this browser can’t share a screen — mobile/tablet browsers don’t allow screen capture; go live from a desktop browser'); return; }
+      if(!_canScreenShare()){ toast('this browser can’t share a screen — mobile browsers don’t allow screen capture; use the PosterChan app, or go live from a desktop browser'); return; }
       _toggleScreen(); };
     // Minimize to a floating thumbnail so the app stays usable WHILE broadcasting. This is purely visual —
     // the broadcast lives in the PeerConnection, not the DOM, so shrinking the overlay never interrupts it.
@@ -2825,9 +2841,18 @@
     const ps=_phoneStream; if(!ps) return;
     const screen=ps.source==='screen';
     const fb=$('#pl-flip'); if(fb) fb.style.display=screen?'none':'';   // flip is camera-only
-    const sb=$('#pl-screen'); if(sb) sb.textContent=screen?'📷 Camera':'🖥 Share screen';
-    // Mirror ONLY the front (selfie) camera — a screen share (or the rear cam) must never be flipped.
-    const v=$('#pl-vid'); if(v) v.classList.toggle('rear', screen || ps.facing==='environment');
+    const sb=$('#pl-screen');
+    if(sb){
+      // The native (MediaProjection) share is a different transport — RTMP, captured outside the WebView — so
+      // there's no track to swap back to the camera in place. Hide the toggle rather than offer one that would
+      // have to tear the stream down to honour it; Stop and go live again to use the camera.
+      if(ps.native) sb.hidden=true;
+      else { sb.hidden=false; sb.textContent=screen?'📷 Camera':'🖥 Share screen'; }
+    }
+    const note=$('#pl-note'); if(note) note.hidden=!ps.native;
+    const v=$('#pl-vid'); if(v){ v.hidden=!!ps.native;
+      // Mirror ONLY the front (selfie) camera — a screen share (or the rear cam) must never be flipped.
+      v.classList.toggle('rear', screen || ps.facing==='environment'); }
   }
   let _swapping=false;
   // Commit an acquired video track onto the live stream: replaceTrack() it onto the existing WHIP sender
@@ -2988,12 +3013,148 @@
     if(r===true) _toastCamera(want);
     return r;
   }
-  const _canScreenShare=()=>!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-  // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
-  // it's screen + voiceover.
+  // ---------- native screen share (Android app) ----------
+  // NO mobile browser implements getDisplayMedia — not Chrome for Android, not the WebView the app runs in, not
+  // iOS Safari. So on the phone the screen cannot reach getUserMedia/WebRTC at all, and the WHIP path the camera
+  // uses is simply not available to it. The app therefore captures the screen NATIVELY (MediaProjection, in a
+  // small Capacitor plugin) and pushes H264/AAC over RTMP to the SAME MediaMTX ingest OBS publishes to, using
+  // the same per-user stream key. Everything else is untouched: same token, same kind-30311, same end-sentinel.
+  const _screenPlugin=()=>_capPlugin('ScreenShare','start');
+  let _screenListener=null;
+  let _screenPending=null;   // armed while we're waiting for the FIRST 'connected' of a native share
+  const _CONNECT_TIMEOUT=25000;
+  // The plugin's start() resolves as soon as the capture service is launched — it does NOT wait for the RTMP
+  // connect, which can still fail (bad key, encoder refused the screen size, MediaProjection denied). Those
+  // arrive later as status events, so a share isn't "live" until 'connected' lands. Arm this BEFORE start()
+  // so an immediate failure can't slip through between the two.
+  function _armScreenConnect(){
+    let settle;
+    const p=new Promise((res,rej)=>{ settle={res,rej}; });
+    const to=setTimeout(()=>{ if(_screenPending===settle){ _screenPending=null; settle.rej(new Error('the screen stream didn’t connect')); } }, _CONNECT_TIMEOUT);
+    settle.done=()=>clearTimeout(to);
+    _screenPending=settle;
+    return p;
+  }
+  function _watchNativeScreen(SS){
+    if(_screenListener) return;
+    try{
+      _screenListener=SS.addListener('screenShareStatus', s=>{
+        const ev=(s&&s.event)||'', msg=(s&&s.message)||'';
+        // Still handshaking: settle the go-live instead of consulting _phoneStream, which isn't assigned yet.
+        // (Dropping these was how a stream that never carried a frame still got announced as LIVE.)
+        if(_screenPending){
+          const p=_screenPending;
+          if(ev==='connected'){ _screenPending=null; p.done(); p.res(); }
+          else if(ev==='stopped' || ev==='error'){ _screenPending=null; p.done(); p.rej(new Error(msg||'screen sharing stopped')); }
+          return;   // 'connecting'/'reconnecting' — keep waiting
+        }
+        const ps=_phoneStream; if(!ps || !ps.native) return;
+        if(ev==='reconnecting') toast('screen stream dropped — reconnecting…');
+        // 'stopped' is the system's OWN stop (the status-bar chip, or the screen locking on Android 15) — the
+        // capture is gone and no JS ran. Without this the app keeps saying LIVE over a dead feed.
+        else if(ev==='stopped' || ev==='error'){
+          if(ev==='error' && msg) toast('screen share failed: '+msg);
+          _endLive();
+        }
+      });
+    }catch(_){ _screenListener=null; }
+  }
+  function _dropNativeScreen(){
+    const h=_screenListener; _screenListener=null;
+    if(_screenPending){ const p=_screenPending; _screenPending=null; p.done(); p.rej(new Error('screen sharing stopped')); }
+    // addListener resolves to the handle (Capacitor returns a promise), so unwrap before removing.
+    try{ Promise.resolve(h).then(x=>{ try{ x && x.remove && x.remove(); }catch(_){} }).catch(()=>{}); }catch(_){}
+  }
+  // A screen capture lives in a foreground service, OUTSIDE the WebView — so it outlives the page. If Android
+  // killed the Activity mid-share (memory pressure, task swiped away), we come back with no _phoneStream and
+  // no way to reach that capture: the user's screen would keep being broadcast with nothing in the app saying
+  // so. Stop any capture we've lost track of, on boot.
+  async function _reconcileNativeScreen(){
+    const SS=_capPlugin('ScreenShare','isStreaming'); if(!SS) return;
+    try{
+      const r=await SS.isStreaming();
+      if(r && r.value && !_phoneStream){ try{ await SS.stop(); }catch(_){} toast('a screen share was still running — stopped it'); }
+    }catch(_){}
+  }
+  // Go live straight from the screen (app only). No WebRTC involved — the plugin owns the whole feed — so the
+  // stream's liveness is reported by the plugin's status events rather than a PeerConnection.
+  async function _screenGoLive(info, title, doAnnounce){
+    if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
+    const SS=_screenPlugin(); if(!SS){ toast('screen sharing needs the PosterChan app'); return; }
+    if(!info.rtmp_native_url){ toast('this server is too old for in-app screen sharing'); return; }
+    _goingLive=true;
+    let granted=false;
+    try{ const r=await SS.requestConsent(); granted=!!(r && r.granted); }
+    catch(e){ _goingLive=false; toast((e&&e.message)||'couldn’t start screen sharing'); return; }
+    if(!granted){ _goingLive=false; toast('screen sharing cancelled'); return; }
+    _watchNativeScreen(SS);
+    const connected=_armScreenConnect();
+    // A failed start can still have left the capture service up — stop it, or the screen keeps being
+    // recorded with nothing on screen to end it.
+    try{ await SS.start({ url:info.rtmp_native_url }); }
+    catch(e){ try{ SS.stop(); }catch(_){} _dropNativeScreen(); _goingLive=false; toast('couldn’t start the screen stream'); return; }
+    // Track it (and show Stop) BEFORE waiting for the connect: the capture is already running, so from here
+    // on there must always be something in the app that can turn it off.
+    const ps={ pc:null, local:null, token:info.token, source:'screen', native:true, info };
+    _phoneStream=ps; _phoneLiveOverlay(); toast('connecting…');
+    // Only announce a stream that's actually carrying frames. Announcing on start() alone posted "🔴 I'm live"
+    // to every follower for streams that then failed to connect — and a kind-1 can't be unsent.
+    try{ await connected; }
+    catch(e){ _goingLive=false; if(_phoneStream===ps){ toast((e&&e.message)||'the screen stream didn’t connect'); _endLive(); } return; }
+    if(_phoneStream!==ps){ _goingLive=false; return; }   // they hit Stop while it was connecting
+    _goingLive=false;
+    try{ await _publishLive(info, title); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
+    toast('🔴 you’re live — sharing your screen');
+  }
+  // Hand a running camera stream over to the screen, keeping the same token (so the kind-30311 — and every
+  // viewer's open player — survives the switch). MediaMTX allows ONE publisher per path, so the camera has to
+  // be gone before the screen connects; that's exactly why consent is asked for FIRST — a user who cancels the
+  // system dialog keeps their camera stream untouched. Viewers see a brief freeze during the handover, and the
+  // server's 20s unpublish grace re-probes the feed before ending anything, so the stream is never ghost-ended.
+  async function _nativeToScreen(ps){
+    const SS=_screenPlugin(); if(!SS || !ps.info || !ps.info.rtmp_native_url) return false;
+    if(_swapping) return false;
+    // Hold the camera-swap lock across the WHOLE handover, consent dialog included. A flip started while the
+    // dialog is up would otherwise still be in flight when we null ps.pc, and _swapPhoneVideo's `_phoneStream
+    // !== ps` guard wouldn't catch it (same object) — it would deref the closed pc, wedge `_swapping` true
+    // forever, and leave the freshly-acquired camera track running for the whole screen share.
+    _swapping=true;
+    const release=v=>{ _swapping=false; return v; };
+    let granted=false;
+    try{ const r=await SS.requestConsent(); granted=!!(r && r.granted); }
+    catch(e){ toast((e&&e.message)||'couldn’t start screen sharing'); return release(false); }
+    if(!granted){ toast('screen sharing cancelled'); return release(false); }
+    if(_phoneStream!==ps) return release(false);   // they ended the stream while the consent dialog was up
+    _watchNativeScreen(SS);
+    const connected=_armScreenConnect();
+    // Mark it native BEFORE anything can await: from here the capture may start at any moment, and a Stop that
+    // lands in the meantime must know to stop the service (otherwise the screen keeps broadcasting invisibly).
+    ps.native=true; ps.source='screen';
+    // Drop the WHIP publisher — MediaMTX allows one publisher per path. Clear the connection-state handler
+    // first: closing the pc ourselves would otherwise look like the stream dying and _endLive would tear down
+    // the very stream we're moving.
+    try{ if(ps.pc) ps.pc.onconnectionstatechange=null; }catch(_){}
+    try{ ps.pc && ps.pc.close(); }catch(_){}
+    try{ ps.local && ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
+    ps.pc=null; ps.local=null;
+    const v=$('#pl-vid'); if(v) v.srcObject=null;
+    _syncOverlayButtons();
+    // The camera is already gone, so a failure here leaves nothing to fall back to: end the stream rather
+    // than strand viewers on a frozen frame.
+    try{ await SS.start({ url:ps.info.rtmp_native_url }); await connected; }
+    catch(e){ if(_phoneStream===ps){ toast((e&&e.message)||'couldn’t start the screen stream'); _endLive(); } return release(false); }
+    return release(true);
+  }
+  const _canScreenShare=()=>!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || !!_screenPlugin();
+  // Toggle screen share ↔ camera. During screen share the mic keeps streaming (a separate audio track in the
+  // browser; the native plugin captures it directly), so it's screen + voiceover either way.
   function _toggleScreen(){
     const ps=_phoneStream; if(!ps) return;
+    if(ps.native) return;   // native share: no in-place way back to the camera (see _syncOverlayButtons)
     if(ps.source==='screen') return _toCamera(ps.facing||'user');
+    // The app's WebView has no getDisplayMedia — capture the screen natively instead.
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) return _nativeToScreen(ps);
     return _swapPhoneVideo(()=>navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false}), nt=>{
       ps.source='screen';
       // The browser's OWN "Stop sharing" control ends this track directly. When it does, fall back to the
@@ -3008,12 +3169,23 @@
     if(r==='busy'){ setTimeout(()=>_onScreenShareEnded(ps), 400); return; }   // a swap was in flight — retry shortly
     if(!r && _phoneStream===ps && ps.source==='screen'){ toast('screen share ended'); _endLive(); }
   }
+  // Release EVERY capture behind a phone stream. Kept as one function because there are two ways out (End the
+  // stream, or Delete it) and a camera/screen capture left running by the path that forgot is a privacy leak,
+  // not a leaked object: the native screen share in particular lives in a foreground service outside the
+  // WebView, so if we don't stop it here nothing ever will.
+  function _teardownPhoneStream(){
+    const ps=_phoneStream; if(!ps) return;
+    _phoneStream=null;
+    if(ps.native){ const SS=_screenPlugin(); try{ SS && SS.stop(); }catch(_){} _dropNativeScreen(); }
+    try{ if(ps.pc) ps.pc.onconnectionstatechange=null; }catch(_){}
+    try{ ps.pc && ps.pc.close(); }catch(_){}
+    try{ ps.local && ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
+    const ov=document.getElementById('phone-live'); if(ov) ov.remove();
+  }
   async function _endLive(){
     if(!_liveStream && !_phoneStream) return;
     _stopLiveHb();
-    if(_phoneStream){ const ps=_phoneStream; _phoneStream=null;
-      try{ ps.pc&&ps.pc.close(); }catch(_){} try{ ps.local&&ps.local.getTracks().forEach(t=>t.stop()); }catch(_){}
-      const ov=document.getElementById('phone-live'); if(ov) ov.remove(); }
+    _teardownPhoneStream();
     const s=_liveStream; _liveStream=null;
     if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
       try{ await publish(30311, '', [

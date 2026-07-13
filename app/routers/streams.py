@@ -91,14 +91,22 @@ async def stream_auth(request: Request, db=Depends(get_db)):
         return Response(status_code=200)
     if action != "publish":
         return JSONResponse({"error": "unsupported action"}, status_code=401)
-    # Extract the API key from the RTMP/SRT query (OBS stream key = "<token>?key=<api_key>").
+    # Extract the API key from the RTMP/SRT query. Two shapes reach us, both legitimate:
+    #   OBS         → "key=<api_key>"   (stream key "<token>?key=<api_key>")
+    #   the app     → "<api_key>"       (bare, no "key=" — see _native_rtmp_url for why)
+    # and either can arrive with a stray separator glued on by the encoder's URL joining, so the value is
+    # parsed leniently rather than assumed well-formed. A bare query is only ever treated as the key when it
+    # carries no "=" at all, so a real query string can never be mistaken for one.
     key = ""
-    q = body.get("query") or ""
+    q = (body.get("query") or "").strip().strip("?/&")
     if q:
-        try:
-            key = (parse_qs(q).get("key") or [""])[0]
-        except Exception:
-            key = ""
+        if "=" in q:
+            try:
+                key = (parse_qs(q).get("key") or [""])[0]
+            except Exception:
+                key = ""
+        else:
+            key = q
     key = (key or body.get("password") or "").strip()
     if not key:
         return JSONResponse({"error": "missing key"}, status_code=401)
@@ -218,6 +226,14 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
         "stream_key": f"{token}?key={api_key}",
         "token": token,
         "hls_url": hls_url,
+        # The Android app's native screen share pushes RTMP directly (its WebView has no getDisplayMedia, so
+        # the screen can't go through WHIP). It needs the WHOLE url, not OBS's server+key split — and it must
+        # be built HERE, because the encoder (RootEncoder) parses an RTMP url as `app/stream` and mangles the
+        # usual "<token>?key=<api_key>" form into app="<token>?" + stream="key=…", which MediaMTX would never
+        # resolve to the path <token>. A BARE query survives its parser intact (it only strips `k=v` pairs it
+        # recognises), keeping the path exactly <token> — so the key rides as a bare query and /auth above
+        # accepts it. Don't "tidy" this into `?key=` without re-reading that parser.
+        "rtmp_native_url": f"rtmp://{host}:{rtmp_port}/{token}?{api_key}",
         # Phone/browser go-live: the client publishes WebRTC via WHIP through this same-origin (HTTPS)
         # proxy — avoids mixed-content and keeps the key server-side (session-authed).
         "whip_url": f"{origin}/api/streams/whip/{token}",

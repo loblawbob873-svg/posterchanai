@@ -2154,6 +2154,10 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .phone-live video.rear{transform:none}   /* only the front (selfie) camera is mirrored */
 .phone-live .pl-badge{position:absolute;top:calc(env(safe-area-inset-top,0) + 14px);left:16px;background:#e0245e;color:#fff;font-weight:700;padding:5px 12px;border-radius:20px;letter-spacing:.5px}
 .phone-live .pl-actions{position:absolute;bottom:calc(env(safe-area-inset-bottom,0) + 24px);display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center;padding:0 10px}
+/* Native screen share: the capture happens outside the WebView, so there's no preview to show — this placard
+   stands in for the video element (which is hidden), including in the minimized thumbnail. */
+.phone-live .pl-note{color:var(--neon,#0ff);font-weight:600;font-size:18px;text-align:center;padding:0 20px}
+.phone-live.pl-mini .pl-note{font-size:11px;padding:0 6px}
 /* Minimized: a floating thumbnail so the rest of the app stays usable while you're still broadcasting.
    inset:auto is what un-blocks the page — the full-screen overlay no longer covers (and eats clicks on) it. */
 .phone-live.pl-mini{inset:auto;right:14px;bottom:20px;width:132px;height:196px;padding:0;gap:0;border-radius:12px;

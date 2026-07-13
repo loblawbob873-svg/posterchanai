@@ -544,7 +544,10 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
         rows.append(bottom)
     if has_pdf:
         rows.append([
+            {"text": "🗜 Compress", "callback_data": "media:compress"},
             {"text": "🖼 To images", "callback_data": "media:toimg"},
+        ])
+        rows.append([
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
         ])

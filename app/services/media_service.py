@@ -2209,6 +2209,80 @@ def pdf_to_images(pdf_data: bytes, dpi: int = 150, max_pages: int = PDF_MAX_PAGE
 # High-level attachment processors
 # ---------------------------------------------------------------------------
 
+PDF_IMAGE_MAX_DIM = 1600      # embedded images bigger than this are downscaled before re-encoding
+PDF_IMAGE_QUALITY = 75
+
+
+def compress_pdf(data: bytes, image_max_dim: int = PDF_IMAGE_MAX_DIM,
+                 quality: int = PDF_IMAGE_QUALITY) -> bytes:
+    """Shrink a PDF, keeping it a real PDF (text stays selectable, pages stay pages).
+
+    Two passes, in the order that pays:
+      1. re-encode each embedded raster image as a JPEG, downscaled to `image_max_dim` on its long side —
+         this is where the bytes almost always are (a scan or a slide deck is really just big images in a
+         PDF wrapper);
+      2. structural cleanup — drop orphaned objects and deflate what's left.
+
+    We deliberately do NOT rasterize the pages. That compresses beautifully and destroys the document: the
+    text layer, selection and search all go with it. An image whose re-encode comes out bigger (already
+    optimized, or tiny) is left untouched, and images with a soft mask are skipped entirely — JPEG has no
+    alpha channel, so "compressing" them would silently drop their transparency.
+    """
+    import fitz  # PyMuPDF
+    from PIL import Image
+
+    def _transparent(xref: int) -> bool:
+        """True if this image carries transparency we'd destroy by re-encoding it as an opaque JPEG.
+
+        `get_images()` only reports the /SMask, so a stencil /Mask, a colour-key mask, an /ImageMask or an
+        inverted /Decode array all slip past that check — and those are exactly the cut-out logos and stamps
+        in letterheads and slide decks. Flattening one turns its transparent regions into solid blocks that
+        cover the text underneath, which is a corrupted document, not a compressed one. When in doubt (the
+        lookup fails), leave the image alone.
+        """
+        for key in ("SMask", "Mask", "ImageMask", "Decode"):
+            try:
+                kind, _ = doc.xref_get_key(xref, key)
+            except Exception:
+                return True
+            if kind and kind != "null":
+                return True
+        return False
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    try:
+        seen: set = set()
+        for page in doc:
+            for info in page.get_images(full=True):
+                xref = info[0]
+                if xref in seen:
+                    continue
+                seen.add(xref)
+                if _transparent(xref):
+                    continue
+                try:
+                    raw = (doc.extract_image(xref) or {}).get("image") or b""
+                    if not raw:
+                        continue
+                    img = Image.open(io.BytesIO(raw))
+                    img.load()
+                    if img.mode not in ("RGB", "L"):
+                        img = img.convert("RGB")
+                    if max(img.size) > image_max_dim:
+                        img.thumbnail((image_max_dim, image_max_dim), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=quality, optimize=True, progressive=True)
+                    new = buf.getvalue()
+                    if len(new) < len(raw):
+                        page.replace_image(xref, stream=new)
+                except Exception as e:
+                    logger.debug(f"compress_pdf: skipping image xref {xref}: {e}")
+        return doc.tobytes(garbage=4, deflate=True, deflate_images=True,
+                           deflate_fonts=True, clean=True)
+    finally:
+        doc.close()
+
+
 def _smaller_output(
     orig_name: str, orig_data: bytes, orig_ct: str,
     new_data: bytes, new_name: str, new_ct: str,
@@ -2291,8 +2365,16 @@ def compress_attachments(attachments: List[Tuple[str, bytes, str]]) -> Tuple[Lis
                 )
                 outputs.append(out)
                 notes.append(f"🎬 {filename}: {_human_size(original)} → {_human_size(len(out['data']))}")
+            elif is_pdf(filename, content_type):
+                compressed = compress_pdf(data)
+                out = _smaller_output(
+                    filename, data, content_type, compressed,
+                    f"{stem}_compressed.pdf", "application/pdf",
+                )
+                outputs.append(out)
+                notes.append(f"📄 {filename}: {_human_size(original)} → {_human_size(len(out['data']))}")
             else:
-                notes.append(f"⏭️ {filename}: not an image or video, skipped")
+                notes.append(f"⏭️ {filename}: not an image, video or PDF, skipped")
         except Exception as e:
             logger.error(f"compress failed for {filename}: {e}", exc_info=True)
             notes.append(f"❌ {filename}: {e}")

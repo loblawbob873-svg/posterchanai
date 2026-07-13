@@ -389,11 +389,11 @@ Files are saved to your Storage.""",
         return await self._translate_text(src, language)
 
     async def _compress_command(self, attachments: Optional[list]) -> dict:
-        """Compress attached image(s) or video(s) and return the smaller files."""
+        """Compress attached image(s), video(s) or PDF(s) and return the smaller files."""
         if not attachments:
             return {
                 "type": "text",
-                "content": "Attach an image or video, then send `compress` to shrink it.",
+                "content": "Attach an image, video or PDF, then send `compress` to shrink it.",
             }
         import asyncio
         from app.services.media_service import compress_attachments

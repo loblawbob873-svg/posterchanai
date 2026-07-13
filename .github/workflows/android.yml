@@ -13,6 +13,7 @@ on:
       - 'static/css/client.css'
       - 'templates/client.html'
       - 'mobile/**'
+      - 'zapstore.yaml'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -67,6 +68,17 @@ jobs:
           cp "$APK" posterchan.apk
           ls -la posterchan.apk
 
+      # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the asset
+      # under a rolling tag never touches it. So apk-latest kept showing "2 days ago" next to a brand-new APK,
+      # which reads as an abandoned project. Deleting the release (the TAG survives, and so does the
+      # /releases/download/apk-latest/posterchan.apk URL that poster.place/apk + refresh.sh depend on) makes
+      # the next step create it fresh, with an honest date. Never fail the build over this — a missing release
+      # is re-created moments later, and the server keeps serving its local mirror meanwhile.
+      - name: Retire the previous rolling release (so the new one is dated today)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete apk-latest --yes --repo "$GITHUB_REPOSITORY" || true
+
       - name: Publish rolling release
         uses: softprops/action-gh-release@v2
         with:
@@ -75,3 +87,20 @@ jobs:
           body: "Latest PosterChan Android APK — auto-built from the web client. Version 1.0.${{ github.run_number }}."
           files: posterchan.apk
           make_latest: true
+
+      # Publish the SAME APK to Zapstore (the Nostr app store) so every build lands there too. Config lives in
+      # zapstore.yaml; `zsp` reads the version straight out of the APK, uploads it to Blossom and publishes the
+      # NIP-82 app/release events. Skipped (not failed) when SIGN_WITH isn't set, so forks still build an APK.
+      # NB: -q, not -y — the upstream docs advertise a -y flag the binary doesn't actually have.
+      - name: Publish to Zapstore
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$SIGN_WITH" ]; then
+            echo "ZAPSTORE_SIGN_WITH is not set — skipping the Zapstore publish (the APK release above still shipped)."
+            exit 0
+          fi
+          curl -sSfLo /tmp/zsp https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
+          chmod +x /tmp/zsp
+          /tmp/zsp publish -q zapstore.yaml

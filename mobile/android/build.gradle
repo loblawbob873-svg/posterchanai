@@ -21,6 +21,7 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven { url 'https://jitpack.io' }   // RootEncoder (screen-share RTMP encoder) is only published here
     }
 }
 

@@ -53,6 +53,14 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Screen sharing while live. MediaProjection may only run from a foreground service, and from
+             Android 14 the service must declare BOTH types it uses: mediaProjection (the capture) and
+             microphone (we stream the mic over the screen as a voiceover). -->
+        <service
+            android:name=".screenshare.ScreenShareService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
     </application>
 
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching
@@ -66,6 +74,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Screen sharing (live streaming): the WebView has no getDisplayMedia, so the screen is captured
+         natively via MediaProjection, which Android only allows from a mediaProjection foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

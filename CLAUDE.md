@@ -34,6 +34,11 @@ by committing and pushing to `origin` first (deploy), then mirroring the same co
 so the public mirror never falls behind production. Keep local `master` tracking `origin` (so plain
 `git push` deploys, not publishes).
 
+```
+git push                     # or ./sync.sh — origin/production first
+git push github master:main  # mirror, same commits, every time
+```
+
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 
 The standalone `~/posterchan` bot framework now lives **in this repo** under `botframework/`
