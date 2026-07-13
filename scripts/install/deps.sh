@@ -62,15 +62,30 @@ check_dependencies() {
     if ! command -v tesseract &>/dev/null; then
         print_warning "tesseract not found - OCR (text from images/scanned PDFs) will be unavailable"
         case "$DISTRO" in
-            gentoo) echo "  Install with: emerge -av app-text/tesseract" ;;
-            arch)   echo "  Install with: pacman -S tesseract tesseract-data-eng" ;;
-            debian) echo "  Install with: apt install tesseract-ocr" ;;
-            fedora) echo "  Install with: dnf install tesseract" ;;
-            suse)   echo "  Install with: zypper install tesseract-ocr tesseract-ocr-traineddata-english" ;;
-            *)      echo "  Install tesseract for your distribution" ;;
+            gentoo) echo "  Install with: emerge -av app-text/tesseract  (set LINGUAS for language data, e.g. LINGUAS=\"en th zh-CN ja ko ar ru hi es fr de\")" ;;
+            arch)   echo "  Install with: pacman -S tesseract tesseract-data-eng tesseract-data-tha tesseract-data-chi_sim tesseract-data-jpn tesseract-data-kor tesseract-data-ara tesseract-data-rus tesseract-data-hin tesseract-data-spa tesseract-data-fra tesseract-data-deu" ;;
+            debian) echo "  Install with: apt install tesseract-ocr tesseract-ocr-tha tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-jpn tesseract-ocr-kor tesseract-ocr-ara tesseract-ocr-rus tesseract-ocr-hin tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-deu" ;;
+            fedora) echo "  Install with: dnf install tesseract tesseract-langpack-tha tesseract-langpack-chi_sim tesseract-langpack-chi_tra tesseract-langpack-jpn tesseract-langpack-kor tesseract-langpack-ara tesseract-langpack-rus tesseract-langpack-hin tesseract-langpack-spa tesseract-langpack-fra tesseract-langpack-deu" ;;
+            suse)   echo "  Install with: zypper install tesseract-ocr tesseract-ocr-traineddata-english tesseract-ocr-traineddata-thai tesseract-ocr-traineddata-chinese_simplified tesseract-ocr-traineddata-japanese tesseract-ocr-traineddata-korean tesseract-ocr-traineddata-arabic tesseract-ocr-traineddata-russian tesseract-ocr-traineddata-hindi tesseract-ocr-traineddata-spanish tesseract-ocr-traineddata-french tesseract-ocr-traineddata-german" ;;
+            *)      echo "  Install tesseract + language packs (eng tha chi_sim chi_tra jpn kor ara rus hin spa fra deu) for your distribution" ;;
         esac
+        echo "  (Language packs beyond English are needed to OCR/translate non-Latin images — Thai, Chinese, etc.)"
     else
-        print_success "tesseract found (OCR available)"
+        # OCR/translate of non-Latin images needs the matching traineddata; base tesseract ships eng only.
+        _langs="$(tesseract --list-langs 2>/dev/null | tail -n +2 | tr '\n' ' ')"
+        if ! echo " $_langs " | grep -q " tha "; then
+            print_warning "tesseract found but only English data - non-Latin OCR/translate (Thai, Chinese, …) will fail"
+            case "$DISTRO" in
+                gentoo) echo "  Add language data via LINGUAS (e.g. LINGUAS=\"th zh-CN zh-TW ja ko ar ru hi es fr de\") then re-emerge app-text/tesseract" ;;
+                arch)   echo "  Install with: pacman -S tesseract-data-tha tesseract-data-chi_sim tesseract-data-chi_tra tesseract-data-jpn tesseract-data-kor tesseract-data-ara tesseract-data-rus tesseract-data-hin tesseract-data-spa tesseract-data-fra tesseract-data-deu" ;;
+                debian) echo "  Install with: apt install tesseract-ocr-tha tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-jpn tesseract-ocr-kor tesseract-ocr-ara tesseract-ocr-rus tesseract-ocr-hin tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-deu" ;;
+                fedora) echo "  Install with: dnf install tesseract-langpack-tha tesseract-langpack-chi_sim tesseract-langpack-chi_tra tesseract-langpack-jpn tesseract-langpack-kor tesseract-langpack-ara tesseract-langpack-rus tesseract-langpack-hin tesseract-langpack-spa tesseract-langpack-fra tesseract-langpack-deu" ;;
+                suse)   echo "  Install with: zypper install tesseract-ocr-traineddata-thai tesseract-ocr-traineddata-chinese_simplified tesseract-ocr-traineddata-japanese tesseract-ocr-traineddata-korean tesseract-ocr-traineddata-arabic tesseract-ocr-traineddata-russian tesseract-ocr-traineddata-hindi tesseract-ocr-traineddata-spanish tesseract-ocr-traineddata-french tesseract-ocr-traineddata-german" ;;
+                *)      echo "  Install tesseract language packs (tha chi_sim chi_tra jpn kor ara rus hin spa fra deu) for your distribution" ;;
+            esac
+        else
+            print_success "tesseract found (OCR available, multi-language)"
+        fi
     fi
 
     # Browser for the 'screenshot' command. Chrome/Chromium is preferred (driven over

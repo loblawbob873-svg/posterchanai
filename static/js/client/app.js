@@ -8884,7 +8884,6 @@
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
-    { const ad=$('#set-admin'); if(ad) ad.onclick=()=>switchView('admin'); }   // Admin panel (moved here from the nav; admins only)
     { const lo=$('#set-logout'); if(lo) lo.onclick=()=>{ if(confirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';

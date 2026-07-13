@@ -100,14 +100,18 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
                     logger.warning(f"Tesseract OCR error (lang={lang}): {e}")
                     return None
             text = _ocr("eng")
-            if len(((text or "").strip())) < 8:   # eng found ~nothing → probably another script
+            # Only retry when eng read essentially NOTHING (a genuinely non-Latin image). A legible short
+            # English image ("STOP", "LOL") gives eng text and must NOT trigger the multi-script pass —
+            # that pass can emit longer garbage glyphs that would win a naive length compare. eng is kept
+            # IN the retry set too, so even an edge-case trigger can't lose real English to garbage.
+            if len((text or "").strip()) < 2:
                 try:
                     others = [l for l in pytesseract.get_languages(config="") if l not in ("osd", "eng")]
                 except Exception:
                     others = []
                 if others:
-                    _pref = ["tha", "chi_sim", "chi_tra", "jpn", "kor", "ara", "rus", "hin", "spa", "fra", "deu"]
-                    ordered = [l for l in _pref if l in others] + [l for l in others if l not in _pref]
+                    _pref = ["eng", "tha", "chi_sim", "chi_tra", "jpn", "kor", "ara", "rus", "hin", "spa", "fra", "deu"]
+                    ordered = ["eng"] + [l for l in _pref if l in others] + [l for l in others if l not in _pref]
                     alt = _ocr("+".join(ordered))
                     if alt and len(alt.strip()) > len((text or "").strip()):
                         text = alt
