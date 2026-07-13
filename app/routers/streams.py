@@ -209,7 +209,9 @@ async def stream_hls_proxy(token: str, path: str):
     upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}"
     import httpx
     try:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
+        # follow_redirects: MediaMTX's HLS does a one-time `?cookieCheck=1` set-cookie + redirect; httpx
+        # keeps a per-client cookie jar across the redirect, so it transparently resolves to the playlist.
+        client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0), follow_redirects=True)
         req = client.build_request("GET", upstream)
         resp = await client.send(req, stream=True)
     except Exception:
