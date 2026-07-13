@@ -595,6 +595,13 @@
     display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-color);
 }
 .bot-modal-foot { border-bottom: none; border-top: 1px solid var(--border-color); justify-content: flex-end; }
+/* Normalise the footer buttons so Save / Cancel / Delete are the SAME size and aligned. `.btn-primary`
+   carries `align-self: flex-start` for the settings-form column, which leaked in here and top-aligned Save
+   while the others stayed centered — making them look mismatched. Force one consistent box. */
+.bot-modal-foot .btn-primary, .bot-modal-foot .btn-secondary {
+    align-self: center; margin: 0; padding: 10px 18px; font-size: 14px; line-height: 1.2;
+    border-radius: 11px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
+}
 .bot-modal-head h3 { margin: 0; flex: 1; }
 .bot-modal-close { background: none; border: none; color: var(--text-secondary); font-size: 24px; cursor: pointer; line-height: 1; }
 .bot-modal-body { padding: 18px; overflow-y: auto; }

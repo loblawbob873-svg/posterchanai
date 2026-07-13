@@ -137,6 +137,7 @@ class RelayServer:
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
         self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
         self._conn_ips: dict = {}  # conn -> client IP (for the deduped "online people" estimate)
+        self._call_seen: dict = {}  # pubkey -> last kind-25050 (call signaling) time, for the live "in call" tally
         # Fediverse-bridge NIP-05: local-part -> puppet pubkey, populated as puppet kind-0 profiles
         # are stored (and warmed from the store at startup). Resolved on ?name= lookups only; never
         # enumerated in the no-name nostr.json dump (there can be tens of thousands).
@@ -394,6 +395,17 @@ class RelayServer:
             # loopback (our own bots / internal) is skipped — not a person online
         return len(known) + unknown
 
+    def active_calls(self) -> int:
+        """Distinct people who exchanged call signaling (kind-25050) in the last ~2 minutes — a live
+        'in a call' indicator for the sidebar ticker. Prunes stale entries as it counts, so the dict can't
+        grow. Not a billing metric: a long, stable call that stops re-signaling ages out, so this reads as
+        recent call ACTIVITY, and the UI only shows it when non-zero."""
+        cutoff = time.time() - 120
+        stale = [pk for pk, t in self._call_seen.items() if t < cutoff]
+        for pk in stale:
+            self._call_seen.pop(pk, None)
+        return len(self._call_seen)
+
     async def _dispatch(self, conn, raw) -> None:
         if isinstance(raw, (bytes, bytearray)):
             if len(raw) > self.cfg.get("max_message_size", 262144):
@@ -562,6 +574,12 @@ class RelayServer:
                     or any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", []))):
                 self._send(conn, ["OK", eid, False, "blocked: call not for a web-of-trust member"])
                 return
+            # Tally who's in a call for the live activity ticker: both the caller and each p-tagged peer.
+            _t = time.time()
+            self._call_seen[ev.get("pubkey", "")] = _t
+            for _tag in ev.get("tags", []):
+                if len(_tag) >= 2 and _tag[0] == "p" and _tag[1]:
+                    self._call_seen[_tag[1]] = _t
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return

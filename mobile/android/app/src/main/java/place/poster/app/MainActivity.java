@@ -8,12 +8,24 @@ import place.poster.app.screenshare.ScreenSharePlugin;
 import place.poster.app.share.ShareTargetPlugin;
 
 public class MainActivity extends BridgeActivity {
+    // Increments on every distinct incoming SEND intent (cold-start launch + each warm onNewIntent). The JS
+    // share handler dedups on THIS instead of the payload — so sharing the SAME image again is a NEW share
+    // (new nonce), not a duplicate, while a mere resume/re-read keeps the same nonce. ShareTargetPlugin
+    // exposes it. Without this, re-sharing the same file was silently swallowed ("worked only once").
+    public static int shareNonce = 0;
+
+    private static boolean isSend(Intent i) {
+        String a = i == null ? null : i.getAction();
+        return Intent.ACTION_SEND.equals(a) || Intent.ACTION_SEND_MULTIPLE.equals(a);
+    }
+
     // A plugin that lives IN this app (rather than in an npm package) is not auto-registered by Capacitor —
     // it has to be declared here, before super.onCreate() builds the bridge, or JS never sees it.
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
+        if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
     }
 
@@ -24,6 +36,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onNewIntent(Intent intent) {
         setIntent(intent);
+        if (isSend(intent)) shareNonce++;   // a genuinely new share → new nonce
         super.onNewIntent(intent);
     }
 }

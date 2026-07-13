@@ -8,6 +8,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import place.poster.app.MainActivity;
+
 /**
  * Which share target did the user pick?
  *
@@ -36,6 +38,8 @@ public class ShareTargetPlugin extends Plugin {
     }
     JSObject ret = new JSObject();
     ret.put("target", AI_ALIAS.equals(cls) ? "ai" : "post");
+    // Per-share nonce: JS dedups on this so re-sharing the SAME file is a new share, not a swallowed duplicate.
+    ret.put("nonce", MainActivity.shareNonce);
     call.resolve(ret);
   }
 }

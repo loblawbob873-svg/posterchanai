@@ -326,10 +326,12 @@ Files are saved to your Storage.""",
         _from = f" from {source}" if source else ""
         messages = [
             {"role": "system", "content": (
-                f"Translate the following {kind}{_from} to {language}. Translate ALL of it — every "
-                "line and list item — do not summarize, omit, or stop early. Preserve the "
-                "original line breaks and formatting. Output only the translation.")},
-            {"role": "user", "content": (text or "")[:24000]},
+                f"You are a translation engine. Translate the following {kind}{_from} INTO {language}. "
+                f"Your ENTIRE reply MUST be written in {language} — never reply in the source language, and "
+                f"never just copy the input. If a word has no {language} equivalent, transliterate it. "
+                "Translate ALL of it — every line and list item — do not summarize, omit, add commentary, or "
+                "stop early. Preserve the original line breaks and formatting. Output only the translation.")},
+            {"role": "user", "content": f"Translate this into {language}:\n\n" + (text or "")[:24000]},
         ]
         # Output is about as long as the input; the default ~2048 cap stops long pages early.
         _orig_np = self.chat_service.num_predict

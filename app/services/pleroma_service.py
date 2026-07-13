@@ -388,6 +388,18 @@ async def favourite_status(instance_url: str, access_token: str, status_id: str)
         return resp.json()
 
 
+async def delete_status(instance_url: str, access_token: str, status_id: str) -> bool:
+    """Delete one of OUR OWN statuses. True if it's gone (404 counts — already deleted is the goal state)."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.delete(url, headers=headers)
+        if resp.status_code == 404:
+            return True
+        resp.raise_for_status()
+        return True
+
+
 async def reblog_status(instance_url: str, access_token: str, status_id: str) -> dict:
     """Reblog (boost) a status."""
     url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/reblog"

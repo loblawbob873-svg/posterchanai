@@ -769,9 +769,14 @@ async def _main(cfg: dict) -> None:
                     online = int(server.online_count())
                 except Exception:
                     online = int(getattr(server, "_conns", 0) or 0)
+                try:
+                    calls = int(server.active_calls())
+                except Exception:
+                    calls = 0
                 json.dump({"running": True, "members": len(gate.members()),
                            "conns": int(getattr(server, "_conns", 0) or 0),   # raw live socket count
                            "online": online,                                  # deduped by client IP = people now
+                           "calls": calls,                                    # people in a call right now (kind-25050)
                            "pid": os.getpid(), "ts": int(time.time()),
                            "block_purge": dict(_purge_state)}, f)
             os.replace(tmp, _paths["status"])
@@ -1233,6 +1238,7 @@ def relay_status() -> dict:
     members = 0
     conns = 0
     online = 0
+    calls = 0
     block_purge = None
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
@@ -1240,13 +1246,14 @@ def relay_status() -> dict:
         members = int(st.get("members", 0))
         conns = int(st.get("conns", 0))
         online = int(st.get("online", conns))   # deduped people count; falls back to raw conns
+        calls = int(st.get("calls", 0))         # people in a call right now
         block_purge = st.get("block_purge")
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
         pass
     return {"running": bool(alive), "members": members, "conns": conns, "online": online,
-            "block_purge": block_purge}
+            "calls": calls, "block_purge": block_purge}
 
 
 def _drop_control(cmd: dict) -> dict:

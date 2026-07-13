@@ -21,6 +21,8 @@
   const LIVE_ICON = '<svg class="live-ico" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>';
   // "on relay" = raw live socket count connected to the built-in relay right now (broadcast glyph).
   const RELAY_ICON = '<svg class="relay-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M6.3 6.3a8 8 0 000 11.4l1.5-1.5a6 6 0 010-8.5L6.3 6.3zm11.4 0l-1.5 1.4a6 6 0 010 8.5l1.5 1.5a8 8 0 000-11.4z"/></svg>';
+  const STREAM_ICON = '<svg class="stream-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M4 5h13a2 2 0 012 2v3l3-2v8l-3-2v3a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2z"/></svg>';
+  const CALL_ICON = '<svg class="call-ico" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z"/></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
   // ---- UI themes (slugs match static/css/client.css :root[data-theme] + schemas.CLIENT_THEMES) ----
   // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
@@ -169,7 +171,7 @@
     const tpl = { kind, content, tags, created_at: Math.floor(Date.now()/1000), pubkey: ME.pubkey };
     return await signer.signEvent(tpl);
   }
-  async function publish(kind, content, tags){
+  async function publish(kind, content, tags, opts){
     if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
     // Replaceable-list wipe guard (kind-3 follows / kind-10000 mutes): NEVER publish a member list that's
     // drastically shorter than the last-known count. A throttled/empty relay read producing an empty base
@@ -194,41 +196,20 @@
     // republishes, so re-adding unconditionally would accumulate duplicate client tags.
     if(kind!==4 && !(tags||[]).some(t=>t&&t[0]==='client')) tags=(tags||[]).concat([['client','PosterChan AI']]);
     const ev = await sign(kind, content, tags);
-    Store.saveEvent(ev); invalidateCounts();
+    Store.saveEvent(ev); invalidateCounts();   // optimistic: show it instantly
     const r = await Relay.publish(ev);
-    if (!r.ok){
-      // The socket drops the message on the floor when it isn't open (a relay restart, a flaky link), and
-      // publish() just timed out — so a note the user had already "sent" was gone, composer cleared, with
-      // nothing but a toast. It is SIGNED, so it can be re-sent verbatim later: park it and retry. (Signed
-      // already matters for a remote signer — a retry must never mean asking Amber to approve it again.)
-      Outbox.add(ev);
-      toast('relay unreachable — saved, will send when it reconnects');
-    }
+    // publish() reports {ok}; it never throws on a relay failure. On failure it ROLLS BACK the optimistic
+    // save — otherwise a post/follow/react that never reached the relay would sit in the local cache looking
+    // posted (and survive reload), a silent divergence with no retry (the Outbox that used to reconcile is
+    // gone). It also shows ONE generic failure toast so nothing fails silently. Callers show their own success
+    // toast (guarded on r.ok), and destructive ones (delete, repost-with-warning) guard on r.ok so a failed
+    // publish can't destroy content. NO queue/replay — replaying a signed event behind the user's back is
+    // exactly what caused the follows-wipe / duplicate-post bugs.
+    if (!r.ok){ try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
+      // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
+      if(!(opts && opts.quiet)) toast('couldn’t reach the relay — try again in a moment'); }
     return { ev, ...r };
   }
-  // Signed-but-unsent events, kept across reloads. Retried whenever the relay is reachable again.
-  const Outbox = {
-    KEY: 'pc_outbox', MAX: 50, _busy: false,
-    list(){ try{ return JSON.parse(localStorage.getItem(this.KEY) || '[]'); }catch(_){ return []; } },
-    _save(a){ try{ localStorage.setItem(this.KEY, JSON.stringify(a.slice(-this.MAX))); }catch(_){} },
-    add(ev){ const a=this.list(); if(!a.some(e=>e.id===ev.id)){ a.push(ev); this._save(a); } },
-    drop(id){ this._save(this.list().filter(e=>e.id!==id)); },
-    async flush(){
-      if(this._busy) return;
-      const pending=this.list(); if(!pending.length) return;
-      this._busy=true;
-      let sent=0;
-      try{
-        for(const ev of pending){
-          let r=null; try{ r=await Relay.publish(ev); }catch(_){ r=null; }
-          if(r && r.ok){ this.drop(ev.id); Store.saveEvent(ev); sent++; }
-          else break;   // still unreachable — keep the rest and try again on the next tick
-        }
-      } finally { this._busy=false; }
-      if(sent){ toast(`sent ${sent} queued post${sent>1?'s':''}`); invalidateCounts();
-        if(VIEW==='home'||VIEW==='global') try{ renderTimeline(VIEW, true); }catch(_){} }
-    },
-  };
   // A guest tried to do something that needs an account → drop the guest chrome and show login.
   function _guestPrompt(){ toast('Log in to interact'); const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); }
 
@@ -305,17 +286,29 @@
         job.run().then(job.res, job.rej).finally(()=>{ this._inflight--; this._pump(); });
       }
     },
+    // Requests the USER is waiting on jump the queue. Restoring a DM history pushes hundreds of decrypt jobs
+    // in here; a sign_event appended behind them would block the composer for MINUTES — you hit Post and
+    // nothing happens. Interactive work (signing, and the connect handshake) goes to the FRONT.
+    _PRIORITY: new Set(['sign_event', 'connect', 'get_public_key']),
     _send(method, params){
       return new Promise((res, rej)=>{
         const run=async()=>{
           try{ return await this._rpc(method, params); }
           catch(e){
-            // one retry: a dropped/throttled request is common under load and is not a real failure
+            // A user REFUSAL is final — retrying just re-prompts them. Match only clear user-denial phrasing;
+            // NOT bare 'unauthorized'/'not authorized', which also appear in transient relay errors
+            // (NIP-42 'restricted: unauthorized', bunker session re-establish) that SHOULD retry.
+            const m=String((e&&e.message)||e).toLowerCase();
+            // Only a USER refusal is final. Bare 'denied' over-matches transient transport errors
+            // ('access denied', 'permission denied', 'connection denied') that SHOULD retry.
+            if(m.includes('rejected by user') || m.includes('user rejected') || m.includes('user declined')
+               || m.includes('denied by user') || m.includes('request denied')) throw e;
             await new Promise(r=>setTimeout(r, 600));
             return await this._rpc(method, params);
           }
         };
-        this._queue.push({ run, res, rej });
+        const job={ run, res, rej };
+        if(this._PRIORITY.has(method)) this._queue.unshift(job); else this._queue.push(job);
         this._pump();
       });
     },
@@ -702,13 +695,20 @@
       // choice lives in the launch intent's component, which ShareTarget reads. Resolved BEFORE the dedupe
       // because it's part of the share's identity: sharing the same photo to the OTHER entry is a NEW share,
       // and keying only on the payload would swallow it as a duplicate (app foregrounds, nothing happens).
-      let toAi=false;
-      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); } }catch(_){}
+      let toAi=false, nonce=null;
+      try{ const ST=_capPlugin('ShareTarget','getTarget'); if(ST){ const t=await ST.getTarget(); toAi=!!(t && t.target==='ai'); if(t && t.nonce!=null) nonce=t.nonce; } }catch(_){}
       // NEVER call SI.finish() — it's getActivity().finish(), which CLOSES PosterChan and drops you back in
       // the sharing app (the "opens for a second then back to the file manager" bug). We leave the app open
       // with the composer instead. Because the intent then persists, checkSendIntentReceived keeps returning
-      // the same share on every startup/resume — so dedupe by signature and process each share once.
-      const sig=(res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0)+'|'+(toAi?'ai':'post');
+      // the same share on every startup/resume — so process each share ONCE.
+      //
+      // Dedupe on the native per-share NONCE (MainActivity bumps it on every incoming SEND intent), NOT on the
+      // payload: re-sharing the SAME image is a genuinely new share (new nonce) and must go through, but a
+      // resume/re-read of the persisted intent keeps the same nonce and is skipped. (Content-based dedup made
+      // sharing the same image twice a silent no-op — "worked only once".) Fall back to a content signature on
+      // an older APK whose plugin returns no nonce.
+      const sig = (nonce!=null) ? ('n'+nonce+'|'+(toAi?'ai':'post'))
+        : ((res.url||'')+'|'+(res.type||'')+'|'+((res.additionalItems&&res.additionalItems.length)||0)+'|'+(toAi?'ai':'post'));
       if(sig===_lastShareSig) return false; _lastShareSig=sig;
       if(GUEST){ _guestPrompt(); try{ toast('Log in to post your shared file'); }catch(_){} _lastShareSig=''; return false; }  // retry after login
       const type=(res.type||'');
@@ -1268,14 +1268,7 @@
     const list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
     if (list.length) Relay.configure({ urls: list, verify: true });
     else Relay.connect(CFG.relay_url);
-    // Retry anything that couldn't be sent (relay restarting, phone offline). Once now, then on a timer —
-    // the pool reconnects on its own, so polling is simpler and safer than hooking every socket's onopen.
-    if(!_outboxTimer){
-      _outboxTimer=setInterval(()=>{ try{ Outbox.flush(); }catch(_){} }, 20000);
-      setTimeout(()=>{ try{ Outbox.flush(); }catch(_){} }, 3000);
-    }
   }
-  let _outboxTimer=null;
 
   function renderConn(s){
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
@@ -1299,25 +1292,32 @@
   let _lastOnline=0, _lastRelay=0;   // cached for the mobile More sheet (which is built synchronously)
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
-    let online=0, users=Number(CFG.users)||0, relay=0;
+    let online=0, users=Number(CFG.users)||0, relay=0, streams=0, calls=0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
       relay=Number(s.relay)||0;
+      streams=Number(s.streams)||0;
+      calls=Number(s.calls)||0;
       if(online>0) _lastOnline=online;
       // WoT size refreshes ONLY on boot/login (it barely changes — daily rebuild). The 15s poll passes
       // onlineOnly=true so the users count stays frozen and only the live "online" number updates.
       if(!onlineOnly && Number(s.users)>0){ users=Number(s.users); CFG.users=users; }
     }catch(_){}
     if(relay>0) _lastRelay=relay;   // cached for the mobile More sheet (built synchronously)
-    if(!uc) return;   // sidebar element absent (mobile) — _lastOnline/_lastRelay cached above for the More sheet
+    _lastStreams=streams; _lastCalls=calls;
+    if(!uc) return;   // sidebar element absent (mobile) — cached above for the More sheet
     const parts=[];
     if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
     if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
     if(relay>0) parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
+    // Live activity — shown only when there IS activity, so the ticker never reads "0 live / 0 in call".
+    if(streams>0) parts.push(`<span class="uc-stat uc-live" title="Live streams right now"><span class="uc-dot"></span>${STREAM_ICON} ${streams.toLocaleString()} live</span>`);
+    if(calls>0) parts.push(`<span class="uc-stat" title="People in a call right now">${CALL_ICON} ${calls.toLocaleString()} in call</span>`);
     if(parts.length){ uc.innerHTML=parts.join(''); uc.classList.remove('hidden'); }
     else uc.classList.add('hidden');
   }
+  let _lastStreams=0, _lastCalls=0;
   function renderMe(){
     if(GUEST){ const mc=$('#me-card'); if(mc){ mc.innerHTML=`<img src="${LOGO}"><div><div class="mn">Guest</div></div>`; mc.onclick=_guestPrompt; } return; }
     const p = Store.profile(ME.pubkey) || {};
@@ -1394,8 +1394,10 @@
                       : new Set([...MUTED].filter(p=>p!==ME.pubkey));
     const other = cur ? cur.tags.filter(t=>t[0]!=='p'&&t[0]!=='word') : [];
     const tags = [...users].map(p=>['p',p]).concat(other, clean.map(w=>['word',w]));
-    await publish(10000, cur?cur.content:'', tags);
+    const r = await publish(10000, cur?cur.content:'', tags);
+    if(!(r && r.ok)) return false;   // relay didn't store it → don't apply locally (publish() toasts the failure)
     MUTED = users; MUTED_WORDS = new Set(clean); _persistMutes();
+    return true;
   }
   // True if a note's text contains any muted word/phrase (substring, case-insensitive). Applied to
   // the timeline feeds so muted-word posts never render.
@@ -1438,7 +1440,8 @@
                      : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]) : []);
     // Don't publish a self-follow p-tag (ME is kept in FOLLOWS only for the home-feed filter).
     const tags = nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p]));
-    await publish(kind, cur?cur.content:'', tags);
+    const r = await publish(kind, cur?cur.content:'', tags);
+    return !!(r && r.ok);   // callers apply the local change + toast ONLY on success (no ghost follow/mute)
   }
   // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
   // the relay's current list + in-memory FOLLOWS (same anti-wipe rule as _editPList). Returns the count
@@ -1451,19 +1454,23 @@
     for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; fresh.push(pk); } }
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
-    await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
+    const r=await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
+    if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk)); return 0; }   // relay didn't store it → revert the local adds
     _persistFollows();
     // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)
     if(_pleromaLinked!==false) for(const pk of fresh){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
     return added;
   }
+  // Returns true when the follow/unfollow actually landed on the relay (callers that show UI state check it).
   async function toggleFollow(pk){
-    const have=FOLLOWS.has(pk); await _editPList(3, pk, !have);
+    const have=FOLLOWS.has(pk);
+    if(!await _editPList(3, pk, !have)) return false;   // relay didn't store the kind-3 → don't fake the follow
     have?FOLLOWS.delete(pk):FOLLOWS.add(pk); _persistFollows(); toast(have?'unfollowed':'followed');
     // Follow-bridge: if we just FOLLOWED a bridged account (has a NIP-48 proxy = a real AP actor), also
     // follow the real account on the user's linked Pleroma. Fire-and-forget — never blocks/undoes the
     // Nostr follow. Self-gates: after one "not linked" answer it stops trying for the rest of the session.
     if(!have && _pleromaLinked!==false){ const actor=Store.profileProxy(pk); if(actor) _followBridgedPleroma(actor); }
+    return true;
   }
   async function _followBridgedPleroma(actor){
     try{
@@ -1487,7 +1494,8 @@
     }catch(_){ _myFollowersLoaded = false; }   // allow a retry if the query failed
   }
   async function toggleMute(pk){
-    const have=MUTED.has(pk); await _editPList(10000, pk, !have);
+    const have=MUTED.has(pk);
+    if(!await _editPList(10000, pk, !have)) return;   // relay didn't store it → don't fake the mute
     have?MUTED.delete(pk):MUTED.add(pk); _persistMutes(); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
   }
   async function fetchPins(){
@@ -1505,10 +1513,12 @@
     const eset = new Set([...inmem, ...(cur?cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[])]);
     if(add) eset.add(eid); else eset.delete(eid);
     const nonE = cur ? cur.tags.filter(t=>t[0]!=='e') : [];
-    await publish(kind, cur?cur.content:'', nonE.concat([...eset].map(id=>['e',id])));
+    const r = await publish(kind, cur?cur.content:'', nonE.concat([...eset].map(id=>['e',id])));
+    return !!(r && r.ok);
   }
   async function togglePin(id){
-    const have=PINNED.has(id); await _editEList(10001, id, !have);
+    const have=PINNED.has(id);
+    if(!await _editEList(10001, id, !have)) return;   // relay didn't store it → don't fake the pin
     have?PINNED.delete(id):PINNED.add(id); toast(have?'unpinned':'pinned 📌');
     if(VIEW==='profile') renderProfileView(ME.pubkey);
   }
@@ -1521,7 +1531,8 @@
     });
   }
   async function toggleBookmark(id, btn){
-    const have=BOOKMARKS.has(id); await _editEList(10003, id, !have);
+    const have=BOOKMARKS.has(id);
+    if(!await _editEList(10003, id, !have)) return;   // relay didn't store it → don't fake the bookmark
     have?BOOKMARKS.delete(id):BOOKMARKS.add(id); toast(have?'removed bookmark':'bookmarked 🔖');
     if(btn) btn.classList.toggle('on', !have);
     if(VIEW==='bookmarks') renderBookmarks();
@@ -2285,7 +2296,8 @@
     if(!confirm('Delete this article? This asks every relay (NIP-09) to remove it.')) return;
     const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const tags=[['e',e.id]]; if(slug) tags.push(['a',`30023:${e.pubkey}:${slug}`]);
-    try{ await publish(5, 'deleted', tags); toast('deletion requested'); switchView('articles'); }
+    try{ const r=await publish(5, 'deleted', tags);   // failure toast by publish()
+      if(r && r.ok){ toast('deletion requested'); switchView('articles'); } }
     catch(err){ toast('delete failed: '+(err.message||'')); }
   }
   async function publishArticle({title, summary, image, body, d}){
@@ -2436,7 +2448,8 @@
     if(!confirm('Delete this listing? This asks every relay (NIP-09) to remove it.')) return;
     const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const tags=[['e',e.id]]; if(slug) tags.push(['a',`30402:${e.pubkey}:${slug}`]);
-    try{ await publish(5,'deleted',tags); toast('deletion requested'); switchView('market'); }
+    try{ const r=await publish(5,'deleted',tags);   // failure toast by publish()
+      if(r && r.ok){ toast('deletion requested'); switchView('market'); } }
     catch(err){ toast('delete failed: '+(err.message||'')); }
   }
   function renderListingEditor(existing){
@@ -2693,7 +2706,8 @@
     if(!confirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     try{
-      await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']]);
+      const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true});
+      if(!(r && r.ok)){ toast('couldn’t reach the relay — the stream was NOT deleted, try again'); return; }
       try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
       // Drop the parked "ended" event too — otherwise the server publishes it when the feed stops and
       // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
@@ -2740,9 +2754,10 @@
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');
     const doSend=async()=>{ const t=(inp.value||'').trim(); if(!t) return;
       if(GUEST){ _guestPrompt(); return; } inp.value='';
-      try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]); if(r&&r.ev){ onEv(r.ev);
-        Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); } }   // so viewers on other clients see it too
-      catch(_){ toast('couldn’t send'); } };
+      try{ const r=await publish(1311, t, [['a', saddr, (CFG&&CFG.relay_url)||'', 'root']]);
+        if(r&&r.ok&&r.ev){ onEv(r.ev); Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }   // render only if stored (else a rejected line would ghost)
+        else if(inp) inp.value=t; }   // failed → restore the text (publish() toasted); don't render a ghost
+      catch(_){ toast('couldn’t send'); if(inp) inp.value=t; } };
     if(send) send.onclick=doSend;
     if(inp) inp.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); doSend(); } };
   }
@@ -2834,11 +2849,14 @@
     // `starts` is kept because the 30311 is REPLACEABLE: the viewer-count update re-signs this same event, and
     // an update that omitted `starts` would silently erase the stream's start time for every client.
     _liveStream={ token:info.token, title, hls:info.hls_url, starts };
-    await publish(30311, '', [
+    const r = await publish(30311, '', [
       ['d', info.token], ['title', title], ['streaming', info.hls_url],
       ['status', 'live'], ['starts', starts],
       ['p', ME.pubkey, '', 'host'],
     ]);
+    // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
+    // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
+    if(!(r && r.ok)) throw new Error('stream announce not stored');
     _parkEndSentinel(info.token, title, info.hls_url, starts);
   }
   // Ghost-LIVE guard. Our 30311 can only be signed HERE (the key never leaves the browser), so if this tab
@@ -3511,7 +3529,8 @@
   async function createChannel(){
     const name=(prompt('Channel name?')||'').trim(); if(!name) return;
     const about=(prompt('Description (optional)?')||'').trim();
-    try{ const { ev }=await publish(40, JSON.stringify({ name, about }), []); toast('channel created'); if(ev){ Store.saveEvent(ev); openChannel(ev); } }
+    try{ const r=await publish(40, JSON.stringify({ name, about }), []);   // failure toast by publish()
+      if(r && r.ok && r.ev){ Store.saveEvent(r.ev); toast('channel created'); openChannel(r.ev); } }
     catch(e){ toast('create failed: '+((e&&e.message)||e)); }
   }
   async function openChannel(e, focusId){
@@ -3674,7 +3693,8 @@
     const msg=_chatMsgs.get(id)||_groupMsgs.get(id), pk=msg?msg.pubkey:null;
     try{
       if(VIEW==='group'){ const ev=await _groupPublish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawGroup(); return; }
-      const { ev }=await publish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawChannel(); toast('reacted '+emoji);
+      const r=await publish(7, emoji, eTags(id,pk));   // failure toast by publish() (which rolls the reaction back)
+      if(r && r.ok && r.ev && _recordReact(r.ev)){ _drawChannel(); toast('reacted '+emoji); }
     }catch(e){ toast('react failed: '+((e&&e.message)||e)); }
   }
   // Translate a chat message in-place (channel + group), via the node's AI backend. DOM-only — the
@@ -3724,9 +3744,17 @@
     ta.value=''; ta.style.height='auto'; ta.disabled=true;
     const tags=[['e', chan.id, '', 'root']];
     if(_chatReplyTo && _chatReplyTo!==chan.id){ const par=_chatMsgs.get(_chatReplyTo); tags.push(['e', _chatReplyTo, '', 'reply']); if(par) tags.push(['p', par.pubkey]); }
-    try{ const { ev }=await publish(42, text, tags); if(ev && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
+    let ok=false;
+    try{ const r=await publish(42, text, tags);   // failure toast by publish()
+      if(r && r.ok && r.ev && !_chatMsgs.has(r.ev.id)){ ok=true; _chatMsgs.set(r.ev.id,r.ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
     catch(e){ toast('send failed: '+((e&&e.message)||e)); }
-    finally{ _clearChatReply(); ta.disabled=false; ta.focus(); }   // text was cleared optimistically → always drop the reply target so the next msg isn't mis-threaded
+    finally{
+      // On failure restore BOTH the text and the reply target, so a relay blip doesn't eat the message OR
+      // silently drop its threading; only clear the reply once it actually sent.
+      if(ok){ _clearChatReply(); }
+      else if(ta){ ta.value=text; ta.dispatchEvent(new Event('input')); }
+      ta.disabled=false; ta.focus();
+    }
   }
   // ---- NIP-29 group writes (kind 9 message / 7 react / 9021 join) via NIP-42 authed publish ----
   async function _groupPublish(kind, content, extraTags){
@@ -4030,7 +4058,8 @@
   async function votePoll(pollId, optId){
     if((_myPollVotes[pollId]||new Set()).has(optId)){ toast('already voted'); return; }
     try{
-      await publish(1018, '', [['e', pollId], ['response', optId]]);
+      const r=await publish(1018, '', [['e', pollId], ['response', optId]]);   // failure toast by publish()
+      if(!(r && r.ok)) return;   // relay didn't store the vote → don't mark it voted (else the guard blocks a retry)
       (_myPollVotes[pollId]=_myPollVotes[pollId]||new Set()).add(optId);
       toast('✓ voted');
       const card=$(`.note.poll[data-id="${pollId}"]`); if(card){ card.removeAttribute('data-poll-done'); hydratePolls(card.parentNode||document); }
@@ -4132,9 +4161,13 @@
       // existing content-warning, and append ours. Keep the same kind so polls/community posts survive.
       const tags=(ev.tags||[]).filter(t=>t[0]!=='content-warning').map(t=>t.slice());
       tags.push(['content-warning', reason]);
-      const { ev:nu }=await publish(ev.kind||1, ev.content||'', tags);
-      await publish(5, 'replaced with a content-warning version', [['e', id]]);   // delete the original
-      if(nu) Store.saveEvent(nu);
+      const r=await publish(ev.kind||1, ev.content||'', tags, {quiet:true});   // we show our own specific messages
+      // Only delete the original once the REPLACEMENT actually landed — otherwise a relay blip on the new
+      // copy would delete the post and lose it entirely (there's no retry queue).
+      if(!r || !r.ok){ toast('couldn’t post the warned copy — original kept, try again'); return; }
+      if(r.ev) Store.saveEvent(r.ev);
+      const d=await publish(5, 'replaced with a content-warning version', [['e', id]], {quiet:true});   // delete the original
+      if(!d || !d.ok){ toast('warned copy posted, but couldn’t delete the original — delete it manually'); renderView(true); return; }
       toast('🔞 re-posted with warning');
       renderView(true);
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
@@ -4611,7 +4644,7 @@
       // it can't be confused with the author's own monero_address tip-jar tag that publish() may add.
       if(proof && txid && isXmrAddr(addr)) tags.push(['monero_proof', txid, String(addr).trim(), proof]);
       else if(txid) tags.push(['txid', txid]);
-      await publish(1, body, tags); toast('ɱ tip note posted');
+      { const r=await publish(1, body, tags); if(r && r.ok) toast('ɱ tip note posted'); }   // failure toast by publish()
     }catch(e){ toast('could not post tip note'); }
   }
   function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
@@ -4693,7 +4726,7 @@
   }
   function pickEmoji(id,pk,btn){
     if(myReaction(id)){ toast('already reacted'); return; }
-    openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(()=>{ toast('reacted '+emoji); decorateCounts(); }); });
+    openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(r=>{ if(r&&r.ok){ toast('reacted '+emoji); decorateCounts(); } }); });   // failure toast by publish() (which also rolls the reaction back)
   }
   // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
   // onPick(action) fires after the menu closes. Shared by the post menu and the profile menu.
@@ -5030,8 +5063,9 @@
     if(btn){ btn.disabled=true; btn.textContent='posting…'; }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
-      await publish(1, m.url, eTags(to.id, to.pk));
-      toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); }
+      const r=await publish(1, m.url, eTags(to.id, to.pk));   // failure toast by publish()
+      if(r && r.ok){ toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); } }
+      else if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; }
     }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
   // Combined-effects rules (match the bot/Telegram): an effect takes ONE geometry motion
@@ -5058,13 +5092,17 @@
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
     const o=Store.get(id);
-    await publish(6, o?JSON.stringify(o):'', eTags(id,pk));
+    const r=await publish(6, o?JSON.stringify(o):'', eTags(id,pk));   // failure toast by publish()
+    if(!(r && r.ok)) return;   // relay didn't store it → don't mark reposted (else the guard blocks a retry)
     btn.classList.add('on'); const n=btn.querySelector('.n'); n.textContent=(parseInt(n.textContent||'0')+1); toast('reposted');
   }
   async function doDelete(id,art){
     if(!confirm('Delete this post? (publishes a NIP-09 deletion request)')) return;
-    await publish(5, 'deleted by author', [['e',id]]);
-    Store.removeEvent(id); if(art)art.remove(); toast('deletion requested');
+    const r = await publish(5, 'deleted by author', [['e',id]], {quiet:true});   // we show our own specific message
+    // Only drop it from the UI once the relay accepted the tombstone. Otherwise say so, and leave the post in
+    // place so the delete can be retried — removing it locally on a failed delete would hide a still-live post.
+    if(r && r.ok){ Store.removeEvent(id); if(art)art.remove(); toast('deletion requested'); }
+    else toast('couldn’t reach the relay — the post was NOT deleted, try again');
   }
 
   // ---------- compose ----------
@@ -5113,7 +5151,7 @@
     const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['admin','🛠️','Admin'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai') && !(v==='admin' && !IS_ADMIN));   // hide AI+Translate in Nostr-only; Admin only for admins
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
-    const _stat=(_wot||_lastOnline||_lastRelay)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}</div>`:'';
+    const _stat=(_wot||_lastOnline||_lastRelay||_lastStreams||_lastCalls)?`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}${_lastStreams?`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span>`:''}${_lastCalls?`<span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`:''}</div>`:'';
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
@@ -5167,14 +5205,23 @@
     }catch(_){ return content; }
   }
   async function sendDraft(id){
-    const d=Drafts.get(id); if(!d || !(d.text||'').trim()) return;
+    const d=Drafts.get(id);
+    // Never fail silently: a Send that does nothing, with no message, is indistinguishable from a broken app.
+    if(!d){ toast('couldn’t find that draft — reload and try again'); return; }
+    if(!(d.text||'').trim()){ toast('that draft is empty'); return; }
     let tags=[]; let content=d.text;
     if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
     if(d.quote){ const o=Store.get(d.quote); const qpk=(o&&o.pubkey)||''; tags.push(['q', d.quote, CFG.relay_url||'', qpk]); if(qpk)tags.push(['p',qpk]); content=_appendQuoteNevent(content, d.quote, qpk); }
     mentionTags(d.text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
     if(d.cw) tags.push(['content-warning', d.cwReason||'']);   // honour a draft's 🔞 flag on direct send too
-    try{ await publish(1, content, tags); Drafts.remove(id); toast('posted'); if(VIEW==='drafts') renderDrafts(); }
-    catch(e){ toast('post failed: '+e.message); }
+    // Remove the draft ONLY once the relay has actually stored the post. On any failure the draft stays —
+    // it is the recovery path (the user retries from here), so its text is never lost.
+    try{
+      const r=await publish(1, content, tags);
+      if(r && r.ok){ Drafts.remove(id); toast('posted'); }   // failure toast + kept draft handled by publish()
+      if(VIEW==='drafts') renderDrafts();
+    }
+    catch(e){ toast('post failed: '+((e&&e.message)||e)); }   // signing failed → nothing was created; keep the draft
   }
   // Tags for a top-level community post (NIP-72 + NIP-22 comment, kind 1111). Uppercase A/K/P =
   // root scope (the community); lowercase a/k/p = parent (== root for a top-level post). Including
@@ -5434,7 +5481,11 @@
             mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
             imetaTagsFor(text).forEach(t=>tags.push(t));
             _applyCw(tags);
-            closeModal(); try{ await publish(1068, text, tags); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); }
+            // A poll's options/mode can't round-trip through a plain-text draft, so DON'T close the modal
+            // until the relay accepts it — that way a blip leaves the composer (with its options) intact to
+            // retry, rather than losing them.
+            try{ const r=await publish(1068, text, tags);
+              if(r&&r.ok){ closeModal(); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); } }
             catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
           } }
         // Community post / article comment → NIP-22 comment (kind 1111) scoped to that root.
@@ -5443,10 +5494,12 @@
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
           imetaTagsFor(text).forEach(t=>tags.push(t));
           _applyCw(tags);
-          closeModal();
-          try{ await publish(1111, text, tags);
-            if(articleComment){ toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
-            else { toast('posted to community'); if(VIEW==='community') openCommunity(community); }
+          // A community/article-comment carries scope tags a plain draft can't preserve, so keep the modal
+          // open until the relay accepts it — a blip leaves the text in place to retry rather than orphaning
+          // a scopeless draft that would post to the home feed.
+          try{ const r=await publish(1111, text, tags);
+            if(r && r.ok && articleComment){ closeModal(); toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
+            else if(r && r.ok){ closeModal(); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
           }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
         // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the
@@ -5458,8 +5511,12 @@
             $('#cmp-status',root).textContent='uploading…';
             const url=await uploadBlob(new File([blob], 'post.png', {type:'image/png'}));
             const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
-            closeModal(); await publish(1, url, btags); _dropDraft();
-            toast('posted 🎨'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
+            // Save a draft before publishing so the text survives a failure (the styled image is re-rendered
+            // from it on retry), and only report success / drop the draft when the relay actually stored it.
+            _saveDraftNow(); closeModal();
+            const r=await publish(1, url, btags);
+            if(r && r.ok){ _dropDraft(); toast('posted 🎨'); }   // failure toast + kept draft handled by publish()
+            if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
           }catch(err){ committed=false; const sb2=$('#cmp-send',root); if(sb2) sb2.disabled=false;
             if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; }
             else $('#cmp-status',root).textContent='background post failed: '+((err&&err.message)||err); }
@@ -5471,8 +5528,13 @@
         mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
         imetaTagsFor(text).forEach(t=>tags.push(t));
         _applyCw(tags);
-        closeModal(); await publish(1, content, tags); _dropDraft();
-        toast('posted'); if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
+        // Save the draft BEFORE we close + publish, so the text is never lost if the post fails (the modal is
+        // already gone by then). On success we remove it; on failure it stays in Drafts as the recovery path.
+        _saveDraftNow();
+        closeModal();
+        { const r=await publish(1, content, tags);
+          if(r && r.ok){ _dropDraft(); toast('posted'); } }   // failure toast + kept draft handled by publish()
+        if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
       ta.focus();
     });
@@ -7330,7 +7392,10 @@
     { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>renderProfileView(pk); }
     // Mute the DM sender straight from the conversation. Muting drops back to the list (the thread
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
-    { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ if(!MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } await toggleMute(pk); }; }
+    // Close the thread only AFTER the mute actually lands — toggleMute now no-ops on a relay failure, so
+    // closing first would dismiss the conversation while the mute silently didn't apply.
+    { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ const wasMuted=MUTED.has(pk); await toggleMute(pk);
+        if(!wasMuted && MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } }; }
     const inp=$('#dm-in');
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'));
@@ -7470,10 +7535,19 @@
       if(!_prof.followers || !_prof.followers.length){
         const fe=await Relay.query([{kinds:[3],'#p':[pk],limit:1000}]).catch(()=>[]);
         _prof.followers=[...new Set(fe.map(e=>e.pubkey))];
-        // Sync the headline count to the ACTUAL deduped list — the NIP-45 COUNT is approximate (or 0 when
-        // the relay doesn't support COUNT), which is why the number disagreed with the opened list. Keep
-        // the larger of the two so a >1000-cap list doesn't undercount a relay that DID report a real total.
-        const fr=$('#show-followers b'); if(fr){ const shown=parseInt(fr.textContent,10)||0; fr.textContent=Math.max(shown, _prof.followers.length); }
+        // Correct the headline to the number of DISTINCT followers. The NIP-45 COUNT counts kind-3 *events*,
+        // and kind-3 is replaceable — a follower who republished their follow list is counted several times
+        // (that's the "133 count but 68 in the list" bug). The deduped list is the truth. Only fall back to
+        // the reported COUNT when we actually hit the 1000 cap (a genuinely huge follower list we can't fully
+        // pull), where the deduped length would UNDERcount.
+        const fr=$('#show-followers b');
+        // The deduped list is the true count (kind-3 is replaceable; the NIP-45 COUNT over-counts republished
+        // lists — the 133-vs-68 bug). Show the distinct count. Never overwrite a real headline with 0 from an
+        // empty/failed read. If we hit the 1000 cap the true total is higher, so show "1000+" — NOT the
+        // inflated NIP-45 number (which is what `fr.textContent` still holds, so we must not max() with it).
+        if(fr && _prof.followers.length){
+          fr.textContent = (fe.length >= 1000) ? _prof.followers.length + '+' : String(_prof.followers.length);
+        }
       }
       peopleModal('Followers', _prof.followers||[]);
     };
@@ -7732,7 +7806,8 @@
         // those clients and even wiped a monero_address set elsewhere.
         if(_xmr){ meta.xmr=_xmr; meta.monero_address=_xmr; } else { delete meta.xmr; delete meta.monero_address; }
         delete meta.monero;   // fold the rarer `monero` alias into the two canonical keys we write
-        closeModal(); await publish(0, JSON.stringify(meta), []); Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); };
+        closeModal(); { const r=await publish(0, JSON.stringify(meta), []);   // failure toast by publish()
+          if(r && r.ok){ Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); } } };
     });
   }
   // Show the relays a user publishes to (NIP-65 kind-10002), with read/write markers.
@@ -7765,7 +7840,8 @@
       }).join('') : '<div class="empty">Nobody here.</div>';
       $$('[data-prof]',list).forEach(el=> el.onclick=(ev)=>{ if(ev.target.closest('.pfollow')) return; closeModal(); renderProfileView(el.dataset.prof); });
       $$('.pfollow',list).forEach(b=> b.onclick=async(ev)=>{ ev.stopPropagation(); b.disabled=true; b.textContent='…';
-        try{ await toggleFollow(b.dataset.fb); b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
+        try{ if(await toggleFollow(b.dataset.fb)){ b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); }
+             else { b.disabled=false; b.textContent='Follow back'; } }   // relay didn't store it (publish() toasted) → leave the button actionable
         catch(_){ b.disabled=false; b.textContent='Follow back'; } });
       // "Follow all back": one-tap follow of everyone in this list I don't already follow (one publish).
       const followable=pks.filter(p=>p!==ME.pubkey && !FOLLOWS.has(p));
@@ -7774,6 +7850,7 @@
         fab.style.display=''; fab.textContent=`Follow all back (${followable.length})`;
         fab.onclick=async()=>{ fab.disabled=true; const orig=fab.textContent; fab.textContent='…';
           try{ const n=await followMany(followable);
+            if(!n){ fab.disabled=false; fab.textContent=orig; return; }   // relay didn't store it (publish() toasted) → keep it actionable
             $$('.pfollow',list).forEach(b=>{ b.disabled=true; b.textContent='Following ✓'; b.classList.remove('btn-cyan'); b.classList.add('btn-ghost'); });
             fab.style.display='none'; toast(`followed ${n} back`);
             if(VIEW==='home') renderView(true);
@@ -8472,7 +8549,9 @@
   async function replyFileUrl(u, btn){
     const to=_ai.replyTo; if(!to){ toast('no post to reply to'); return; }
     if(btn){ btn.disabled=true; btn.textContent='posting…'; }
-    try{ const pub=await _fileToPublicUrl(u); await publish(1, pub, eTags(to.id, to.pk)); toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; } }
+    try{ const pub=await _fileToPublicUrl(u); const r=await publish(1, pub, eTags(to.id, to.pk));   // failure toast by publish()
+      if(r && r.ok){ toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; } }
+      else if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
     catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
   // Share generated media as a NEW Nostr post: re-upload the (authed/local) artifact to public Blossom,
@@ -8900,6 +8979,11 @@
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
+          ${(window.Capacitor && window.__PC_API_BASE__) ? `<label class="fld">🌐 Instance
+            <div class="instance-pick" id="us-instance-pick"></div>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(window.__PC_API_BASE__)}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
+          </label>
+          <div class="muted small">Which PosterChan server this app talks to (your Nostr key stays the same — it's portable). Switching reloads the app. Tap a quick-pick or type a domain.</div>` : ''}
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -9092,6 +9176,32 @@
     { const mc=$('#set-media-cache'); if(mc) mc.onchange=()=>{
         const gb=+mc.value||4; ClientSettings.set('mediaCacheGB', gb); _applyMediaCacheBudget(gb);
         toast('media cache set to '+gb+' GB'); }; }
+    // Instance quick-pick (native app only). Chips for the default + recently-used instances; tapping one (or
+    // Connect) switches the server the app talks to. The Nostr key is portable, so only the session re-establishes.
+    { const pick=$('#us-instance-pick'), inp=$('#us-instance-inp'), go=$('#us-instance-go');
+      if(pick && inp && go && window.__PC_API_BASE__){
+        const cur=window.__PC_API_BASE__;
+        // Normalise to https://host, and REJECT anything that isn't a plausible domain — otherwise a typo
+        // ('asdf') would become https://asdf and the app would switch/reload to a dead instance. Returns '' if
+        // the input isn't a valid host (needs a dot + a TLD, or is localhost/an IP).
+        const norm=u=>{
+          u=(u||'').trim(); if(!u) return '';
+          if(!/^https?:\/\//i.test(u)) u='https://'+u; u=u.replace(/\/+$/,'');
+          let host=''; try{ host=new URL(u).hostname; }catch(_){ return ''; }
+          const ok = host==='localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
+          return ok ? u : '';
+        };
+        let recent=[]; try{ recent=JSON.parse(localStorage.getItem('pc_instances')||'[]'); }catch(_){}
+        const opts=[...new Set([cur, 'https://poster.place', ...recent].map(norm).filter(Boolean))];
+        pick.innerHTML=opts.map(u=>`<button class="instance-chip${u===cur?' on':''}" data-u="${enc(u)}">${enc(u.replace(/^https?:\/\//,''))}${u===cur?' ✓':''}</button>`).join('');
+        const _switch=raw=>{ const u=norm(raw); if(!u){ toast('that doesn’t look like a valid instance domain'); return; }
+          if(u===cur){ toast('already connected to '+u.replace(/^https?:\/\//,'')); return; }
+          try{ localStorage.setItem('pc_instances', JSON.stringify([...new Set([u, ...opts])].slice(0,6))); }catch(_){}
+          if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
+          else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); } };
+        pick.querySelectorAll('.instance-chip').forEach(b=> b.onclick=()=>_switch(b.dataset.u));
+        go.onclick=()=>_switch(inp.value);
+      } }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
     { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{
         ClientSettings.set('hideDmPreview', hd.checked);
@@ -9101,7 +9211,8 @@
     { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
         const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
         wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
-        try{ await saveMutedWords(words); if(st) st.textContent='Saved — '+MUTED_WORDS.size+' muted word(s). New posts are filtered immediately.'; }
+        try{ const okv=await saveMutedWords(words);
+          if(st) st.textContent = okv ? ('Saved — '+MUTED_WORDS.size+' muted word(s). New posts are filtered immediately.') : 'Couldn’t reach the relay — not saved, try again.'; }
         catch(e){ if(st) st.textContent='Save failed: '+((e&&e.message)||e); }
         finally{ wb.disabled=false; }
       }; }
@@ -9127,17 +9238,40 @@
         const r=await fetch('/api/matrix/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({homeserver:$('#us-mx-hs').value.trim(),username:$('#us-mx-user').value.trim(),password:$('#us-mx-pass').value})});
         const d=await r.json().catch(()=>({})); if(r.ok){ toast('Matrix connected'); renderUserSettings(); } else st.textContent=d.detail||'connect failed'; }; }
     { const d=$('#us-mx-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Matrix?'))return; await fetch('/api/matrix/disconnect',{method:'POST'}); renderUserSettings(); }; }
-    // Pleroma OAuth (opens instance; callback posts 'pleroma_connected')
+    // Wait for an account link to actually land, then re-render.
+    //
+    // This used to rely SOLELY on the callback page doing window.opener.postMessage(...). When the OAuth page
+    // opens as a tab rather than a popup (or the browser nulls `opener` under cross-origin-opener rules) that
+    // message never arrives — so the token was saved server-side while the panel still said "Connect with
+    // OAuth". The user re-authorises, it works again, and still looks broken. Poll the server for the truth
+    // instead; the postMessage stays as a fast path when it does work.
+    function _awaitLink(done, statusEl, msgName){
+      let stop=false;
+      const finish=()=>{ if(stop) return; stop=true; window.removeEventListener('message',h); renderUserSettings(); };
+      const h=e=>{ if(e.data===msgName) finish(); };
+      window.addEventListener('message',h);
+      const t0=Date.now();
+      (async function poll(){
+        while(!stop && Date.now()-t0 < 180000){
+          await new Promise(r=>setTimeout(r, 2000));
+          if(stop) return;
+          try{ const s=await fetch('/api/auth/settings').then(r=>r.ok?r.json():null); if(s && done(s)) return finish(); }catch(_){}
+        }
+        if(!stop){ stop=true; window.removeEventListener('message',h);
+          if(statusEl) statusEl.textContent='still not linked — if you approved it, reload this page'; }
+      })();
+    }
+    // Pleroma OAuth (opens the instance in a new tab; we then wait for the link to actually appear)
     { const c=$('#us-plr-conn'); if(c) c.onclick=async()=>{ const st=$('#us-plr-stat'); const url=$('#us-plr-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='registering app…';
         const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
-        const h=e=>{ if(e.data==='pleroma_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
+        _awaitLink(s=>!!s.pleroma_has_access_token, st, 'pleroma_connected'); }; }
     { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Misskey MiAuth
     { const c=$('#us-mk-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mk-stat'); const url=$('#us-mk-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='starting MiAuth…';
         const r=await fetch('/api/misskey/miauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
-        const h=e=>{ if(e.data==='misskey_connected'){ window.removeEventListener('message',h); renderUserSettings(); } }; window.addEventListener('message',h); }; }
+        _awaitLink(s=>!!s.misskey_has_api_token, st, 'misskey_connected'); }; }   // NB: has_api_token, not has_access_token
     { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
     // Finance: remove the stored key
     { const fc=$('#us-fin-clear'); if(fc) fc.onclick=async()=>{ if(!confirm('Remove your Budget Manager API key?'))return;
@@ -10107,6 +10241,9 @@
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
       document.body.appendChild(el);
+      // Tap the minimized thumbnail (anywhere but a button) to restore it. The call lives in the
+      // PeerConnection, not the DOM, so minimizing/restoring never touches the media.
+      el.onclick=e=>{ if(el.classList.contains('call-mini') && !e.target.closest('button')) _setOverlayMini('call-overlay', false); };
     }
     const p=profOf(_call.peer)||{};
     const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
@@ -10114,7 +10251,10 @@
     const stx=document.getElementById('call-status'); if(stx) stx.textContent=_callStatus();
     const hasLocalVid=_hasLiveVideo(_call.local), hasRemoteVid=_hasLiveVideo(_call.remote);
     const showVid=hasLocalVid||hasRemoteVid;
-    el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'');
+    // Preserve the minimized state: _callUI re-runs on every call event (ICE, mute, remote video), and a
+    // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
+    const _mini=el.classList.contains('call-mini');
+    el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); } }
     const acts=document.getElementById('call-actions');
@@ -10124,7 +10264,8 @@
     const canVid=!!(_call.local && _call.pc);
     const html = (_call.state==='ringing' && !_call.caller)
       ? act('call-accept','📞','Answer','accept')+act('call-decline','✕','Decline','decline')
-      : act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute')
+      : act('call-min','▁','Minimize')
+        +act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute')
         +(canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
         +act('call-hang','📵','End','hang');
     if(acts && acts.dataset.k!==html){ acts.dataset.k=html; acts.innerHTML=html;
@@ -10132,9 +10273,17 @@
       if(b('call-accept')) b('call-accept').onclick=_acceptCall;
       if(b('call-decline')) b('call-decline').onclick=_declineCall;
       if(b('call-hang')) b('call-hang').onclick=()=>_hangup(false);
+      if(b('call-min')) b('call-min').onclick=e=>{ e.stopPropagation(); _setOverlayMini('call-overlay', true); };
       if(b('call-mute')) b('call-mute').onclick=()=>{ if(_call&&_call.local){ _call.muted=!_call.muted; _call.local.getAudioTracks().forEach(t=>t.enabled=!_call.muted); _callUI(); } };
       if(b('call-cam')) b('call-cam').onclick=()=>_toggleVideo();
     }
+  }
+  // Shrink a call/room overlay to a floating thumbnail so the app stays usable during a call. Purely visual:
+  // the media rides the PeerConnection, not the DOM, so this never interrupts the call. Shared by 1:1 + group.
+  function _setOverlayMini(id, on){
+    const el=document.getElementById(id); if(!el) return;
+    el.classList.toggle('call-mini', !!on);
+    if(on) toast('call minimized — tap it to return');
   }
   function renderCalls(){
     const feed=$('#feed'); if(!feed) return;
@@ -10278,7 +10427,8 @@
   function _roomUI(){
     let el=document.getElementById('room-overlay');
     if(!_room){ if(el) el.remove(); return; }
-    if(!el){ el=document.createElement('div'); el.id='room-overlay'; el.className='call-overlay room'; document.body.appendChild(el); }
+    if(!el){ el=document.createElement('div'); el.id='room-overlay'; el.className='call-overlay room'; document.body.appendChild(el);
+      el.onclick=e=>{ if(el.classList.contains('call-mini') && !e.target.closest('button')) _setOverlayMini('room-overlay', false); }; }
     const ringingIn=_room.ringing;
     const tiles=[{me:true}].concat([..._room.members].filter(h=>h!==ME.pubkey).map(h=>({hex:h})));
     const n=tiles.length;
@@ -10291,13 +10441,14 @@
       }).join('')}</div>
       <div class="call-actions">${ringingIn
         ? `<button class="call-btn accept" id="room-accept">📞 Join</button><button class="call-btn decline" id="room-decline">✕</button>`
-        : `<button class="call-btn" id="room-mute" title="mute">${_room.muted?'🔇':'🎙️'}</button>${_room.video?`<button class="call-btn" id="room-cam">${_room.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="room-hang">✕</button>`}</div>`;
+        : `<button class="call-btn" id="room-min" title="minimize">▁</button><button class="call-btn" id="room-mute" title="mute">${_room.muted?'🔇':'🎙️'}</button>${_room.video?`<button class="call-btn" id="room-cam">${_room.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="room-hang">✕</button>`}</div>`;
     const lv=el.querySelector('#room-local'); if(lv && _room.local && lv.srcObject!==_room.local){ lv.srcObject=_room.local; lv.play&&lv.play().catch(()=>{}); }
     el.querySelectorAll('.room-remote').forEach(v=>{ const peer=_room.peers.get(v.dataset.hex); if(peer && peer.stream && v.srcObject!==peer.stream){ v.srcObject=peer.stream; v.play&&v.play().catch(()=>{}); } });
     const b=id=>el.querySelector('#'+id);
     if(b('room-accept')) b('room-accept').onclick=_roomAccept;
     if(b('room-decline')) b('room-decline').onclick=_roomDecline;
     if(b('room-hang')) b('room-hang').onclick=_roomLeave;
+    if(b('room-min')) b('room-min').onclick=e=>{ e.stopPropagation(); _setOverlayMini('room-overlay', true); };
     if(b('room-mute')) b('room-mute').onclick=()=>{ if(_room&&_room.local){ _room.muted=!_room.muted; _room.local.getAudioTracks().forEach(t=>t.enabled=!_room.muted); _roomUI(); } };
     if(b('room-cam')) b('room-cam').onclick=()=>{ if(_room&&_room.local){ _room.camOff=!_room.camOff; _room.local.getVideoTracks().forEach(t=>t.enabled=!_room.camOff); _roomUI(); } };
   }

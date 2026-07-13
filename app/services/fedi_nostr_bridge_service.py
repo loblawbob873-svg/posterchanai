@@ -558,7 +558,8 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
     upstream iff broadcasting), then drop the bookkeeping row. Bounded + throttled — deletions are
     rare and per-status checks cost a request each."""
     rows = (db.query(FediBridgeDelivered)
-            .filter(FediBridgeDelivered.instance_url == instance_url)
+            .filter(FediBridgeDelivered.instance_url == instance_url,
+                    FediBridgeDelivered.note_id != "")   # skip write-back TOMBSTONES (no status to check)
             .order_by(FediBridgeDelivered.id.desc()).limit(_DELETION_BATCH).all())
     if not rows:
         return
@@ -582,8 +583,14 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
             if row.nostr_pubkey:
                 pup = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == row.nostr_pubkey).first()
                 actor_uri = pup.actor_uri if pup else None
-            if actor_uri:
-                await ident.delete_note(port, actor_uri, row.nostr_event_id, broadcast)
+            if not actor_uri:
+                # No puppet ⇒ this row is not a MIRRORED note, it's a local user's own cross-post recorded by
+                # the write-back. Its row is what stops that note being federated again (and being echoed back
+                # into the timeline as a puppet note). Deleting the row because the status 404s — which is
+                # exactly what happens right after the user deletes it — would resurrect the deleted post on
+                # the next replay. Leave it alone; it is a permanent marker, not bookkeeping to reap.
+                continue
+            await ident.delete_note(port, actor_uri, row.nostr_event_id, broadcast)
             db.delete(row)
             db.commit()
             logger.info("[fedi-bridge] mirrored note %s deleted on source → NIP-09 delete published", row.note_id)
@@ -649,8 +656,11 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
         # with a wiped local_settings.json) — resume forward from the newest delivered note so the gap
         # during downtime is recovered, not skipped. Otherwise it's a fresh connect: backfill a bounded
         # window of recent posts so the timeline isn't empty on day one.
+        # Exclude write-back TOMBSTONE rows (note_id="") — they can be the newest row for an instance but
+        # carry no status id, so resuming from them would skip forward-resume and drop downtime posts.
         last = (db.query(FediBridgeDelivered)
-                .filter(FediBridgeDelivered.instance_url == instance_url)
+                .filter(FediBridgeDelivered.instance_url == instance_url,
+                        FediBridgeDelivered.note_id != "")
                 .order_by(FediBridgeDelivered.id.desc()).first())
         if last and last.note_id:
             since = last.note_id

@@ -245,6 +245,7 @@ async def client_stats(request: Request, v: str = ""):
     online = _record_viewer(request, v)
     members = 0
     relay_conns = 0
+    calls = 0
     try:
         from app.services.nostr_relay.thread import relay_status
         st = relay_status()
@@ -252,9 +253,39 @@ async def client_stats(request: Request, v: str = ""):
         # Deduped-by-IP count = distinct PEOPLE connected to the relay right now (not raw sockets, which
         # also count multi-tab/federation/scrapers). Falls back to raw conns if the relay didn't dedup.
         relay_conns = int(st.get("online", st.get("conns", 0)) or 0)
+        calls = int(st.get("calls", 0) or 0)
     except Exception:
         pass
-    return JSONResponse({"users": members, "online": online, "relay": relay_conns})
+    return JSONResponse({"users": members, "online": online, "relay": relay_conns,
+                         "calls": calls, "streams": await _live_stream_count()})
+
+
+_stream_count_cache = {"n": 0, "at": 0.0}
+
+
+async def _live_stream_count() -> int:
+    """How many streams are live on this instance right now = MediaMTX paths that are ready. Cached for 10s
+    so the ~per-viewer /client/stats poll doesn't hit MediaMTX every request. Best-effort: any failure
+    (streaming disabled, MediaMTX down) yields 0 and the ticker hides itself."""
+    import time as _t
+    now = _t.monotonic()
+    if now - _stream_count_cache["at"] < 10:
+        return _stream_count_cache["n"]
+    n = 0
+    try:
+        from app.services import settings_store
+        if (settings_store.get("stream_enabled", "false") or "").strip().lower() == "true":
+            api_port = (settings_store.get("stream_api_port", "9997") or "9997").strip()
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.5, connect=1.5)) as client:
+                r = await client.get(f"http://127.0.0.1:{api_port}/v3/paths/list")
+            if r.status_code == 200:
+                items = (r.json() or {}).get("items") or []
+                n = sum(1 for it in items if isinstance(it, dict) and it.get("ready"))
+    except Exception:
+        n = 0
+    _stream_count_cache["n"], _stream_count_cache["at"] = n, now
+    return n
 
 
 @router.post("/qr")

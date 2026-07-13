@@ -28,7 +28,13 @@ from app.services.nostr import nip17, bridge_keys, nostr_service
 
 logger = logging.getLogger(__name__)
 
-_WRITEBACK_KINDS = [1, 6, 7, 1059]
+_WRITEBACK_KINDS = [1, 5, 6, 7, 1059]
+# KNOWN GAP (deliberately not "fixed" with an age cap): a cross-post that keeps FAILING (the instance 422s,
+# say) gets re-queued by every reconnect's _LOOKBACK_SEC replay, so a backlog can build and then federate all
+# at once when the instance recovers — which reads as spam. Bounding it on the note's created_at was the
+# obvious fix and is WRONG: created_at is the client's SIGNING time, so an offline/queued post, a clock-skewed
+# client, or any outage longer than the cap would silently never federate at all. Losing posts is worse than
+# a late burst. Doing this properly needs a durable per-event attempt counter (give up after N), not a clock.
 _seen_events: set = set()       # event ids already actioned this process (bounded below)
 _SEEN_CAP = 5000
 _LOOKBACK_SEC = 6 * 3600        # on (re)connect, replay this far back so interactions made while the
@@ -406,7 +412,12 @@ async def _crosspost(db, user, ev: dict) -> None:
     """Federate a user's top-level Nostr note to their linked Pleroma account as a new public post.
     Idempotent across restart/replay via a recorded FediBridgeDelivered row keyed on the note id."""
     eid = ev.get("id")
-    if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
+    # Scope the dedup to THIS author. A tombstone/delivery row is now written keyed on (event id, pubkey);
+    # without the pubkey filter here, a row carrying someone else's event id would suppress their cross-post —
+    # i.e. user A deleting a note e-tagged to B's id could permanently stop B's post from ever federating.
+    if db.query(FediBridgeDelivered).filter(
+            FediBridgeDelivered.nostr_event_id == eid,
+            FediBridgeDelivered.nostr_pubkey == ev.get("pubkey", "")).first():
         return
     text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
     q = await _quote_link(db, ev)
@@ -431,6 +442,63 @@ async def _crosspost(db, user, ev: dict) -> None:
         logger.warning("[fedi-writeback] cross-post failed (ev %s): %s", eid, e)
 
 
+async def _delete_federated(db, user, ev: dict) -> bool:
+    """NIP-09 delete (kind 5) → delete the fediverse status this note became. True if nothing failed.
+
+    Deleting on Nostr used to leave the cross-posted copy standing on the fediverse forever: kind 5 wasn't
+    even subscribed to, so nothing told Pleroma to remove it. A delete that only half-applies is worse than
+    no delete — the user believes the post is gone. Each e-tag names a Nostr event we may have federated;
+    FediBridgeDelivered maps it to the status id.
+    """
+    inst, token = user.pleroma_instance_url, user.pleroma_access_token
+    if not inst or not token:
+        return True
+    host = (inst or "").rstrip("/").lower()
+    targets = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
+    ok = True
+    pk = ev.get("pubkey", "")
+    for target in targets:
+        rows = db.query(FediBridgeDelivered).filter(
+            FediBridgeDelivered.nostr_event_id == target,
+            FediBridgeDelivered.nostr_pubkey == pk).all()   # only ever our OWN statuses
+        if not rows:
+            # Nothing federated (yet). Record a TOMBSTONE anyway: the cross-post may merely have FAILED so far
+            # (a 422ing instance), and the reconnect replay would happily federate it later — publishing a note
+            # the user has already deleted, with the tombstone long since consumed. _crosspost skips any note
+            # that already has a row, so this closes that race permanently.
+            try:
+                db.add(FediBridgeDelivered(
+                    platform="pleroma", instance_url=inst, note_id="", note_uri=None,
+                    author_acct=None, nostr_event_id=target, nostr_pubkey=pk))
+                db.commit()
+                logger.info("[fedi-writeback] tombstoned %s — deleted before it federated", target[:10])
+            except Exception as e:
+                db.rollback()
+                ok = False
+                logger.warning("[fedi-writeback] could not tombstone %s: %s", target[:10], e)
+            continue
+        for row in rows:
+            if not row.note_id:
+                continue   # already a tombstone — nothing on the fediverse to delete
+            # NEVER send this user's bearer token anywhere but the instance that ISSUED it. The row records
+            # the instance the status was posted to; if the user has since relinked to a different instance,
+            # posting their NEW token to the OLD host would hand a live credential to a third party.
+            if (row.instance_url or "").rstrip("/").lower() != host:
+                logger.warning("[fedi-writeback] not deleting %s: it lives on %s but the account is now on %s",
+                               row.note_id, row.instance_url, inst)
+                continue
+            try:
+                await pleroma_service.delete_status(inst, token, row.note_id)
+                # KEEP the FediBridgeDelivered row. It is what stops the global fedi mirror re-importing the
+                # user's own post as a puppet note — drop it and a still-live (or re-fetched) status comes
+                # straight back into the Nostr timeline under a puppet key the user can't delete.
+                logger.info("[fedi-writeback] deleted fediverse status %s (nostr %s)", row.note_id, target[:10])
+            except Exception as e:
+                ok = False   # transient → leave the event un-seen so the next replay retries it
+                logger.warning("[fedi-writeback] could not delete fediverse status %s: %s", row.note_id, e)
+    return ok
+
+
 async def _handle(db, ev: dict) -> None:
     eid = ev.get("id")
     if not eid or eid in _seen_events:
@@ -444,6 +512,12 @@ async def _handle(db, ev: dict) -> None:
     user = _user_for_pubkey(db, pk)
     if not user:
         return                       # not a local user with a linked Pleroma account → ignore
+    if int(ev.get("kind", 1)) == 5:
+        # Only mark it handled if every delete actually succeeded — otherwise a transient failure would burn
+        # the retry and the status would stay up on the fediverse forever.
+        if await _delete_federated(db, user, ev):
+            _seen_events.add(eid)
+        return
     row = _target_row(db, ev)
     if not row:
         # No bridged parent to thread under. Cross-post ONLY a genuine TOP-LEVEL note — never a NIP-10
@@ -468,8 +542,10 @@ async def _handle(db, ev: dict) -> None:
         elif kind == 6:
             await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
         elif kind == 1:
-            # Durable idempotency across restart/replay: skip if this reply already federated.
-            if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid).first():
+            # Durable idempotency across restart/replay: skip if this reply already federated. Scoped by
+            # author so a foreign tombstone can't suppress it.
+            if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid,
+                                                    FediBridgeDelivered.nostr_pubkey == pk).first():
                 return
             text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
             q = await _quote_link(db, ev)
@@ -522,7 +598,12 @@ async def _listen_once() -> None:
         if not authors:
             return 0
         since = int(time.time()) - (_LOOKBACK_SEC if first else (_RESUBSCRIBE_SEC + 60))
-        await ws.send(json.dumps(["REQ", sub_pub, {"kinds": [1, 6, 7], "authors": authors, "since": since}]))
+        # Drive the filter from _WRITEBACK_KINDS (minus the gift-wrap kind, which has its own subscription
+        # below with a much longer window). This literal used to be hardcoded [1, 6, 7], so adding kind 5 to
+        # the constant did NOTHING — deletes were never even subscribed to, and the delete-propagation code
+        # below could never run.
+        kinds = [k for k in _WRITEBACK_KINDS if k != 1059]
+        await ws.send(json.dumps(["REQ", sub_pub, {"kinds": kinds, "authors": authors, "since": since}]))
         return len(authors)
 
     async with websockets.connect(uri, open_timeout=10, close_timeout=2, ping_interval=30) as ws:
