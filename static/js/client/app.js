@@ -265,7 +265,9 @@
     // worker decrypts instantly.
     //
     // So the transport is a QUEUE: a few in flight at a time, each retried once. Slower, but it finishes.
-    _cap: 3, _inflight: 0, _queue: [],
+    // 6 in flight: enough to actually chew through a DM history (each message = 2 decryptions), while still
+    // far short of the hundreds-at-once that made Amber drop requests.
+    _cap: 6, _inflight: 0, _queue: [],
     _pump(){
       while(this._inflight < this._cap && this._queue.length){
         const job=this._queue.shift();
@@ -6927,6 +6929,17 @@
   const _DM_INIT = 25, _DM_STEP = 30;   // show the last 25 on open (bubbles paint instantly w/ placeholders, then decrypt); "load older" reveals 30 more
   let _dmScrollTop = false;    // next thread render keeps the top (after "load older") instead of bottom
   let _dmLoaded=false, _dmUnread=0;
+  // A remote signer (Amber) decrypts each message on the PHONE, so restoring a big history genuinely takes a
+  // while. Say so, with a count — otherwise a half-filled DM list just looks broken.
+  let _dmProg='';
+  function _dmProgress(done, total){
+    if(arguments.length) _dmProg = (done < total) ? `🔓 decrypting your messages… ${done}/${total}` : '';
+    const wrap=document.querySelector('#dm-list'); if(!wrap) return;
+    let el=document.getElementById('dm-progress');
+    if(!_dmProg){ if(el) el.remove(); return; }
+    if(!el){ el=document.createElement('div'); el.id='dm-progress'; el.className='muted small'; el.style.padding='8px 10px'; wrap.prepend(el); }
+    el.textContent=_dmProg;
+  }
   async function ensureDMs(){
     if(_dmLoaded) return; _dmLoaded=true;
     const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
@@ -6936,7 +6949,20 @@
     const filt=[{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }];
     if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
     const evs=await Relay.query(filt);
-    for(const e of evs){ Store.saveEvent(e); if(e.kind===1059) await ingestWrap(e, false); else ingestDM(e); }
+    evs.forEach(e=>Store.saveEvent(e));
+    evs.filter(e=>e.kind!==1059).forEach(ingestDM);
+    // Unwrap the gift wraps NEWEST-FIRST and CONCURRENTLY. This loop used to `await` one wrap at a time,
+    // which is invisible with a local key (the worker decrypts instantly) but brutal with a remote signer:
+    // each wrap costs TWO round-trips to a phone, so a 500-message history was ~1000 serial round-trips —
+    // tens of minutes, during which you see only the handful it has got through ("still only the same 6 DMs").
+    // Fire them all and let the signer transport cap real concurrency; newest-first so the DMs you actually
+    // want appear first, and _scheduleDmRefresh paints them as they land.
+    const wraps=evs.filter(e=>e.kind===1059).sort((a,b)=>b.created_at-a.created_at);
+    if(wraps.length) _dmProgress(0, wraps.length);
+    let _done=0;
+    await Promise.all(wraps.map(w=>ingestWrap(w, false).finally(()=>{
+      if(++_done % 10 === 0 || _done === wraps.length) _dmProgress(_done, wraps.length);
+    })));
     // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
     // Messages view was opened, so DMs received while away still alert — not just live ones.
     recountDmUnread();
@@ -7140,6 +7166,7 @@
       return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b><div class="muted small">${prev}</div></div></div>`;
     }).join('');
     $('#dm-new').onclick=newDmModal;
+    _dmProgress();   // re-attach the "decrypting…" line — the innerHTML above just wiped it
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
     // Tapping the AVATAR opens the sender's profile instead of the conversation.
