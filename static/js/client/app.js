@@ -2782,7 +2782,7 @@
         if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
           pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
     }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
-    _phoneStream={ pc, local, token:info.token, facing };
+    _phoneStream={ pc, local, token:info.token, facing, source:'camera' };
     // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
@@ -2794,48 +2794,102 @@
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
     el=document.createElement('div'); el.id='phone-live'; el.className='phone-live';
+    // Screen share needs getDisplayMedia — absent on iOS Safari and some in-app WebViews, so only offer it
+    // where it exists rather than show a button that always fails.
+    const canScreen=!!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     el.innerHTML=`<div class="pl-badge">● LIVE</div><video id="pl-vid" autoplay playsinline muted></video>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button>${canScreen?`<button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button>`:''}<button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
-    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.classList.toggle('rear', _phoneStream.facing==='environment'); v.play&&v.play().catch(()=>{}); }
+    const v=$('#pl-vid',el); if(v && _phoneStream){ v.srcObject=_phoneStream.local; v.play&&v.play().catch(()=>{}); }
     $('#pl-stop',el).onclick=()=>_endLive();
     $('#pl-flip',el).onclick=()=>_flipCamera();
+    { const sb=$('#pl-screen',el); if(sb) sb.onclick=()=>_toggleScreen(); }
+    _syncOverlayButtons();
   }
-  let _flipping=false;
-  // Switch between the front ('user') and rear ('environment') camera WITHOUT renegotiating: grab a new
-  // video track from the other camera and replaceTrack() it onto the existing WHIP sender, so viewers see
-  // the cut seamlessly. Audio and the peer connection are untouched.
-  async function _flipCamera(){
-    if(!_phoneStream || _flipping) return;
-    _flipping=true;
-    const ps=_phoneStream; const want = ps.facing==='environment' ? 'user' : 'environment';
-    const bail=(t)=>{ if(t) toast(t); _flipping=false; };
+  // Reflect the current source in the overlay: flip only makes sense for the camera, and the screen button
+  // is a toggle back to camera while sharing.
+  function _syncOverlayButtons(){
+    const ps=_phoneStream; if(!ps) return;
+    const screen=ps.source==='screen';
+    const fb=$('#pl-flip'); if(fb) fb.style.display=screen?'none':'';   // flip is camera-only
+    const sb=$('#pl-screen'); if(sb) sb.textContent=screen?'📷 Camera':'🖥 Share screen';
+    // Mirror ONLY the front (selfie) camera — a screen share (or the rear cam) must never be flipped.
+    const v=$('#pl-vid'); if(v) v.classList.toggle('rear', screen || ps.facing==='environment');
+  }
+  let _swapping=false;
+  // Swap the OUTGOING video track without renegotiating: acquire a new source, replaceTrack() it onto the
+  // existing WHIP sender (viewers see a seamless cut), then swap the preview + stop the old track. Audio and
+  // the peer connection are untouched — so a screen share keeps your mic. `apply(nt)` records source-specific
+  // state once the swap commits. Returns 'busy' if another swap is in flight, false on failure/cancel, true on
+  // success — callers (the screen-end fallback) rely on this to recover instead of freezing on a dead track.
+  // Hardened against a concurrent _endLive: every await is followed by a `_phoneStream===ps` re-check, and
+  // once replaceTrack commits, nt (now live) is never stopped.
+  async function _swapPhoneVideo(acquire, apply){
+    if(!_phoneStream || _swapping) return 'busy';
+    _swapping=true;
+    const ps=_phoneStream;
+    const done=(v,t)=>{ if(t) toast(t); _swapping=false; return v; };
     let ns=null;
-    try{ ns=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:want}},audio:false}); }
-    catch(_){ return bail('couldn’t switch camera'); }
-    const nt=ns.getVideoTracks()[0];
-    // The stream may have ended (Stop tapped, or the pc dropped → _endLive) while we were acquiring the
-    // camera. If so _phoneStream is no longer ps and _endLive never saw this new track — stop it, or its
-    // LED/camera stays on with no UI to kill it (a privacy leak until reload).
-    if(_phoneStream!==ps || !nt){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail(); }
+    try{ ns=await acquire(); }
+    catch(e){ const cancelled=e&&(e.name==='NotAllowedError'||e.name==='AbortError'); return done(false, cancelled?'':'couldn’t switch video'); }
+    const nt=ns && ns.getVideoTracks()[0];
+    // The stream may have ended while we were acquiring (Stop tapped / pc dropped → _endLive). If so the new
+    // track has no owner and _endLive never saw it — stop it, or its camera/screen-capture stays live with no
+    // UI to end it (a privacy leak until reload).
+    if(_phoneStream!==ps || !nt){ try{ ns&&ns.getTracks().forEach(t=>t.stop()); }catch(_){} return done(false); }
+    // getDisplayMedia can return a system/tab AUDIO track even with audio:false (some Chromium builds). We
+    // only use the video track, so stop every other track now — else that capture leaks for the page's life.
+    try{ ns.getTracks().forEach(t=>{ if(t!==nt){ try{ t.stop(); }catch(_){} } }); }catch(_){}
     const sender=ps.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
-    if(!sender){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail('couldn’t switch camera'); }
+    if(!sender){ try{ nt.stop(); }catch(_){} return done(false, 'couldn’t switch video'); }
     try{ await sender.replaceTrack(nt); }
-    catch(_){ try{ ns.getTracks().forEach(t=>t.stop()); }catch(_){} return bail('couldn’t switch camera'); }
-    // replaceTrack succeeded — nt is now the OUTGOING track, so from here nothing may stop it. If the stream
-    // ended mid-swap, _endLive closed the pc already; just drop this now-orphan track.
-    if(_phoneStream!==ps){ try{ nt.stop(); }catch(_){} return bail(); }
-    // Swap the preview track + stop the OLD camera. Guarded so a preview hiccup can never stop the live nt.
+    catch(_){ try{ nt.stop(); }catch(_){} return done(false, 'couldn’t switch video'); }
+    // Committed — nt is the outgoing track now, so nothing below may stop it. If the stream ended mid-swap,
+    // _endLive already closed the pc; just drop this orphan.
+    if(_phoneStream!==ps){ try{ nt.stop(); }catch(_){} return done(false); }
     try{ const old=ps.local.getVideoTracks()[0];
-      if(old){ ps.local.removeTrack(old); try{ old.stop(); }catch(_){} }
+      if(old){ try{ old.onended=null; }catch(_){}   // clear any source's end-handler before WE stop it, so an intentional swap doesn't trigger a fallback
+        ps.local.removeTrack(old); try{ old.stop(); }catch(_){} }
       ps.local.addTrack(nt); }catch(_){}
-    // Trust the camera we ACTUALLY got, not what we asked for: a single-camera device returns the same
-    // front cam, so keying the mirror off `want` would un-mirror a still-selfie preview. Fall back to `want`
-    // only when the browser doesn't report facingMode.
-    let got=want; try{ const fm=nt.getSettings&&nt.getSettings().facingMode; if(fm) got=fm; }catch(_){}
-    ps.facing=got;
-    const v=$('#pl-vid'); if(v){ v.srcObject=ps.local; v.classList.toggle('rear', got==='environment'); v.play&&v.play().catch(()=>{}); }
-    _flipping=false;
+    try{ apply && apply(nt); }catch(_){}
+    const v=$('#pl-vid'); if(v){ v.srcObject=ps.local; v.play&&v.play().catch(()=>{}); }
+    _syncOverlayButtons();
+    return done(true);
+  }
+  const _camConstraints=(facing)=>({video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:facing}},audio:false});
+  // Switch the source to a camera (front/rear). Shared by the flip button and the screen→camera fallback.
+  function _toCamera(want){
+    return _swapPhoneVideo(()=>navigator.mediaDevices.getUserMedia(_camConstraints(want)), nt=>{
+      const ps=_phoneStream; if(!ps) return;
+      // Trust the camera we ACTUALLY got (a single-camera device returns the same front cam), so we don't
+      // un-mirror a still-selfie preview by keying the mirror off what we merely requested.
+      let got=want; try{ const fm=nt.getSettings&&nt.getSettings().facingMode; if(fm) got=fm; }catch(_){}
+      ps.source='camera'; ps.facing=got;
+    });
+  }
+  // Flip front ('user') ↔ rear ('environment') camera.
+  function _flipCamera(){
+    const ps=_phoneStream; if(!ps) return;
+    return _toCamera(ps.facing==='environment' ? 'user' : 'environment');
+  }
+  // Toggle screen share ↔ camera. During screen share the mic (a separate audio track) keeps streaming, so
+  // it's screen + voiceover.
+  function _toggleScreen(){
+    const ps=_phoneStream; if(!ps) return;
+    if(ps.source==='screen') return _toCamera(ps.facing||'user');
+    return _swapPhoneVideo(()=>navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false}), nt=>{
+      ps.source='screen';
+      // The browser's OWN "Stop sharing" control ends this track directly. When it does, fall back to the
+      // camera so the broadcast survives — and if that fallback can't run (no camera, or another swap was
+      // mid-flight), end the stream rather than leave viewers frozen on a dead track.
+      try{ nt.onended=()=>_onScreenShareEnded(ps); }catch(_){}
+    });
+  }
+  async function _onScreenShareEnded(ps){
+    if(_phoneStream!==ps || ps.source!=='screen') return;   // WE replaced it (onended was cleared) — nothing to do
+    const r=await _toCamera(ps.facing||'user');
+    if(r==='busy'){ setTimeout(()=>_onScreenShareEnded(ps), 400); return; }   // a swap was in flight — retry shortly
+    if(!r && _phoneStream===ps && ps.source==='screen'){ toast('screen share ended'); _endLive(); }
   }
   async function _endLive(){
     if(!_liveStream && !_phoneStream) return;
