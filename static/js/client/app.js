@@ -1776,6 +1776,24 @@
     try{ const bytes = Math.round((+gb || 4) * 1024 * 1024 * 1024);
       caches.open('pc-config-v1').then(c => c.put('/media-budget', new Response(String(bytes)))).catch(()=>{}); }catch(_){}
   }
+  // Show the device's ACTUAL storage ceiling (Settings → Media). The media cache can never exceed what
+  // the OS/WebView grants for this origin — on a bundled Android app that's a fraction of FREE disk and
+  // persist() isn't reliably granted, so a near-full tablet caps far below the chosen budget. Surfacing
+  // usage/quota lets the user see the real limit instead of guessing why caching "stops early".
+  async function _fillMediaCacheStat(){
+    const el=$('#media-cache-stat'); if(!el) return;
+    try{
+      if(!(navigator.storage && navigator.storage.estimate)){ el.textContent='This device doesn’t report storage stats.'; return; }
+      const est=await navigator.storage.estimate();
+      const persisted=(navigator.storage.persisted)?await navigator.storage.persisted().catch(()=>null):null;
+      const g=n=>(n||0)/1073741824, f=n=>n<1?n.toFixed(2):n.toFixed(1);
+      const used=g(est.usage), quota=g(est.quota), budget=+ClientSettings.get('mediaCacheGB',4);
+      let msg=`This device: ~${f(used)} GB used of ~${f(quota)} GB the OS allows for the app.`;
+      if(persisted===false) msg+=' Storage isn’t marked persistent (common in the Android app), so the OS caps it by free disk — freeing space on the device raises the ceiling.';
+      if(quota>0 && quota < budget*0.6) msg+=` Your ${budget} GB setting is above this device’s limit, so caching stops at the device ceiling, not your setting.`;
+      el.textContent=msg;
+    }catch(_){ el.textContent=''; }
+  }
   let _pleromaLinked = null;   // follow-bridge gate, learned lazily per session: null=unknown, false=no Pleroma (skip), true=linked
   // Data saver = ONE manual toggle (NO_IMAGES): it holds content images/videos as tap-to-load
   // placeholders — that (not fewer posts) is where the bandwidth actually goes. No connection sniffing:
@@ -9128,6 +9146,7 @@
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
           <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. Per-device.</div>
+          <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
           ${(window.Capacitor && window.__PC_API_BASE__) ? `<label class="fld">🌐 Instance
             <div class="instance-pick" id="us-instance-pick"></div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(window.__PC_API_BASE__)}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
@@ -9324,7 +9343,8 @@
     // Media cache size (per-device): persist + push the new byte budget to the service worker.
     { const mc=$('#set-media-cache'); if(mc) mc.onchange=()=>{
         const gb=+mc.value||4; ClientSettings.set('mediaCacheGB', gb); _applyMediaCacheBudget(gb);
-        toast('media cache set to '+gb+' GB'); }; }
+        toast('media cache set to '+gb+' GB'); _fillMediaCacheStat(); }; }
+    _fillMediaCacheStat();
     // Instance quick-pick (native app only). Chips for the default + recently-used instances; tapping one (or
     // Connect) switches the server the app talks to. The Nostr key is portable, so only the session re-establishes.
     { const pick=$('#us-instance-pick'), inp=$('#us-instance-inp'), go=$('#us-instance-go');
