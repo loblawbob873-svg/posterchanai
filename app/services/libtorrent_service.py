@@ -256,6 +256,25 @@ class LibtorrentService:
 
         logger.info("[BT] LibtorrentService stopped")
 
+    def _stable_ih(self, handle) -> str:
+        """A STABLE info-hash string used as the dict key AND the resume filename. The deprecated
+        `handle.info_hash()` (v1 accessor) returns ALL-ZEROS for a v2/hybrid torrent whose metadata
+        resolved v2-first — so its resume file gets saved as 0000…0000.resume but later reloads under
+        the REAL hash, and remove() (keyed by the real hash) can never delete it, so the torrent comes
+        back every restart ('Orange Is the New Black' bug). Prefer a non-zero v1, then v2, so the hash
+        used everywhere is consistent and never all-zeros for a real torrent."""
+        try:
+            ihs = handle.info_hashes()
+            v1 = getattr(ihs, "v1", None)
+            if v1 is not None and not v1.is_all_zeros():
+                return str(v1)
+            v2 = getattr(ihs, "v2", None)
+            if v2 is not None and not v2.is_all_zeros():
+                return str(v2)
+        except Exception:
+            pass
+        return str(handle.info_hash())
+
     def _save_resume_data(self):
         """Save resume data for all torrents."""
         logger.info("[BT] Saving resume data for all torrents...")
@@ -276,7 +295,7 @@ class LibtorrentService:
             alerts = self.session.pop_alerts()
             for alert in alerts:
                 if isinstance(alert, lt.save_resume_data_alert):
-                    info_hash = str(alert.handle.info_hash())
+                    info_hash = self._stable_ih(alert.handle)
                     try:
                         resume_file = self.resume_dir / f"{info_hash}.resume"
                         resume_data = lt.write_resume_data_buf(alert.params)
@@ -287,7 +306,7 @@ class LibtorrentService:
                     except Exception as e:
                         logger.error(f"[BT] Failed to write resume data for {info_hash}: {e}")
                 elif isinstance(alert, lt.save_resume_data_failed_alert):
-                    info_hash = str(alert.handle.info_hash())
+                    info_hash = self._stable_ih(alert.handle)
                     pending.discard(info_hash)
                     logger.warning(f"[BT] Resume data failed for {info_hash}: {alert.error}")
             time.sleep(0.1)
@@ -316,9 +335,19 @@ class LibtorrentService:
                 was_paused = bool(params.flags & lt.torrent_flags.paused)
 
                 handle = self.session.add_torrent(params)
-                info_hash = str(handle.info_hash())
+                info_hash = self._stable_ih(handle)
                 self.torrents[info_hash] = handle
                 count += 1
+
+                # SELF-HEAL: an older resume file may be named by a hash that no longer matches this
+                # torrent's stable hash (the all-zeros / v1-vs-v2 drift that let a removed torrent come
+                # back). Rename it to the stable hash so a future remove() finds and deletes it.
+                if resume_file.name != f"{info_hash}.resume":
+                    try:
+                        resume_file.replace(self.resume_dir / f"{info_hash}.resume")
+                        logger.info(f"[BT] Renamed stale resume {resume_file.name} -> {info_hash}.resume")
+                    except Exception as e:
+                        logger.warning(f"[BT] Could not rename resume {resume_file.name}: {e}")
 
                 if handle.is_valid():
                     if was_paused:
@@ -466,7 +495,7 @@ class LibtorrentService:
                 # shutdown-only _save_resume_data (which raced the loop and saved partial state).
                 if isinstance(alert, lt.save_resume_data_alert):
                     try:
-                        info_hash = str(alert.handle.info_hash())
+                        info_hash = self._stable_ih(alert.handle)
                         # Ignore late resume-save alerts for torrents removed between the
                         # periodic save request and this alert — otherwise the .resume file
                         # is resurrected and the torrent comes back on the next restart.
@@ -487,7 +516,7 @@ class LibtorrentService:
                     # Notify once per torrent that the download is done. Dedup against the
                     # persisted set so restarts/rechecks (which re-emit this alert) don't re-spam.
                     try:
-                        ih = str(alert.handle.info_hash())
+                        ih = self._stable_ih(alert.handle)
                         if ih in self.torrents and ih not in self._notified:
                             self._notified.add(ih)
                             self._save_notified()
@@ -570,7 +599,7 @@ class LibtorrentService:
         params.save_path = str(self.download_dir)
 
         handle = self.session.add_torrent(params)
-        info_hash = str(handle.info_hash())
+        info_hash = self._stable_ih(handle)
 
         self.torrents[info_hash] = handle
         self._update_numbering()
@@ -591,7 +620,7 @@ class LibtorrentService:
         params.save_path = str(self.download_dir)
 
         handle = self.session.add_torrent(params)
-        info_hash = str(handle.info_hash())
+        info_hash = self._stable_ih(handle)
 
         self.torrents[info_hash] = handle
         self._update_numbering()
