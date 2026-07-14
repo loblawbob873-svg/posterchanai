@@ -1869,13 +1869,12 @@ async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_d
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
-    if not user:
-        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
+    # Validate the payload BEFORE the account lookup (fail fast on a bad event).
     ev = data.event or {}
-    # The note must be a real, signed kind-1 authored by THIS user (we broadcast it verbatim later).
-    if ev.get("kind") != 1:
-        return JSONResponse({"ok": False, "error": "only text notes (kind 1) can be scheduled"}, status_code=400)
+    # Must be a real, signed post authored by THIS user (we broadcast it verbatim later). Allow the
+    # top-level post kinds the composer can schedule: kind 1 (text/image notes) and kind 1068 (polls).
+    if ev.get("kind") not in (1, 1068):
+        return JSONResponse({"ok": False, "error": "only text/image notes and polls can be scheduled"}, status_code=400)
     if ev.get("pubkey") != pk or not nostr_event.verify_event(ev):
         return JSONResponse({"ok": False, "error": "event must be validly signed by you"}, status_code=400)
     now = int(time.time())
@@ -1889,6 +1888,9 @@ async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_d
     # from being future-dated (which strict upstream relays reject) once it's published at its due time.
     if abs(int(ev.get("created_at", 0)) - when) > 120:
         return JSONResponse({"ok": False, "error": "event time must match the scheduled time"}, status_code=400)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
     pending = (db.query(ScheduledPost)
                .filter(ScheduledPost.user_id == user.id,
                        ScheduledPost.status.in_(("pending", "sending"))).count())

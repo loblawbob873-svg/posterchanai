@@ -904,6 +904,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-sched-row.hidden{display:none}
 .cmp-sched-row .input{margin:0;max-width:230px;flex:0 1 auto}
 .cmp-sched-row .btn{margin:0}
+.sched-chips{display:flex;gap:6px;flex-wrap:wrap}
+.sched-chip{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--neon);border-radius:999px;padding:4px 11px;font-size:13px;line-height:1}
+.sched-chip:hover{background:color-mix(in srgb, var(--neon) 20%, var(--panel2))}
+.sched-when{width:100%;text-align:center;margin-top:4px}
 #cmp-sched-btn.on{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon)}
 /* Scheduled-posts section in the Drafts view */
 .sched-head{font-weight:700;color:var(--neon);margin:2px 4px 8px;font-size:15px}

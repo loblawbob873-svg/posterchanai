@@ -5172,9 +5172,9 @@
   const Scheduled = {
     _cache:null, _cacheAt:0,
     _proof(){ return selfProof(); },   // shared with Drafts → opening Drafts never triggers a 2nd signer prompt
-    async create(content, tags, whenTs){
-      const t=_enrichTags(1, tags);   // same enrichment as publish() → a scheduled note is identical
-      const ev=await sign(1, content, t, whenTs);   // signed with the FUTURE created_at = the scheduled time
+    async create(kind, content, tags, whenTs){
+      const t=_enrichTags(kind, tags);   // same enrichment as publish() → a scheduled post is identical
+      const ev=await sign(kind, content, t, whenTs);   // signed with the FUTURE created_at = the scheduled time
       try{
         const r=await fetch('/client/scheduled',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:await this._proof(),event:ev,scheduled_at:whenTs})}).then(r=>r.json());
@@ -5382,7 +5382,7 @@
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px">💾 Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
-      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button></div>`}
+      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -5619,24 +5619,55 @@
       // ⏰ Schedule (plain top-level posts): sign the note with a future created_at; the backend publishes it.
       { const sbtn=$('#cmp-sched-btn',root), srow=$('#cmp-sched-row',root), sat=$('#cmp-sched-at',root);
         if(sbtn && srow && sat){
+          // Live "→ fires <local time> (in N min)" readout so what you're scheduling is unambiguous — the
+          // silent 1-hour default used to surprise people who thought they'd picked a nearer time.
+          const _when=$('#cmp-sched-when',root);
+          const _updWhen=()=>{ if(!_when) return; const ts=Math.floor(new Date(sat.value).getTime()/1000);
+            if(!sat.value || isNaN(ts)){ _when.textContent=''; return; }
+            const mins=Math.round((ts-Date.now()/1000)/60);
+            const rel = mins<1?'now' : mins<60?`in ${mins} min` : mins<1440?`in ${(mins/60).toFixed(mins%60?1:0)} h` : `in ${Math.round(mins/1440)} d`;
+            _when.textContent=`→ publishes ${new Date(ts*1000).toLocaleString()} (${rel})`; };
+          sat.addEventListener('input', _updWhen);
+          $$('.sched-chip',srow).forEach(c=> c.onclick=()=>{ sat.value=_dtLocal(new Date(Date.now()+(+c.dataset.min)*60000)); _updWhen(); });
           sbtn.onclick=()=>{ const show=srow.classList.toggle('hidden')===false; sbtn.classList.toggle('on', show);
-            if(show){ sat.min=_dtLocal(new Date(Date.now()+60*1000)); if(!sat.value) sat.value=_dtLocal(new Date(Date.now()+3600*1000)); sat.focus(); } };
+            if(show){ sat.min=_dtLocal(new Date(Date.now()+60*1000)); if(!sat.value) sat.value=_dtLocal(new Date(Date.now()+10*60*1000)); _updWhen(); sat.focus(); } };   // default: +10 min (short, and the readout shows it)
           $('#cmp-sched-go',root).onclick=async()=>{
-            const text=ta.value.trim(); if(!text){ $('#cmp-status',root).textContent='write something to schedule'; return; }
-            // Scheduling handles plain text notes only — a poll (kind 1068) or a rendered-background image
-            // post can't go through this path, so refuse rather than silently dropping them.
-            const _pb=$('#cmp-pollbox',root);
-            if((_pb && !_pb.classList.contains('hidden')) || (typeof _bgChoice!=='undefined' && _bgChoice)){
-              $('#cmp-status',root).textContent='scheduling supports plain text posts only (not polls or backgrounds yet)'; return; }
+            const st=$('#cmp-status',root), go=$('#cmp-sched-go',root);
+            const text=ta.value.trim();
             const whenTs=Math.floor(new Date(sat.value).getTime()/1000);
-            if(!sat.value || isNaN(whenTs)){ $('#cmp-status',root).textContent='pick a date & time'; return; }
-            if(whenTs < Math.floor(Date.now()/1000)+30){ $('#cmp-status',root).textContent='pick a time at least a minute from now'; return; }
-            const go=$('#cmp-sched-go',root); go.disabled=true; $('#cmp-status',root).textContent='scheduling…';
-            const tags=[]; mentionTags(text).forEach(t=>tags.push(t)); imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
-            const r=await Scheduled.create(text, tags, whenTs);
-            if(r && r.ok){ committed=true; document.removeEventListener('keydown',_escSave); _dropDraft(); closeModal();
-              toast('scheduled for '+new Date(whenTs*1000).toLocaleString()); if(VIEW==='drafts') renderView(true); }
-            else { go.disabled=false; $('#cmp-status',root).textContent='schedule failed: '+((r&&r.error)||'try again'); }
+            if(!sat.value || isNaN(whenTs)){ st.textContent='pick a date & time'; return; }
+            if(whenTs < Math.floor(Date.now()/1000)+30){ st.textContent='pick a time at least a minute from now'; return; }
+            go.disabled=true; st.textContent='scheduling…';
+            try{
+              // Build the SAME event the immediate Post ▶ would — text/image note, poll, or background —
+              // just signed with the future time and queued instead of published.
+              let kind=1, content=text, tags=[];
+              const _pb=$('#cmp-pollbox',root);
+              if(_pb && !_pb.classList.contains('hidden')){                 // 📊 poll (kind 1068)
+                if(!text){ st.textContent='write a poll question'; go.disabled=false; return; }
+                const labels=[...$$('.poll-opt-in',root)].map(i=>i.value.trim()).filter(Boolean);
+                if(labels.length<2){ st.textContent='add at least 2 poll options'; go.disabled=false; return; }
+                kind=1068; tags=[['polltype', $('#cmp-poll-multi',root).checked?'multiplechoice':'singlechoice']];
+                labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l]));
+                mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+                imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
+              } else if(typeof _bgChoice!=='undefined' && _bgChoice){        // 🎨 background → render+upload now, post the image
+                if(!text){ st.textContent='write something first'; go.disabled=false; return; }
+                st.textContent='rendering…'; const blob=await renderBgPost(text, _bgChoice);
+                st.textContent='uploading…'; content=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
+                imetaTagsFor(content).forEach(t=>tags.push(t)); _applyCw(tags);
+              } else {                                                       // plain text (incl. attached media URLs in the text)
+                if(!text){ st.textContent='write something to schedule'; go.disabled=false; return; }
+                mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+                imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
+              }
+              const r=await Scheduled.create(kind, content, tags, whenTs);
+              if(r && r.ok){ committed=true; document.removeEventListener('keydown',_escSave); _dropDraft(); closeModal();
+                toast('scheduled for '+new Date(whenTs*1000).toLocaleString()); if(VIEW==='drafts') renderView(true); }
+              else { go.disabled=false; st.textContent='schedule failed: '+((r&&r.error)||'try again'); }
+            }catch(err){ go.disabled=false;
+              if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
+              else st.textContent='schedule failed: '+((err&&err.message)||err); }
           };
         } }
       ta.focus();

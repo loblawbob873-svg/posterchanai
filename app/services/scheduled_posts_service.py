@@ -28,7 +28,9 @@ from app.services import settings_store as _ss
 
 logger = logging.getLogger("scheduled_posts")
 
-_MAX_FUTURE_DAYS = 400              # reject schedules further out than this (sanity bound)
+_MAX_FUTURE_DAYS = 300              # cap how far out a schedule can be. Kept BELOW Blossom's 365-day
+                                   # age-TTL so an image/background post (whose blob is uploaded at
+                                   # schedule time) can't have its media pruned before the note publishes.
 # Give up after this many ACTUAL publish attempts (~2h at the 30s poll). Counting attempts — not wall time
 # since the due date — means a post whose due time fell during a long outage/deploy still gets its full
 # retry budget once the node is back (attempts only accrue when we actually try), which is exactly when
