@@ -108,6 +108,12 @@ async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[boo
         return False, str(e)
 
 
+async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
+    """Broadcast an already-signed event to the local relay. Returns (accepted, message). Public
+    entry point for callers that hold a fully-formed signed event (e.g. scheduled posts)."""
+    return await _ws_publish(port, event, timeout=timeout)
+
+
 async def _ws_query(port: int, filters: list, timeout: float = 6.0) -> list:
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"

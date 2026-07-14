@@ -899,6 +899,16 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:16.5px;line-height:1.5;max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 74%,transparent);mask-image:linear-gradient(180deg,#000 74%,transparent)}
 .draft-body img,.draft-body video{max-height:130px;max-width:100%;width:auto;border-radius:8px;object-fit:cover}
 .draft-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap}
+/* ⏰ Schedule composer row — wraps cleanly on narrow/mobile/app widths */
+.cmp-sched-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin:8px 0 2px}
+.cmp-sched-row.hidden{display:none}
+.cmp-sched-row .input{margin:0;max-width:230px;flex:0 1 auto}
+.cmp-sched-row .btn{margin:0}
+#cmp-sched-btn.on{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon)}
+/* Scheduled-posts section in the Drafts view */
+.sched-head{font-weight:700;color:var(--neon);margin:2px 4px 8px;font-size:15px}
+.sched-card{border-left:3px solid var(--neon)}
+.sched-card.sched-failed{border-left-color:var(--danger,#ff5a7d)}
 .gif-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-height:55vh;overflow:auto;margin-top:10px}
 .gif-item{width:100%;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--line);background:#120c24}
 .gif-item:hover{border-color:var(--neon)}

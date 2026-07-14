@@ -392,6 +392,12 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting reminder scheduler: {e}", exc_info=True)
             try:
+                # Start the scheduled-posts poller (publishes pre-signed notes at their scheduled time)
+                from app.services.scheduled_posts_service import start_scheduled_posts_scheduler
+                start_scheduled_posts_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting scheduled-posts scheduler: {e}", exc_info=True)
+            try:
                 # Distributed-LB (DVM): listen for GPU jobs addressed to this node over Nostr
                 # (no-op unless nostr_dvm_enabled). Runs in this loop; jobs hop to the GPU lock.
                 from app.services import nostr_dvm
@@ -690,6 +696,12 @@ async def shutdown():
         try:
             from app.services.reminder_service import stop_reminder_scheduler
             stop_reminder_scheduler()
+        except Exception:
+            pass
+        # Stop the scheduled-posts poller
+        try:
+            from app.services.scheduled_posts_service import stop_scheduled_posts_scheduler
+            stop_scheduled_posts_scheduler()
         except Exception:
             pass
         try:

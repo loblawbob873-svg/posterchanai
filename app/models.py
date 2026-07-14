@@ -468,6 +468,30 @@ class SavedSearch(Base):
 
 
 
+class ScheduledPost(Base):
+    """A Nostr note the user scheduled to publish later. The note is PRE-SIGNED client-side (the server
+    never holds the user's key) with its intended future `created_at`; a background scheduler
+    (`scheduled_posts_service`) polls for due rows and broadcasts the already-signed event to the relay,
+    so it works for every login type (nip07 / Amber / local nsec). This row (in the app's Postgres) is
+    the store of record — it persists across restarts; a row left 'sending' by a crash is recovered to
+    'pending' on startup. `content_preview` lets the Drafts UI list schedules without the key."""
+    __tablename__ = "scheduled_posts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id = Column(String(64), nullable=False, index=True)   # the pre-signed event's id (dedup/reference)
+    event_json = Column(Text, nullable=False)                   # the full pre-signed Nostr event
+    scheduled_at = Column(DateTime, nullable=False, index=True)  # UTC; when to publish
+    # pending → sending (claimed by a scheduler tick) → sent | failed; or cancelled by the user.
+    status = Column(String(20), default="pending", index=True)
+    content_preview = Column(String(280), default="")          # first line of the note, for the list UI
+    attempts = Column(Integer, default=0)                      # publish attempts so far (give up after _MAX_ATTEMPTS)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)                  # when it reached a terminal state (sent/failed/cancelled) — the prune clock
+
+    user = relationship("User", backref="scheduled_posts")
+
+
 class PushSubscription(Base):
     """A browser Web Push subscription (PWA) tied to a Nostr pubkey. The push watcher sends OS
     notifications here when the app is closed. Server-owned infra (endpoint + keys the SERVER must read

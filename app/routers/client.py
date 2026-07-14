@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request, Response, Query, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
@@ -1833,6 +1834,97 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     doc = await store.get_doc(port, "pcai:drafts", seckey=sk)
     drafts = doc.get("drafts", []) if isinstance(doc, dict) else []
     return JSONResponse({"ok": True, "drafts": drafts if isinstance(drafts, list) else []})
+
+
+# ----- Scheduled posts: publish a pre-signed note at a future time -----
+class ScheduledCreateReq(BaseModel):
+    pubkey: str
+    auth: str
+    event: dict          # a full, client-SIGNED Nostr event (created_at = the scheduled time)
+    scheduled_at: int    # unix seconds; when to publish (must match the event's created_at)
+
+
+class ScheduledAuthReq(BaseModel):
+    pubkey: str
+    auth: str
+
+
+class ScheduledCancelReq(BaseModel):
+    pubkey: str
+    auth: str
+    id: int
+
+
+_MAX_PENDING_SCHEDULES = 100   # per-user cap (abuse guard)
+
+
+@router.post("/scheduled")
+async def scheduled_create(data: ScheduledCreateReq, db: Session = Depends(get_db)):
+    """Store a pre-signed note to publish later. The server never signs it — the client already did,
+    with created_at = the scheduled time — so this only validates ownership + the event, then queues it."""
+    from app.services import scheduled_posts_service as sched
+    from app.models import ScheduledPost
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
+    ev = data.event or {}
+    # The note must be a real, signed kind-1 authored by THIS user (we broadcast it verbatim later).
+    if ev.get("kind") != 1:
+        return JSONResponse({"ok": False, "error": "only text notes (kind 1) can be scheduled"}, status_code=400)
+    if ev.get("pubkey") != pk or not nostr_event.verify_event(ev):
+        return JSONResponse({"ok": False, "error": "event must be validly signed by you"}, status_code=400)
+    now = int(time.time())
+    when = int(data.scheduled_at)
+    if when < now - 60:
+        return JSONResponse({"ok": False, "error": "scheduled time is in the past"}, status_code=400)
+    if when > now + sched._MAX_FUTURE_DAYS * 86400:
+        return JSONResponse({"ok": False, "error": "scheduled time is too far in the future"}, status_code=400)
+    # created_at IS what the published note will show as its time — require it to MATCH the schedule
+    # (the client signs with created_at = scheduled time). A tight bound also keeps the broadcast event
+    # from being future-dated (which strict upstream relays reject) once it's published at its due time.
+    if abs(int(ev.get("created_at", 0)) - when) > 120:
+        return JSONResponse({"ok": False, "error": "event time must match the scheduled time"}, status_code=400)
+    pending = (db.query(ScheduledPost)
+               .filter(ScheduledPost.user_id == user.id,
+                       ScheduledPost.status.in_(("pending", "sending"))).count())
+    if pending >= _MAX_PENDING_SCHEDULES:
+        return JSONResponse({"ok": False, "error": f"too many scheduled posts (max {_MAX_PENDING_SCHEDULES})"}, status_code=429)
+    row = sched.create(db, user, ev, datetime.utcfromtimestamp(when))
+    return JSONResponse({"ok": True, "id": row.id, "scheduled_at": when})
+
+
+@router.post("/scheduled/list")
+async def scheduled_list(data: ScheduledAuthReq, db: Session = Depends(get_db)):
+    from app.services import scheduled_posts_service as sched
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "posts": []})
+    return JSONResponse({"ok": True, "posts": sched.list_for_user(db, user)})
+
+
+@router.post("/scheduled/cancel")
+async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_db)):
+    from app.services import scheduled_posts_service as sched
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": False, "error": "no account"}, status_code=403)
+    ok = sched.cancel(db, user, int(data.id))
+    return JSONResponse({"ok": ok, "error": None if ok else "already sending or sent"})
 
 
 # ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----

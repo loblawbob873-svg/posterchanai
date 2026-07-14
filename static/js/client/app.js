@@ -167,9 +167,36 @@
     };
   }
   // build + sign an event from a template
-  async function sign(kind, content, tags=[]){
-    const tpl = { kind, content, tags, created_at: Math.floor(Date.now()/1000), pubkey: ME.pubkey };
+  // Standard tag enrichment applied to every event this client emits — shared by publish() and the
+  // scheduled-post path so a scheduled note is byte-identical to an immediate one (no drift).
+  // - xmr stamp: OPT-IN per-note Monero address on kind-1 (tippability vs correlation cost).
+  // - NIP-89 client tag: brands events "via PosterChan AI". Skipped for legacy NIP-04 DMs (kind 4) — a
+  //   public client tag on a private message leaks metadata. Added only if absent (replaceable lists
+  //   preserve non-p tags across republishes, so re-adding would accumulate duplicates).
+  function _enrichTags(kind, tags){
+    tags = (tags||[]).slice();
+    if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !tags.some(t=>t&&t[0]==='monero_address')) tags.push(['monero_address', my]); }catch(_){} }
+    if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(['client','PosterChan AI']);
+    return tags;
+  }
+  async function sign(kind, content, tags=[], createdAt){
+    const tpl = { kind, content, tags, created_at: createdAt || Math.floor(Date.now()/1000), pubkey: ME.pubkey };
     return await signer.signEvent(tpl);
+  }
+  // ONE cached kind-27235 ownership proof (base64) reused by ALL /client self-auth endpoints (drafts,
+  // scheduled, …). The server verifies sig + pubkey + a 5-min freshness window, NOT the content, so a
+  // single proof authorizes every self-scoped call — and caching it (~4 min) means an external signer
+  // (Amber / nip07) prompts at most once per window instead of once per endpoint per action.
+  let _selfProofB64=null, _selfProofAt=0, _selfProofP=null;
+  async function selfProof(){
+    const now=Math.floor(Date.now()/1000);
+    if(_selfProofB64 && (now-_selfProofAt)<240) return _selfProofB64;
+    if(_selfProofP) return _selfProofP;   // a sign() is already in flight → concurrent callers share it (one prompt)
+    _selfProofP=(async()=>{ try{
+      const b=btoa(JSON.stringify(await sign(27235,'auth',[['p',ME.pubkey]])));
+      _selfProofB64=b; _selfProofAt=Math.floor(Date.now()/1000); return b;
+    } finally { _selfProofP=null; } })();
+    return _selfProofP;
   }
   async function publish(kind, content, tags, opts){
     if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
@@ -188,13 +215,7 @@
     // client can tip you straight from a post. Off by default — attaching a receiving address to EVERY post
     // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
     // Profile if you want max tippability. Your address is still readable from your kind-0 profile regardless.
-    if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !(tags||[]).some(t=>t&&t[0]==='monero_address')) tags=(tags||[]).concat([['monero_address', my]]); }catch(_){} }
-    // NIP-89 client tag: brand every event this client publishes so others can show "via PosterChan AI".
-    // Skipped for legacy NIP-04 DMs (kind 4) — a public client tag on a private message leaks metadata,
-    // and the NIP-17 gift-wrap DM path (which bypasses publish()) is already exempt. Added only if absent
-    // — replaceable lists (kind-3 follows / kind-10000 mutes) preserve their non-p tags across
-    // republishes, so re-adding unconditionally would accumulate duplicate client tags.
-    if(kind!==4 && !(tags||[]).some(t=>t&&t[0]==='client')) tags=(tags||[]).concat([['client','PosterChan AI']]);
+    tags = _enrichTags(kind, tags);
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts();   // optimistic: show it instantly
     const r = await Relay.publish(ev);
@@ -5130,13 +5151,13 @@
     // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
     // so drafts written on one device appear on another. Push is debounced.
     _sync(a){ if(typeof ME==='undefined'||!ME) return; clearTimeout(this._t); this._t=setTimeout(async()=>{
-      try{ const auth=await sign(27235,'drafts',[['p',ME.pubkey]]);
+      try{ const auth=await selfProof();
         await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),drafts:a})}); }catch(_){} }, 900); },
+          body:JSON.stringify({pubkey:ME.pubkey,auth:auth,drafts:a})}); }catch(_){} }, 900); },
     async pull(){ if(typeof ME==='undefined'||!ME) return;
-      try{ const auth=await sign(27235,'drafts',[['p',ME.pubkey]]);
+      try{ const auth=await selfProof();
         const r=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+          body:JSON.stringify({pubkey:ME.pubkey,auth:auth})}).then(r=>r.json());
         if(r && r.ok && Array.isArray(r.drafts)){
           // union by id, newest ts wins — never drops a draft made offline on either device
           const map={}; [...r.drafts, ...this.all()].forEach(d=>{ if(d&&d.id&&(!map[d.id]||(d.ts||0)>=(map[d.id].ts||0))) map[d.id]=d; });
@@ -5146,6 +5167,30 @@
         } }catch(_){} },
   };
   function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  // ---------- Scheduled posts: sign a note with a FUTURE created_at; the backend broadcasts it at that time.
+  // The server never holds your key — signing stays here — so it works for nip07 / Amber / local nsec alike. ----
+  const Scheduled = {
+    _cache:null, _cacheAt:0,
+    _proof(){ return selfProof(); },   // shared with Drafts → opening Drafts never triggers a 2nd signer prompt
+    async create(content, tags, whenTs){
+      const t=_enrichTags(1, tags);   // same enrichment as publish() → a scheduled note is identical
+      const ev=await sign(1, content, t, whenTs);   // signed with the FUTURE created_at = the scheduled time
+      try{
+        const r=await fetch('/client/scheduled',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:await this._proof(),event:ev,scheduled_at:whenTs})}).then(r=>r.json());
+        this._cache=null; return r;
+      }catch(e){ return { ok:false, error:(e&&e.message)||'network' }; }
+    },
+    async list(force){ if(typeof ME==='undefined'||!ME) return [];
+      const now=Date.now();
+      if(!force && this._cache && (now-this._cacheAt)<4000) return this._cache;   // short TTL: avoid re-fetch on rapid re-renders
+      try{ const r=await fetch('/client/scheduled/list',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth:await this._proof()})}).then(r=>r.json());
+        const posts=(r&&Array.isArray(r.posts))?r.posts:[]; this._cache=posts; this._cacheAt=now; return posts;
+      }catch(_){ return this._cache||[]; } },
+    async cancel(id){ try{ const r=await fetch('/client/scheduled/cancel',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pubkey:ME.pubkey,auth:await this._proof(),id})}).then(r=>r.json()); this._cache=null; return !!(r&&r.ok); }catch(_){ return false; } },
+  };
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
@@ -5182,7 +5227,7 @@
   }
   function renderDrafts(){
     const feed=$('#feed'); const list=Drafts.live();
-    feed.innerHTML = list.length ? list.map(d=>{
+    const draftsHtml = list.length ? list.map(d=>{
       const ctx = d.reply?'<span class="muted small">↩ reply</span>' : d.quote?'<span class="muted small">❝ quote</span>' : '';
       return `<div class="note draft-card" data-draft="${d.id}"><div class="draft-body">${linkify(d.text||'')}</div>
         <div class="draft-foot"><span class="muted small">${ctx} saved ${timeAgo(d.ts)}</span>
@@ -5190,7 +5235,8 @@
           <button class="btn btn-ghost small" data-act="edit">✏ Edit</button>
           <button class="btn btn-ghost small" data-act="del" style="color:var(--danger)">🗑 Delete</button>
           <button class="btn btn-neon small" data-act="send">Send ▶</button></div></div>`;
-    }).join('') : '<div class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
+    }).join('') : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
+    feed.innerHTML = `<div id="sched-section"></div>` + draftsHtml;
     feed.querySelectorAll('.draft-card').forEach(card=>{
       const id=card.dataset.draft;
       card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text,cw:d.cw,cwReason:d.cwReason}); };
@@ -5198,6 +5244,33 @@
       card.querySelector('[data-act="send"]').onclick=()=>sendDraft(id);
     });
     hydrate(feed);
+    _renderScheduled();   // async: fill the ⏰ Scheduled section above the drafts
+  }
+  async function _renderScheduled(){
+    if(VIEW!=='drafts') return;
+    const posts=await Scheduled.list();
+    const host=$('#sched-section'); if(!host || VIEW!=='drafts') return;   // navigated away while fetching
+    // Hide the "No drafts" empty-state when there ARE scheduled posts (else it reads as contradictory).
+    { const de=$('#drafts-empty'); if(de) de.style.display = posts.length ? 'none' : ''; }
+    if(!posts.length){ host.innerHTML=''; return; }
+    host.innerHTML = `<div class="sched-head">⏰ Scheduled · ${posts.length}</div>` + posts.map(p=>{
+      const when=new Date((p.scheduled_at||0)*1000).toLocaleString();
+      const st=p.status;
+      const label = st==='failed' ? ('⚠ failed to publish · was due '+when)
+                  : st==='sending' ? ('⏰ '+when+' · sending…') : ('⏰ '+when);
+      const action = st==='sending' ? '<span class="muted small">sending…</span>'
+        : `<button class="btn btn-ghost small" data-act="cancel" style="color:var(--danger)">${st==='failed'?'✖ Dismiss':'✖ Cancel'}</button>`;
+      return `<div class="note draft-card sched-card${st==='failed'?' sched-failed':''}" data-sid="${enc(String(p.id))}"><div class="draft-body">${linkify(p.preview||'(no text)')}</div>
+        <div class="draft-foot"><span class="muted small">${enc(label)}</span><span class="spacer"></span>${action}</div></div>`;
+    }).join('');
+    host.querySelectorAll('.sched-card').forEach(card=>{
+      const b=card.querySelector('[data-act="cancel"]'); if(!b) return;
+      const failed=card.classList.contains('sched-failed');
+      b.onclick=async()=>{ if(!confirm(failed?'Dismiss this failed scheduled post?':'Cancel this scheduled post?')) return; b.disabled=true;
+        const ok=await Scheduled.cancel(card.dataset.sid);
+        if(!ok && !failed) toast('too late — it already posted');
+        if(VIEW==='drafts') _renderScheduled(); };
+    });
   }
   // Append a quoted note as an inline `nostr:nevent` (WITH relay hint + author) to the post content.
   // A NIP-18 quote needs BOTH the `q` tag AND the inline nevent: many clients (Damus/Amethyst/Primal)
@@ -5308,7 +5381,8 @@
       </div>
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px;min-width:120px">💾 Draft</button><button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px;min-width:120px">Post ▶</button></div>
+      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px">💾 Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
+      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -5542,9 +5616,35 @@
           if(r && r.ok){ _dropDraft(); toast('posted'); } }   // failure toast + kept draft handled by publish()
         if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
+      // ⏰ Schedule (plain top-level posts): sign the note with a future created_at; the backend publishes it.
+      { const sbtn=$('#cmp-sched-btn',root), srow=$('#cmp-sched-row',root), sat=$('#cmp-sched-at',root);
+        if(sbtn && srow && sat){
+          sbtn.onclick=()=>{ const show=srow.classList.toggle('hidden')===false; sbtn.classList.toggle('on', show);
+            if(show){ sat.min=_dtLocal(new Date(Date.now()+60*1000)); if(!sat.value) sat.value=_dtLocal(new Date(Date.now()+3600*1000)); sat.focus(); } };
+          $('#cmp-sched-go',root).onclick=async()=>{
+            const text=ta.value.trim(); if(!text){ $('#cmp-status',root).textContent='write something to schedule'; return; }
+            // Scheduling handles plain text notes only — a poll (kind 1068) or a rendered-background image
+            // post can't go through this path, so refuse rather than silently dropping them.
+            const _pb=$('#cmp-pollbox',root);
+            if((_pb && !_pb.classList.contains('hidden')) || (typeof _bgChoice!=='undefined' && _bgChoice)){
+              $('#cmp-status',root).textContent='scheduling supports plain text posts only (not polls or backgrounds yet)'; return; }
+            const whenTs=Math.floor(new Date(sat.value).getTime()/1000);
+            if(!sat.value || isNaN(whenTs)){ $('#cmp-status',root).textContent='pick a date & time'; return; }
+            if(whenTs < Math.floor(Date.now()/1000)+30){ $('#cmp-status',root).textContent='pick a time at least a minute from now'; return; }
+            const go=$('#cmp-sched-go',root); go.disabled=true; $('#cmp-status',root).textContent='scheduling…';
+            const tags=[]; mentionTags(text).forEach(t=>tags.push(t)); imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
+            const r=await Scheduled.create(text, tags, whenTs);
+            if(r && r.ok){ committed=true; document.removeEventListener('keydown',_escSave); _dropDraft(); closeModal();
+              toast('scheduled for '+new Date(whenTs*1000).toLocaleString()); if(VIEW==='drafts') renderView(true); }
+            else { go.disabled=false; $('#cmp-status',root).textContent='schedule failed: '+((r&&r.error)||'try again'); }
+          };
+        } }
       ta.focus();
     });
   }
+  // Format a Date as a <input type="datetime-local"> value (LOCAL time, no tz): YYYY-MM-DDTHH:MM.
+  function _dtLocal(d){ const p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
   function replyTags(parent, id, pk){
     const tags=[]; let root=null;
     if(parent){
