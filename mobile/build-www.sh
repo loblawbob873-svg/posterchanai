@@ -12,6 +12,10 @@ mkdir -p www/static/js/client www/static/css www/static/vendor/nostr
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
+# The service worker must sit at the bundle ROOT so it can register with root scope (the app loads the
+# client at / — not /client like the web PWA). Without this the SW never registered in the app and the
+# media cache never ran (media re-downloaded every view). app.js registers /sw.js when in-app.
+cp "$SRC"/static/js/client/sw.js      www/sw.js
 cp "$SRC"/static/vendor/nostr/nostr.bundle.js www/static/vendor/nostr/
 # hls.js — loaded on demand by the Streams tab (loadHls injects <script src>, which the bundled-mode fetch
 # shim does NOT rewrite), so it must be bundled locally or in-app HLS playback 404s.

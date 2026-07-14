@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v302';
+const CACHE = 'pc-nostr-v303';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -19,6 +19,11 @@ const CONFIG_CACHE = 'pc-config-v1';      // client-written config the SW reads 
 const VIDEO_MAX_BYTES = 60 * 1024 * 1024; // cache a PLAYED video up to this size (raised 15→60MB for more
                                           // re-watch/bandwidth savings); the 4GB byte budget is the real cap
                                           // and trimMedia evicts oldest, so bigger clips just get cached too.
+// The bundled Capacitor APK registers this SW at the ROOT (/sw.js); the web PWA registers it at
+// /client/sw.js. In the APK the client is the LOCAL BUNDLE — authoritative and updated by the APK
+// itself — so the SW must be MEDIA-ONLY there and never cache/serve app code or navigations, or it
+// would pin stale JS across an APK update. Detect app-mode from our own script path.
+const IS_APP = self.location.pathname === '/sw.js';
 const SHELL = [
   '/client',
   '/static/css/client.css',
@@ -43,6 +48,9 @@ self.addEventListener('install', e => {
   // Precache the shell, but DON'T skipWaiting() automatically — a freshly installed worker waits until
   // the user accepts the in-app "Update available" prompt, which posts SKIP_WAITING (below). This avoids
   // reloading the page out from under someone; they choose when to update.
+  // App is media-only (the bundle serves the shell), and SHELL lists '/client' which 404s in the app —
+  // an atomic addAll would reject anyway. So only precache the shell in the web PWA.
+  if (IS_APP) return;
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{}));
 });
 self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
@@ -152,6 +160,18 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method === 'POST' && url.pathname === '/client/share'){ e.respondWith(handleShare(e.request)); return; }
   if (e.request.method !== 'GET') return;
+
+  // APK: MEDIA-ONLY, and only CROSS-ORIGIN IMAGES (avatars + uploaded images from the server / other
+  // hosts). Deliberately NOT: same-origin bundle assets (they must refresh on an APK update, so never
+  // cache them), videos (their cross-origin range requests come back opaque → don't proxy, leave
+  // playback direct), app code, or navigations. Everything else passes straight through, keeping the
+  // bundle authoritative so the SW can't fight the APK's own update flow.
+  if (IS_APP){
+    if (e.request.destination === 'image' && url.origin !== self.location.origin) e.respondWith(cacheFirstMedia(e.request));
+    return;
+  }
+
+  // ---- WEB PWA (unchanged: same ordering as before this feature) ----
   if (url.pathname === '/relay' || url.pathname.startsWith('/client/config')) return;  // live data / WS
 
   const isAppCode = url.pathname === '/client' || url.pathname === '/client/' ||
@@ -161,8 +181,7 @@ self.addEventListener('fetch', e => {
 
   if (isAppCode) e.respondWith(staleWhileRevalidate(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
-  // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia). With
-  // preload="none" on timeline videos, a video isn't even fetched until the user taps play.
+  // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia).
   else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
 });
@@ -196,8 +215,11 @@ self.addEventListener('push', e => {
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
+  // The app runs at '/', the web PWA at '/client'. Focus the existing window (the app has just one), else
+  // open the right home URL for the context.
+  const home = IS_APP ? '/' : '/client';
   e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-    for (const c of cs) { if (c.url.includes('/client') && 'focus' in c) return c.focus(); }
-    return clients.openWindow('/client');
+    for (const c of cs) { if ((IS_APP || c.url.includes('/client')) && 'focus' in c) return c.focus(); }
+    return clients.openWindow(home);
   }));
 });

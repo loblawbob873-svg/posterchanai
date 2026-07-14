@@ -799,11 +799,19 @@
     try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(_){}
     try{ _applyMediaCacheBudget(ClientSettings.get('mediaCacheGB', 4)); }catch(_){}   // push the saved media-cache size to the SW
     if ('serviceWorker' in navigator){
+      // The bundled Capacitor app loads the client at the ROOT (www/index.html) and ships sw.js at
+      // /sw.js, whereas the web PWA serves it at /client/sw.js under the /client scope. Registering the
+      // web path/scope inside the app 404s (no /client/sw.js in the bundle) and wouldn't cover the app's
+      // root pages anyway — so the SW never ran there and NOTHING was cached (media re-downloaded every
+      // view). Detect the app via the injected __PC_API_BASE__ and register the root sw.js at root scope.
+      const _isApp = !!window.__PC_API_BASE__;
       // Reload once the NEW SW takes control. It only takes control after the USER accepts the update
       // (applyUpdate → postMessage SKIP_WAITING) — the SW no longer skipWaiting()s on its own — so this
       // reload is always user-initiated (never yanks the page mid-use). Arm only when a controller
       // already exists at load, so a first-install clients.claim() doesn't cause a spurious reload.
-      if(navigator.serviceWorker.controller){
+      // NOT in the app: the APK ships its own updates (reinstall), so its media-only SW must never drive
+      // an "Update available" prompt or a reload — that would fire a redundant prompt after every APK update.
+      if(!_isApp && navigator.serviceWorker.controller){
         // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
         // build. clients.claim() fires this in EVERY open tab, not just the one that clicked, so guard the
         // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
@@ -817,7 +825,10 @@
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
       // 15 min; when a new build finishes installing, _onSwUpdateReady surfaces an "Update available"
       // entry in the Notifications menu instead of reloading automatically.
-      navigator.serviceWorker.register('/client/sw.js',{scope:'/client',updateViaCache:'none'}).then(reg=>{
+      navigator.serviceWorker.register(_isApp?'/sw.js':'/client/sw.js',{scope:_isApp?'/':'/client',updateViaCache:'none'}).then(reg=>{
+        // App: registered purely for media caching. The APK updates itself, so skip ALL the web
+        // update-prompt/reload wiring — a new media-only SW just activates silently on the next cold start.
+        if(_isApp) return;
         try{ reg.update(); }catch(_){}
         // Watch a worker for the installed+waiting state (an UPDATE, not first install → controller exists).
         const track = w => { if(!w) return;
