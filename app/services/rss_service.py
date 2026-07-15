@@ -36,6 +36,7 @@ _MAX_BYTES = 4_000_000  # STREAM cap: stop reading the body past this (a huge/ga
 _MAX_ITEMS = 50
 _MAX_CACHE = 400        # bound the shared cache (public endpoint w/ arbitrary URLs) — evict oldest past this
 _MAX_REDIRECTS = 5
+_ERR_TTL = 60.0         # negative cache: a failing feed is retried at most once per 60s (not every request)
 
 _cache: dict = {}       # url -> (monotonic_fetched_at, payload)
 _inflight: dict = {}    # url -> asyncio.Future  (dedup concurrent fetches into ONE upstream request)
@@ -158,7 +159,10 @@ def parse_feed(raw: bytes, base_url: str) -> tuple:
             if tag == "title" and not title:
                 title = (ch.text or "").strip()
             elif tag == "link" and not link:
-                link = (ch.get("href") or (ch.text or "")).strip()
+                href = (ch.get("href") or (ch.text or "")).strip()
+                rel = ch.get("rel")   # Atom: prefer rel=alternate (the article); skip self/edit/replies
+                if href and (not rel or rel == "alternate"):
+                    link = href
             elif tag in ("guid", "id") and not guid:
                 guid = (ch.text or "").strip()
             elif tag in ("pubdate", "published", "updated", "date") and not date:
@@ -266,8 +270,8 @@ def _start_fetch(url: str):
             _inflight.pop(u, None)
             try:
                 p = f.result()
-                if isinstance(p, dict) and not p.get("error"):
-                    _cache[u] = (time.monotonic(), p)
+                if isinstance(p, dict):
+                    _cache[u] = (time.monotonic(), p)   # cache errors too (negative cache → no re-fetch storm)
                     _evict()
             except Exception:
                 pass
@@ -277,20 +281,24 @@ def _start_fetch(url: str):
 
 async def get_feed(url: str, force: bool = False) -> dict:
     """Steady stale-while-revalidate read from the shared cache:
-       fresh (< _TTL)  → return it;  stale → return it NOW + refresh in the background;
-       cold / force    → fetch once (concurrent misses ride a single in-flight request).
+       fresh good (< _TTL)   → return it;   stale-but-good → return it NOW + refresh in the background;
+       fresh error (< _ERR_TTL) → return the error (a broken feed isn't re-fetched every request);
+       cold / stale-error / force → fetch once (concurrent misses ride a single in-flight request).
     The resolve-based SSRF check runs inside the fetch (is_safe_host per redirect hop), so a cache read does
     NO DNS — this is what keeps it CPU-cheap and easy on the source sites (one fetch per feed per TTL, no
     matter how many users)."""
     now = time.monotonic()
     hit = _cache.get(url)
+    good = bool(hit and not hit[1].get("error"))
     if hit and not force:
-        if (now - hit[0]) < _TTL:
+        if (now - hit[0]) < (_TTL if good else _ERR_TTL):
             return {**hit[1], "cached": True}
-        _start_fetch(url)                                    # stale → serve now, revalidate in background
-        return {**hit[1], "cached": True, "stale": True}
+        if good:                                             # stale-but-good → serve now, revalidate in bg
+            _start_fetch(url)
+            return {**hit[1], "cached": True, "stale": True}
+        # stale error → fall through and refetch inline (nothing good to serve)
 
-    payload = await _start_fetch(url)                        # cold/forced → fetch (deduped); callback caches
-    if payload.get("error") and hit:                         # transient failure → serve the last good copy
+    payload = await _start_fetch(url)                        # cold/forced/stale-error → fetch (deduped)
+    if payload.get("error") and good:                        # fetch failed but we had a good copy → serve it
         return {**hit[1], "cached": True, "stale": True}
     return {**payload, "cached": False}

@@ -26,6 +26,8 @@
     let _items = [];          // fetched, merged, sorted
     let _obs = null;          // IntersectionObserver for mark-read-on-scroll
     let _loading = false;
+    let _gen = 0;             // render token — a newer render/feed-switch supersedes an in-flight older one
+    const inView = () => window.__PC.VIEW === 'news';
 
     // ---- read state: a capped, insertion-ordered set of item ids (bounded so the event can't grow) ----
     let _readIds = [], _readSet = new Set(), _readSaveT = null;
@@ -94,12 +96,15 @@
       _loading = true;
       try{
         if(_active==='all'){
-          const urls = _feeds.map(f=>f.url).join(',');
-          if(!urls){ _items=[]; return; }
-          const r = await fetch('/api/rss/feeds?urls='+encodeURIComponent(urls)).then(r=>r.json()).catch(()=>({feeds:[]}));
+          const all=_feeds.map(f=>f.url);
+          if(!all.length){ _items=[]; return; }
+          // CHUNK the feed list (a big imported OPML would blow the server's URL-length limit / 30-feed cap).
+          const chunks=[]; for(let i=0;i<all.length;i+=12) chunks.push(all.slice(i,i+12));
           const nameOf = u => (_feeds.find(f=>f.url===u)||{}).name || (u.split('/')[2]||u);
+          const results = await Promise.all(chunks.map(c=>
+            fetch('/api/rss/feeds?urls='+encodeURIComponent(c.join(','))).then(r=>r.json()).catch(()=>({feeds:[]}))));
           _items = [];
-          for(const fd of (r.feeds||[])) for(const it of (fd.items||[])) _items.push({ ...it, feed:fd.url, feedName: nameOf(fd.url) });
+          for(const r of results) for(const fd of (r.feeds||[])) for(const it of (fd.items||[])) _items.push({ ...it, feed:fd.url, feedName: nameOf(fd.url) });
         } else {
           const fd = _feeds.find(f=>f.url===_active) || { url:_active, name:_active };
           const r = await fetch('/api/rss/feed?url='+encodeURIComponent(_active)).then(r=>r.json()).catch(()=>({items:[]}));
@@ -140,20 +145,30 @@
       // wire actions
       $$('.news-share', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const it=_items[+b.dataset.i]; if(it) compose({ text: it.title + '\n\n' + it.link }); });
       $$('.news-sum', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); summarize(_items[+b.dataset.i], b); });
-      // mark-read-on-scroll
+      // mark-read only once a card has scrolled ABOVE the top of the viewport (you read PAST it) — NOT
+      // merely because it's on screen at first render (that would grey the newest headlines unread).
       if(_obs) _obs.disconnect();
-      _obs = new IntersectionObserver(ents=>{ for(const en of ents){ if(en.isIntersecting){ const el=en.target; const it=_items[+el.dataset.i];
-        if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); } _obs.unobserve(el); } } }, { rootMargin:'0px 0px -40% 0px' });
+      _obs = new IntersectionObserver(ents=>{ for(const en of ents){
+        const top = en.rootBounds ? en.rootBounds.top : 0;
+        if(!en.isIntersecting && en.boundingClientRect.bottom <= top){
+          const el=en.target; const it=_items[+el.dataset.i];
+          if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); }
+          _obs.unobserve(el);
+        }
+      } }, { threshold:0 });
       $$('.news-card', list).forEach(el=> _obs.observe(el));
     }
     async function renderNews(){
+      const gen = ++_gen;                       // supersede any older in-flight render
       const feed = $('#feed');
       feed.innerHTML = `<div class="news-wrap"><div id="news-head"></div><div id="news-list"><div class="spinner"></div></div></div>`;
       if(!_feeds) await loadState();
-      $('#news-head').innerHTML = _chips();
+      if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
+      const head = $('#news-head'); if(!head) return;
+      head.innerHTML = _chips();
       $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } _active=b.dataset.feed; renderNews(); });
       await fetchActive();
-      if(window.__PC.VIEW!=='news') return;   // navigated away during the fetch
+      if(gen!==_gen || !inView()) return;       // navigated away / a newer feed-switch won the race
       renderList();
     }
 
@@ -166,7 +181,7 @@
         const txt = (r && (r.summary || r.text)) || 'No summary available.';
         modalNews(`<h3>✨ ${enc(it.title)}</h3><div class="news-summary">${enc(txt).replace(/\n/g,'<br>')}</div>
           <div class="row" style="margin-top:12px"><button class="btn btn-cyan" id="news-sum-share">↗ Share summary</button>
-          <a class="btn btn-ghost" href="${enc(it.link)}" target="_blank" rel="noopener">Open article</a></div>`, root=>{
+          <a class="btn btn-ghost" href="${enc(safeUrl(it.link)||'#')}" target="_blank" rel="noopener">Open article</a></div>`, root=>{
           const s=$('#news-sum-share',root); if(s) s.onclick=()=>compose({ text: txt.trim()+'\n\n'+it.link });
         });
       }catch(e){ toast('summarize failed'); }
@@ -190,7 +205,7 @@
           <textarea class="input" id="news-opml-text" rows="4" placeholder="&lt;opml&gt;…&lt;/opml&gt;" style="margin-top:6px"></textarea>
           <button class="btn btn-ghost small" id="news-import-text" style="margin-top:6px">Import pasted OPML</button>
         </details>`, root=>{
-        $$('.news-del',root).forEach(b=> b.onclick=async()=>{ const i=+b.dataset.i; const rm=_feeds[i]; _feeds.splice(i,1); if(rm && _active===rm.url) _active='all'; await saveFeeds(); closeNews(); manageFeeds(); });
+        $$('.news-del',root).forEach(b=> b.onclick=async()=>{ const i=+b.dataset.i; const rm=_feeds[i]; _feeds.splice(i,1); if(rm && _active===rm.url) _active='all'; await saveFeeds(); renderNews(); closeNews(); manageFeeds(); });
         $('#news-addbtn',root).onclick=async()=>{
           let url=($('#news-newurl',root).value||'').trim(); if(!url) return;
           if(!/^https?:\/\//i.test(url)) url='https://'+url;
