@@ -6975,19 +6975,28 @@
     // _followSeen time = last-checked), so only a pubkey we've NEVER recorded — a genuinely new follower
     // arriving live — pings/badges. (the recurring "follow spam from people who followed long ago")
     try{
-      const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
+      // RETRY until the read succeeds — on a cold start the socket may still be connecting, and a single
+      // empty seed is what left old followers unmarked (→ re-pinged as "new"). The read itself is reliable.
+      let followers=[];
+      for(let attempt=0; attempt<4; attempt++){
+        await Relay.ready(6000);
+        followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]).catch(()=>[]);
+        if(followers.length) break;
+        await new Promise(r=>setTimeout(r, 800*(attempt+1)));
+      }
+      // One-time REPAIR (pc_follow_pins_v2): older builds pinned some existing followers at their recent
+      // contact-list SAVE time, so they keep floating up as fresh "followed you". Everything the seed returns
+      // is an EXISTING follower (the live sub handles genuinely-new ones), so re-pin the WHOLE list at the
+      // conservative epoch ONCE to clear those bad pins. After that, normal pin-once (never overwrites).
+      const repair = !localStorage.getItem('pc_follow_pins_v2');
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
-        // Pin an existing follower at/below the STABLE epoch so a later re-save can't float them to the top.
-        // _notifEpoch is a real timestamp (never 0), so no "55 years ago". Also REPAIRS a stale 0 persisted
-        // by an old build (falsy → treated as unset here). Batched: one localStorage write below, not per row.
-        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
+        if(repair || !_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
-      // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
-      // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
-      // followers keep resurfacing: notifList would then pin them at their fresh re-save time. (Harmless if
-      // you genuinely have no followers: there's no kind-3 to mis-pin.)
-      _followSeeded = (followers||[]).length>0;
+      // Mark the repair + the seed done ONLY when the read actually returned followers (an empty answer
+      // proves nothing — claiming "seeded" off it is what let old followers keep resurfacing).
+      if(followers.length){ try{ localStorage.setItem('pc_follow_pins_v2','1'); }catch(_){} }
+      _followSeeded = followers.length>0;
     }catch(_){}
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
@@ -7777,14 +7786,26 @@
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
-    // Skipped on a cold socket (wasReady=false): these would just time out to 0/0; onReady reloads instead.
-    if(wasReady) (async()=>{
-      const [k3, followerCount, pinList] = await Promise.all([
-        Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
-        Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
-        Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
-      ]);
-      if(VIEW!=='profile' || _prof.pk!==pk) return;
+    // The reads themselves are reliable (a manual COUNT returns the right number) — the only failure mode is
+    // firing them before the socket is delivering. So RETRY until we get real data instead of firing once:
+    // wait for a live socket (v312 zombie-aware), query, and if EVERYTHING comes back empty (0 followers AND
+    // no contact list AND no pins = a failed read, not a genuinely-blank profile) wait and try again. This is
+    // what makes "0/0 until reload" impossible without touching query()/count() internals.
+    (async()=>{
+      let k3=[], followerCount=0, pinList=[];
+      for(let attempt=0; attempt<4; attempt++){
+        await Relay.ready(6000);
+        if(VIEW!=='profile' || _prof.pk!==pk) return;   // navigated away
+        [k3, followerCount, pinList] = await Promise.all([
+          Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
+          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
+          Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
+        ]);
+        if(VIEW!=='profile' || _prof.pk!==pk) return;
+        if(followerCount || k3.length || pinList.length) break;   // got real data → done
+        await new Promise(r=>setTimeout(r, 700*(attempt+1)));       // all empty → socket wasn't ready → retry
+      }
+      _prof.hydrated = !!(followerCount || k3.length || pinList.length);   // still empty after retries → let onReady/onReconnect try again later
       _prof.following = k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
       const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
       const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
