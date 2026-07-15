@@ -1117,6 +1117,7 @@
         gt.onclick=()=>{ const o=!ClientSettings.get('gamesOpen', false); ClientSettings.set('gamesOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
     { const dd=$('#btn-drafts-d'); if(dd) dd.onclick = ()=>switchView('drafts'); }   // desktop Drafts button (next to New post; hidden on mobile via CSS)
+    { const cc=$('#btn-calls-d'); if(cc) cc.onclick = ()=>switchView('calls'); }   // desktop Calls button (next to Drafts; hidden on mobile — mobile uses the nav/sheet)
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     bindSearch();
@@ -1670,6 +1671,7 @@
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     { const dd=$('#btn-drafts-d'); if(dd) dd.classList.toggle('active', v==='drafts'); }   // desktop Drafts topbar btn is not a .nav-item — highlight it explicitly
+    { const cc=$('#btn-calls-d'); if(cc) cc.classList.toggle('active', v==='calls'); }   // same for the desktop Calls topbar btn
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
