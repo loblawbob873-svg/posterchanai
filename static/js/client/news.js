@@ -13,7 +13,7 @@
     // Feed content is untrusted — only allow http(s) URLs as href/src (blocks javascript:/data: scheme XSS).
     const safeUrl = u => /^https?:\/\//i.test(u||'') ? u : '';
 
-    const FEEDS_D = 'pcai:news-feeds', READ_D = 'pcai:news-read', READ_CAP = 800;
+    const FEEDS_D = 'pcai:news-feeds', READ_D = 'pcai:news-read', READ_CAP = 2000, MAX_ITEMS = 2000;
     const DEFAULTS = [
       { url:'https://feeds.bbci.co.uk/news/rss.xml', name:'BBC News' },
       { url:'https://hnrss.org/frontpage', name:'Hacker News' },
@@ -111,6 +111,7 @@
           _items = (r.items||[]).map(it=>({ ...it, feed:fd.url, feedName: fd.name }));
         }
         _items.sort((a,b)=> (b.ts||0)-(a.ts||0));
+        if(_items.length > MAX_ITEMS) _items = _items.slice(0, MAX_ITEMS);   // retention: keep newest 2000, drop older
       } finally { _loading = false; }
     }
 

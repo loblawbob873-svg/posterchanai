@@ -50,6 +50,14 @@
 - **Load balancing**: round-robin across multiple chat servers
 - **Intent detection** and slash-style **commands** (e.g. `/mail`, `/image`, `/search`)
 
+### Nostr web client
+
+The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus an installable Android APK) — feed, profiles, DMs, notifications, articles, communities, bookmarks, and more. Highlights:
+
+- **News (RSS reader)** — a built-in RSS/Atom reader under **Discover → News**. Feeds are fetched **server-side** through the built-in **HTTP proxy (→ Tor), with a direct fallback**, and served from a **shared, steady stale-while-revalidate cache** — each feed is fetched at most once per 5 min and concurrent requests are deduped, so it scales to many users without hammering the source sites. Your **feed list and read state are your own encrypted Nostr events** (`kind-30078`), cached locally and hydrated from the relay so they **sync across devices**. Per-article **Share as a note** and **LLM Summarize**, **mark-read-as-you-scroll**, **OPML import/export** (Miniflux-compatible), and YouTube-channel thumbnails. Hardened: `defusedxml` parsing, SSRF-guarded fetches (per-redirect-hop revalidation), and streamed size caps.
+- **Voice & video calls** — 1:1 and small-group **WebRTC** calls that work **across instances**, signaled over Nostr (`kind-25050`) with a built-in Pion **TURN** relay for NAT traversal. Audio-first with a mid-call video toggle and screen-share.
+- **Live streaming (OBS)** — go live from **OBS** (or any RTMP encoder): the bundled **MediaMTX** ingests RTMP → HLS, and the stream is announced on Nostr via **NIP-53** (`kind-30311`) under **Discover → Streams**, so it also shows up in the wider Nostr stream directories. Auth reuses your per-user API key; off by default (`install.sh --stream`).
+
 ### Voice & media
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
@@ -62,7 +70,7 @@
 ### PIM & productivity
 
 - **Email**: read and send mail via IMAP/SMTP
-- **News**: RSS-style news sources with summaries (`news` / `dailynews`)
+- **News**: LLM news summaries from chat (`news` / `dailynews`), plus a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))
 - **Finance (Budget Manager)**: per-user budget summary, bills, and payments from chat (`budget`, `bills`, `pay`, `addbill`) against a self-hosted Budget Manager app
 - **To-do**: quick personal task list from chat (`todo`)
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
