@@ -6945,6 +6945,11 @@
   if(!_notifEpoch){ const _lastSeen=+(localStorage.getItem('pc_notif_seen')||0); const _now=Math.floor(Date.now()/1000);
     _notifEpoch = _lastSeen ? Math.min(_now, _lastSeen) : _now;   // never 0 (would render "55 years ago")
     try{ localStorage.setItem('pc_notif_epoch', String(_notifEpoch)); }catch(_){} }
+  // Cap every stored pin at the stable epoch SYNCHRONOUSLY here at load — before any notifications render —
+  // so a stale >epoch pin from an old build can't briefly float a follower to the top during the async seed's
+  // cold-start window. Idempotent (no-op once clean); the seed below only ADDS unrecorded followers.
+  { let _capped=false; for(const k in _followSeen){ if(_followSeen[k] > _notifEpoch){ _followSeen[k]=_notifEpoch; _capped=true; } }
+    if(_capped){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } }
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
@@ -6977,39 +6982,28 @@
         if(followers.length) break;
         await new Promise(r=>setTimeout(r, 800*(attempt+1)));
       }
-      // One-time REPAIR (pc_follow_pins_v2): older builds pinned some existing followers at their recent
-      // contact-list SAVE time, so they keep floating up as fresh "followed you". Everything the seed returns
-      // is an EXISTING follower (the live sub handles genuinely-new ones), so re-pin the WHOLE list at the
-      // conservative epoch ONCE to clear those bad pins. After that, normal pin-once (never overwrites).
-      const repair = !localStorage.getItem('pc_follow_pins_v2');
+      // Seed unrecorded followers at the conservative epoch (everything the seed returns is an EXISTING
+      // follower; genuinely-new ones the live sub handles — also pinned old now). Stale >epoch pins from
+      // old builds were already capped synchronously at load, so this only ADDS.
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
-        if(repair || !_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
+        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
-      // Mark the repair + the seed done ONLY when the read actually returned followers (an empty answer
-      // proves nothing — claiming "seeded" off it is what let old followers keep resurfacing).
-      if(followers.length){ try{ localStorage.setItem('pc_follow_pins_v2','1'); }catch(_){} }
       _followSeeded = followers.length>0;
     }catch(_){}
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
-          // A kind-3 is the follower's WHOLE contact list, re-saved on every follow/unfollow — so a follower
-          // we've ALREADY recorded re-saving theirs is NOT news. "known" = KEY-EXISTENCE in _followSeen (a
-          // stored 0 from an old build still counts as seen — the fix over the old truthiness test that let
-          // 0-pinned followers re-surface). Deliberately NOT the FOLLOWERS set: ensureMyFollowers() adds
-          // even a brand-new follower to FOLLOWERS when you open a people list, which would then wrongly
-          // suppress their genuine follow. _followSeen is a stable app-start snapshot, so a pubkey we've
-          // NEVER recorded arriving LIVE (after EOSE) is a real new follow → pin at now (shows recent);
-          // everything else — backlog, or any known follower re-saving — pins OLD and can't float to the top.
-          const known = Object.prototype.hasOwnProperty.call(_followSeen, ev.pubkey);
+          // A kind-3 is the follower's WHOLE contact list, re-saved on every follow/unfollow.
           FOLLOWERS.add(ev.pubkey);
-          // Surface as a genuinely-new follow (pin at now) ONLY when live AND never-recorded AND the seed
-          // actually populated _followSeen (_followSeeded) — otherwise "unknown" can't be trusted to mean
-          // "new" (a cold-cache seed that returned nothing leaves every old follower unrecorded), so pin it
-          // as history. This closes the cold-cache case where an old follower re-saving still spammed "new".
-          if(_notifReady && !known && _followSeeded) _followTs(ev.pubkey, ev.created_at);
-          else _followTsOld(ev.pubkey, ev.created_at);
+          // ALWAYS pin at/below the stable epoch — NEVER at the re-save's recent created_at. A kind-3 carries
+          // no real "when did they follow" time, and the seed can't be trusted to be complete (174 large
+          // contact-lists can't all stream before the query timeout → a PARTIAL seed leaves many followers
+          // unrecorded). So we cannot reliably tell a genuinely-new follow from an old one re-saving, and the
+          // old "pin new ones at now" branch is exactly what floated DIFFERENT un-seeded followers to the top
+          // as fresh "followed you" on every edit. Pinning old (pin-once, capped) kills that for good — a new
+          // follow still appears in the Follows list, just not floated/highlighted as new.
+          _followTsOld(ev.pubkey, ev.created_at);
           if(VIEW==='notifications') renderNotifications();
           return;                                  // a re-saved contact list never re-notifies
         }
