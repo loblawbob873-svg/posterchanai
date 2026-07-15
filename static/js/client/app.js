@@ -6935,34 +6935,18 @@
   // follower re-saving their list never re-pings or re-lights the badge.
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
   let _followSeeded=false;   // true once the follower seed (below) has run — before that, notifList must NOT persist pins
-  // A STABLE floor for history follows: captured ONCE and never advanced. History/unpinned follows are
-  // capped to it so a known follower re-saving their contact list can't float back to the top — UNLIKE
-  // seenNotif.last, which advances on every view and kept re-admitting re-saved follows as "new" (the
-  // recurring follow-spam). Seed it from the LAST-VIEWED time (pc_notif_seen) when we have one — an older,
-  // safer floor than "now", so on the very first load after this ships an existing user's followers who
-  // re-saved recently are still capped below the seen line (a bare "now" epoch wouldn't cap them yet).
-  let _notifEpoch=+(localStorage.getItem('pc_notif_epoch')||0);
-  if(!_notifEpoch){ const _lastSeen=+(localStorage.getItem('pc_notif_seen')||0); const _now=Math.floor(Date.now()/1000);
-    _notifEpoch = _lastSeen ? Math.min(_now, _lastSeen) : _now;   // never 0 (would render "55 years ago")
-    try{ localStorage.setItem('pc_notif_epoch', String(_notifEpoch)); }catch(_){} }
-  // Cap every stored pin at the stable epoch SYNCHRONOUSLY here at load — before any notifications render —
-  // so a stale >epoch pin from an old build can't briefly float a follower to the top during the async seed's
-  // cold-start window. Idempotent (no-op once clean); the seed below only ADDS unrecorded followers.
-  { let _capped=false; for(const k in _followSeen){ if(_followSeen[k] > _notifEpoch){ _followSeen[k]=_notifEpoch; _capped=true; } }
-    if(_capped){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } }
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
   // Pin a follower we're meeting from HISTORY (the seed, the relay's pre-EOSE backlog, the Store cache) —
   // never at their kind-3's created_at, which is just their last contact-list SAVE. Keep them at/below the
   // seen line so an old follower re-saving their list can't float to the top as a brand-new "followed you".
-  function _followTsOld(pk, created){ return _followTs(pk, Math.min(created, _notifEpoch)); }
+  function _followTsOld(pk, created){ return _followTs(pk, seenNotif.last ? Math.min(created, seenNotif.last) : created); }
   // Unpinned kind-3 (seed missed them / storage cleared) gets the same conservative time, so the ORDER is
   // right even when nothing has been recorded yet — the pin is a cache, not the thing correctness rests on.
-  // Cap at the STABLE _notifEpoch (never seenNotif.last, which advances and re-floats re-saved followers).
   function _notifTs(e){
     if(e.kind!==3) return e.created_at;
-    return _followSeen[e.pubkey] || Math.min(e.created_at, _notifEpoch);
+    return _followSeen[e.pubkey] || (seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at);
   }
   async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
@@ -6973,37 +6957,33 @@
     // _followSeen time = last-checked), so only a pubkey we've NEVER recorded — a genuinely new follower
     // arriving live — pings/badges. (the recurring "follow spam from people who followed long ago")
     try{
-      // RETRY until the read succeeds — on a cold start the socket may still be connecting, and a single
-      // empty seed is what left old followers unmarked (→ re-pinged as "new"). The read itself is reliable.
-      let followers=[];
-      for(let attempt=0; attempt<4; attempt++){
-        await Relay.ready(6000);
-        followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]).catch(()=>[]);
-        if(followers.length) break;
-        await new Promise(r=>setTimeout(r, 800*(attempt+1)));
-      }
-      // Seed unrecorded followers at the conservative epoch (everything the seed returns is an EXISTING
-      // follower; genuinely-new ones the live sub handles — also pinned old now). Stale >epoch pins from
-      // old builds were already capped synchronously at load, so this only ADDS.
+      const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
-        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
+        // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
+        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0. Also
+        // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
+        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
-      _followSeeded = followers.length>0;
+      // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
+      // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
+      // followers keep resurfacing: notifList would then pin them at their fresh re-save time. (Harmless if
+      // you genuinely have no followers: there's no kind-3 to mis-pin.)
+      _followSeeded = (followers||[]).length>0;
     }catch(_){}
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
-          // A kind-3 is the follower's WHOLE contact list, re-saved on every follow/unfollow.
           FOLLOWERS.add(ev.pubkey);
-          // ALWAYS pin at/below the stable epoch — NEVER at the re-save's recent created_at. A kind-3 carries
-          // no real "when did they follow" time, and the seed can't be trusted to be complete (174 large
-          // contact-lists can't all stream before the query timeout → a PARTIAL seed leaves many followers
-          // unrecorded). So we cannot reliably tell a genuinely-new follow from an old one re-saving, and the
-          // old "pin new ones at now" branch is exactly what floated DIFFERENT un-seeded followers to the top
-          // as fresh "followed you" on every edit. Pinning old (pin-once, capped) kills that for good — a new
-          // follow still appears in the Follows list, just not floated/highlighted as new.
-          _followTsOld(ev.pubkey, ev.created_at);
+          // Before EOSE this is the relay's BACKLOG — history the seed should have covered, not news. A
+          // kind-3 carries no "when did they follow you" (it's their whole contact list, re-saved whenever
+          // they follow ANYONE), so pinning backlog at its created_at is exactly what kept showing an old
+          // follower as a fresh "followed you" every time they edited their list. Only a kind-3 that lands
+          // AFTER EOSE is a genuinely new follow.
+          const firstTime = !_followSeen[ev.pubkey];
+          const live = _notifReady;
+          const ts = live ? _followTs(ev.pubkey, ev.created_at) : _followTsOld(ev.pubkey, ev.created_at);
+          if(live && firstTime && ts>seenNotif.last) bumpNotif();
           if(VIEW==='notifications') renderNotifications();
           return;                                  // a re-saved contact list never re-notifies
         }
