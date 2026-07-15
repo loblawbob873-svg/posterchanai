@@ -1705,12 +1705,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(0,255,255,.5)}
 /* ---- Desktop scaling --------------------------------------------------------
    The UI's sizing is px-based and tuned for a large / 4K display; on smaller desktops (1080p and
    OS-scaled laptops) those fixed sizes read as oversized. Scale the whole app down with `zoom` in
-   steps, compensating the full-height containers (height:100vh/zoom) so they still fill the screen
-   with no blank strip. Bounded to >820px so the mobile layout (≤820px) is left completely alone;
-   true 4K (>1920px CSS px) gets no zoom. */
-@media (min-width:821px) and (max-width:1920px){ body{ zoom:.85 } .app{ height:calc(100vh / .85) } .main{ height:100% } }
-@media (min-width:821px) and (max-width:1600px){ body{ zoom:.78 } .app{ height:calc(100vh / .78) } .main{ height:100% } }
-@media (min-width:821px) and (max-width:1366px){ body{ zoom:.70 } .app{ height:calc(100vh / .70) } .main{ height:100% } }
+   steps, compensating the full-height containers (height:100dvh/zoom) so they still fill the screen
+   with no blank strip. dvh (not vh) so on a TABLET with visible browser chrome the app fits the visible
+   viewport and the sidebar footer (username → connection → Logout) isn't pushed off the bottom; on
+   desktop dvh==vh so nothing changes. Bounded to >820px so the mobile layout (≤820px, sidebar hidden)
+   is left completely alone; true 4K (>1920px CSS px) gets no zoom. */
+@media (min-width:821px) and (max-width:1920px){ body{ zoom:.85 } .app{ height:calc(100dvh / .85) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1600px){ body{ zoom:.78 } .app{ height:calc(100dvh / .78) } .main{ height:100% } }
+@media (min-width:821px) and (max-width:1366px){ body{ zoom:.70 } .app{ height:calc(100dvh / .70) } .main{ height:100% } }
 
 /* ---- 4chan browser (Discover) — themed to match the note UI, mobile-first ---- */
 .fc-bar,.fc-thread-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;position:sticky;top:0;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
