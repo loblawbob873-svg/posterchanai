@@ -466,6 +466,12 @@ class RelayServer:
             self._send(conn, ["OK", eid, False, "invalid: bad id or signature"])
             return
         kind = int(ev.get("kind", 1))
+        # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
+        # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,
+        # kind-7 reactions, kind-5 deletes), so this is scoped to kind 1 only.
+        if kind == 1 and not (ev.get("content") or "").strip():
+            self._send(conn, ["OK", eid, False, "invalid: empty note"])
+            return
         # NIP-40: reject an event already past its expiration (don't store or relay it).
         exp = _event_expiration(ev)
         if exp is not None and exp <= int(time.time()):

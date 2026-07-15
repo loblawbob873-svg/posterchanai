@@ -578,6 +578,8 @@ async def _main(cfg: dict) -> None:
             return   # invalid sig — NOT marked (deterministic re-reject is cheap; never store)
         if int(ev.get("kind", 1)) == 1:
             content = ev.get("content", "")
+            if not content.strip():
+                return   # EMPTY note — spam/noise, nothing to render; don't store or fan out (matches _on_event)
             if (_bl and blocked_language(content, _bl)) or (_bw and blocked_word(content, _bw)):
                 return
         if await store.add_event(ev, origin="wot"):

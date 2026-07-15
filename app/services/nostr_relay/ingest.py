@@ -130,6 +130,8 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue
             if int(ev.get("kind", 1)) == 1:
                 _content = ev.get("content", "")
+                if not _content.strip():
+                    continue   # empty note — spam/noise
                 if (blocked and blocked_language(_content, blocked)) or \
                         (blocked_words and blocked_word(_content, blocked_words)):
                     continue
@@ -270,6 +272,8 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
                 continue
             if block_bridged and is_bridged_post(ev) and not (gate is not None and gate.is_operator(ev.get("pubkey", ""))):
                 continue
+            if int(ev.get("kind", 1)) == 1 and not (ev.get("content") or "").strip():
+                continue   # empty note — don't backfill spam as a thread ancestor
             if _content_blocked(ev, blocked, blocked_words):
                 continue
             if await store.add_event(ev, origin="ancestor"):
