@@ -7645,6 +7645,10 @@
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     const mine=pk===ME.pubkey;
+    await Relay.ready(3000);   // on a cold start the relay socket is still connecting; wait for it before
+                               // querying so the reads don't drop into a dead socket and eat 6s timeouts
+                               // (the "15s profile load + 0 followers on first open, fine after reload" bug)
+    if(VIEW!=='profile') return;   // navigated away while the socket was connecting
     // Refetch the newest kind-0 (so a renamed / re-avatar'd profile updates live) CONCURRENTLY with the
     // notes fetch below — they're independent, so running them in parallel instead of back-to-back saves a
     // full round-trip on every profile open. Awaited just before the header paint (usually already resolved).

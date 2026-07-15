@@ -123,6 +123,19 @@
     // back-compat single-relay entry point (built-in WoT relay, trusted)
     connect(url){ this.configure({ urls: url ? [url] : [], verify: false }); },
 
+    // Resolve once a socket is actually OPEN (or `ms` elapses). Call BEFORE a burst of one-shot reads on a
+    // cold start: on first launch (esp. the APK, radio waking) the socket is still CONNECTING, and firing
+    // REQs into it just drops them (Conn._send needs readyState OPEN) and eats the full query timeout —
+    // the "15s profile load + 0 followers on first open, fine after reload". Instant when already connected.
+    ready(ms=3000){
+      return new Promise(resolve => {
+        const ok = () => { for (const c of this._conns.values()) if (c.ws && c.ws.readyState === 1) return true; return false; };
+        if (ok() || !this._conns.size) return resolve();
+        const t0 = Date.now();
+        const iv = setInterval(() => { if (ok() || Date.now() - t0 >= ms){ clearInterval(iv); resolve(); } }, 50);
+      });
+    },
+
     // Force a fresh connection on every relay — call when the app returns to the foreground. A mobile
     // PWA's WebSocket is frozen while backgrounded and very often comes back DEAD-but-still-"open"
     // (zombie): the client thinks it's connected, no events flow, and the next query times out against a
