@@ -236,15 +236,6 @@
         }, 10000);
       }
     },
-    // Force ONE fresh connection for a failed read, debounced. The profile loader fires several reads at
-    // once (Promise.all), so without this each would wake() and tear down the others' reconnecting socket.
-    // Concurrent read-failures within 2s share the single in-flight reconnect; the rest just _awaitConnected.
-    _recoverForRead(){
-      const now = Date.now();
-      if (this._lastReadWake && now - this._lastReadWake < 2000) return;
-      this._lastReadWake = now;
-      try{ this.wake(); }catch(_){}
-    },
     // Resolve once ANY socket reports readyState OPEN (or `ms` elapses). Used to hold a retried read
     // until the just-reconnected socket is actually up — Conn._send DROPS anything sent before OPEN.
     _awaitConnected(ms=1500){
@@ -260,13 +251,18 @@
       return new Promise((res)=>{
         const got = []; let done = false;
         const finish = (viaTimeout) => { if (done) return; done = true; this.close(id);
-          // A timeout with ZERO events means the socket was frozen/dead — a genuinely empty result EOSEs
-          // (finish(false)) and never lands here. Force a fresh connection and retry the read ONCE so a
-          // read right after a proxy idle-close / mobile resume self-heals instead of surfacing an empty
-          // list (the "followers show 0 / empty until reload" bug: one-shot reads aren't re-armed on
-          // reconnect, unlike live subs). _retry=false caps it at a single retry.
+          // A timeout with ZERO events means the socket was dead or still connecting when we sent — a
+          // genuinely empty result EOSEs (finish(false)) and never lands here. Reconnect any dead socket,
+          // wait for one to be OPEN, and retry the read ONCE so a read fired before the socket was ready
+          // (fresh load) or against a dead socket self-heals instead of surfacing an empty list (the
+          // "followers show 0 / empty until reload" bug: one-shot reads aren't re-armed on reconnect,
+          // unlike live subs). _retry=false caps it at a single retry.
           if (viaTimeout && !got.length && _retry){
-            this._recoverForRead();
+            // reviveStale reconnects ONLY a genuinely dead/stale socket — it never touches a healthy or
+            // still-connecting one, so it can't disrupt the OTHER concurrent reads. Then wait for a socket
+            // to be OPEN and retry ONCE. Covers the two real cases: a read fired before the socket finished
+            // connecting (fresh load), or against a dead socket — both self-heal instead of returning empty.
+            try{ this.reviveStale(); }catch(_){}
             this._awaitConnected(1500).then(()=> this.query(filters, timeout, false).then(res));
             return;
           }
@@ -288,10 +284,10 @@
         const id = 'cnt' + Math.random().toString(36).slice(2,9);
         let best = 0, done = false, settle = null, replied = false;
         const finish = () => { if (done) return; done = true; clearTimeout(settle); this._countWaiters.delete(id);
-          // No COUNT reply at all (not even a {count:0}) → a frozen socket, not a real zero. Force-reconnect
-          // and retry ONCE so a follower/following tally doesn't render a spurious 0 after a resume. A
-          // genuine 0 DID reply (replied=true) and resolves straight through. Mirrors query()'s self-heal.
-          if (_retry && !replied){ this._recoverForRead();
+          // No COUNT reply at all (not even a {count:0}) → a dead/not-yet-ready socket, not a real zero.
+          // Reconnect any dead socket and retry ONCE so a follower/following tally doesn't render a spurious
+          // 0. A genuine 0 DID reply (replied=true) and resolves straight through. Mirrors query()'s self-heal.
+          if (_retry && !replied){ try{ this.reviveStale(); }catch(_){}
             return void this._awaitConnected(1500).then(()=> this.count(filters, timeout, false).then(res)); }
           res(best); };
         this._countWaiters.set(id, n => {
