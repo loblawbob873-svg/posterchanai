@@ -6923,18 +6923,29 @@
   // follower re-saving their list never re-pings or re-lights the badge.
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
   let _followSeeded=false;   // true once the follower seed (below) has run — before that, notifList must NOT persist pins
+  // A STABLE floor for history follows: captured ONCE and never advanced. History/unpinned follows are
+  // capped to it so a known follower re-saving their contact list can't float back to the top — UNLIKE
+  // seenNotif.last, which advances on every view and kept re-admitting re-saved follows as "new" (the
+  // recurring follow-spam). Seed it from the LAST-VIEWED time (pc_notif_seen) when we have one — an older,
+  // safer floor than "now", so on the very first load after this ships an existing user's followers who
+  // re-saved recently are still capped below the seen line (a bare "now" epoch wouldn't cap them yet).
+  let _notifEpoch=+(localStorage.getItem('pc_notif_epoch')||0);
+  if(!_notifEpoch){ const _lastSeen=+(localStorage.getItem('pc_notif_seen')||0); const _now=Math.floor(Date.now()/1000);
+    _notifEpoch = _lastSeen ? Math.min(_now, _lastSeen) : _now;   // never 0 (would render "55 years ago")
+    try{ localStorage.setItem('pc_notif_epoch', String(_notifEpoch)); }catch(_){} }
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
   // Pin a follower we're meeting from HISTORY (the seed, the relay's pre-EOSE backlog, the Store cache) —
   // never at their kind-3's created_at, which is just their last contact-list SAVE. Keep them at/below the
   // seen line so an old follower re-saving their list can't float to the top as a brand-new "followed you".
-  function _followTsOld(pk, created){ return _followTs(pk, seenNotif.last ? Math.min(created, seenNotif.last) : created); }
+  function _followTsOld(pk, created){ return _followTs(pk, Math.min(created, _notifEpoch)); }
   // Unpinned kind-3 (seed missed them / storage cleared) gets the same conservative time, so the ORDER is
   // right even when nothing has been recorded yet — the pin is a cache, not the thing correctness rests on.
+  // Cap at the STABLE _notifEpoch (never seenNotif.last, which advances and re-floats re-saved followers).
   function _notifTs(e){
     if(e.kind!==3) return e.created_at;
-    return _followSeen[e.pubkey] || (seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at);
+    return _followSeen[e.pubkey] || Math.min(e.created_at, _notifEpoch);
   }
   async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
@@ -6948,10 +6959,10 @@
       const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
       let changed=false;
       for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
-        // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
-        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0. Also
-        // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
-        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
+        // Pin an existing follower at/below the STABLE epoch so a later re-save can't float them to the top.
+        // _notifEpoch is a real timestamp (never 0), so no "55 years ago". Also REPAIRS a stale 0 persisted
+        // by an old build (falsy → treated as unset here). Batched: one localStorage write below, not per row.
+        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]=Math.min(e.created_at, _notifEpoch); changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
       // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
       // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
@@ -6962,16 +6973,22 @@
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.kind===3){
+          // A kind-3 is the follower's WHOLE contact list, re-saved on every follow/unfollow — so a follower
+          // we've ALREADY recorded re-saving theirs is NOT news. "known" = KEY-EXISTENCE in _followSeen (a
+          // stored 0 from an old build still counts as seen — the fix over the old truthiness test that let
+          // 0-pinned followers re-surface). Deliberately NOT the FOLLOWERS set: ensureMyFollowers() adds
+          // even a brand-new follower to FOLLOWERS when you open a people list, which would then wrongly
+          // suppress their genuine follow. _followSeen is a stable app-start snapshot, so a pubkey we've
+          // NEVER recorded arriving LIVE (after EOSE) is a real new follow → pin at now (shows recent);
+          // everything else — backlog, or any known follower re-saving — pins OLD and can't float to the top.
+          const known = Object.prototype.hasOwnProperty.call(_followSeen, ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
-          // Before EOSE this is the relay's BACKLOG — history the seed should have covered, not news. A
-          // kind-3 carries no "when did they follow you" (it's their whole contact list, re-saved whenever
-          // they follow ANYONE), so pinning backlog at its created_at is exactly what kept showing an old
-          // follower as a fresh "followed you" every time they edited their list. Only a kind-3 that lands
-          // AFTER EOSE is a genuinely new follow.
-          const firstTime = !_followSeen[ev.pubkey];
-          const live = _notifReady;
-          const ts = live ? _followTs(ev.pubkey, ev.created_at) : _followTsOld(ev.pubkey, ev.created_at);
-          if(live && firstTime && ts>seenNotif.last) bumpNotif();
+          // Surface as a genuinely-new follow (pin at now) ONLY when live AND never-recorded AND the seed
+          // actually populated _followSeen (_followSeeded) — otherwise "unknown" can't be trusted to mean
+          // "new" (a cold-cache seed that returned nothing leaves every old follower unrecorded), so pin it
+          // as history. This closes the cold-cache case where an old follower re-saving still spammed "new".
+          if(_notifReady && !known && _followSeeded) _followTs(ev.pubkey, ev.created_at);
+          else _followTsOld(ev.pubkey, ev.created_at);
           if(VIEW==='notifications') renderNotifications();
           return;                                  // a re-saved contact list never re-notifies
         }
@@ -7627,8 +7644,11 @@
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
-    const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
+    const mine=pk===ME.pubkey;
+    // Refetch the newest kind-0 (so a renamed / re-avatar'd profile updates live) CONCURRENTLY with the
+    // notes fetch below — they're independent, so running them in parallel instead of back-to-back saves a
+    // full round-trip on every profile open. Awaited just before the header paint (usually already resolved).
+    const k0=Relay.query([{authors:[pk],kinds:[0],limit:1}]).then(e=>{ for(const x of e)Store.saveProfile(x); }).catch(()=>{});
     // Only the author's recent notes block the first paint. following/followers/pinned are loaded
     // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
     // was the multi-second stall on every profile open.
@@ -7643,8 +7663,10 @@
       if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
       await new Promise(r=>setTimeout(r, 450*(attempt+1)));
     }
-    notes.forEach(n=>Store.saveEvent(n));
+    await k0;   // fold in the freshest profile before painting the header (usually already resolved during the notes fetch)
     if(VIEW!=='profile') return;
+    const p=Store.profile(pk)||{};
+    notes.forEach(n=>Store.saveEvent(n));
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
