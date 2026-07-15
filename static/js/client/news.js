@@ -27,12 +27,35 @@
     let _obs = null;          // IntersectionObserver for mark-read-on-scroll
     let _loading = false;
     let _gen = 0;             // render token — a newer render/feed-switch supersedes an in-flight older one
+    let _loaded = false;      // true once News has fetched items this session (guards the global-unread recompute)
     const inView = () => window.__PC.VIEW === 'news';
 
     // ---- read state: a capped, insertion-ordered set of item ids (bounded so the event can't grow) ----
     let _readIds = [], _readSet = new Set(), _readSaveT = null;
     function _loadReadLocal(){ try{ _readIds = JSON.parse(localStorage.getItem('pc_news_read')||'[]')||[]; }catch(_){ _readIds=[]; } _readSet = new Set(_readIds); }
     function isRead(id){ return _readSet.has(id); }
+    // unread badge on the News nav entries. The GLOBAL unread count can only be computed from the 'all'
+    // view (which loads every feed); any other time we just repaint the last-persisted count so a
+    // single-feed view or a call before News has loaded can NEVER clobber it down to 0.
+    let _badgeT = null;
+    function updateBadge(){
+      _paintBadge(_persistedBadge());                     // instant: always show the last-known count
+      if(_loaded && _active === 'all'){                   // only 'all' may recompute the global count
+        clearTimeout(_badgeT); _badgeT = setTimeout(_recomputeBadge, 150);   // debounced (scroll marks many)
+      }
+    }
+    function _recomputeBadge(){
+      try{
+        let n = 0; for(const it of _items){ if(!isRead(it.id)) n++; }
+        try{ localStorage.setItem('pc_news_unread', String(n)); }catch(_){}
+        _paintBadge(n);
+      }catch(_){}
+    }
+    function _persistedBadge(){ try{ return +(localStorage.getItem('pc_news_unread') || 0) || 0; }catch(_){ return 0; } }
+    function _paintBadge(n){
+      const txt = n > 99 ? '99+' : String(n);
+      document.querySelectorAll('.news-badge').forEach(b=>{ b.textContent = n ? txt : ''; b.style.display = n ? '' : 'none'; });
+    }
     function markRead(id){
       if(!id || _readSet.has(id)) return;
       _readSet.add(id); _readIds.push(id);
@@ -92,26 +115,30 @@
     }
 
     // ---- fetch ----
+    // Returns the fetched items (does NOT assign _items) — renderNews assigns only after its generation
+    // check, so a slow superseded fetch can't clobber a newer feed's _items (share/summarize/mark-read).
     async function fetchActive(){
       _loading = true;
       try{
+        let items = [];
         if(_active==='all'){
           const all=_feeds.map(f=>f.url);
-          if(!all.length){ _items=[]; return; }
-          // CHUNK the feed list (a big imported OPML would blow the server's URL-length limit / 30-feed cap).
-          const chunks=[]; for(let i=0;i<all.length;i+=12) chunks.push(all.slice(i,i+12));
-          const nameOf = u => (_feeds.find(f=>f.url===u)||{}).name || (u.split('/')[2]||u);
-          const results = await Promise.all(chunks.map(c=>
-            fetch('/api/rss/feeds?urls='+encodeURIComponent(c.join(','))).then(r=>r.json()).catch(()=>({feeds:[]}))));
-          _items = [];
-          for(const r of results) for(const fd of (r.feeds||[])) for(const it of (fd.items||[])) _items.push({ ...it, feed:fd.url, feedName: nameOf(fd.url) });
+          if(all.length){
+            // CHUNK the feed list (a big imported OPML would blow the server's URL-length limit / 30-feed cap).
+            const chunks=[]; for(let i=0;i<all.length;i+=12) chunks.push(all.slice(i,i+12));
+            const nameOf = u => (_feeds.find(f=>f.url===u)||{}).name || (u.split('/')[2]||u);
+            const results = await Promise.all(chunks.map(c=>
+              fetch('/api/rss/feeds?urls='+encodeURIComponent(c.join(','))).then(r=>r.json()).catch(()=>({feeds:[]}))));
+            for(const r of results) for(const fd of (r.feeds||[])) for(const it of (fd.items||[])) items.push({ ...it, feed:fd.url, feedName: nameOf(fd.url) });
+          }
         } else {
           const fd = _feeds.find(f=>f.url===_active) || { url:_active, name:_active };
           const r = await fetch('/api/rss/feed?url='+encodeURIComponent(_active)).then(r=>r.json()).catch(()=>({items:[]}));
-          _items = (r.items||[]).map(it=>({ ...it, feed:fd.url, feedName: fd.name }));
+          items = (r.items||[]).map(it=>({ ...it, feed:fd.url, feedName: fd.name }));
         }
-        _items.sort((a,b)=> (b.ts||0)-(a.ts||0));
-        if(_items.length > MAX_ITEMS) _items = _items.slice(0, MAX_ITEMS);   // retention: keep newest 2000, drop older
+        items.sort((a,b)=> (b.ts||0)-(a.ts||0));
+        if(items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS);   // retention: keep newest 2000, drop older
+        return items;
       } finally { _loading = false; }
     }
 
@@ -146,17 +173,22 @@
       // wire actions
       $$('.news-share', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const it=_items[+b.dataset.i]; if(it) compose({ text: it.title + '\n\n' + it.link }); });
       $$('.news-sum', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); summarize(_items[+b.dataset.i], b); });
-      // mark-read only once a card has scrolled ABOVE the top of the viewport (you read PAST it) — NOT
-      // merely because it's on screen at first render (that would grey the newest headlines unread).
+      // mark-read once a card has scrolled ABOVE the top of the SCROLL CONTAINER (you read PAST it) — NOT
+      // merely on screen at first render (that would grey the newest headlines). root MUST be #feed (the
+      // overflow-y:auto scroller): with the default viewport root a card scrolled out #feed's top is still
+      // in the viewport behind the top bar, so its rect.bottom never reaches 0 and nothing marks read.
       if(_obs) _obs.disconnect();
+      // #feed is the scroll container normally; in embed mode CSS forces it overflow:visible and the WINDOW
+      // scrolls instead — use the viewport root (null) there so mark-read still fires.
+      const scroller = document.body.classList.contains('embed') ? null : ($('#feed') || null);
       _obs = new IntersectionObserver(ents=>{ for(const en of ents){
         const top = en.rootBounds ? en.rootBounds.top : 0;
         if(!en.isIntersecting && en.boundingClientRect.bottom <= top){
           const el=en.target; const it=_items[+el.dataset.i];
-          if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); }
+          if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); updateBadge(); }
           _obs.unobserve(el);
         }
-      } }, { threshold:0 });
+      } }, { root: scroller, threshold:0 });
       $$('.news-card', list).forEach(el=> _obs.observe(el));
     }
     async function renderNews(){
@@ -168,9 +200,12 @@
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
       $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } _active=b.dataset.feed; renderNews(); });
-      await fetchActive();
+      const items = await fetchActive();
       if(gen!==_gen || !inView()) return;       // navigated away / a newer feed-switch won the race
+      _items = items;                           // assign ONLY as the winning render (stale fetch is discarded)
+      _loaded = true;
       renderList();
+      updateBadge();
     }
 
     // ---- summarize (server LLM) ----
@@ -233,7 +268,9 @@
     }
     function closeNews(){ if(_nMod){ _nMod.remove(); _nMod=null; } }
 
-    window.PCNews = { render: renderNews };
+    window.PCNews = { render: renderNews, updateBadge };
+    // paint the last known unread count at startup so the nav badge shows before News is opened (no extra fetch)
+    try{ const n = +(localStorage.getItem('pc_news_unread') || 0); if(n > 0) _paintBadge(n); }catch(_){}
   }
   init();
 })();

@@ -40,6 +40,9 @@ _ERR_TTL = 60.0         # negative cache: a failing feed is retried at most once
 
 _cache: dict = {}       # url -> (monotonic_fetched_at, payload)
 _inflight: dict = {}    # url -> asyncio.Future  (dedup concurrent fetches into ONE upstream request)
+_reval_at: dict = {}    # url -> monotonic time before which a stale-but-good feed won't be background-revalidated
+                        # again (so a once-good feed whose upstream is now down is retried at most once/_ERR_TTL,
+                        # not on every request — we keep serving the good copy rather than caching the error)
 
 _TAG = lambda t: t.rsplit('}', 1)[-1].lower() if '}' in t else t.lower()
 _HTML_TAGS = re.compile(r'<[^>]+>')
@@ -192,6 +195,8 @@ def parse_feed(raw: bytes, base_url: str) -> tuple:
         # <media:group><media:thumbnail url=.../><media:description>… — the direct-children loop misses it).
         # Scan descendants for a media:thumbnail / image media:content and a description.
         if not image or not desc:
+            # walk the whole item subtree — thumbnails/descriptions nest at varying depths (media:group,
+            # media:content wrappers, YouTube, …); the subtree is small (one item) so this is cheap.
             for sub in node.iter():
                 st = _TAG(sub.tag)
                 u = (sub.get("url") or "").strip()
@@ -252,10 +257,12 @@ async def _fetch(url: str) -> dict:
 
 def _evict():
     """Bound the shared cache — drop the oldest entries once past _MAX_CACHE (public endpoint, arbitrary URLs)."""
-    if len(_cache) <= _MAX_CACHE:
+    over = len(_cache) - _MAX_CACHE
+    if over <= 0:
         return
-    for k in sorted(_cache, key=lambda k: _cache[k][0])[: len(_cache) - _MAX_CACHE]:
+    for k in sorted(_cache, key=lambda k: _cache[k][0])[:over]:
         _cache.pop(k, None)
+        _reval_at.pop(k, None)
 
 
 def _start_fetch(url: str):
@@ -270,9 +277,16 @@ def _start_fetch(url: str):
             _inflight.pop(u, None)
             try:
                 p = f.result()
-                if isinstance(p, dict):
-                    _cache[u] = (time.monotonic(), p)   # cache errors too (negative cache → no re-fetch storm)
+                if not isinstance(p, dict):
+                    return
+                if not p.get("error"):
+                    _cache[u] = (time.monotonic(), p)                       # good → always cache
+                    _reval_at.pop(u, None)                                  # recovered → clear revalidation backoff
                     _evict()
+                elif u not in _cache or _cache[u][1].get("error"):
+                    _cache[u] = (time.monotonic(), p)                       # error → cache ONLY when there's no
+                    _evict()                                               # good copy to protect (negative cache).
+                    # A good copy present is left untouched (keep serving it); get_feed throttles the retry.
             except Exception:
                 pass
         fut.add_done_callback(_done)
@@ -294,7 +308,9 @@ async def get_feed(url: str, force: bool = False) -> dict:
         if (now - hit[0]) < (_TTL if good else _ERR_TTL):
             return {**hit[1], "cached": True}
         if good:                                             # stale-but-good → serve now, revalidate in bg
-            _start_fetch(url)
+            if now >= _reval_at.get(url, 0.0):               # throttle: at most one bg revalidation per _ERR_TTL,
+                _reval_at[url] = now + _ERR_TTL              # so a once-good feed whose upstream is now down isn't
+                _start_fetch(url)                            # re-fetched on every request (dead-upstream storm)
             return {**hit[1], "cached": True, "stale": True}
         # stale error → fall through and refetch inline (nothing good to serve)
 
