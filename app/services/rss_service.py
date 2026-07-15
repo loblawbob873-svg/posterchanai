@@ -184,6 +184,19 @@ def parse_feed(raw: bytes, base_url: str) -> tuple:
         if key in seen:
             continue
         seen.add(key)
+        # Fallback: some feeds NEST the thumbnail/description one level down (e.g. YouTube's
+        # <media:group><media:thumbnail url=.../><media:description>… — the direct-children loop misses it).
+        # Scan descendants for a media:thumbnail / image media:content and a description.
+        if not image or not desc:
+            for sub in node.iter():
+                st = _TAG(sub.tag)
+                u = (sub.get("url") or "").strip()
+                if not image and u and (st == "thumbnail" or (st == "content" and "image" in (sub.get("type") or ""))):
+                    image = u
+                if not desc and st in ("description", "summary") and (sub.text or "").strip():
+                    desc = sub.text
+                if image and desc:
+                    break
         if not image:
             image = _abs_url(_img_from_html(desc), base_url)
         items.append({"id": key, "title": title, "link": link, "ts": _to_ts(date),
