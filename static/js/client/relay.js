@@ -127,12 +127,19 @@
     // cold start: on first launch (esp. the APK, radio waking) the socket is still CONNECTING, and firing
     // REQs into it just drops them (Conn._send needs readyState OPEN) and eats the full query timeout —
     // the "15s profile load + 0 followers on first open, fine after reload". Instant when already connected.
+    // Resolves TRUE once a socket is actually OPEN, or FALSE if `ms` elapsed first (still connecting /
+    // offline). The caller uses the boolean to decide whether its reads hit a live socket — if not, it
+    // marks itself un-hydrated so onReady/onReconnect can reload it when the socket finally comes up.
     ready(ms=3000){
       return new Promise(resolve => {
         const ok = () => { for (const c of this._conns.values()) if (c.ws && c.ws.readyState === 1) return true; return false; };
-        if (ok() || !this._conns.size) return resolve();
+        if (ok()) return resolve(true);
+        if (!this._conns.size) return resolve(false);
         const t0 = Date.now();
-        const iv = setInterval(() => { if (ok() || Date.now() - t0 >= ms){ clearInterval(iv); resolve(); } }, 50);
+        const iv = setInterval(() => {
+          if (ok()){ clearInterval(iv); resolve(true); }
+          else if (Date.now() - t0 >= ms){ clearInterval(iv); resolve(false); }
+        }, 50);
       });
     },
 

@@ -1216,7 +1216,10 @@
     Relay.onReady = ()=>{
       hydrateUser();
       setTimeout(loadRightbar, 1500);
-      if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
+      if(_entityFromPath()){ routeFromPath(); return; }   // deep-link needs relay data (profile/thread fetch)
+      // Cold start: a profile opened before the socket was up painted 0/0 (hydrated=false). Now that the
+      // socket is live, reload it so its follower/following counts + notes fill in — no manual refresh.
+      if(VIEW==='profile' && _prof && _prof.pk && !_prof.hydrated) renderProfileView(_prof.pk); };
     // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
     // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
     // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
@@ -1227,7 +1230,11 @@
       // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
       // case for those, so it'd blank them to a spinner). The fetches also self-render these.
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+        .then(()=>{ if(GUEST) return;
+          // A profile that never hydrated (opened while the socket was down) reloads on reconnect too — but
+          // an already-loaded profile is left alone (no scroll/tab reset on a routine socket blip).
+          if(VIEW==='profile' && _prof && _prof.pk && !_prof.hydrated){ try{ renderProfileView(_prof.pk); }catch(_){} return; }
+          if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
     };
     connectRelays();
     // Guest→login WITHOUT a page reload: the relay is already connected from guest browsing, so the
@@ -7645,30 +7652,37 @@
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     const mine=pk===ME.pubkey;
-    await Relay.ready(3000);   // on a cold start the relay socket is still connecting; wait for it before
-                               // querying so the reads don't drop into a dead socket and eat 6s timeouts
-                               // (the "15s profile load + 0 followers on first open, fine after reload" bug)
+    // On a cold start the relay socket is still connecting; wait for it before querying so the reads don't
+    // drop into a dead socket and eat 6s timeouts (the "15s profile load + 0 followers on first open, fine
+    // after reload" bug). wasReady=false means it timed out still-connecting — we record that on _prof so
+    // onReady/onReconnect reload this profile the moment the socket actually opens (see boot()).
+    const wasReady = await Relay.ready(4000);
     if(VIEW!=='profile') return;   // navigated away while the socket was connecting
-    // Refetch the newest kind-0 (so a renamed / re-avatar'd profile updates live) CONCURRENTLY with the
-    // notes fetch below — they're independent, so running them in parallel instead of back-to-back saves a
-    // full round-trip on every profile open. Awaited just before the header paint (usually already resolved).
-    const k0=Relay.query([{authors:[pk],kinds:[0],limit:1}]).then(e=>{ for(const x of e)Store.saveProfile(x); }).catch(()=>{});
-    // Only the author's recent notes block the first paint. following/followers/pinned are loaded
-    // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
-    // was the multi-second stall on every profile open.
-    // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
-    // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
-    // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
-    // profile still resolves fast).
-    let notes=[];
-    for(let attempt=0; attempt<3; attempt++){
-      try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
-      if(VIEW!=='profile') return;   // navigated away during the notes fetch
-      if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
-      await new Promise(r=>setTimeout(r, 450*(attempt+1)));
+    let notes;
+    if(wasReady){
+      // Refetch the newest kind-0 (so a renamed / re-avatar'd profile updates live) CONCURRENTLY with the
+      // notes fetch below — they're independent, so running them in parallel instead of back-to-back saves a
+      // full round-trip on every profile open. Awaited just before the header paint (usually already done).
+      const k0=Relay.query([{authors:[pk],kinds:[0],limit:1}]).then(e=>{ for(const x of e)Store.saveProfile(x); }).catch(()=>{});
+      // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
+      // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
+      // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
+      // profile still resolves fast).
+      notes=[];
+      for(let attempt=0; attempt<3; attempt++){
+        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
+        if(VIEW!=='profile') return;   // navigated away during the notes fetch
+        if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
+        await new Promise(r=>setTimeout(r, 450*(attempt+1)));
+      }
+      await k0;   // fold in the freshest profile before painting the header (usually already resolved during the notes fetch)
+      if(VIEW!=='profile') return;
+    } else {
+      // Socket still connecting: firing REQs now just eats 6s timeouts (the old 10-15s cold open). Paint
+      // from whatever's cached and bail on the network — hydrated=false makes onReady/onReconnect reload the
+      // whole profile the instant the socket opens, so the real notes + follower counts fill in then.
+      notes = Store.feed(e=>e.pubkey===pk).slice(0,80);
     }
-    await k0;   // fold in the freshest profile before painting the header (usually already resolved during the notes fetch)
-    if(VIEW!=='profile') return;
     const p=Store.profile(pk)||{};
     notes.forEach(n=>Store.saveEvent(n));
     const npub=NT().nip19.npubEncode(pk);
@@ -7708,6 +7722,7 @@
     // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
     const authorNotes=Store.feed(e=>e.pubkey===pk);
     _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
+              hydrated: wasReady,   // false = queried before the socket was up → onReady/onReconnect reloads it
               oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
     fillList('notes');
     hydrate(feed);
@@ -7750,7 +7765,8 @@
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
-    (async()=>{
+    // Skipped on a cold socket (wasReady=false): these would just time out to 0/0; onReady reloads instead.
+    if(wasReady) (async()=>{
       const [k3, followerCount, pinList] = await Promise.all([
         Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
         Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
