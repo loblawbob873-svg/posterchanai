@@ -1216,10 +1216,7 @@
     Relay.onReady = ()=>{
       hydrateUser();
       setTimeout(loadRightbar, 1500);
-      if(_entityFromPath()){ routeFromPath(); return; }   // deep-link needs relay data (profile/thread fetch)
-      // Cold start: a profile opened before the socket was up painted 0/0 (hydrated=false). Now that the
-      // socket is live, reload it so its follower/following counts + notes fill in — no manual refresh.
-      if(VIEW==='profile' && _prof && _prof.pk && !_prof.hydrated) renderProfileView(_prof.pk); };
+      if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
     // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
     // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
@@ -1230,11 +1227,7 @@
       // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
       // case for those, so it'd blank them to a spinner). The fetches also self-render these.
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-        .then(()=>{ if(GUEST) return;
-          // A profile that never hydrated (opened while the socket was down) reloads on reconnect too — but
-          // an already-loaded profile is left alone (no scroll/tab reset on a routine socket blip).
-          if(VIEW==='profile' && _prof && _prof.pk && !_prof.hydrated){ try{ renderProfileView(_prof.pk); }catch(_){} return; }
-          if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
     };
     connectRelays();
     // Guest→login WITHOUT a page reload: the relay is already connected from guest browsing, so the
@@ -7638,6 +7631,7 @@
 
   // ---------- profile ----------
   let _prof = { pk:null, tab:'notes', oldest:0, loading:false, done:false, limit:40, fill:null };
+  let _profGen = 0;   // bumped per renderProfileView; async steps bail if superseded (opening B while A loads)
   // scroll-back for the active profile tab — pull older author notes, then re-fill the tab list
   // (notes/replies/media all derive from the author's kind-1 stream, so one fetch grows all three).
   async function loadOlderProfile(){
@@ -7671,41 +7665,27 @@
     _hidePill();
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
+    const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    const mine=pk===ME.pubkey;
-    // On a cold start the relay socket is still connecting; wait for it before querying so the reads don't
-    // drop into a dead socket and eat 6s timeouts (the "15s profile load + 0 followers on first open, fine
-    // after reload" bug). wasReady=false means it timed out still-connecting — we record that on _prof so
-    // onReady/onReconnect reload this profile the moment the socket actually opens (see boot()).
-    const wasReady = await Relay.ready(4000);
-    if(VIEW!=='profile') return;   // navigated away while the socket was connecting
-    let notes;
-    if(wasReady){
-      // Refetch the newest kind-0 (so a renamed / re-avatar'd profile updates live) CONCURRENTLY with the
-      // notes fetch below — they're independent, so running them in parallel instead of back-to-back saves a
-      // full round-trip on every profile open. Awaited just before the header paint (usually already done).
-      const k0=Relay.query([{authors:[pk],kinds:[0],limit:1}]).then(e=>{ for(const x of e)Store.saveProfile(x); }).catch(()=>{});
-      // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
-      // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
-      // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
-      // profile still resolves fast).
-      notes=[];
-      for(let attempt=0; attempt<3; attempt++){
-        try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
-        if(VIEW!=='profile') return;   // navigated away during the notes fetch
-        if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
-        await new Promise(r=>setTimeout(r, 450*(attempt+1)));
-      }
-      await k0;   // fold in the freshest profile before painting the header (usually already resolved during the notes fetch)
-      if(VIEW!=='profile') return;
-    } else {
-      // Socket still connecting: firing REQs now just eats 6s timeouts (the old 10-15s cold open). Paint
-      // from whatever's cached and bail on the network — hydrated=false makes onReady/onReconnect reload the
-      // whole profile the instant the socket opens, so the real notes + follower counts fill in then.
-      notes = Store.feed(e=>e.pubkey===pk).slice(0,80);
+    { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
+    if(myGen!==_profGen) return;   // a newer profile opened during the kind-0 fetch
+    const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
+    // Only the author's recent notes block the first paint. following/followers/pinned are loaded
+    // in the BACKGROUND below — the followers query alone can pull up to 1000 kind-3 events, which
+    // was the multi-second stall on every profile open.
+    // Retry an EMPTY result: over a high-latency link (Thailand→US) the first REQ can EOSE empty before
+    // the relay serves this author's notes → the profile showed "0 posts" for an active account. Retry a
+    // couple times with backoff (only when we got nothing AND have nothing cached, so a genuinely-empty
+    // profile still resolves fast).
+    let notes=[];
+    for(let attempt=0; attempt<3; attempt++){
+      try{ notes=await Relay.query([{authors:[pk],kinds:[1,1068,6],limit:80}]); }catch(_){ notes=[]; }   // polls + reposts
+      if(VIEW!=='profile' || myGen!==_profGen) return;   // navigated away / a newer profile opened during the notes fetch
+      if(notes.length || Store.feed(e=>e.pubkey===pk).length) break;
+      await new Promise(r=>setTimeout(r, 450*(attempt+1)));
     }
-    const p=Store.profile(pk)||{};
     notes.forEach(n=>Store.saveEvent(n));
+    if(VIEW!=='profile' || myGen!==_profGen) return;
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -7743,7 +7723,6 @@
     // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
     const authorNotes=Store.feed(e=>e.pubkey===pk);
     _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
-              hydrated: wasReady,   // false = queried before the socket was up → onReady/onReconnect reloads it
               oldest: authorNotes.length ? authorNotes[authorNotes.length-1].created_at : 0 };
     fillList('notes');
     hydrate(feed);
@@ -7786,35 +7765,29 @@
     // Background: following / followers / pinned — fetched in PARALLEL after the first paint and
     // patched in, so the profile opens instantly instead of waiting on (esp.) the 1000-event
     // followers query. Re-checks _prof.pk so a fast navigation away doesn't patch the wrong profile.
-    // The reads themselves are reliable (a manual COUNT returns the right number) — the only failure mode is
-    // firing them before the socket is delivering. So RETRY until we get real data instead of firing once:
-    // wait for a live socket (v312 zombie-aware), query, and if EVERYTHING comes back empty (0 followers AND
-    // no contact list AND no pins = a failed read, not a genuinely-blank profile) wait and try again. This is
-    // what makes "0/0 until reload" impossible without touching query()/count() internals.
     (async()=>{
+      // The follower COUNT and the contact-list (following) REQ race empty INDEPENDENTLY on a just-connected
+      // socket, so a single fire can land followers but 0 following (or 0/0). Patch each stat the moment ITS
+      // read arrives, and retry (up to 3x) until BOTH are in — a genuinely-empty field just exhausts the
+      // retries and shows 0. This does NOT touch the notes/paint path above.
       let k3=[], followerCount=0, pinList=[];
-      for(let attempt=0; attempt<4; attempt++){
-        await Relay.ready(6000);
-        if(VIEW!=='profile' || _prof.pk!==pk) return;   // navigated away
+      for(let attempt=0; attempt<3; attempt++){
         const [ak3, acount, apins] = await Promise.all([
-          Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),   // their contact list → FOLLOWING
-          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT of FOLLOWERS — don't pull 1000 contact-list blobs just to tally. List lazy-loaded on click.
+          Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
+          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
           Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
         ]);
-        if(VIEW!=='profile' || _prof.pk!==pk) return;
-        // Keep the BEST of each across attempts — the COUNT and the contact-list REQ each race empty
-        // independently, so a single attempt can land followers(174) but NOT following. Don't stop until
-        // BOTH the follower count AND the contact list are in (the 15xx bug: broke on count alone → 0 following).
-        if(acount>followerCount) followerCount=acount;
-        if(ak3.length) k3=ak3;
+        if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
+        if(acount>followerCount){ followerCount=acount; const fr=$('#show-followers b'); if(fr) fr.textContent=followerCount; }
+        if(ak3.length){ k3=ak3; _prof.following=k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]); const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length; }
         if(apins.length) pinList=apins;
         if(followerCount && k3.length) break;
-        await new Promise(r=>setTimeout(r, 700*(attempt+1)));
+        await new Promise(r=>setTimeout(r, 800*(attempt+1)));
       }
-      _prof.hydrated = !!(followerCount || k3.length);   // still nothing after retries → let onReady/onReconnect try again later
-      _prof.following = k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
-      const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
-      const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
+      // Write the FINAL values unconditionally — a genuinely-empty field (0 followers, or no contact list)
+      // never triggered the in-loop patch, so without this it would keep the "·" placeholder instead of "0".
+      { const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
+        const ff=$('#show-following b'); if(ff) ff.textContent=(_prof.following||[]).length; }
       const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
       if(pinIds.length){
         const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));
