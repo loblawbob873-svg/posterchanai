@@ -56,6 +56,13 @@
       const txt = n > 99 ? '99+' : String(n);
       document.querySelectorAll('.news-badge').forEach(b=>{ b.textContent = n ? txt : ''; b.style.display = n ? '' : 'none'; });
     }
+    function markAllRead(){
+      for(const it of _items){ markRead(it.id); }     // marks the loaded set (global set when in the 'all' view)
+      if(_active === 'all'){ try{ localStorage.setItem('pc_news_unread', '0'); }catch(_){} _paintBadge(0); }
+      else updateBadge();
+      renderList();
+      try{ toast('marked all read'); }catch(_){}
+    }
     function markRead(id){
       if(!id || _readSet.has(id)) return;
       _readSet.add(id); _readIds.push(id);
@@ -163,6 +170,7 @@
     function _chips(){
       const chip = (v,l)=>`<button class="news-chip${_active===v?' on':''}" data-feed="${enc(v)}">${enc(l)}</button>`;
       return `<div class="news-chips">${chip('all','All')}${_feeds.map(f=>chip(f.url, f.name)).join('')}
+        <button class="news-chip news-readall" title="Mark all read">✓✓</button>
         <button class="news-chip news-add" title="Manage feeds">＋</button></div>`;
     }
     function renderList(){
@@ -199,7 +207,7 @@
       if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
-      $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } _active=b.dataset.feed; renderNews(); });
+      $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } if(b.classList.contains('news-readall')){ markAllRead(); return; } _active=b.dataset.feed; renderNews(); });
       const items = await fetchActive();
       if(gen!==_gen || !inView()) return;       // navigated away / a newer feed-switch won the race
       _items = items;                           // assign ONLY as the winning render (stale fetch is discarded)
