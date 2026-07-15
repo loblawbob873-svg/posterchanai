@@ -20,7 +20,7 @@ from app.database import init_db, get_db
 from app.auth import get_current_user_optional, get_current_user, create_access_token
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
-from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss
+from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -200,6 +200,7 @@ app.include_router(mail.router)
 app.include_router(torrent.router)
 app.include_router(fourchan.router)
 app.include_router(rss.router)
+app.include_router(markets.router)
 app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
@@ -411,6 +412,12 @@ async def startup():
                 start_catalog_refresh()
             except Exception as e:
                 logging.error(f"Error starting 4chan refresh scheduler: {e}", exc_info=True)
+            try:
+                # Markets daily digest (08:00): crypto price+news → operator kind-30078, served via /api/markets
+                from app.services.markets_service import start_markets_scheduler
+                start_markets_scheduler()
+            except Exception as e:
+                logging.error(f"Error starting markets scheduler: {e}", exc_info=True)
 
             try:
                 # Resolve/mint the datastore operator key into the keyfile BEFORE the relay starts,
@@ -713,6 +720,11 @@ async def shutdown():
         try:
             from app.routers.fourchan import stop_catalog_refresh
             stop_catalog_refresh()
+        except Exception:
+            pass
+        try:
+            from app.services.markets_service import stop_markets_scheduler
+            stop_markets_scheduler()
         except Exception:
             pass
 

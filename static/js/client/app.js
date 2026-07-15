@@ -775,7 +775,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','calls','settings','translate','news']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -1661,7 +1661,7 @@
 
   // ---------- view routing ----------
   function switchView(v){
-    if(window.PC_NOSTR_ONLY && v==='ai') v='home';   // AI disabled in Nostr-only deployments
+    if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
@@ -1672,7 +1672,7 @@
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     { const dd=$('#btn-drafts-d'); if(dd) dd.classList.toggle('active', v==='drafts'); }   // desktop Drafts topbar btn is not a .nav-item — highlight it explicitly
     { const cc=$('#btn-calls-d'); if(cc) cc.classList.toggle('active', v==='calls'); }   // same for the desktop Calls topbar btn
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
     renderView(true);
@@ -1714,6 +1714,7 @@
     if (VIEW==='repos') return renderRepos();
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -1979,7 +1980,7 @@
   function bindMobileGestures(){
     const feed = $('#feed'); if(!feed || _gesturesBound) return; _gesturesBound = true;
     const SWIPE_VIEWS = ['home','global','notifications','messages'];   // mirrors the mobile bottom nav order
-    const REFRESHABLE = new Set(['home','global','notifications','messages','bookmarks','drafts','articles','market','streams','communities']);
+    const REFRESHABLE = new Set(['home','global','notifications','messages','bookmarks','drafts','articles','market','markets','streams','communities']);
     const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
     let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, ind=null;
     // Don't hijack horizontal drags that belong to scrollable/interactive children.
@@ -2472,7 +2473,7 @@
     const cats=mktCats(e); const sold=mktStatus(e)==='sold';
     const mine=e.pubkey===ME.pubkey;
     feed.innerHTML=`<div class="listing-view">
-      <button class="btn btn-ghost small" id="li-back">← Market</button>
+      <button class="btn btn-ghost small" id="li-back">← Shopping</button>
       ${imgs.length?`<div class="li-gallery"><img class="li-main" id="li-main" src="${enc(imgs[0])}" onerror="this.style.display='none'">
         ${imgs.length>1?`<div class="li-thumbs">${imgs.map((u,i)=>`<img class="li-th ${i===0?'on':''}" data-u="${enc(u)}" src="${enc(u)}" onerror="this.remove()">`).join('')}</div>`:''}</div>`:''}
       <div class="li-head">
@@ -2555,7 +2556,7 @@
       const a=_grab(); if(!(a.title||a.body||a.images.length)){ toast('nothing to save yet'); return; }
       if(!_slug) _slug=_slugFor(a.title);
       $('#le-status').textContent='saving draft…';
-      try{ await publishListing(a, _slug, 30403); $('#le-status').textContent='✓ draft saved'; toast('draft saved (in Market)'); }
+      try{ await publishListing(a, _slug, 30403); $('#le-status').textContent='✓ draft saved'; toast('draft saved (in Shopping)'); }
       catch(err){ $('#le-status').textContent='draft save failed'; }
     };
     $('#le-pub').onclick=async()=>{
@@ -5258,7 +5259,8 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['news','🗞️','News'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
+    const items=[['news','🗞️','News'],['markets','📈','Markets'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Shopping'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
