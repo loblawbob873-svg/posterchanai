@@ -1314,6 +1314,18 @@
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
     const [cls,txt] = map[s]||['',''];
     const el = $('#conn-status'); if(!el) return; el.className = 'conn ' + cls; el.querySelector('span').textContent = txt;
+    // Tap the connection line → an on-device DIAGNOSTIC alert (Firefox-Android has no console). Shows what
+    // the client actually reads for your followers/following + the live socket state, to pin down the
+    // recurring "0 followers + follow-spam" without remote debugging. Read-only; safe to leave in.
+    el.onclick = async ()=>{
+      if(!ME || !ME.pubkey){ alert('not logged in'); return; }
+      const socks=[...Relay._conns.values()].map(c=>(c.url||'?').replace(/^wss?:\/\//,'')+' rs='+(c.ws?c.ws.readyState:'-')+' rx='+(c._lastRx?(((Date.now()-c._lastRx)/1000)|0)+'s':'never'));
+      let cnt,own; try{ cnt=await Relay.count([{kinds:[3],'#p':[ME.pubkey]}]); }catch(e){ cnt=''+e; }
+      try{ own=await Relay.query([{authors:[ME.pubkey],kinds:[3],limit:1}]); }catch(_){ own=[]; }
+      alert('— DIAG —\nfollowers(count)= '+cnt+'\nfollowing= '+(own&&own[0]?own[0].tags.filter(t=>t[0]==='p'&&t[1]).length:'NO CONTACT LIST')
+        +'\nbuild= '+(window.__PC_APP_BUILD__||'web')+'\nrelay_url= '+((typeof CFG!=='undefined'&&CFG&&CFG.relay_url)||'?')
+        +'\nsockets:\n'+(socks.join('\n')||'NONE'));
+    };
   }
   // Sidebar community stats under ONLINE: network size (WoT) + who's using the site right now.
   // Network size (WoT) comes from CFG once (it barely changes — daily rebuild); only "online now" is

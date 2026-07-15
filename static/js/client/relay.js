@@ -132,12 +132,24 @@
     // marks itself un-hydrated so onReady/onReconnect can reload it when the socket finally comes up.
     ready(ms=3000){
       return new Promise(resolve => {
-        const ok = () => { for (const c of this._conns.values()) if (c.ws && c.ws.readyState === 1) return true; return false; };
-        if (ok()) return resolve(true);
+        // "Live" = OPEN and not a zombie. A zombie (proxy idle-closed / PWA resumed, but the browser still
+        // reports the socket OPEN) has readyState 1 yet delivers nothing — a bare readyState check treats it
+        // as ready and the caller's reads then time out into it (the "0 followers on the web too" case).
+        // Treat a trusted socket silent >30s as NOT live (matches reviveStale's zombie threshold).
+        const live = () => {
+          for (const c of this._conns.values()){
+            if (!c.ws || c.ws.readyState !== 1) continue;
+            if (c.trusted && c._lastRx && Date.now() - c._lastRx > 30000) continue;   // zombie
+            return true;
+          }
+          return false;
+        };
+        if (live()) return resolve(true);
         if (!this._conns.size) return resolve(false);
+        try{ this.reviveStale(); }catch(_){}   // reconnect a dead/zombie socket so live() can become true
         const t0 = Date.now();
         const iv = setInterval(() => {
-          if (ok()){ clearInterval(iv); resolve(true); }
+          if (live()){ clearInterval(iv); resolve(true); }
           else if (Date.now() - t0 >= ms){ clearInterval(iv); resolve(false); }
         }, 50);
       });
