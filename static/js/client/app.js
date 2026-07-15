@@ -7796,16 +7796,22 @@
       for(let attempt=0; attempt<4; attempt++){
         await Relay.ready(6000);
         if(VIEW!=='profile' || _prof.pk!==pk) return;   // navigated away
-        [k3, followerCount, pinList] = await Promise.all([
-          Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
-          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
+        const [ak3, acount, apins] = await Promise.all([
+          Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),   // their contact list → FOLLOWING
+          Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT of FOLLOWERS — don't pull 1000 contact-list blobs just to tally. List lazy-loaded on click.
           Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
         ]);
         if(VIEW!=='profile' || _prof.pk!==pk) return;
-        if(followerCount || k3.length || pinList.length) break;   // got real data → done
-        await new Promise(r=>setTimeout(r, 700*(attempt+1)));       // all empty → socket wasn't ready → retry
+        // Keep the BEST of each across attempts — the COUNT and the contact-list REQ each race empty
+        // independently, so a single attempt can land followers(174) but NOT following. Don't stop until
+        // BOTH the follower count AND the contact list are in (the 15xx bug: broke on count alone → 0 following).
+        if(acount>followerCount) followerCount=acount;
+        if(ak3.length) k3=ak3;
+        if(apins.length) pinList=apins;
+        if(followerCount && k3.length) break;
+        await new Promise(r=>setTimeout(r, 700*(attempt+1)));
       }
-      _prof.hydrated = !!(followerCount || k3.length || pinList.length);   // still empty after retries → let onReady/onReconnect try again later
+      _prof.hydrated = !!(followerCount || k3.length);   // still nothing after retries → let onReady/onReconnect try again later
       _prof.following = k3.length ? (k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])) : [];
       const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
       const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
