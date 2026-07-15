@@ -775,7 +775,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','calls','settings','translate']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','streams','communities','calls','settings','translate','news']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -1672,7 +1672,7 @@
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     { const dd=$('#btn-drafts-d'); if(dd) dd.classList.toggle('active', v==='drafts'); }   // desktop Drafts topbar btn is not a .nav-item — highlight it explicitly
     { const cc=$('#btn-calls-d'); if(cc) cc.classList.toggle('active', v==='calls'); }   // same for the desktop Calls topbar btn
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Market 🛍️', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
     renderView(true);
@@ -1713,6 +1713,7 @@
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
     if (VIEW==='4chan') return render4chan();
+    if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -5257,7 +5258,7 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
+    const items=[['news','🗞️','News'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Market'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']];
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
@@ -10654,7 +10655,11 @@
 
   window.__PC = {
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
-    ensureProfile: _ensureProfile, NT,
+    ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    // fetch that carries auth on BOTH web (session cookie) and the APK (bearer token) — for authed server
+    // endpoints like /api/news/summarize called from sub-modules (news.js).
+    authFetch: (url, opts={}) => fetch(url, { credentials:'include', ...opts, headers:{ ...(opts.headers||{}), ...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}) } }),
+    ensureAiSession,   // populate the bearer token (needed for authed endpoints on the APK) before authFetch
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),

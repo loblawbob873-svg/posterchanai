@@ -147,3 +147,4 @@ torpy
 # py-vapid + cryptography (already present) + http-ece. Server-side only; the client uses the browser
 # PushManager. See app/services/push_service.py + nostr_push_service.py.
 pywebpush>=1.14.0
+defusedxml>=0.7.1  # SSRF/entity-safe XML parsing for the News RSS reader

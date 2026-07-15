@@ -113,6 +113,7 @@
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="disc-toggle"><span class="ic">🧭</span><span>Discover</span><span class="chev" id="disc-chev">▾</span></button>
                 <div class="nav-sub" id="disc-sub">
+                    <button class="nav-item sub" data-view="news"><span class="ic">🗞️</span><span>News</span></button>
                     {% if not nostr_only %}<button class="nav-item sub" data-view="translate"><span class="ic">🗣️</span><span>Live Translate</span></button>{% endif %}
                     <button class="nav-item sub" data-view="articles"><span class="ic">📰</span><span>Articles</span></button>
                     <button class="nav-item sub" data-view="market"><span class="ic">🛍️</span><span>Market</span></button>
@@ -203,6 +204,7 @@
 <script src="/static/js/client/negentropy.js?v={{ ver }}"></script>
 <script src="/static/js/client/relay.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
+<script src="/static/js/client/news.js?v={{ ver }}"></script>
 <script src="/static/js/client/chess.js?v={{ ver }}"></script>
 <script src="/static/js/client/ttt.js?v={{ ver }}"></script>
 <script src="/static/js/client/hangman.js?v={{ ver }}"></script>
