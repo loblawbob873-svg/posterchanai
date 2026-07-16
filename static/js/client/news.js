@@ -34,22 +34,19 @@
     let _readIds = [], _readSet = new Set(), _readSaveT = null;
     function _loadReadLocal(){ try{ _readIds = JSON.parse(localStorage.getItem('pc_news_read')||'[]')||[]; }catch(_){ _readIds=[]; } _readSet = new Set(_readIds); }
     function isRead(id){ return _readSet.has(id); }
-    // unread badge on the News nav entries. The GLOBAL unread count can only be computed from the 'all'
-    // view (which loads every feed); any other time we just repaint the last-persisted count so a
-    // single-feed view or a call before News has loaded can NEVER clobber it down to 0.
-    let _badgeT = null;
+    // Unread badge = articles NEWER than the last time you opened News (the standard RSS "new since last
+    // visit" model — NOT "every item you haven't scrolled past", which on a 2000-item feed just sticks at
+    // 99+). Computed only from the 'all' view. The first visit sets the baseline (nothing pre-existing is
+    // "new" → 0), and opening News advances the baseline so the badge clears.
+    function _seenTs(){ try{ return +(localStorage.getItem('pc_news_seen_ts') || 0) || 0; }catch(_){ return 0; } }
     function updateBadge(){
-      _paintBadge(_persistedBadge());                     // instant: always show the last-known count
-      if(_loaded && _active === 'all'){                   // only 'all' may recompute the global count
-        clearTimeout(_badgeT); _badgeT = setTimeout(_recomputeBadge, 150);   // debounced (scroll marks many)
-      }
-    }
-    function _recomputeBadge(){
-      try{
-        let n = 0; for(const it of _items){ if(!isRead(it.id)) n++; }
-        try{ localStorage.setItem('pc_news_unread', String(n)); }catch(_){}
-        _paintBadge(n);
-      }catch(_){}
+      _paintBadge(_persistedBadge());                    // instant: show the last-known count
+      if(!_loaded || _active !== 'all') return;          // only the 'all' view sees the whole feed
+      const seen = _seenTs();
+      let newest = 0, cnt = 0;
+      for(const it of _items){ const t = it.ts || 0; if(t > newest) newest = t; if(seen && t > seen) cnt++; }
+      try{ localStorage.setItem('pc_news_unread', String(cnt)); localStorage.setItem('pc_news_seen_ts', String(newest)); }catch(_){}
+      _paintBadge(cnt);
     }
     function _persistedBadge(){ try{ return +(localStorage.getItem('pc_news_unread') || 0) || 0; }catch(_){ return 0; } }
     function _paintBadge(n){
@@ -57,9 +54,10 @@
       document.querySelectorAll('.news-badge').forEach(b=>{ b.textContent = n ? txt : ''; b.style.display = n ? '' : 'none'; });
     }
     function markAllRead(){
-      for(const it of _items){ markRead(it.id); }     // marks the loaded set (global set when in the 'all' view)
-      if(_active === 'all'){ try{ localStorage.setItem('pc_news_unread', '0'); }catch(_){} _paintBadge(0); }
-      else updateBadge();
+      for(const it of _items){ markRead(it.id); }        // grey the visible cards
+      let newest = 0; for(const it of _items){ if((it.ts || 0) > newest) newest = it.ts || 0; }
+      try{ localStorage.setItem('pc_news_seen_ts', String(newest)); localStorage.setItem('pc_news_unread', '0'); }catch(_){}
+      _paintBadge(0);
       renderList();
       try{ toast('marked all read'); }catch(_){}
     }
@@ -193,7 +191,7 @@
         const top = en.rootBounds ? en.rootBounds.top : 0;
         if(!en.isIntersecting && en.boundingClientRect.bottom <= top){
           const el=en.target; const it=_items[+el.dataset.i];
-          if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); updateBadge(); }
+          if(it && !isRead(it.id)){ markRead(it.id); el.classList.add('read'); }   // grey card; badge is time-based, not read-based
           _obs.unobserve(el);
         }
       } }, { root: scroller, threshold:0 });
@@ -277,8 +275,12 @@
     function closeNews(){ if(_nMod){ _nMod.remove(); _nMod=null; } }
 
     window.PCNews = { render: renderNews, updateBadge };
-    // paint the last known unread count at startup so the nav badge shows before News is opened (no extra fetch)
-    try{ const n = +(localStorage.getItem('pc_news_unread') || 0); if(n > 0) _paintBadge(n); }catch(_){}
+    // One-time migration: the old badge counted scroll-unread (stuck at 99+). If there's no "seen" baseline
+    // yet, clear that stale count so the new "new since last visit" model starts clean.
+    try{
+      if(!localStorage.getItem('pc_news_seen_ts')) localStorage.setItem('pc_news_unread', '0');
+      const n = _persistedBadge(); if(n > 0) _paintBadge(n);   // paint last known count before News is opened
+    }catch(_){}
   }
   init();
 })();
