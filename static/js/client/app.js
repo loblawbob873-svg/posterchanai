@@ -6930,7 +6930,10 @@
     if(!confirm('Delete this blob?'))return; const server=mediaServer();
     const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
-    if(res.ok){ FilesIdx.forget(sha); delete _trackUrls[sha]; toast('deleted'); renderBlossom(); } else toast('delete failed');
+    // 404 = the blob is already gone from the server, but a stale entry is still in the Files index → still
+    // forget it, so an already-deleted blob can be cleared from the file manager (was stuck as "delete failed").
+    if(res.ok || res.status===404){ FilesIdx.forget(sha); delete _trackUrls[sha]; toast(res.ok?'deleted':'removed'); renderBlossom(); }
+    else toast('delete failed');
   }
 
   // ---------- notifications ----------
