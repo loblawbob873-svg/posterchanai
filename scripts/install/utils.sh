@@ -182,7 +182,11 @@ ensure_igc_235() {
         return 0
     fi
     print_warning "Intel Graphics Compiler >= 2.35.5 not detected${_igc:+ (found $_igc)}."
-    echo "  It unblocks the 14B/long-context LLM and image gen >=768, and is in no distro repo."
+    echo "  It unblocks the 14B/long-context LLM and image gen >=768. Most distros don't package a"
+    echo "  new-enough IGC, so install-igc.sh fetches a prebuilt one. (Gentoo ships >=2.37 via"
+    echo "  'emerge dev-util/intel-graphics-compiler' — but if it errors with an llvm::AttributeMask"
+    echo "  redefinition, the ebuild is picking lld from the wrong LLVM slot; pin it via"
+    echo "  /etc/portage/env — see the project_igc_emerge_lld_slot note.)"
     local igc_script="$SCRIPT_DIR/scripts/install-igc.sh"
     if [ ! -x "$igc_script" ]; then
         echo "  Install with: sudo ./scripts/install-igc.sh --download"
