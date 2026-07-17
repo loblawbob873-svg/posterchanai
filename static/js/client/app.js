@@ -5279,9 +5279,9 @@
       return `<div class="note draft-card" data-draft="${d.id}"><div class="draft-body">${linkify(d.text||'')}</div>
         <div class="draft-foot"><span class="muted small">${ctx} saved ${timeAgo(d.ts)}</span>
           <span class="spacer"></span>
-          <button class="btn btn-ghost small" data-act="edit">✏ Edit</button>
-          <button class="btn btn-ghost small" data-act="del" style="color:var(--danger)">🗑 Delete</button>
-          <button class="btn btn-neon small" data-act="send">Send ▶</button></div></div>`;
+          <button class="btn btn-cyan small" data-act="edit">✏ Edit</button>
+          <button class="btn btn-cyan small" data-act="del">🗑 Delete</button>
+          <button class="btn btn-cyan small" data-act="send">Send ▶</button></div></div>`;
     }).join('') : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
     feed.innerHTML = `<div id="sched-section"></div>` + draftsHtml;
     feed.querySelectorAll('.draft-card').forEach(card=>{
