@@ -232,7 +232,7 @@
           <div class="news-meta">${enc(it.feedName||'')}${it.ts?' · '+_ago(it.ts)+' ago':''}</div>
           ${it.snippet?`<div class="news-snip">${enc(it.snippet)}</div>`:''}
           <div class="news-acts">
-            <button class="btn btn-ghost small news-share" data-i="${i}">↗ Share</button>
+            <button class="btn btn-cyan small news-share" data-i="${i}">↗ Share</button>
             ${window.PC_NOSTR_ONLY ? '' : `<button class="btn btn-ghost small news-sum" data-i="${i}">✨ Summarize</button>`}
           </div>
         </div></div>`;
