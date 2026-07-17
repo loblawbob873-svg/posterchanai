@@ -233,7 +233,7 @@
           ${it.snippet?`<div class="news-snip">${enc(it.snippet)}</div>`:''}
           <div class="news-acts">
             <button class="btn btn-cyan small news-post" data-i="${i}">↗ Share</button>
-            ${window.PC_NOSTR_ONLY ? '' : `<button class="btn btn-ghost small news-sum" data-i="${i}">✨ Summarize</button>`}
+            ${window.PC_NOSTR_ONLY ? '' : `<button class="btn btn-cyan small news-sum" data-i="${i}">✨ Summarize</button>`}
           </div>
         </div></div>`;
     }
