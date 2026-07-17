@@ -28,7 +28,7 @@
         <div class="mkts-head">
           <span class="mkts-sym">${enc(c.sym)}</span>
           <span class="mkts-name">${enc(c.name)}</span>
-          <button class="mkts-share btn btn-cyan" title="Share as a post">Share</button>
+          <button class="mkts-post btn btn-cyan" title="Share as a post">Share</button>
         </div>
         <div class="mkts-sum${c.summary?'':' mkts-muted'}">${c.summary ? enc(c.summary) : 'No data available right now.'}</div>
         ${arts ? `<div class="mkts-arts">${arts}</div>` : ''}
@@ -59,7 +59,7 @@
         <div class="mkts-top">📈 Daily crypto digest${r.generated_at?` · <span class="mkts-muted">${enc(fmtWhen(r.generated_at))}</span>`:''}</div>
         ${coins.map(_card).join('')}
       </div>`;
-      $$('.mkts-share', feed).forEach(b=> b.onclick=()=>{
+      $$('.mkts-post', feed).forEach(b=> b.onclick=()=>{
         const el = b.closest('.mkts-card'); const c = coins.find(x=>x.sym===el.dataset.sym);
         if(c) share(c);
       });

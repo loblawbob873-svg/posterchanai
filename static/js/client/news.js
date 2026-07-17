@@ -232,7 +232,7 @@
           <div class="news-meta">${enc(it.feedName||'')}${it.ts?' · '+_ago(it.ts)+' ago':''}</div>
           ${it.snippet?`<div class="news-snip">${enc(it.snippet)}</div>`:''}
           <div class="news-acts">
-            <button class="btn btn-cyan small news-share" data-i="${i}">↗ Share</button>
+            <button class="btn btn-cyan small news-post" data-i="${i}">↗ Share</button>
             ${window.PC_NOSTR_ONLY ? '' : `<button class="btn btn-ghost small news-sum" data-i="${i}">✨ Summarize</button>`}
           </div>
         </div></div>`;
@@ -249,7 +249,7 @@
       list.innerHTML = _items.length ? _items.map(_card).join('')
         : '<div class="empty">No articles — add a feed with ＋ or try again.</div>';
       // wire actions
-      $$('.news-share', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const it=_items[+b.dataset.i]; if(it) compose({ text: it.title + '\n\n' + it.link }); });
+      $$('.news-post', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const it=_items[+b.dataset.i]; if(it) compose({ text: it.title + '\n\n' + it.link }); });
       $$('.news-sum', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); summarize(_items[+b.dataset.i], b); });
       // mark-read once a card has scrolled ABOVE the top of the SCROLL CONTAINER (you read PAST it) — NOT
       // merely on screen at first render (that would grey the newest headlines). root MUST be #feed (the

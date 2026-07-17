@@ -703,7 +703,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .mkts-head{display:flex;align-items:center;gap:10px}
 .mkts-sym{font-weight:800;font-size:15px;color:var(--neon);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px 9px;letter-spacing:.5px}
 .mkts-name{font-weight:700;font-size:16px;color:var(--text);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mkts-share{flex:0 0 auto;padding:5px 14px;font-size:13px;border-radius:999px}
+.mkts-post{flex:0 0 auto;padding:5px 14px;font-size:13px;border-radius:999px}
 .mkts-sum{line-height:1.55;font-size:14.5px;color:var(--text);margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .mkts-arts{display:flex;flex-direction:column;gap:5px;margin-top:10px;border-top:1px solid var(--line);padding-top:9px}
 .mkts-art{font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
