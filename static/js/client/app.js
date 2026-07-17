@@ -590,7 +590,7 @@
         if(d.type==='npub'){ await renderProfileView(d.data); return; }
         if(d.type==='nprofile'){ await renderProfileView(d.data.pubkey); return; }
         if(d.type==='note'){ openThread(d.data); return; }
-        if(d.type==='nevent'){ openThread(d.data.id); return; }
+        if(d.type==='nevent'){ openThread(d.data.id, d.data.relays); return; }   // keep the nevent's relay hints for fetching an off-relay parent
         if(d.type==='naddr'){ await openNaddr(d.data.pubkey, d.data.identifier, d.data.kind); return; }   // open the article/addressable event, not the author's profile
       }
     }catch(err){ console.warn('[route] could not open', e, err); }
@@ -4333,12 +4333,16 @@
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
       ${mp.gallery}</div>`; }
-  // NIP-10 parent of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
-  function replyParentId(ev){
+  // NIP-10 parent e-tag of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
+  // Returns the WHOLE tag so its relay hint (t[2]) can be used to fetch an off-relay parent.
+  function replyParentTag(ev){
     const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]);
-    const t=es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1];
-    return t?t[1]:null;
+    return es.find(t=>t[3]==='reply')||es.find(t=>t[3]==='root')||es[es.length-1]||null;
   }
+  function replyParentId(ev){ const t=replyParentTag(ev); return t?t[1]:null; }
+  // Every wss:// relay hint carried on an event's e-tags — fed to fetchEvent so an ancestor whose
+  // author is outside our WoT (never stored on our relay) is fetched from where the thread lives.
+  const eTagRelays = ev => (ev.tags||[]).filter(t=>t[0]==='e'&&t[2]&&/^wss?:\/\//i.test(t[2])).map(t=>t[2]);
   // Compact "↩ replying to <name>" LABEL shown above a reply — NOT the parent's full card. Rendering the
   // whole parent inline duplicated it all over a busy feed: a reply's parent is often itself a shown reply
   // or a popular post that many people reply to, so its card repeated dozens of times ("duplicate replies").
@@ -9618,12 +9622,15 @@
   // the trust set isn't stored here. Fetch such a missing event from public relays (UNTRUSTED → the
   // signer worker verifies the signature before we display it), so threads aren't truncated.
   const PUBLIC_FALLBACK_RELAYS = ['wss://relay.damus.io','wss://nos.lol','wss://relay.primal.net','wss://relay.nostr.band'];
-  function fetchFromPublicRelays(filters, timeout=4500){
+  function fetchFromPublicRelays(filters, timeout=4500, extraRelays){
+    // Query the event's OWN relay hints (from an nevent or a NIP-10 e-tag) alongside the public
+    // fallbacks — so a parent whose author is outside our WoT is found where it actually lives.
+    const relays=[...new Set([...(extraRelays||[]).filter(u=>/^wss?:\/\//i.test(u)), ...PUBLIC_FALLBACK_RELAYS])];
     return new Promise(resolve=>{
-      const got=new Map(); let pending=PUBLIC_FALLBACK_RELAYS.length, done=false;
+      const got=new Map(); let pending=relays.length, done=false;
       const finish=()=>{ if(done)return; done=true; clearTimeout(to); resolve([...got.values()]); };
       const to=setTimeout(finish, timeout);
-      PUBLIC_FALLBACK_RELAYS.forEach(url=>{
+      relays.forEach(url=>{
         let ws, counted=false; const done1=()=>{ if(counted)return; counted=true; if(--pending<=0)finish(); };
         try{ ws=new WebSocket(url); }catch(_){ done1(); return; }
         const sid='pf'+Math.random().toString(36).slice(2,8);
@@ -9634,35 +9641,36 @@
       });
     });
   }
-  async function fetchEvent(id){
+  async function fetchEvent(id, hints){
     let r=await Relay.query([{ ids:[id] }]); if(r[0]) return r[0];
-    const pub=await fetchFromPublicRelays([{ ids:[id] }]);
+    const pub=await fetchFromPublicRelays([{ ids:[id] }], 4500, hints);
     for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
     return null;
   }
-  function openThread(id){
-    try{ _navUrl('/'+NT().nip19.neventEncode({ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
-    renderThread(id);
+  function openThread(id, relays){
+    const hints=(relays||[]).filter(u=>/^wss?:\/\//i.test(u));
+    try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
+    renderThread(id, hints);
   }
-  async function renderThread(id){
+  async function renderThread(id, hints){
     VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let ev=Store.get(id);
-    if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ ev=await fetchEvent(id, hints); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
     // A chat message (NIP-28 kind-42) has no normal thread — e.g. a reaction notification links here.
     // Resolve its channel and open the room, then scroll to + flash the message.
     if(ev.kind===42){
       // NIP-28: the channel is the `root`-marked e-tag; with no markers the convention is the FIRST e-tag.
       const root=(ev.tags.find(t=>t[0]==='e' && t[3]==='root') || ev.tags.find(t=>t[0]==='e') || [])[1];
-      let chan=root ? (Store.get(root)||await fetchEvent(root)) : null;
+      let chan=root ? (Store.get(root)||await fetchEvent(root, [...(hints||[]), ...eTagRelays(ev)])) : null;
       if(chan){ Store.saveEvent(chan); openChannel(chan, id); return; }
     }
     // Resolve the thread ROOT (+ the ancestor chain from the clicked post up to it) so a click on ANY
     // reply opens the whole conversation root-first. Then render it as a tree with the clicked post
     // highlighted + scrolled into view.
-    const { rootId, chain } = await _threadRoot(ev);
-    let root = chain.find(x=>x.id===rootId) || Store.get(rootId) || await fetchEvent(rootId) || ev;
+    const { rootId, chain } = await _threadRoot(ev, hints);
+    let root = chain.find(x=>x.id===rootId) || Store.get(rootId) || await fetchEvent(rootId, [...(hints||[]), ...eTagRelays(ev)]) || ev;
     Store.saveEvent(root);
     // Two reply queries in PARALLEL: descendants that root-tag the root, AND direct replies to the CLICKED
     // post (a reply that only tags its immediate parent wouldn't appear in the root query — this keeps its
@@ -9698,8 +9706,12 @@
       return h;
     };
     const nReplies=all.length-1;
+    // If the clicked post is itself a reply but its parent couldn't be reached (author out of WoT, no
+    // working relay hint), SAY so instead of silently presenting the reply as though it were the root.
+    const missingParent = (root.id===ev.id && replyParentId(ev)) ? replyParentId(ev) : null;
     // root post first (highlighted if IT was the clicked one), then the count, then its reply subtree
-    let html=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
+    let html = missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
+    html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
@@ -9714,18 +9726,21 @@
   // Resolve a post's thread root, returning { rootId, chain } where chain is the clicked post + each
   // fetched ancestor up to (and including, if reachable) the root. Prefers the NIP-10 'root' e-tag (O(1));
   // otherwise climbs the reply chain, bounded to 8 hops so a deep uncached chain can't hang on serial fetches.
-  async function _threadRoot(ev){
+  async function _threadRoot(ev, hints){
     const chain=[ev];
+    // Relay hints for fetching an ancestor of `u`: the nevent's hints PLUS `u`'s own e-tag hints (which
+    // include the parent's relay hint), so an out-of-WoT ancestor is fetched from where it actually lives.
+    const H = u => [...new Set([...(hints||[]), ...eTagRelays(u)])];
     const rootTag=(ev.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
-    if(rootTag){ const r=Store.get(rootTag)||await fetchEvent(rootTag); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rootTag, chain }; }
+    if(rootTag){ const r=Store.get(rootTag)||await fetchEvent(rootTag, H(ev)); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rootTag, chain }; }
     if(!replyParentId(ev)) return { rootId:ev.id, chain };   // no reply parent → already a root post
     let cur=ev, depth=0;
     while(depth++ < 8){
       const rt=(cur.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
-      if(rt){ const r=Store.get(rt)||await fetchEvent(rt); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rt, chain }; }
+      if(rt){ const r=Store.get(rt)||await fetchEvent(rt, H(cur)); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rt, chain }; }
       const pid=replyParentId(cur); if(!pid || pid===cur.id) return { rootId:cur.id, chain };
-      const par=Store.get(pid) || await fetchEvent(pid);
-      if(!par) return { rootId:pid, chain };                // parent unreachable → best root we can reach
+      const par=Store.get(pid) || await fetchEvent(pid, H(cur));
+      if(!par) return { rootId:pid, chain };                // parent unreachable even via hints → best root we can reach
       Store.saveEvent(par); chain.push(par); cur=par;
     }
     return { rootId:cur.id, chain };

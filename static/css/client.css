@@ -1166,6 +1166,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .thread-node{position:relative}
 .thread-node[style]{border-left:2px solid var(--line)}
 .thread-hl>.note{background:rgba(0,255,255,.07);box-shadow:0 0 0 2px var(--neon) inset;border-radius:12px}
+/* compact "parent not loadable" banner above an orphaned reply (overrides .empty's big padding) */
+.thread-missing .empty{padding:10px 12px;font-size:13px;opacity:.75;border:1px dashed var(--line);border-radius:10px;margin-bottom:8px}
 
 /* notifications */
 .notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:center;font-size:16.5px}
