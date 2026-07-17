@@ -217,7 +217,7 @@ RUN if [ "$GPU" = "nostr" ]; then \
         pip install -r /tmp/requirements-nostr.txt ; \
     else \
         pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
-          && pip install "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \
+          && pip install "numpy>=2,<2.5" "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \
     fi
 
 # --- app source ---------------------------------------------------------------
