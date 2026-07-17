@@ -56,7 +56,7 @@ print_summary() {
     if [ "$INSTALL_IMAGE" = "1" ]; then
         echo "    Image Backend: $IMAGE_BACKEND"
     else
-        echo "    Image Backend: external (ComfyUI)"
+        echo "    Image Backend: external (remote posterchanai image servers)"
     fi
     echo ""
 
@@ -83,8 +83,8 @@ print_summary() {
     if [ "$INSTALL_IMAGE" = "1" ] && [ "$IMAGE_BACKEND" = "native" ]; then
         echo "    • Download a Stable Diffusion model (SDXL recommended)"
         echo "    • Configure image model in Admin > Image Generation"
-    elif [ "$IMAGE_BACKEND" = "comfyui" ]; then
-        echo "    • Configure ComfyUI URL in Admin > Image Generation"
+    else
+        echo "    • Configure remote image server URLs in Admin > Image Generation"
     fi
     echo ""
 }
@@ -154,7 +154,7 @@ show_help() {
     echo "  Full Stack       LLM + Image Generation (recommended)"
     echo "  LLM Only         Chat/text generation only"
     echo "  Image Only       Image generation only (use external LLM)"
-    echo "  Lightweight      Web UI only (external Ollama + ComfyUI)"
+    echo "  Lightweight      Web UI only (external Ollama + remote posterchanai image servers)"
     echo ""
     echo "LLM Backends:"
     echo "  Intel Arc        IPEX-LLM + llama.cpp SYCL"
@@ -163,9 +163,8 @@ show_help() {
     echo "  CPU              llama.cpp (slow)"
     echo "  Ollama           External Ollama service"
     echo ""
-    echo "Image Backends:"
+    echo "Image Backend:"
     echo "  Native           Built-in diffusers (CUDA/XPU/ROCm/CPU)"
-    echo "  ComfyUI          External ComfyUI service"
     echo ""
 }
 

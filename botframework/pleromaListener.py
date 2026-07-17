@@ -55,8 +55,6 @@ from searxng import search_web, smart_search, search_images, summarize_search_re
 from tts import generate_speech_with_retries, generate_narration_video
 from news import fetch_news_from_source
 from core.utils import strip_html, contains_bad_words
-from config import COMFYUI_API_ENDPOINT
-from config import STABLE_DIFFUSION_ENDPOINT
 from config import IMAGE_POSTER_FREQ
 from config import IMAGE_POSTER_PROMPT
 from config import IMAGE_POSTER_TEXT
@@ -65,7 +63,7 @@ from random_scenes import RANDOM_SCENE_ELEMENTS
 import random
 
 # Unified codebase: image generation always goes through image_backend → the posterchanai
-# server. (No ComfyUI/Stable-Diffusion gating; those backends were removed in the merge.)
+# server (native diffusers — the one image backend).
 from image_backend import generate_image_bytes
 
 

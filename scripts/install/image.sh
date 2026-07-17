@@ -36,13 +36,6 @@ setup_image_deps() {
     pip install onnxruntime huggingface_hub insightface opencv-python-headless mkl -q
     print_success "Face detection dependencies installed"
 
-    # Skip diffusers if using ComfyUI backend
-    if [ "$IMAGE_BACKEND" != "native" ]; then
-        deactivate
-        print_success "Using ComfyUI backend - skipping diffusers installation"
-        return
-    fi
-
     print_step "Installing native image generation dependencies..."
 
     # Install diffusers/transformers/accelerate (+ video text-to-video deps)

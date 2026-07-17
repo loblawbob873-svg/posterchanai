@@ -19,8 +19,6 @@ from config import (
     IMAGE_POSTER_PROMPT,
     IMAGE_POSTER_TEXT,
     IMAGE_POSTER_RANDOM_SCENES,
-    COMFYUI_API_ENDPOINT,
-    STABLE_DIFFUSION_ENDPOINT,
     AUTO_NARRATE
 )
 from random_scenes import RANDOM_SCENE_ELEMENTS
@@ -192,7 +190,7 @@ def _handle_media_command(note, command, arg, own_acct, visibility):
         send_reply(note, "", own_acct=own_acct, visibility=visibility, video_bytes=_v)
 
 # Unified codebase: image generation always goes through image_backend → the posterchanai
-# server. (No ComfyUI/Stable-Diffusion gating; those backends were removed in the merge.)
+# server (native diffusers — the one image backend).
 from image_backend import generate_image_bytes
 
 # Persistent sets to track processed mentions and replied notes

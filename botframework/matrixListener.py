@@ -21,8 +21,6 @@ from config import (
     IMAGE_POSTER_PROMPT,
     IMAGE_POSTER_TEXT,
     IMAGE_POSTER_RANDOM_SCENES,
-    COMFYUI_API_ENDPOINT,
-    STABLE_DIFFUSION_ENDPOINT,
     RESPOND_TO_ALL,
     AUTO_NARRATE,
     POSTERCHANAI_API_ENDPOINT,
@@ -62,7 +60,7 @@ from searxng import search_web, smart_search, search_images, summarize_search_re
 from tts import generate_speech_with_retries, generate_narration_video
 from news import fetch_news_from_source
 
-# Always import from image_backend - it handles routing to posterchanai/comfyui/stablediffusion
+# Image generation goes through image_backend (native diffusers via the posterchanai server).
 from image_backend import generate_image_bytes_with_retries
 
 # Shared ytdl arg parser (clip/compress modifiers) — same syntax across all bots.
@@ -1663,16 +1661,11 @@ def process_messages():
                             send_reply(message, "Image generated but failed to upload. Check server logs for details.")
                     else:
                         print("→ ERROR: Image generation returned None after all retries")
-                        print("→ Check image generation backend (posterchanai/comfyui) configuration and connectivity")
+                        print("→ Check the posterchanai image backend configuration and connectivity")
                         print("→ Troubleshooting:")
-                        from config import USE_POSTERCHANAI, COMFYUI_API_ENDPOINT
-                        if USE_POSTERCHANAI:
-                            print(f"→   - Verify posterchanai is running at {POSTERCHANAI_API_ENDPOINT}")
-                            print(f"→   - Test: curl {POSTERCHANAI_API_ENDPOINT}/api/health")
-                            print(f"→   - Check POSTERCHANAI_API_KEY or login credentials")
-                        else:
-                            print(f"→   - Verify ComfyUI is running at {COMFYUI_API_ENDPOINT}")
-                            print(f"→   - Test: curl {COMFYUI_API_ENDPOINT}/system_stats")
+                        print(f"→   - Verify posterchanai is running at {POSTERCHANAI_API_ENDPOINT}")
+                        print(f"→   - Test: curl {POSTERCHANAI_API_ENDPOINT}/api/health")
+                        print(f"→   - Check POSTERCHANAI_API_KEY or login credentials")
                         send_reply(message, "Sorry, image generation failed. The backend may be unavailable.")
                 except Exception as e:
                     print(f"→ ERROR: Image generation exception: {type(e).__name__}: {e}")
@@ -1791,11 +1784,7 @@ def imageposter():
                 post_image_to_matrix(MATRIX_ROOM_ID, IMAGE_POSTER_TEXT, image_bytes=image_bytes)
         else:
             print("ERROR: imageposter - Image generation returned None after all retries")
-            from config import USE_POSTERCHANAI, COMFYUI_API_ENDPOINT
-            if USE_POSTERCHANAI:
-                print(f"ERROR: Check posterchanai connectivity at {POSTERCHANAI_API_ENDPOINT}")
-            else:
-                print(f"ERROR: Check ComfyUI connectivity at {COMFYUI_API_ENDPOINT}")
+            print(f"ERROR: Check posterchanai connectivity at {POSTERCHANAI_API_ENDPOINT}")
     except Exception as e:
         print(f"ERROR: imageposter - Exception during image generation: {e}")
         import traceback

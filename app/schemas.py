@@ -397,7 +397,7 @@ class SettingsResponse(BaseModel):
     # Unified codebase: ONE PosterChanAI server URL drives everything. The bots reach the shared
     # LLM at {server}/api/chat/completions and do image generation via the same server's API
     # (they're separate processes, so they use HTTP rather than the in-process GPU model). No
-    # separate OpenAI endpoint, no ComfyUI/Stable-Diffusion.
+    # separate OpenAI endpoint.
     bots_server_url: str = ""                  # e.g. https://ai.poster.place  (chat + image)
     bots_ai_api_key: str = ""                  # key for the server's chat endpoint
     bots_ai_model: str = ""

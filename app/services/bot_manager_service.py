@@ -52,8 +52,8 @@ AUTOPOST_DEFAULT_MAX_MIN = 360   # minutes
 
 # Unified codebase: a SINGLE PosterChanAI server URL (bots_server_url) drives everything —
 # the bots reach the shared LLM and image generation through it over HTTP (they're separate
-# processes, so they can't share the GPU-loaded model in-process). No separate OPENAI endpoint,
-# no ComfyUI/Stable-Diffusion. These straightforward settings map 1:1; the server-derived ones
+# processes, so they can't share the GPU-loaded model in-process). No separate OPENAI endpoint.
+# These straightforward settings map 1:1; the server-derived ones
 # (OPENAI_ENDPOINT / POSTERCHANAI_API_ENDPOINT / USE_POSTERCHANAI) are set in _load_global_env.
 _GLOBAL_ENV_MAP = {
     "bots_ai_api_key": "OPENAI_API_KEY",
@@ -123,7 +123,7 @@ def _load_global_env():
 
     Everything routes through the single PosterChanAI server URL: the bot's LLM calls hit
     {server}/api/chat/completions and its image generation uses the server's image API
-    (USE_POSTERCHANAI is forced on — no ComfyUI/SD)."""
+    (USE_POSTERCHANAI is forced on — native diffusers)."""
     env = os.environ.copy()
     wanted = set(_GLOBAL_ENV_MAP) | set(_SERVER_URL_KEYS)
     rows = {k: settings_store.get(k) for k in wanted if settings_store.exists(k)}
@@ -154,7 +154,7 @@ def _load_global_env():
             server = server[:-len("://localhost")] + "://127.0.0.1"
         env["POSTERCHANAI_API_ENDPOINT"] = server
         env["OPENAI_ENDPOINT"] = server + "/api/chat/completions"
-    env["USE_POSTERCHANAI"] = "true"   # always use the unified server; never ComfyUI/SD
+    env["USE_POSTERCHANAI"] = "true"   # always use the unified server (native diffusers)
     # SQL_* base creds (per-bot SQL_DATABASE is added in _build_env when sql_database is set)
     env["_SQL_USER"] = settings_store.get("bots_sql_user", "")
     env["_SQL_PASS"] = settings_store.get("bots_sql_pass", "")
@@ -905,7 +905,7 @@ def _monitor_loop():
 _EXPORT_PATH = BOTFRAMEWORK_DIR / "bots_config_export.json"
 
 # Global export key -> bots_* setting key. The legacy POSTERCHANAI_API_ENDPOINT becomes the
-# single bots_server_url (chat + image both derive from it); ComfyUI/SD/separate-AI-URL dropped.
+# single bots_server_url (chat + image both derive from it); separate-AI-URL dropped.
 _SEED_GLOBALS = {
     "POSTERCHANAI_API_ENDPOINT": "bots_server_url",
     "AI_API_KEY": "bots_ai_api_key", "AI_MODEL": "bots_ai_model",

@@ -1,6 +1,6 @@
 """
 Posterchanai API client for image generation.
-Provides same interface as comfyui.py but uses posterchanai's native diffusers backend.
+Image generation via posterchanai's native diffusers backend (the one image backend).
 Includes native WD14 tagging support.
 """
 import json

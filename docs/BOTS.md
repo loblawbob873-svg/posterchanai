@@ -55,9 +55,9 @@ Shared by every bot — set once:
 | Timezone | Bot clock |
 | Pleroma DB user / password / host | Postgres access for blockbot/welcome/report |
 
-There is **no** separate OpenAI endpoint, ComfyUI, or Stable-Diffusion setting — everything
-derives from the single server URL, and image generation always goes through the PosterChanAI
-server (`USE_POSTERCHANAI` is forced on).
+There is **no** separate OpenAI endpoint setting — everything derives from the single server
+URL, and image generation always goes through the PosterChanAI server's native diffusers
+backend (`USE_POSTERCHANAI` is forced on).
 
 **Master kill-switch — "Run bots on this server" (`bots_manager_enabled`, default off).** The
 manager runs **no** bots until this is on. This lets a node deploy the code safely while the

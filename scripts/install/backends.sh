@@ -162,34 +162,20 @@ select_llm_backend() {
 }
 
 select_image_backend() {
-    # Skip if not installing image generation
+    # Image generation is always NATIVE (built-in diffusers) now — the external ComfyUI
+    # backend was removed. No local image gen → use remote posterchanai image servers.
     if [ "$INSTALL_IMAGE" = "0" ]; then
-        IMAGE_BACKEND="comfyui"  # Default to external ComfyUI
+        IMAGE_BACKEND="remote"
         return
     fi
 
-    print_step "Select image generation backend:"
-    echo ""
-    echo -e "  1) ${BOLD}Native (diffusers)${NC} - Recommended"
+    IMAGE_BACKEND="native"
+    print_step "Image generation backend: Native (diffusers)"
     echo "     Built-in Stable Diffusion using HuggingFace diffusers"
     echo "     Supports: NVIDIA (CUDA), Intel Arc (XPU), AMD (ROCm), CPU"
-    echo ""
-    echo -e "  2) ${BOLD}ComfyUI${NC} (External)"
-    echo "     Use existing ComfyUI installation"
-    echo "     More features but requires separate setup"
-    echo ""
-
-    read -p "Select image backend [1-2, default=1]: " IMAGE_CHOICE
-    IMAGE_CHOICE=${IMAGE_CHOICE:-1}
-
-    case "$IMAGE_CHOICE" in
-        1) IMAGE_BACKEND="native" ;;
-        2) IMAGE_BACKEND="comfyui" ;;
-        *) IMAGE_BACKEND="native" ;;
-    esac
 
     # Show AMD-specific warnings for native image generation
-    if [ "$IMAGE_BACKEND" = "native" ] && [ "$GPU_TYPE" = "amd" ]; then
+    if [ "$GPU_TYPE" = "amd" ]; then
         echo ""
         print_warning "AMD ROCm Image Generation Notes:"
         echo ""
@@ -200,8 +186,9 @@ select_image_backend() {
         echo ""
         read -p "Continue with native image generation? [Y/n]: " CONTINUE_AMD
         if [[ "$CONTINUE_AMD" =~ ^[Nn] ]]; then
-            IMAGE_BACKEND="comfyui"
-            echo "  Switched to ComfyUI backend"
+            INSTALL_IMAGE=0
+            IMAGE_BACKEND="remote"
+            echo "  Skipping local image generation (use remote posterchanai image servers)"
         fi
     fi
 }

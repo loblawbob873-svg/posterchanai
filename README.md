@@ -61,7 +61,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 ### Voice & media
 
 - **Text-to-speech (TTS)** and **speech-to-text (STT)**; Edge TTS and configurable backends
-- **Image generation**: ComfyUI (external) or native diffusers (SDXL); multiple image servers supported
+- **Image generation**: native diffusers (SDXL); multiple image servers supported
 - **Music generation** (`musicgeni`): text-to-song via a self-hosted [ACE-Step](https://github.com/ace-step/ACE-Step-1.5) server (fits a 12 GB GPU); load-balanced + VRAM-swapped like image gen, with a spoken watermark. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
@@ -116,7 +116,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 ## Requirements
 
 - **Python 3.10+**
-- (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and image generation (ComfyUI or native diffusers)
+- (Optional) **GPU** and backends for local LLM (Ollama, llama-cpp-python, IPEX-LLM) and native diffusers image generation
 - (Optional) **Headless Chrome/Chromium** for the `screenshot` command (driven over the DevTools protocol — full-page and JS-aware, so SPAs render instead of coming out blank; no Selenium/chromedriver). Firefox is used as a fallback if Chrome is absent:
   - Gentoo: `emerge www-client/google-chrome` (or `www-client/chromium`)
   - Debian/Ubuntu: `apt install chromium` (or install `google-chrome-stable`)
@@ -174,7 +174,7 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
    ```
    Follow the prompts: it first asks **Full** vs **Nostr-only** (relay + Nostr web client +
    Blossom, *no AI* — light, no GPU). For Full it then detects your GPU, lets you choose LLM
-   backend (Ollama, llama-cpp, etc.) and image backend (ComfyUI or native), creates the venv,
+   backend (Ollama, llama-cpp, etc.) and native diffusers image generation, creates the venv,
    installs Python deps, and optionally sets up a systemd service.
 
 3. **Start the server** (if not using systemd):
@@ -221,7 +221,7 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 - Copy **`.env.example`** to **`.env`** and adjust (optional).
 - First run creates a **SQLite** database; use the **web UI** and **Admin** panel to configure:
   - LLM backend (Ollama, llama-cpp, IPEX) and model
-  - Image generation (ComfyUI URL or native)
+  - Image generation (native diffusers model)
   - TTS/STT, email, plugins
 - See **`docs/`** for detailed setup (IPEX, nginx, etc.).
 

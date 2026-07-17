@@ -5,8 +5,9 @@ Provides text-to-speech and image generation capabilities.
 
 Modules:
     tts - Text-to-speech using Edge TTS
-    comfyui - ComfyUI image generation (when available)
-    stablediffusion - Stable Diffusion WebUI (when available)
+
+Image generation lives in image_backend (native diffusers via posterchanai_api) — import it
+from there, not this package.
 
 Note: This package re-exports from existing root-level modules for convenience.
 Direct imports (e.g., `from tts import ...`) still work.
@@ -36,23 +37,3 @@ except ImportError:
     generate_narration_video = None
     clean_text_for_tts = None
     list_voices = None
-
-# Re-export ComfyUI functions
-try:
-    from comfyui import (
-        generate_image_bytes,
-        generate_image_bytes_with_retries,
-        generate_img2img_bytes,
-        generate_img2img_bytes_with_retries,
-    )
-    __all__.extend([
-        'generate_image_bytes',
-        'generate_image_bytes_with_retries',
-        'generate_img2img_bytes',
-        'generate_img2img_bytes_with_retries',
-    ])
-except ImportError:
-    generate_image_bytes = None
-    generate_image_bytes_with_retries = None
-    generate_img2img_bytes = None
-    generate_img2img_bytes_with_retries = None

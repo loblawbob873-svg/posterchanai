@@ -166,6 +166,20 @@
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
     }
 
+    // ---- article snapshot: persist a SMALL slice of the merged 'all' feed so the reader paints INSTANTLY on
+    // the next cold open (PWA restart / reload), same local-first pattern as the feed list + read state above.
+    // The network fetch still runs and swaps in fresh items right after — the snapshot just kills the blank
+    // spinner. Gated on login (like the feed-list cache) so a logged-out DEFAULTS view can't leak to a real user.
+    const SNAP_CAP = 150;   // enough to fill the first screenfuls; keeps the localStorage entry well under ~80KB
+    function _saveSnap(items){
+      try{
+        if(!(window.__PC.ME && window.__PC.ME.pubkey)) return;
+        const slim = (items||[]).slice(0, SNAP_CAP).map(it=>({ id:it.id, title:it.title, link:it.link, ts:it.ts, snippet:it.snippet, image:it.image, feed:it.feed, feedName:it.feedName }));
+        localStorage.setItem('pc_news_snap', JSON.stringify(slim));
+      }catch(_){}
+    }
+    function _loadSnap(){ try{ const c=JSON.parse(localStorage.getItem('pc_news_snap')||'null'); return (Array.isArray(c)&&c.length)?c:null; }catch(_){ return null; } }
+
     // ---- fetch ---- (each returns {items, stale}; staleness is RETURNED, never a shared global, so a
     // background tick can't flip the flag for a concurrent view fetch)
     // Fetch EVERY configured feed (the 'all' set), merged/sorted/capped, and refresh the _lastAll badge basis.
@@ -185,7 +199,7 @@
       for(const it of _lastAll){ if(it.feed && urls.has(it.feed) && !got.has(it.feed)) items.push(it); }
       items.sort((a,b)=> (b.ts||0)-(a.ts||0));
       if(items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS);   // retention: keep newest 2000, drop older
-      if(items.length) _lastAll = items;                                // update the badge basis from a full snapshot
+      if(items.length){ _lastAll = items; _saveSnap(items); }           // update the badge basis + persist for instant next-open paint
       return { items, stale };
     }
     // Returns {items, stale} (does NOT assign _items) — renderNews assigns only after its generation check,
@@ -278,6 +292,9 @@
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
       $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } if(b.classList.contains('news-readall')){ markAllRead(); return; } _active=b.dataset.feed; renderNews(); });
+      // INSTANT paint: show the last saved snapshot immediately (no blank spinner) on the default 'all' view while
+      // the live fetch runs; the fresh result swaps in below. Only when we have nothing yet this session.
+      if(_active==='all' && !_items.length){ const snap=_loadSnap(); if(snap){ _items=snap; if(!_lastAll.length) _lastAll=snap; renderList(); } }
       const { items, stale } = await fetchActive();
       if(gen!==_gen || !inView()) return;       // navigated away / a newer feed-switch won the race
       _items = items;                           // assign ONLY as the winning render (stale fetch is discarded)
