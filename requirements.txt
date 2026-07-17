@@ -73,7 +73,10 @@ opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0
 # Used directly by parallax_service (depth post-processing / warp grids). Already a
 # transitive dep of opencv/onnxruntime/torch; listed explicitly since we import it.
-numpy
+# Cap at <2.5: rembg→PyMatting→numba (0.66) needs NumPy<=2.4, but the torch-2.13 stack ships
+# numpy 2 — so an unpinned resolve grabs 2.5.x and numba's import hard-fails ("Numba needs NumPy
+# 2.4 or less"), breaking background removal + the parallax/alpha-matting effects. 2.4.x satisfies both.
+numpy>=2,<2.5
 # Background removal for the `removebackground` command (u2net ONNX via onnxruntime, above).
 rembg>=2.0.50
 # Native LLM inference (requires compilation with GPU flags - see README)
