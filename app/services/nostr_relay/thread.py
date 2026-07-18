@@ -239,7 +239,7 @@ def _read_config() -> dict:
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
             # Nostr↔Fediverse bridge: optional shorter retention for the mirrored global-timeline
-            # firehose (origin='bridge'). 0 = use the general retention_days above.
+            # firehose (origin='bridge'). 0 = keep forever (the general retention_days prune skips bridge).
             "bridge_retention_days": gi("fedi_bridge_retention_days", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 604800),  # weekly (was daily)

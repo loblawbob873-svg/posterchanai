@@ -47,7 +47,12 @@ _spawn_sig: Optional[str] = None
 # Settings whose change requires regenerating the config + respawning mediamtx.
 _SIG_KEYS = ("stream_rtmp_port", "stream_hls_port", "stream_srt_port",
              "stream_webrtc_port", "stream_webrtc_udp_port", "stream_domain", "turn_public_ip",
-             "stream_auth_secret", "stream_api_port")
+             "stream_auth_secret", "stream_api_port",
+             # Recording toggle/dir must be here or MediaMTX is never respawned with `record: yes`, so
+             # flipping stream_record_enabled on would silently record nothing. The trade-off: toggling it
+             # respawns MediaMTX (like any config key), which briefly drops a currently-live stream — an
+             # admin set-and-forget setting, so that's preferred over silently not recording.
+             "stream_record_enabled", "stream_record_dir")
 
 
 def _ensure_hook_secret(cfg: dict) -> str:
@@ -71,6 +76,17 @@ def _app_port() -> str:
 
 def _cfg() -> dict:
     return settings_store.all_settings()
+
+
+def recording_dir() -> str:
+    """The (sanitized) temp dir MediaMTX records into, one subdir per stream token. Single source of
+    truth shared with stream_vod_service so both agree on where recordings live. Just a path — mount it
+    as tmpfs/point it at /dev/shm for RAM-backed recording; the app doesn't care. Sanitized because it's
+    interpolated into the MediaMTX YAML (recordPath) — no quotes/space injection."""
+    import re
+    d = (settings_store.get("stream_record_dir", "") or "/tmp/posterchanai-streams").strip()
+    d = re.sub(r"[^A-Za-z0-9._/\-]", "", d).rstrip("/")
+    return d or "/tmp/posterchanai-streams"
 
 
 def _enabled(cfg: dict) -> bool:
@@ -182,8 +198,24 @@ def _write_config(cfg: dict) -> None:
         "paths:",
         "  all_others:",
         f"    runOnNotReady: 'curl -sS -m 5 -o /dev/null -X POST \"{end_url}\"'",
-        "",
     ]
+    # Save-to-Blossom recording: MediaMTX records each publish as fmp4 into a temp dir; stream_vod_service
+    # uploads it to the streamer's Blossom drive when the stream ends and deletes it. Files land at
+    # <rec_dir>/<token>/<timestamp>.mp4. (Mount rec_dir as tmpfs for RAM-backed / no-SSD recording.)
+    if (cfg.get("stream_record_enabled", "") or "").strip().lower() == "true":
+        rec_dir = recording_dir()
+        try:
+            os.makedirs(rec_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning("[stream] could not create recording dir %s: %s", rec_dir, e)
+        lines += [
+            "    record: yes",
+            f"    recordPath: '{rec_dir}/%path/%Y-%m-%d_%H-%M-%S-%f'",
+            "    recordFormat: fmp4",
+            "    recordSegmentDuration: 24h",   # one file per session unless it runs a full day
+            "    recordDeleteAfter: 0",          # stream_vod_service deletes after uploading to Blossom
+        ]
+    lines.append("")
     _STREAM_CFG.write_text("\n".join(lines) + "\n")
 
 

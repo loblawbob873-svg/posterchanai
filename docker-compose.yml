@@ -51,6 +51,10 @@ x-common: &common
     # Blossom at /blossom (same port as the app; front with TLS). Blobs default to the storage
     # server (proxy) and fall back to local on the data volume. See docs/BLOSSOM.md.
     - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+    # Turnkey save-to-Blossom stream recording: set POSTERCHANAI_STREAM_RECORD=1 (needs POSTERCHANAI_STREAM=1).
+    # Records to POSTERCHANAI_STREAM_RECORD_DIR (default /tmp/posterchanai-streams) then uploads to Blossom;
+    # mount that path as tmpfs if you want it RAM-backed. Per-user opt-in still applies. See docs/STREAMING.md.
+    - POSTERCHANAI_STREAM_RECORD=${POSTERCHANAI_STREAM_RECORD:-0}
     # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
     # music pointed at the acestep container — no manual Admin config needed.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}

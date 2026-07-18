@@ -195,7 +195,7 @@ DEFAULT_SETTINGS: dict = {}
 
 
 def init_db():
-    from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob  # noqa: F401 - registers tables for create_all
+    from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob, StreamVOD  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
@@ -342,6 +342,8 @@ def init_db():
             "stream_webrtc_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_PORT", "8889"),
             "stream_webrtc_udp_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_UDP_PORT", "8189"),
             "stream_auth_secret": "",   # auto-generated on first stream start (stream_service)
+            "stream_record_enabled": ("true" if os.environ.get("POSTERCHANAI_STREAM_RECORD", "0") in ("1", "true") else "false"),
+            "stream_record_dir": os.environ.get("POSTERCHANAI_STREAM_RECORD_DIR", "/tmp/posterchanai-streams"),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

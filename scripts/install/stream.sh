@@ -2,6 +2,11 @@
 # Install the built-in MediaMTX media server for OBS streaming (add-on: ./install.sh --stream).
 # MediaMTX is a single prebuilt Go binary (no build step); the app supervises it as a subprocess
 # (app/services/stream_service.py) — no systemd unit. Absent binary → the streaming feature is a no-op.
+#
+# Save-to-Blossom recording (stream_record_enabled): MediaMTX records each stream as fmp4 into a temp dir
+# (stream_record_dir, default /tmp/posterchanai-streams) which the app creates on demand, then uploads the
+# finished VOD to Blossom and deletes it. Nothing to install here — it's just a directory; mount it as tmpfs
+# (or point it at /dev/shm) if you want RAM-backed recording. No extra packages: ffprobe/ffmpeg cover it.
 
 setup_stream_server() {
     print_banner 2>/dev/null || true

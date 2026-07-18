@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 import base64
@@ -447,6 +448,16 @@ def compute_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def compute_sha256_file(path: str, chunk: int = 1 << 20) -> str:
+    """sha256 hex of a file, read in chunks so a multi-GB blob never lands in RAM.
+    CPU/IO-bound — call via asyncio.to_thread."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 # --- storage backends -------------------------------------------------------
 
 def _local_path(blob_dir: str, sha256: str) -> str:
@@ -464,6 +475,23 @@ async def _proxy_put(storage_url: str, sha256: str, data: bytes, mime: str) -> s
     files = {"file": (sha256, data, mime or "application/octet-stream")}
     form = {"username": _PROXY_USER, "path": subdir}
     r = await _client().post(url, headers=_proxy_headers(), files=files, data=form)
+    if r.status_code != 200:
+        raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
+    return (r.json().get("path") or f"{subdir}/{sha256}")
+
+
+async def _proxy_put_file(storage_url: str, sha256: str, path: str, mime: str) -> str:
+    """Stream a file to the storage server (no full in-memory copy) under
+    _blossom/blossom/<ab>/<sha>. Returns rel-path. httpx reads the file object in chunks."""
+    subdir = f"blossom/{sha256[:2]}"
+    url = f"{storage_url.rstrip('/')}/api/storage/upload-file"
+    form = {"username": _PROXY_USER, "path": subdir}
+    with open(path, "rb") as fh:
+        files = {"file": (sha256, fh, mime or "application/octet-stream")}
+        # No TOTAL timeout (a multi-GB VOD upload can outlast the shared client's 120s cap), but keep
+        # finite read/write timeouts so a stalled connection fails instead of pinning the task forever.
+        r = await _client().post(url, headers=_proxy_headers(), files=files, data=form,
+                                 timeout=httpx.Timeout(None, connect=10.0, read=600.0, write=600.0))
     if r.status_code != 200:
         raise RuntimeError(f"storage upload failed: HTTP {r.status_code} {r.text[:200]}")
     return (r.json().get("path") or f"{subdir}/{sha256}")
@@ -628,6 +656,53 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     # Only newly-stored blobs are queued — a re-upload of the same hash is already mirrored.
     if mirror and cfg["mirror_servers"]:
         _enqueue_mirror(sha256, data, mime, cfg["mirror_servers"])
+    return _descriptor_fields(blob)
+
+
+async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict:
+    """Like save_blob, but for a large file on disk (e.g. a recorded stream in tmpfs): hash and
+    upload by STREAMING from the path so a multi-GB blob never sits fully in RAM. Dedup by sha256.
+    Does not seed the RAM byte-cache (too big) and does not auto-mirror (would re-read the file).
+    Returns the descriptor dict. The caller owns the source file (delete it after)."""
+    cfg = _cfg(db)
+    sha256 = await asyncio.to_thread(compute_sha256_file, path)
+    size = await asyncio.to_thread(os.path.getsize, path)
+
+    existing = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+    if existing:
+        _meta_put(_meta_from_row(existing))
+        return _descriptor_fields(existing)
+
+    # End the read transaction BEFORE the (minutes-long, multi-GB) upload — otherwise the connection sits
+    # idle-in-transaction and Postgres' idle_in_transaction_session_timeout (60s) kills it, so the commit
+    # below fails and the blob is never recorded. Reads above are done; a fresh txn opens on the insert.
+    db.rollback()
+
+    if cfg["backend"] == "proxy":
+        stored_path = await _proxy_put_file(cfg["storage_url"], sha256, path, mime)
+        storage = "proxy"
+    else:
+        stored_path = _local_path(cfg["blob_dir"], sha256)
+
+        def _copy():
+            os.makedirs(os.path.dirname(stored_path), exist_ok=True)
+            tmp = stored_path + ".tmp"
+            # Stream copy (tmpfs → blob dir are different filesystems, so os.link would EXDEV).
+            with open(path, "rb") as src, open(tmp, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            os.replace(tmp, stored_path)
+
+        await asyncio.to_thread(_copy)
+        storage = "local"
+
+    now = int(time.time())
+    blob = BlossomBlob(
+        sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
+        expires_at=None, storage=storage, path=stored_path,
+    )
+    db.add(blob)
+    db.commit()
+    _meta_put(_meta_from_row(blob))
     return _descriptor_fields(blob)
 
 

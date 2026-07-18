@@ -150,6 +150,12 @@ class SettingsResponse(BaseModel):
     stream_webrtc_udp_port: str = "8189"  # WebRTC media (UDP/ICE); forward this + set a public IP for remote phones
     stream_auth_secret: str = ""       # secret the app injects into MediaMTX's auth-hook URL (auto-generated); gates /api/streams/auth
     stream_api_port: str = "9997"      # MediaMTX control API, LOOPBACK-only; stream_end_service asks it if a path is still publishing
+    # Save ended live streams to the streamer's Blossom drive (stream_vod_service). MediaMTX records each
+    # stream as fmp4 into a temp dir; on confirmed end it's streamed into Blossom and indexed for the
+    # web-UI "Past streams" view. The dir is just a path — mount it as tmpfs/point it at /dev/shm if you
+    # want RAM-backed (no SSD writes); the app doesn't care which.
+    stream_record_enabled: str = "false"   # global kill-switch; per-user opt-in is User.stream_record
+    stream_record_dir: str = "/tmp/posterchanai-streams"   # recording scratch dir (temp; cleaned as it goes)
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

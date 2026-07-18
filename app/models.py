@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -63,6 +63,9 @@ class User(Base):
     nostr_relays = Column(Text, nullable=True)                 # comma/newline list; blank = defaults
     nostr_media_service = Column(String(20), nullable=True)    # "blossom" | "nip96"
     nostr_media_endpoint = Column(String(500), nullable=True)  # blank = service default
+    # Opt-in: save this user's ended live streams to their Blossom drive (stream_vod_service).
+    # Mirrored to Nostr via users_store.CONFIG_FIELDS; gated by the global stream_record_enabled.
+    stream_record = Column(Boolean, default=False)
 
     # Matrix integration settings
     matrix_enabled = Column(Boolean, default=False)
@@ -312,6 +315,35 @@ class BlossomBlob(Base):
     expires_at = Column(Integer, nullable=True)         # unix seconds; 0/NULL = never
     storage = Column(String(10), nullable=False, default="local")  # "local" | "proxy"
     path = Column(String(512), nullable=False)          # local file path or proxy rel-path
+
+
+class StreamVOD(Base):
+    """A finished live stream saved to the streamer's Blossom drive (see stream_vod_service).
+
+    The stream is recorded (by MediaMTX) to a size-capped tmpfs, then on confirmed end
+    concatenated to one fmp4 and streamed into Blossom — attributed to the streamer's own
+    `pubkey` (their User.nostr_npub, hex). This row is the app-side index the web UI reads to
+    list a user's past streams and play them back at the Blossom URL (blossom_public_url/<sha256>).
+    The bytes live in Blossom (dedup/retention there); deleting this row just hides the VOD."""
+    __tablename__ = "stream_vods"
+    __table_args__ = (
+        Index('ix_streamvod_user', 'user_id'),
+        Index('ix_streamvod_token', 'token'),
+        # One VOD per (stream session) — makes finalize idempotent across end-event retries.
+        Index('ix_streamvod_session', 'token', 'started_at', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    pubkey = Column(String(64), nullable=False)         # streamer's hex pubkey (owns the Blossom blob)
+    token = Column(String(64), nullable=False)          # the stream publish token (MediaMTX path / 30311 d-tag)
+    sha256 = Column(String(64), nullable=False)         # Blossom blob hash → playback URL
+    mime = Column(String(60), nullable=False, default="video/mp4")
+    size = Column(BigInteger, nullable=False)           # bytes
+    duration_s = Column(Integer, nullable=True)         # length in seconds (best-effort from ffprobe)
+    title = Column(String(300), nullable=True)          # stream title at go-live, if known
+    started_at = Column(Integer, nullable=False)        # unix seconds — recording start
+    created_at = Column(Integer, nullable=False)        # unix seconds — finalize/upload time
 
 
 class MatrixNotifyMap(Base):

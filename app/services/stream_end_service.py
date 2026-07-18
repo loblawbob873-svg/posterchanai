@@ -214,6 +214,11 @@ async def _end_now(user_id: int, reason: str) -> None:
 
 # ---------------------------------------------------------------- triggers
 
+# NOTE: saving the tmpfs recording to Blossom is NOT triggered from here. It's driven independently by
+# stream_vod_service.process_pending() (run by the reaper below), which detects an ended session by probing
+# MediaMTX and claims the recording — so graceful/ungraceful/lost-hook/inconclusive ends are all handled
+# uniformly, without this path (which only runs when a sentinel exists) having to fire it.
+
 async def _end_after_grace(token: str, user_id: int) -> None:
     try:
         await asyncio.sleep(_HOOK_GRACE)
@@ -291,6 +296,16 @@ async def _reaper_loop() -> None:
         try:
             await asyncio.sleep(_SWEEP_INTERVAL)
             await _sweep()
+            # Drive the save-to-Blossom worker: detect ended recordings + retry staged uploads. SPAWNED
+            # (not awaited) so its per-token MediaMTX liveness probes can't stall the reaper; it's
+            # re-entrancy-guarded, so a still-running pass is a no-op. Isolated from the reaper's own work.
+            try:
+                from app.services import stream_vod_service
+                _vt = asyncio.get_running_loop().create_task(stream_vod_service.process_pending())
+                _pending.add(_vt)
+                _vt.add_done_callback(_pending.discard)
+            except Exception as e:
+                logger.debug("[stream-end] VOD process_pending error: %s", e)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # pragma: no cover - defensive

@@ -26,8 +26,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import APIKey, User, UserSetting
-from app.services import settings_store, stream_end_service
+from app.models import APIKey, User, UserSetting, StreamVOD
+from app.services import settings_store, stream_end_service, users_store
 from app.services.nostr.event import verify_event
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,12 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     # The feed is really flowing now — let the reaper end this stream if it later disappears.
     try:
         stream_end_service.mark_publishing(db, row.user_id)
+        # Record the authoritative go-live time for this session so the VOD finalizer knows the real
+        # session start (and which segments belong to it), independent of file mtimes. No-op if recording
+        # is off. Preserved across a reconnect (only written when absent), cleared when the VOD is claimed.
+        if (settings_store.get("stream_record_enabled", "") or "").strip().lower() == "true":
+            from app.services import stream_vod_service
+            stream_vod_service.mark_golive(path)
     except Exception as e:
         logger.debug("[stream] could not mark %s publishing: %s", path, e)
     return Response(status_code=200)
@@ -235,12 +241,16 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     else:
         hls_url = f"{origin}/api/streams/hls/{token}/index.m3u8"
 
+    record_on = (cfg.get("stream_record_enabled", "") or "").strip().lower() == "true"
     return {
         "enabled": enabled,
         "rtmp_url": f"rtmp://{host}:{rtmp_port}",
         "stream_key": f"{token}?key={api_key}",
         "token": token,
         "hls_url": hls_url,
+        # Save-to-Blossom recording: whether the node offers it, and this user's opt-in.
+        "record_available": record_on,
+        "record_enabled": bool(getattr(current_user, "stream_record", False)),
         # The Android app's native screen share pushes RTMP directly (its WebView has no getDisplayMedia, so
         # the screen can't go through WHIP). It needs the WHOLE url, not OBS's server+key split — and it must
         # be built HERE, because the encoder (RootEncoder) parses an RTMP url as `app/stream` and mangles the
@@ -456,3 +466,60 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         except Exception:
             pass
     return response
+
+
+# ---------------------------------------------------------------- Past streams (VODs)
+
+def _vod_url(sha256: str) -> str:
+    """Public playback URL for a VOD blob (BUD-01 GET on the Blossom server)."""
+    base = (settings_store.get("blossom_public_url", "") or "").strip().rstrip("/")
+    # Fallback to the built-in Blossom server's BUD-01 GET route (mounted at /blossom, no /api prefix).
+    return f"{base}/{sha256}" if base else f"/blossom/{sha256}"
+
+
+def _vod_json(v: StreamVOD) -> dict:
+    return {
+        "id": v.id,
+        "token": v.token,
+        "url": _vod_url(v.sha256),
+        "sha256": v.sha256,
+        "size": v.size,
+        "duration_s": v.duration_s,
+        "title": v.title,
+        "started_at": v.started_at,
+        "created_at": v.created_at,
+    }
+
+
+@router.get("/vods")
+def stream_vods(current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """The signed-in user's saved past streams, newest first."""
+    rows = (db.query(StreamVOD).filter(StreamVOD.user_id == current_user.id)
+            .order_by(StreamVOD.started_at.desc()).limit(200).all())
+    return {"vods": [_vod_json(v) for v in rows]}
+
+
+@router.get("/vods/by-token/{token}")
+def stream_vods_by_token(token: str, db=Depends(get_db)):
+    """A streamer's past streams by publish token — PUBLIC, like HLS playback (the bytes are already
+    public on the Blossom server). Lets a viewer watch streams that ended without needing an account."""
+    rows = (db.query(StreamVOD).filter(StreamVOD.token == token)
+            .order_by(StreamVOD.started_at.desc()).limit(200).all())
+    return {"vods": [_vod_json(v) for v in rows]}
+
+
+@router.post("/record")
+def stream_record_toggle(body: dict, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Set the per-user 'save my ended streams to Blossom' opt-in. Mirrored to Nostr (users_store) so it
+    hydrates on a fresh node. The global stream_record_enabled kill-switch still gates recording."""
+    raw = body.get("enabled")
+    # Coerce robustly: a JSON string like "false"/"0" is truthy to bool(), which would make the
+    # toggle impossible to turn off.
+    enabled = raw.strip().lower() in ("1", "true", "yes", "on") if isinstance(raw, str) else bool(raw)
+    current_user.stream_record = enabled
+    db.commit()
+    try:
+        users_store.sync_user_blocking(db, current_user)
+    except Exception as e:
+        logger.warning("[stream] record-opt-in Nostr sync failed for %s: %s", current_user.id, e)
+    return {"stream_record": enabled}

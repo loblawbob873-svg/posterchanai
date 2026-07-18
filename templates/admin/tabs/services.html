@@ -96,6 +96,17 @@
             <input type="text" id="stream_rtmp_port" name="stream_rtmp_port" placeholder="1935" style="max-width:120px;">
             <small>OBS ingest port — forward this on your router.</small>
         </div>
+        <div class="form-group">
+            <label for="stream_record_enabled">
+                <input type="checkbox" id="stream_record_enabled" name="stream_record_enabled"> Save ended streams to Blossom (“Past streams”)
+            </label>
+            <small>Global switch. Each streamer also opts in per-stream (Go Live → “Save my streams”). A recorded stream is written to a temp dir, then uploaded to the streamer's Blossom drive when it ends and shown under their profile → Streams. Toggling this restarts the media server (drops any live stream briefly).</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_record_dir">Recording temp dir</label>
+            <input type="text" id="stream_record_dir" name="stream_record_dir" placeholder="/tmp/posterchanai-streams">
+            <small>Where MediaMTX writes recordings before upload. It's just a path — mount it as tmpfs (or point it at <code>/dev/shm</code>) if you want RAM-backed recording with no SSD writes.</small>
+        </div>
     </fieldset>
 
     <fieldset>
@@ -335,7 +346,7 @@
             <div class="form-group">
                 <label for="fedi_bridge_retention_days">Mirror retention (days)</label>
                 <input type="number" id="fedi_bridge_retention_days" name="fedi_bridge_retention_days" value="0" min="0">
-                <small>Age out mirrored notes faster than the relay's general retention. 0 = use the general setting.</small>
+                <small>How long to keep mirrored fediverse posts. The relay's general retention does not apply to bridge content — this setting alone governs its age. <strong>0 = keep forever</strong> (a busy bridge may then need a value here, or a relay event cap, to bound disk).</small>
             </div>
         </div>
         <div class="form-group">

@@ -456,6 +456,10 @@ async def startup():
                 # stream_enabled + the binary is installed)
                 from app.services.stream_service import start_stream_server
                 start_stream_server()
+                # Clear any stream recordings orphaned in tmpfs by a mid-stream restart/crash (they'd
+                # otherwise accumulate until /dev/shm fills). Safe at startup — nothing is served yet.
+                from app.services.stream_vod_service import sweep_orphans
+                sweep_orphans()
             except Exception as e:
                 logging.error(f"Error starting stream server: {e}", exc_info=True)
 

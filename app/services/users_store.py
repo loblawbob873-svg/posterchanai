@@ -53,6 +53,7 @@ CONFIG_FIELDS = (
     "matrix_dm_bot_user_id",
     "finance_api_key", "social_notif_enabled", "matrix_notif_enabled",
     "fedi_bridge_enabled", "fedi_crosspost_enabled",   # Nostr↔Fediverse opt-ins (cursors *_since stay local)
+    "stream_record",   # per-user opt-in: save ended live streams to the user's Blossom drive
 )
 
 _SYNCED = ACCOUNT_FIELDS + CONFIG_FIELDS

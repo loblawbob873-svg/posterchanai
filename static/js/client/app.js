@@ -2744,9 +2744,9 @@
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
       <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
         <div class="stream-main">
-          ${url?`<video class="stream-player" id="st-video" controls playsinline></video>
+          ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline></video>
             <div class="muted small" id="st-note"></div>
-            <div class="row">${isDesktop()?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener">▶ Open stream URL</a></div>`:'<div class="empty">No stream URL provided.</div>'}
+            <div class="row">${isDesktop()&&url?`<button class="btn btn-ghost small" id="st-pop">⧉ Pop out player</button>`:''}${url?`<a class="btn btn-ghost small" href="${enc(url)}" target="_blank" rel="noopener">▶ Open stream URL</a>`:''}</div>`:'<div class="empty">No stream URL provided.</div>'}
           ${summary?`<div class="about">${linkify(summary)}</div>`:''}
         </div>
         <div class="stream-chat" id="st-chat">
@@ -2765,7 +2765,24 @@
     { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     decorateProfiles();
-    if(url) attachStream(url);
+    // An ENDED stream: prefer the saved recording (VOD) over the now-dead live URL. Resolve it by the
+    // stream's publish token (the 30311 `d` tag) and play the Blossom URL — attachStream feeds a plain
+    // mp4/fmp4 straight into <video>. `openStream._tok` guards against a race if you tap another stream
+    // before the fetch resolves.
+    openStream._view=e.id;   // guard on the (unique) event id, not the d-tag which can be empty
+    if(st==='ended'){
+      const _view=e.id; { const n0=$('#st-note'); if(n0) n0.textContent='Loading recording…'; }
+      (async()=>{
+        let vurl='';
+        if(dtag){ try{ const r=await _streamFetch('/api/streams/vods/by-token/'+encodeURIComponent(dtag));
+          if(r&&r.ok){ const j=await r.json(); const v=(j.vods||[])[0]; if(v&&v.url) vurl=v.url; } }catch(_){} }
+        if(VIEW!=='stream'||openStream._view!==_view) return;   // navigated away / opened another stream
+        const playUrl=vurl||url; const n2=$('#st-note');
+        if(!playUrl){ if(n2) n2.textContent='This stream ended — no recording available.'; return; }
+        if(n2) n2.textContent = vurl ? '▶ Recorded stream' : '';
+        attachStream(playUrl);
+      })();
+    } else if(url){ attachStream(url); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr);   // don't start the sub if chat is hidden
   }
@@ -2886,6 +2903,7 @@
     modal(`<h3>🔴 Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
+      ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${canPhone || canScreen
         ? `${canPhone ? `<button class="btn btn-neon full" id="gl-phone">📱 Go live from this phone (camera)</button>` : ''}
            ${canScreen ? `<button class="btn btn-neon full" id="gl-screen">🖥 Go live sharing this screen</button>` : ''}
@@ -2898,6 +2916,10 @@
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
+      { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
+          _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
+            .then(()=>toast(rc.checked?'recording on':'recording off')).catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
+            .finally(()=>{ rc.disabled=false; }); }; }
       $('#gl-cancel',root).onclick=closeModal;
       { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _phoneGoLive(info, t, a); }; }
       { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _screenGoLive(info, t, a); }; }
@@ -7689,7 +7711,7 @@
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
-      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button></div>
+      <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
     let pinnedHtml = '';   // filled by the deferred pinned query below; listFor() reads it live
     const listFor=(tab)=>{
@@ -7703,10 +7725,16 @@
         return `<div class="media-grid">${items}</div>`; }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
+      if(tab==='streams'){ const s=_dedupAddr(Store.feed(e=>e.kind===30311 && (e.pubkey===pk || streamHost(e)===pk))).slice(0,lim);
+        return s.length ? `<div class="stream-grid">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
     const fillList=(tab)=>{ const el=$('#prof-list'); if(el) el.innerHTML=listFor(tab); };
+    // Wire the Streams tab's cards to open the stream/VOD (author-name clicks still go to the profile).
+    const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
+      el.querySelectorAll('.stream-card').forEach(c=>{ c.style.cursor='pointer';
+        c.onclick=(ev)=>{ if(ev.target.closest('[data-prof]')) return; const s=Store.get(c.dataset.id); if(s) openStream(s); }; }); };
     // pagination cursor: oldest author kind-1 we hold (drives loadOlderProfile via `until`)
     const authorNotes=Store.feed(e=>e.pubkey===pk);
     _prof = { pk, tab:'notes', loading:false, done:false, limit:40, fill:fillList, following:[], followers:[],
@@ -7715,10 +7743,19 @@
     hydrate(feed);
     decorateVerified($('#prof-vchk'), pk, p.nip05);
     $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
+      if(tab==='streams') _wireProfStreamClicks();
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
       if(tab==='articles' && !_prof.artLoaded){ _prof.artLoaded=true;
         try{ const a=await Relay.query([{authors:[pk],kinds:[30023],limit:40}]); for(const e of (a||[])) Store.saveEvent(e); }catch(_){}
         if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='articles'){ fillList('articles'); hydrate(feed); } }
+      // Streams (kind-30311) live + ended — lazy-fetch once (our relay + the wider stream network).
+      if(tab==='streams' && !_prof.streamsLoaded){ _prof.streamsLoaded=true;
+        try{ const s=await Relay.query([{authors:[pk],kinds:[30311],limit:60}]); for(const e of (s||[])) Store.saveEvent(e); }catch(_){}
+        try{ let ext=await Relay.queryFrom(STREAM_RELAYS,[{authors:[pk],kinds:[30311],limit:60}]);
+          if(ext&&ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
+            const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; }
+            for(const e of ext) Store.saveEvent(e); } }catch(_){}
+        if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
     });
     $('#copy-npub').onclick=()=>{ navigator.clipboard.writeText(npub); toast('npub copied'); };
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }

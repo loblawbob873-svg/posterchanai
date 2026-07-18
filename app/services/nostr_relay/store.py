@@ -171,9 +171,10 @@ class RelayStore:
         self.dsn = dsn or _DEFAULT_DSN
         self.max_events = max_events
         self.retention_days = retention_days
-        # Optional, shorter retention for the fediverse-bridge mirror (origin='bridge'). 0 = use the
-        # general retention. The global fedi timeline is a high-volume firehose, so an operator may
-        # want it aged out faster than the WoT feed. Profiles (kind 0) are never pruned regardless.
+        # Retention for the fediverse-bridge mirror (origin='bridge'). Governs bridge content's age on its
+        # OWN — the general retention_days age prune skips origin='bridge'. 0 = keep forever (age-wise; the
+        # count cap still applies as a memory backstop). A busy bridge may want it aged out; profiles
+        # (kind 0) are never pruned regardless.
         self.bridge_retention_days = bridge_retention_days
         self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
         self._tls = threading.local()
@@ -518,12 +519,19 @@ class RelayStore:
         (ActivityPub / atproto mirror content from mostr.pub, momostr.pink, ditto.pub, brid.gy, …).
         Scoped to timeline kinds via is_bridged_post so it NEVER touches DMs (kind 4 / NIP-17 1059) —
         a fediverse user DMing through a bridge sends proxy-tagged kind-4s, and deleting those ate
-        incoming DMs. Preserve-aware too: a local user's own/direct events are never deleted."""
+        incoming DMs. Preserve-aware too: a local user's own/direct events are never deleted.
+
+        EXCLUDES origin='bridge' — OUR OWN built-in bridge's puppet content. Those posts are proxy-tagged
+        too, but ingest deliberately keeps them (server.py: `not _is_puppet`), so purging them here
+        contradicted that and silently deleted the fediverse posts a user had replied to (orphaning the
+        thread: 'Replying to a post that couldn't be loaded'). This purge is for EXTERNAL bridge mirror
+        content synced in (origin='wot'), not the bridge we run ourselves."""
         from .bridges import is_bridged_post
         conn = self._conn()
         preserve = self._preserve_clause()
         rows = conn.execute(
-            f"SELECT id, kind, tags FROM events WHERE kind IN (1,6) AND {preserve} AND tags LIKE '%\"proxy\"%'").fetchall()
+            f"SELECT id, kind, tags FROM events WHERE kind IN (1,6) AND {preserve} "
+            f"AND origin != 'bridge' AND tags LIKE '%\"proxy\"%'").fetchall()
         ids = []
         for r in rows:
             try:
@@ -824,11 +832,16 @@ class RelayStore:
         # reposts/reactions/comments + public chat/articles/streams), and only synced copies (the
         # preserve clause keeps origin='direct' and local users'). Everything else (profiles,
         # contacts, relay/identity lists, DMs, channel/community defs, …) is never touched.
+        # EXCLUDES origin='bridge' — our own built-in bridge's mirror content's AGE is governed by its own
+        # "Mirror retention" setting (the bridge_retention_days prune below), NOT this general window, so a
+        # Mirror retention of 0 means "keep forever" (age-wise). NOTE: the hard count-cap further below is a
+        # separate MEMORY backstop and still applies to every origin — set max_events (or a Mirror retention)
+        # if a busy bridge could otherwise grow the store without bound.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
             rows = conn.execute(
                 f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
-                f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
+                f"AND {preserve} AND origin != 'bridge' RETURNING id", (cutoff,)).fetchall()
             gone += [r["id"] for r in rows]; removed += len(rows)
         # Puppet-addressed DM gift-wraps/seals (origin='bridge', kinds 13/1059) are transient and not
         # in _PRUNABLE_KINDS, so without this an attacker spamming derivable puppet npubs grows the DB
