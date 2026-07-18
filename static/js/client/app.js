@@ -6520,6 +6520,42 @@
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
     if(list!==null){ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); _gcOrphanIndexBlobs(list); }
+    // Label saved-stream recordings ("Past streams") so they don't show as anonymous video blobs. This is
+    // a cosmetic cross-reference of the user's own VOD list — fetch it ONCE (cached), in the BACKGROUND,
+    // and re-render the grid when it lands. Never block the drive's first paint on this (a slow/hung
+    // /api/streams/vods must not leave the drive blank), and never re-fetch on every folder switch/move.
+    if(list!==null && _filesFolder!=='Music'){
+      _ensureVodNames().then(changed=>{
+        if(!changed || VIEW!=='blossom' || _filesTab!=='public' || _filesFolder==='Music') return;
+        // Apply the freshly-fetched labels onto the CURRENT grid IN PLACE — no re-render, so this can't
+        // revert an in-window blob add/remove, flash a spinner, or wipe the upload-progress queue.
+        const grid=document.getElementById('bl-grid'); if(!grid) return;
+        for(const sha in _vodNameMap){
+          if((FilesIdx.meta(sha)||{}).name) continue;                      // a user-named file keeps its own name
+          const card=grid.querySelector('.file-card[data-sha="'+sha+'"]'); if(!card) continue;
+          const span=card.querySelector('.meta > span'); if(span){ span.textContent=_vodNameMap[sha].slice(0,18); span.title=_vodNameMap[sha]; }
+        }
+      });
+    }
+  }
+  let _vodNameMap={};          // sha256 -> "Stream <date>" (or a short sha) for the current user's recorded VODs (drive labels)
+  let _vodNamesInflight=false; // a fetch is in progress — blocks a concurrent second fetch from a fast re-render
+  let _vodNamesAt=0;           // last-fetch time. TTL-cached so we DON'T refetch every folder-switch, but DO pick up a VOD recorded later this session and recover from an early auth-race failure
+  async function _ensureVodNames(){
+    if(_vodNamesInflight) return false;
+    if(_vodNamesAt && (Date.now()-_vodNamesAt < 60000)) return false;   // cached & fresh → nothing new to apply
+    _vodNamesInflight=true; _vodNamesAt=Date.now();                     // stamp up-front → at most ONE attempt per 60s (success OR failure) — no refetch storm on a persistently-failing endpoint
+    let changed=false;
+    try{ const vr=await _streamFetch('/api/streams/vods');
+      if(vr && vr.ok){ const vj=await vr.json(); const m={};
+        for(const v of (vj.vods||[])){ if(!v.sha256) continue; const t=+v.started_at||0; const d=new Date(t*1000);
+          // With a real start time → "Stream <date> <time>"; without one, fall back to a short sha so two
+          // timestamp-less recordings don't collapse to an identical bare "Stream" label.
+          m[v.sha256]='Stream '+((!t||isNaN(d.getTime())) ? v.sha256.slice(0,6) : (d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}))); }
+        _vodNameMap=m; changed=true; } }
+    catch(_){}
+    _vodNamesInflight=false;
+    return changed;            // failure keeps the stamp → next retry after the 60s TTL (bounded), labels just wait
   }
   function _renderFilesGrid(grid, list){
     if(!grid) return;
@@ -6535,7 +6571,7 @@
     if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; }   // reset paging on folder change
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
     grid.innerHTML = inFolder.length ? (_shown.map(b=>{
-      const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||'';
+      const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||_vodNameMap[b.sha256]||'';
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         const ext=((m.mime||'').split('/')[1]||'enc').slice(0,10);
         return `<div class="file-card enc" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext)}</span></div></a>
@@ -6970,6 +7006,7 @@
   // follower re-saving their list never re-pings or re-lights the badge.
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
   let _followSeeded=false;   // true once the follower seed (below) has run — before that, notifList must NOT persist pins
+  let _followReady=false;    // true after the follows (kind-3) sub reaches EOSE — only then is a kind-3 a genuinely NEW follow
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
@@ -6991,10 +7028,22 @@
     // follow" every time anyone edits their list. We mark every existing follower as already-seen (their
     // _followSeen time = last-checked), so only a pubkey we've NEVER recorded — a genuinely new follower
     // arriving live — pings/badges. (the recurring "follow spam from people who followed long ago")
-    try{
-      const followers = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
+    // Run the seed in the BACKGROUND so it never delays the live mention/zap/DM subscription below — the
+    // retry can take a few seconds on a laggy link. Until it completes, _followSeeded stays false and the
+    // kind-3 badge-bump is HELD (a follow only touches the badge, never a ping), so a slow/failed seed
+    // can't resurface old followers; the only cost is not badging a brand-new follow in the first ~second.
+    (async()=>{ try{
+      // Retry the seed on a laggy link (Thailand→US): a single REQ can EOSE empty before the relay serves
+      // the follower kind-3s, leaving _followSeen unpopulated → every old follower re-saving their contact
+      // list post-EOSE re-pings as a brand-new "followed you". Retry with backoff until it returns (same
+      // fix as restoreMediaServer). Empty after all tries → genuinely no followers (or offline) → no harm.
+      let followers=[];
+      for(let attempt=0; attempt<4 && !followers.length; attempt++){
+        if(attempt>0) await new Promise(r=>setTimeout(r, 600*attempt));
+        try{ followers = (await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]))||[]; }catch(_){ followers=[]; }
+      }
       let changed=false;
-      for(const e of (followers||[])){ FOLLOWERS.add(e.pubkey);
+      for(const e of followers){ FOLLOWERS.add(e.pubkey);
         // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
         // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0. Also
         // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
@@ -7004,24 +7053,28 @@
       // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
       // followers keep resurfacing: notifList would then pin them at their fresh re-save time. (Harmless if
       // you genuinely have no followers: there's no kind-3 to mis-pin.)
-      _followSeeded = (followers||[]).length>0;
+      _followSeeded = followers.length>0;
+      if(VIEW==='notifications') renderNotifications();   // reflect the seeded ordering once the async seed lands
     }catch(_){}
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,3,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
-      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
-        if(ev.kind===3){
+      // Sub B — follows (kind-3), subscribed only AFTER the seed above, so every kind-3 is judged against a
+      // populated _followSeen: an existing follower re-saving their contact list is firstTime=false and
+      // never resurfaces; only a pubkey we've NEVER recorded, arriving after THIS sub's own EOSE, badges as
+      // a new follow. Its own _followReady (not the mentions sub's EOSE) is the backlog→live boundary.
+      Relay.subscribe([{ '#p':[ME.pubkey], kinds:[3], limit:150 }], {
+        onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
-          // Before EOSE this is the relay's BACKLOG — history the seed should have covered, not news. A
-          // kind-3 carries no "when did they follow you" (it's their whole contact list, re-saved whenever
-          // they follow ANYONE), so pinning backlog at its created_at is exactly what kept showing an old
-          // follower as a fresh "followed you" every time they edited their list. Only a kind-3 that lands
-          // AFTER EOSE is a genuinely new follow.
           const firstTime = !_followSeen[ev.pubkey];
-          const live = _notifReady;
+          const live = _followReady;
           const ts = live ? _followTs(ev.pubkey, ev.created_at) : _followTsOld(ev.pubkey, ev.created_at);
-          if(live && firstTime && ts>seenNotif.last) bumpNotif();
-          if(VIEW==='notifications') renderNotifications();
-          return;                                  // a re-saved contact list never re-notifies
-        }
+          if(live && firstTime && ts>seenNotif.last) bumpNotif();   // only a post-EOSE, never-seen follower badges
+          if(VIEW==='notifications') renderNotifications(); } },
+        onEose: ()=>{ _followReady=true; if(VIEW==='notifications') renderNotifications(); }
+      });
+    })();
+    // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
+    // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
+      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
       onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
@@ -7726,11 +7779,14 @@
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
       if(tab==='streams'){ const s=_dedupAddr(Store.feed(e=>e.kind===30311 && (e.pubkey===pk || streamHost(e)===pk))).slice(0,lim);
-        return s.length ? `<div class="stream-grid">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
+        return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
     };
-    const fillList=(tab)=>{ const el=$('#prof-list'); if(el) el.innerHTML=listFor(tab); };
+    // Guard against redundant re-renders: the lazy-fetch (+ hydrate/live-event churn) can call fillList
+    // with byte-identical HTML, and re-setting innerHTML re-triggers the .stream-card fade → screen flicker.
+    let _lastFill=null;
+    const fillList=(tab)=>{ const el=$('#prof-list'); if(!el) return; const h=listFor(tab); if(h===_lastFill) return; _lastFill=h; el.innerHTML=h; };
     // Wire the Streams tab's cards to open the stream/VOD (author-name clicks still go to the profile).
     const _wireProfStreamClicks=()=>{ const el=$('#prof-list'); if(!el) return;
       el.querySelectorAll('.stream-card').forEach(c=>{ c.style.cursor='pointer';

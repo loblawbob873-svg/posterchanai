@@ -382,7 +382,7 @@ async def stream_viewers(token: str):
     return {"live": bool(data.get("ready")), "viewers": len(readers)}
 
 
-@router.get("/hls/{token}/{path:path}")
+@router.api_route("/hls/{token}/{path:path}", methods=["GET", "HEAD"])
 async def stream_hls_proxy(token: str, path: str, request: Request):
     """Reverse-proxy HLS playlists/segments from the local MediaMTX HLS server.
 
@@ -401,6 +401,14 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
     safe = "".join(c for c in f"{token}/{path}" if c.isalnum() or c in "._-/")
     if ".." in safe or safe != f"{token}/{path}":
         return Response(status_code=400)
+    if request.method == "HEAD":
+        # Players (and native <video>) probe the playlist with a HEAD preflight; answer it directly with the
+        # right content-type instead of 405ing. The follow-up GET does the real cookie-gated MediaMTX proxy.
+        ct = ("application/vnd.apple.mpegurl" if path.endswith(".m3u8")
+              else "video/mp2t" if path.endswith(".ts")
+              else "video/mp4" if path.endswith((".mp4", ".m4s"))
+              else "application/octet-stream")
+        return Response(status_code=200, media_type=ct)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
     upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
     # Forward ONLY the HLS session cookie upstream (never the app's auth/session cookies), always asserting
