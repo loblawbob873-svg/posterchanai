@@ -212,9 +212,10 @@ def _write_config(cfg: dict) -> None:
             "    record: yes",
             f"    recordPath: '{rec_dir}/%path/%Y-%m-%d_%H-%M-%S-%f'",
             "    recordFormat: fmp4",
-            "    recordSegmentDuration: 24h",   # one file per session unless it runs a full day
-            "    recordDeleteAfter: 0",          # stream_vod_service deletes after uploading to Blossom
-        ]
+            "    recordSegmentDuration: '24h'",   # one file per session unless it runs a full day
+            "    recordDeleteAfter: '0s'",         # 0 duration = never auto-delete; stream_vod_service cleans
+        ]                                          # up after uploading. (MediaMTX wants a DURATION STRING here,
+        #                                            not a bare number — `0` → "cannot unmarshal number".)
     lines.append("")
     _STREAM_CFG.write_text("\n".join(lines) + "\n")
 
