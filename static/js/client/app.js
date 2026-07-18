@@ -7778,7 +7778,7 @@
         return `<div class="media-grid">${items}</div>`; }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
-      if(tab==='streams'){ const s=_dedupAddr(Store.feed(e=>e.kind===30311 && (e.pubkey===pk || streamHost(e)===pk))).slice(0,lim);
+      if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> e.pubkey===pk || streamHost(e)===pk)).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
