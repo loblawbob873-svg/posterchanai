@@ -594,7 +594,7 @@ def update_settings(
         # startup, so editing them in the UI did nothing until a restart (symptom: "I set prune to 0
         # but old notes still get deleted"). Flush durably first (relay re-reads from Postgres), then
         # push the live update — same pattern as the upstream reload above, no restart.
-        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events")
+        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events", "fedi_bridge_retention_days")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_store_keys):
             flushed = False
             try:
@@ -607,7 +607,7 @@ def update_settings(
                 try:
                     from app.services.nostr_relay.thread import trigger_store_config_reload
                     trigger_store_config_reload()
-                    logger.info("[Admin] relay store config reload requested (retention/max_events, no restart)")
+                    logger.info("[Admin] relay store config reload requested (retention/max_events/mirror-retention, no restart)")
                 except Exception as e:
                     logger.warning(f"[Admin] relay store-config reload after settings save failed: {e}")
         # Blossom mirror list / public URL / enable changed → re-advertise the operator's kind-10063
