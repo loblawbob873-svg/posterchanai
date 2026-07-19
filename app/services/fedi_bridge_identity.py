@@ -219,7 +219,9 @@ async def publish(port: int, ev: dict, timeout: float = 8.0) -> tuple[bool, str]
                     msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
                     if msg[0] == "OK" and msg[1] == ev["id"]:
                         return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
-                    # NOTICE / other control frames on a publish-only socket → ignore and keep reading
+                    # NOTICE / other control frames on a publish-only socket → ignore and keep reading.
+                    # (Oversized events never reach a NOTICE — the websockets layer drops the >512KB frame
+                    # first — so the bridge guards event size proactively before publishing instead.)
             except Exception as e:
                 global _ws
                 _ws = None        # drop the dead socket; second attempt reconnects

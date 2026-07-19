@@ -2727,6 +2727,7 @@
       $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const s=Store.get(c.dataset.id); if(s) openStream(s); });
     };
     paint();
+    _maybeOfferAnnounce();   // surface a one-tap Announce if our OWN OBS feed is ingesting but unannounced
     // Merge in streams from the wider network (background — the local list already painted). External
     // relays are UNTRUSTED, so VERIFY each event's signature before saving/rendering — an unverified
     // forgery could spoof a host or (addressable) shadow a real user's stream in the local cache.
@@ -2916,6 +2917,27 @@
     // Harmless if one is already stored — the server keeps the "went live" state across a re-park.
     _parkEndSentinel(tok, _liveStream.title, _liveStream.hls, starts);
   }
+  // The #1 "I streamed but nothing shows anywhere" confusion: starting OBS makes the SERVER ingest, but the
+  // kind-30311 that actually puts a stream on Discover / your profile / zap.stream can only be SIGNED here in
+  // the browser — so ingesting isn't announcing. If our own OBS feed is live yet we never announced it, surface
+  // a loud one-tap Announce banner instead of leaving the user to hunt for the button in the Go Live dialog.
+  async function _maybeOfferAnnounce(){
+    if(_liveStream || _phoneStream || _goingLive || GUEST || !ME || VIEW!=='streams') return;
+    let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ return; }
+    if(!info || !info.hls_url || info.enabled===false) return;
+    let live=false; try{ const r=await fetch(info.hls_url,{cache:'no-store'}); live=r.ok; }catch(_){ }
+    if(!live || _liveStream || VIEW!=='streams') return;   // re-check the guards after the awaits
+    const feed=$('#feed'); const top=feed&&feed.querySelector('.streams-top');
+    if(!top || feed.querySelector('#ingest-banner')) return;
+    const b=document.createElement('div'); b.id='ingest-banner'; b.className='ingest-banner';
+    b.innerHTML=`<div>🔴 <b>Your OBS stream is live on the server</b> — but not announced on Nostr yet, so it won’t show on Discover or your profile until you announce it.</div>`
+      +`<div class="ib-row"><input class="input" id="ib-title" placeholder="Stream title" maxlength="120"><button class="btn btn-neon small" id="ib-go">📡 Announce live</button></div>`;
+    top.after(b);
+    feed.querySelector('#ib-go').onclick=async(ev)=>{ const btn=ev.currentTarget; btn.disabled=true;
+      const t=(feed.querySelector('#ib-title').value||'').trim()||'Live stream';
+      try{ await _publishLive(info, t); _startLiveHb(); toast('🔴 you’re live — announced on Nostr'); switchView('streams'); }
+      catch(_){ btn.disabled=false; toast('couldn’t announce the stream'); } };
+  }
   async function _goLive(){
     if(GUEST){ _guestPrompt(); return; }
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); switchView('streams'); return; }
@@ -2929,7 +2951,7 @@
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${canPhone || canScreen
-        ? `${canPhone ? `<button class="btn btn-neon full" id="gl-phone">📱 Go live from this phone (camera)</button>` : ''}
+        ? `${canPhone ? `<button class="btn btn-neon full" id="gl-phone">${isDesktop()?'📹 Go live with this webcam':'📱 Go live from this phone (camera)'}</button>` : ''}
            ${canScreen ? `<button class="btn btn-neon full" id="gl-screen">🖥 Go live sharing this screen</button>` : ''}
            <div class="gl-or">— or stream from a computer with OBS —</div>`
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
@@ -10157,8 +10179,19 @@
   async function _nativeShareMedia(src){
     const P=(window.Capacitor&&Capacitor.Plugins)||{}; const Filesystem=P.Filesystem, Share=P.Share;
     if(!Filesystem||!Share) return false;
-    const hdr = _aiToken ? {'Authorization':'Bearer '+_aiToken} : {};
-    const r=await fetch(src, {headers:hdr, credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status);
+    // A cross-origin fetch() of a TIMELINE image (arbitrary external / blossom host with no CORS) is blocked
+    // by the WebView — the <img> renders but fetch() can't read the bytes ("couldn't share image"). Pull
+    // those through our OWN public, CORS-enabled, SSRF-guarded proxy (poster.place fetches the bytes
+    // server-side). Our own AUTHED /api content (e.g. AI-chat /api/files) IS same-origin + CORS-OK, so fetch
+    // it directly WITH the Bearer (the proxy couldn't auth as the user for it anyway).
+    const origin = _serverOrigin();
+    let fetchUrl, opts;
+    if(src.startsWith(origin + '/api/')){
+      fetchUrl = src; opts = {headers: (_aiToken?{'Authorization':'Bearer '+_aiToken}:{}), credentials:'include'};
+    } else {
+      fetchUrl = origin + '/client/proxy-image?url=' + encodeURIComponent(src); opts = {};
+    }
+    const r=await fetch(fetchUrl, opts); if(!r.ok) throw new Error('HTTP '+r.status);
     const b64=await _blobToB64(await r.blob());
     let name=((src.split('/').pop()||'image').split('?')[0])||'image'; if(!/\.[a-z0-9]{2,4}$/i.test(name)) name+='.png';
     const w=await Filesystem.writeFile({ path:name, data:b64, directory:'CACHE' });

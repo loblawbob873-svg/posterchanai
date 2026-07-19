@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError, InterfaceError   # CONNECTION-level (transient) DB errors — retry, don't skip
 
 from app.models import FediBridgeDelivered, FediPuppet
 from app.services import pleroma_service, settings_store
@@ -46,11 +47,12 @@ _MAX_ANCESTORS = 8             # DEFAULT ancestors backfilled (root-first) to an
                                # Delivered oldest→newest so each ancestor's parent is mirrored just before it →
                                # NIP-10 e-tag linked. Kept conservative because the personal-notification plane
                                # reuses this default and has NO per-poll drain budget.
-_BRIDGE_MAX_ANCESTORS = 8      # bridge-drain ancestor window. Kept SMALL (== _MAX_ANCESTORS) so ONE reply's
-                               # backfill (≤8 publishes) can never run the poll past _POLL_TIMEOUT — the
-                               # earlier 15 + a per-ancestor deadline break wedged the poll on timeout AND
-                               # orphaned replies (the break skipped the immediate parent). The immediate
-                               # parent is always ancestors[-1], so it's always in this window → replies thread.
+_BRIDGE_MAX_ANCESTORS = 15     # WIDER ancestor window for the timeline-bridge drain — lets deep UNLISTED
+                               # sub-threads (which enter Nostr ONLY as backfilled ancestors) thread to their
+                               # true root. Safe to be wide because the drain passes a `_deadline` down to
+                               # _backfill_ancestors, which RAISES (→ whole reply retries next cycle, no orphan)
+                               # once past it — time is bounded by the deadline, NOT by a small cap. The
+                               # personal plane passes no deadline (0) → unbounded there, as before.
 _BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
 _MAX_QUOTE_DEPTH = 2           # cap quote-of-quote recursion when mirroring referenced notes
 
@@ -236,12 +238,17 @@ def _emoji_tags(content: str, *emoji_maps: dict) -> list:
 
 async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
                               instance_host: str, post: dict, token: str = "",
-                              max_ancestors: int = _MAX_ANCESTORS) -> None:
+                              max_ancestors: int = _MAX_ANCESTORS, deadline: float = 0.0) -> None:
     """Mirror a reply's ancestor chain (toward the conversation root) so the reply threads under a
     real parent instead of appearing as an orphan with missing context. Ancestors come root-first,
     so each is delivered before its child and never triggers a further backfill (recursion guard).
-    `token` lets the personal plane backfill from the USER's instance (else the bridge read account)."""
+    `token` lets the personal plane backfill from the USER's instance (else the bridge read account).
+    `deadline` (monotonic, 0 = unbounded): past it we RAISE _PublishFailed so the WHOLE reply aborts and
+    retries next cycle (already-delivered ancestors are _seen-skipped then, so it converges incrementally)
+    — this bounds a single deep reply's cost by TIME without orphaning it or wedging the poll on timeout."""
     token = token or _get("fedi_bridge_access_token")
+    if deadline and time.monotonic() > deadline:
+        raise _PublishFailed("drain deadline (before ancestor fetch)")   # retry the whole reply next cycle
     try:
         ctx = await pleroma_service.fetch_context(instance_url, token, post["id"])
         ancestors = ctx.get("ancestors") or []
@@ -249,7 +256,9 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
         logger.debug("[fedi-bridge] ancestor fetch failed for %s: %s", post.get("id"), e)
         return
     blocked = _blocked_domains()
-    for raw in ancestors[-max_ancestors:]:            # closest N (always includes the immediate parent); ≤8
+    for raw in ancestors[-max_ancestors:]:            # closest N (always includes the immediate parent)
+        if deadline and time.monotonic() > deadline:
+            raise _PublishFailed("drain deadline (mid-ancestor)")   # abort → reply retries next cycle (no orphan)
         anc = _norm(platform, raw)
         if not anc.get("id"):
             continue
@@ -262,7 +271,7 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
             continue
         try:
             await _deliver(db, port, platform, instance_url, instance_host, raw, anc,
-                           backfill=False, token=token)
+                           backfill=False, token=token, _deadline=deadline)
         except _PublishFailed:
             raise   # relay publish failed mid-backfill — abort so the WHOLE reply retries (no orphaned thread)
         except Exception as e:
@@ -420,7 +429,7 @@ def _raw_quote_status(platform: str, raw: dict) -> dict | None:
 
 
 async def _resolve_quote(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
-                         raw: dict, token: str, depth: int) -> tuple:
+                         raw: dict, token: str, depth: int, deadline: float = 0.0) -> tuple:
     """Ensure the note quoted by `raw` is mirrored on the relay, returning (event_id, puppet_pubkey)
     or (None, None). Reuses an existing mirror; otherwise mirrors it (moderation-checked,
     depth-bounded) so a Nostr client can embed the quoted post's content via the q tag / nostr ref."""
@@ -440,9 +449,12 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
         return None, None
     try:
         eid = await _deliver(db, port, platform, instance_url, instance_host, q_raw, qpost,
-                             backfill=False, token=token, _depth=depth + 1)
+                             backfill=False, token=token, _depth=depth + 1, _deadline=deadline)
     except _PublishFailed:
-        return None, None   # quote is secondary — skip the embed rather than abort the parent's delivery
+        return None, None   # quote is SECONDARY — skip the embed rather than abort the parent. (Re-raising
+                            # here would make the personal plane's _ensure_status_event drop a notification's
+                            # whole e-tag/thread on a transient quote failure; and the parent's OWN publish
+                            # failing transiently already retries the note, re-resolving the quote next cycle.)
     if not eid:
         return None, None
     row = _existing_mirror(db, instance_url, quri, qpost.get("id"))
@@ -452,7 +464,7 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None, _depth: int = 0,
-                   _max_anc: int = _MAX_ANCESTORS) -> str | None:
+                   _max_anc: int = _MAX_ANCESTORS, _deadline: float = 0.0) -> str | None:
     # Only a PUBLIC-audience status may become a public Nostr note (see _is_public_audience).
     if not _is_public_audience(raw):
         return None
@@ -479,7 +491,7 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         if parent_id:
             if backfill and not _parent_event(db, instance_url, parent_id):
                 await _backfill_ancestors(db, port, platform, instance_url, instance_host, post,
-                                          token=token, max_ancestors=_max_anc)
+                                          token=token, max_ancestors=_max_anc, deadline=_deadline)
             parent = _parent_event(db, instance_url, parent_id)
             if parent and parent.nostr_event_id:
                 # The delivered-map row can outlive the event it points at (pruned/deleted). Confirm the
@@ -506,7 +518,7 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         # not a dangling link. Depth-bounded so a chain of quote-of-quote can't recurse without limit.
         quote_bech = None
         quoted_ev_id, quoted_pk = await _resolve_quote(db, port, platform, instance_url, instance_host,
-                                                       raw, token, _depth)
+                                                       raw, token, _depth, deadline=_deadline)
         if quoted_ev_id:
             # NIP-18 q tag: ['q', <id>, <relay-url>, <pubkey>] — include the relay hint so other
             # clients can locate the quoted note and render the embed (was emitted with an empty slot).
@@ -538,15 +550,29 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         # NIP-30 custom emoji: tag every :shortcode: still present in the content so clients render the
         # actual emoji image instead of the raw shortcode text.
         tags.extend(_emoji_tags(content, post.get("content_emojis")))
+        # Oversized guard: an event over the relay's 512KB frame cap is dropped by the websockets layer with a
+        # raw ConnectionClosed (no OK, no NOTICE) — which looks transient and would wedge the drain retrying
+        # the giant post forever. `content` dominates the serialized size, so cap it well under 512KB here and
+        # SKIP (permanent → cursor advances). A post this large is pathological and never worth mirroring.
+        if len(content or "") > 300_000:
+            logger.info("[fedi-bridge] skipping oversized post %s (%d chars) — over relay frame cap",
+                        post.get("id"), len(content or ""))
+            return None
         ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
         ok, msg = await ident.publish(port, ev)
         if not ok:
             logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
-            # Distinguish a PERMANENT relay rejection (blocked author / not-in-WoT / invalid / already a
-            # duplicate) — which will NEVER be accepted, so SKIP it and let the cursor advance (return None)
-            # — from a TRANSIENT failure (dead socket, relay restart, timeout, rate-limit) which must retry
-            # (raise → don't advance). Without this split, ONE blocked-author post on the global drain wedges
-            # the cursor forever and no new posts get mirrored at all.
+            # Distinguish a PERMANENT relay rejection (SKIP → cursor advances, return None) from a TRANSIENT
+            # failure (retry → raise, don't advance). Without this split ONE permanently-rejected post wedges
+            # the cursor forever and NOTHING new mirrors.
+            #   Whitelist keyed to the SAME-REPO relay's exact OK-false vocabulary (nostr_relay/server.py):
+            #   PERMANENT = "invalid: …" (bad id/sig, empty, expired, future) and "blocked: …" (author blocked,
+            #     not-in-WoT, bridged-not-accepted). "duplicate" kept defensively (already-stored → skip).
+            #   TRANSIENT (default, NOT whitelisted → raise): the relay's ONE retryable reject
+            #     "error: not stored, retry", PLUS connection failures — ident.publish returns (False, str(e))
+            #     / "unreachable" on a dead socket, arbitrary text that must NOT be treated as permanent.
+            # ⚠ If the relay gains a NEW permanent rejection with a different prefix, add it here or the drain
+            #   will wedge on it (default-transient errs toward retry so a relay RESTART never drops posts).
             if (msg or "").lower().startswith(("blocked", "invalid", "duplicate")):
                 return None
             raise _PublishFailed(msg or "publish failed")
@@ -576,7 +602,7 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
 
 
 async def _process(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
-                   blocked_domains: set, include_replies: bool, raw: dict) -> None:
+                   blocked_domains: set, include_replies: bool, raw: dict, deadline: float = 0.0) -> None:
     # Skip pure boosts (a reblog with no own content): the original federates in on its own, so
     # mirroring the boost would just duplicate it. Quote-posts (own text) ARE mirrored.
     if raw.get("reblog") and not (raw.get("content") or "").strip():
@@ -594,7 +620,7 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
     if _seen(db, instance_url, post["id"], uri):
         return
     await _deliver(db, port, platform, instance_url, instance_host, raw, post,
-                   _max_anc=_BRIDGE_MAX_ANCESTORS)   # bridge drain only — personal plane uses the default 8
+                   _max_anc=_BRIDGE_MAX_ANCESTORS, _deadline=deadline)   # bridge drain: wide window, time-bounded
 
 
 # --- deletions --------------------------------------------------------------
@@ -648,7 +674,8 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
 
 async def _backfill_recent(db: Session, port: int, platform: str, instance_url: str,
                            instance_host: str, blocked_domains: set, include_replies: bool,
-                           ttype: str = None, cursor_key: str = "fedi_bridge_global_since") -> None:
+                           ttype: str = None, cursor_key: str = "fedi_bridge_global_since",
+                           deadline: float = 0.0) -> None:
     """On a fresh connect, mirror a bounded window of RECENT history (paging backward with max_id) so
     the Nostr global timeline isn't empty until new posts trickle in. Mirrors oldest-first (parents
     before replies) and then sets the forward cursor to the newest seen. `ttype`/`cursor_key` let the
@@ -670,16 +697,32 @@ async def _backfill_recent(db: Session, port: int, platform: str, instance_url: 
         return
     newest = max((r.get("id") for r in collected if r.get("id")), default=None)
     done = 0
+    # ONE-TIME best-effort recent-history fill (only runs on a fresh connect / lost cursor). Deliver
+    # oldest-first; on ANY per-post failure just roll back and SKIP it — dropping a couple of the ~60
+    # backfilled posts is fine, the normal forward drain carries on from `newest`. Then advance the cursor
+    # to `newest` == max(id): this matches the forward drain's id-based `min_id` resume EXACTLY (no
+    # created_at-vs-id ordering gap on the federated firehose), and setting the cursor means the next poll
+    # takes the normal forward path instead of re-running this backfill. A deadline break just stops early
+    # WITHOUT advancing, so the whole window re-runs next poll (delivered posts are _seen-skipped).
+    over_budget = False
     for raw in sorted(collected, key=lambda r: r.get("created_at") or ""):   # oldest-first
+        if deadline and time.monotonic() > deadline:
+            over_budget = True
+            break   # never overrun _POLL_TIMEOUT — resume the fill next poll (cursor NOT advanced below)
         try:
             await _process(db, port, platform, instance_url, instance_host,
-                           blocked_domains, include_replies, raw)
+                           blocked_domains, include_replies, raw, deadline=deadline)
             done += 1
         except Exception as e:
-            logger.debug("[fedi-bridge] backfill mirror failed: %s", e)
-    if newest:
+            try:
+                db.rollback()   # a failed publish OR a txn-aborting DB error — clear the session, skip the post
+            except Exception:
+                pass
+            logger.debug("[fedi-bridge] backfill mirror failed (skipping): %s", e)
+    if newest and not over_budget:
         settings_store.put(cursor_key, newest)
-    logger.info("[fedi-bridge] initial %s backfill mirrored %d recent post(s)", ttype, done)
+    logger.info("[fedi-bridge] initial %s backfill mirrored %d recent post(s)%s",
+                ttype, done, " (over budget — resuming next poll)" if over_budget else "")
 
 
 # --- poll -------------------------------------------------------------------
@@ -715,7 +758,7 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
             logger.info("[fedi-bridge] %s cursor lost — resuming forward from newest delivered note %s", ttype, since)
         else:
             await _backfill_recent(db, port, platform, instance_url, instance_host,
-                                   blocked_domains, include_replies, ttype, cursor_key)
+                                   blocked_domains, include_replies, ttype, cursor_key, deadline=deadline)
             return
 
     cursor = since
@@ -737,17 +780,31 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
                         # the poll past _POLL_TIMEOUT and getting cancelled before the cursor advances.
             try:
                 await _process(db, port, platform, instance_url, instance_host,
-                               blocked_domains, include_replies, raw)
+                               blocked_domains, include_replies, raw, deadline=deadline)
                 last = raw.get("id") or last
-            except (httpx.TransportError, asyncio.TimeoutError, _PublishFailed) as e:
-                # A relay PUBLISH failure (local relay restart, dead socket) must NOT advance the cursor —
-                # else this in-flight note is skipped forever (permanently missing from the mirror). Stop
-                # the page here; `last` holds the last delivered note, so it retries next poll.
+            except (httpx.TransportError, asyncio.TimeoutError, _PublishFailed, OperationalError, InterfaceError) as e:
+                # A relay PUBLISH failure (local relay restart, dead socket) OR a transient CONNECTION-level DB
+                # error (PG connection dropped mid-_seen/commit) must NOT advance the cursor — else this
+                # in-flight note is skipped forever (permanently missing from the mirror). Stop the page here;
+                # `last` holds the last delivered note, so it retries next poll. Roll back so a poisoned PG
+                # session doesn't break the sibling (global) drain that reuses this same session.
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
                 logger.warning("[fedi-bridge] %s drain transient/publish error, retrying next cycle: %s", ttype, e)
                 transient = True
                 break
             except Exception as e:
-                logger.warning("[fedi-bridge] %s post mirror failed: %s", ttype, e)
+                # Genuinely-bad post (e.g. IntegrityError/DataError) → SKIP it (advance) so it can't wedge the
+                # drain. But roll back FIRST: such an error may have aborted the PG txn, and without this the
+                # poisoned session breaks every later _seen/query in this page AND the sibling (global) drain
+                # that reuses this same session — silently dropping those posts too.
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                logger.warning("[fedi-bridge] %s post mirror failed (skipping): %s", ttype, e)
                 last = raw.get("id") or last
         if last and last != cursor:
             cursor = last
@@ -772,8 +829,9 @@ async def poll_once(db: Session) -> None:
     await _refresh_moderation(instance_url, token)
 
     deadline = time.monotonic() + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll. Bounds
-                                                  # the per-POST loop in _drain_timeline (not backfill — that's
-                                                  # bounded by the small _BRIDGE_MAX_ANCESTORS cap instead).
+                                                  # the per-POST loop in _drain_timeline AND (threaded down as
+                                                  # _deadline) each post's ancestor backfill + the fresh-connect
+                                                  # _backfill_recent — so no single deep reply overruns _POLL_TIMEOUT.
     # Drain the LOCAL timeline FIRST (when it's a distinct feed): it's low-volume and finishes fast, so
     # the instance's OWN users — whose posts the federated firehose dilutes/drops (an active local
     # account got ~7% of a week mirrored) — are never starved by the high-volume global drain. Wrapped so
