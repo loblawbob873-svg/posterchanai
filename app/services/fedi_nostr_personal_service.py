@@ -250,12 +250,16 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                     sc = content.strip(":")
                     content = f":{sc}:"
                     tags.append(["emoji", sc, emoji_url])
-            ok, msg = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags, broadcast=broadcast))
+            ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
+            ok, msg = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags,
+                                                                  broadcast=broadcast, created_at=ts))
             return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype == "reblog" and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
             tags = [["p", recipient]] + ([["e", target]] if target else [])
-            ok, msg = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
+            ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
+            ok, msg = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags,
+                                                                  broadcast=broadcast, created_at=ts))
             return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype in ("follow", "follow_request"):
             # A fediverse user followed this bridge user → reflect it on Nostr by adding the bridge
@@ -283,6 +287,22 @@ _notif_poison: dict = {}        # user_id -> {"id": notif id, "fails": consecuti
                                 # genuinely wedging the drain, not a transient blip — do we skip past it so newer
                                 # notifications aren't starved forever. Any success clears the streak.
 _POISON_MAX_FAILS = 20          # ~20 min of continuous same-item failure before skipping (vs a flap of 1-3)
+
+
+def _notif_ts(n: dict, status: dict | None) -> int | None:
+    """A STABLE unix-seconds timestamp for a reaction/reblog event so a RETRY builds the identical
+    Nostr event id — the relay then dedups the re-publish instead of storing a second favourite/boost.
+    Without this, the wider retry window could accrue duplicate reactions when the relay stores an event
+    but its OK is lost/times out. Prefer the notification's own time (recent → passes relay age checks),
+    then the source status's; None (→ wall clock) only if neither parses (rare)."""
+    for s in (n.get("created_at"), (status or {}).get("created_at")):
+        if not s:
+            continue
+        try:
+            return int(datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp())
+        except Exception:
+            continue
+    return None
 
 
 def _is_permanent_reject(msg: str) -> bool:
