@@ -541,7 +541,14 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         ok, msg = await ident.publish(port, ev)
         if not ok:
             logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
-            raise _PublishFailed(msg or "publish failed")   # NOT an intentional skip — caller must retry, not advance
+            # Distinguish a PERMANENT relay rejection (blocked author / not-in-WoT / invalid / already a
+            # duplicate) — which will NEVER be accepted, so SKIP it and let the cursor advance (return None)
+            # — from a TRANSIENT failure (dead socket, relay restart, timeout, rate-limit) which must retry
+            # (raise → don't advance). Without this split, ONE blocked-author post on the global drain wedges
+            # the cursor forever and no new posts get mirrored at all.
+            if (msg or "").lower().startswith(("blocked", "invalid", "duplicate")):
+                return None
+            raise _PublishFailed(msg or "publish failed")
         row_kw = dict(platform=platform, instance_url=instance_url, note_id=post["id"],
                       note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
                       nostr_pubkey=p["pubkey_hex"])
