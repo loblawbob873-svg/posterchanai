@@ -239,6 +239,11 @@ main() {
     # a download hiccup just means streaming stays off until retried with ./install.sh --stream.
     setup_stream_server || print_warning "MediaMTX (streaming) download did not complete; enable later with ./install.sh --stream"
 
+    # Step 9e: Build the built-in Pion TURN relay (voice/video-call NAT traversal). Shipped by DEFAULT so
+    # calls are turnkey (no separate ./install.sh --turn step). Non-fatal — a missing Go toolchain just leaves
+    # calls on STUN-only until built later with ./install.sh --turn.
+    setup_turn_server || print_warning "TURN relay build skipped (Go toolchain missing?); build later with ./install.sh --turn"
+
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance
 

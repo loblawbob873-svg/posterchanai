@@ -1691,7 +1691,16 @@
   }
   async function fetchMyProfile(){
     if(Store.haveProfile(ME.pubkey)) renderMe();   // instant from the profile cache
-    try{ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){ Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe(); } }catch(_){}
+    try{ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){ Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe(); return; } }catch(_){}
+    // The LOCAL relay had no kind-0 for us — on a FRESH node (empty relay) a returning user would otherwise be
+    // stuck as "anon" with no avatar. Pull our profile from the wider discovery relays, VERIFY the signature
+    // (they're untrusted), render it, and rebroadcast to our own relay so it's cached locally from now on.
+    try{
+      const ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{authors:[ME.pubkey],kinds:[0],limit:1}]);
+      const p=(ext||[]).filter(ev=>{ try{ return NT().verifyEvent(ev); }catch(_){ return false; } })
+                        .sort((a,b)=>b.created_at-a.created_at)[0];
+      if(p){ Store.saveProfile(p); renderMe(); try{ Relay.publish(p); }catch(_){} }
+    }catch(_){}
   }
   // Fill/refresh a `.name[data-prof]` span once its author's profile loads — WITH NIP-30 custom emoji
   // (fediverse-bridged names have :shortcodes:). innerHTML only when there's actually an emoji to render
@@ -9725,7 +9734,7 @@
         fedi_crosspost_enabled:(($('#us-fedi-crosspost')||{}).checked)||false,
         matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
-        theme:($('#us-theme')&&$('#us-theme').value)||'professional',
+        theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
       const fin=$('#us-fin').value.trim(); if(fin) body.finance_api_key=fin;
       const st=$('#us-save-status'); if(st) st.textContent='saving…';

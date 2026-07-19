@@ -321,8 +321,9 @@ def init_db():
             # turn_shared_secret stays blank here and is auto-generated on first TURN start (turn_service).
             "calls_enabled": ("false" if os.environ.get("POSTERCHANAI_CALLS", "1") in ("0", "false") else "true"),
             "calls_default_video": "false",
-            # POSTERCHANAI_TURN is a Docker on/off flag ("1"); map it to the "true"/"false" the code checks.
-            "turn_enabled": ("true" if os.environ.get("POSTERCHANAI_TURN", "0") in ("1", "true") else "false"),
+            # ON by default (turnkey NAT traversal for calls) — a safe no-op until a public IP is set, since
+            # turn_service._should_run() also requires turn_public_ip + the built binary. POSTERCHANAI_TURN=0 disables.
+            "turn_enabled": ("false" if os.environ.get("POSTERCHANAI_TURN", "1") in ("0", "false") else "true"),
             "turn_domain": os.environ.get("POSTERCHANAI_TURN_DOMAIN", ""),
             "turn_public_ip": os.environ.get("POSTERCHANAI_TURN_PUBLIC_IP", ""),
             "turn_port": os.environ.get("POSTERCHANAI_TURN_PORT", "3478"),
@@ -332,8 +333,9 @@ def init_db():
             "turn_relay_min_port": "49160",
             "turn_relay_max_port": "49200",
             "stun_fallback_urls": "",
-            # OBS streaming (MediaMTX). Env-seeded for turnkey Docker via POSTERCHANAI_STREAM.
-            "stream_enabled": ("true" if os.environ.get("POSTERCHANAI_STREAM", "0") in ("1", "true") else "false"),
+            # OBS streaming (MediaMTX) ON by default — the binary ships in the install/Docker image, so a fresh
+            # node is turnkey for live streams. POSTERCHANAI_STREAM=0 disables.
+            "stream_enabled": ("false" if os.environ.get("POSTERCHANAI_STREAM", "1") in ("0", "false") else "true"),
             "stream_domain": os.environ.get("POSTERCHANAI_STREAM_DOMAIN", ""),
             "stream_rtmp_port": os.environ.get("POSTERCHANAI_STREAM_RTMP_PORT", "1935"),
             "stream_hls_port": os.environ.get("POSTERCHANAI_STREAM_HLS_PORT", "8888"),
@@ -342,7 +344,8 @@ def init_db():
             "stream_webrtc_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_PORT", "8889"),
             "stream_webrtc_udp_port": os.environ.get("POSTERCHANAI_STREAM_WEBRTC_UDP_PORT", "8189"),
             "stream_auth_secret": "",   # auto-generated on first stream start (stream_service)
-            "stream_record_enabled": ("true" if os.environ.get("POSTERCHANAI_STREAM_RECORD", "0") in ("1", "true") else "false"),
+            # "Save ended streams to Blossom" ON by default (per-user opt-in User.stream_record still required).
+            "stream_record_enabled": ("false" if os.environ.get("POSTERCHANAI_STREAM_RECORD", "1") in ("0", "false") else "true"),
             "stream_record_dir": os.environ.get("POSTERCHANAI_STREAM_RECORD_DIR", "/tmp/posterchanai-streams"),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
