@@ -1172,7 +1172,10 @@
         const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
         e.preventDefault(); e.stopPropagation();
         const f=document.createElement('div'); f.className='yt-frame';
-        f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy"></iframe>`;
+        // referrerpolicy overrides the page's <meta name="referrer" content="no-referrer"> for THIS iframe
+        // only: YouTube's embed player rejects a referrer-less embed on play (error 153), so send it our
+        // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
+        f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
         yt.replaceWith(f);
       });
       // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
