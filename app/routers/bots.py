@@ -397,7 +397,7 @@ def _cleanup_nostr_identity(db: Session, bot: Bot):
     try:
         for blob in blossom_service.list_for_pubkey(db, pub):
             try:
-                _run_async(blossom_service.delete_blob_bytes(db, blob))
+                _run_async(blossom_service.delete_blob_bytes(db, blob, fresh_client=True))   # off-main-loop (_run_async) → own httpx client, else the proxy delete silently fails and orphans the bytes
             except Exception:
                 pass
             db.delete(blob)
@@ -574,6 +574,9 @@ def restart_bot(bot_id: int, db: Session = Depends(get_db),
     if not bot.enabled:
         bot.enabled = True
         db.commit()
+        from app.services import bots_store   # (module isn't imported at file scope; every call site imports locally)
+        bots_store.sync_bot_blocking(db, bot)   # write-through to the relay-authoritative store, else
+                                                # hydrate reverts enabled→False on the next startup
     bot_manager_service.restart_bot(bot.name)
     return {"status": "restarted", "name": bot.name}
 

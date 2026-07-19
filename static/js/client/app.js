@@ -58,7 +58,24 @@
   // Extensionless Blossom blobs (/<sha256>) carry NO type in the URL, so we render them as <img>;
   // if that fails the blob is likely a video (bots post bare video URLs) — try <video>, and only
   // if THAT fails fall back to a plain link. (Fixes videos showing as a link instead of playing.)
-  window.__blobFallback = function(el){
+  window.__blobFallback = async function(el){
+    // First try an AUTHENTICATED fetch → blob URL. On the APK the WebView origin is NOT the API host, so a
+    // bare <img> can't carry the Bearer token and /api/files 403s (blank/broken image). fetch() CAN send
+    // the token (and cookies), so the blob loads where the <img> couldn't — the APK-broken-image fix.
+    if(el.tagName === 'IMG' && !el.dataset.blobTried){
+      el.dataset.blobTried = '1';
+      try{
+        const url = (el.dataset.osrc || el.currentSrc || el.src).split('#')[0].replace(/[?&]_r=\d+/,'');
+        const r = await fetch(url, { headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include' });
+        if(r.ok){ const b = await r.blob(); const bu = URL.createObjectURL(b);
+          if((b.type||'').startsWith('video/')){   // extensionless blossom VIDEO rendered as <img> → swap to a real <video> with the blob
+            const v=document.createElement('video'); v.src=bu; v.controls=true; v.playsInline=true; v.preload='none'; v.className=el.className; el.replaceWith(v); return;
+          }
+          el.onload = ()=>{ try{ URL.revokeObjectURL(bu); }catch(_){} };   // free the blob URL once decoded (else it leaks for the page's life)
+          el.src = bu; return;
+        }
+      }catch(_){}
+    }
     const src = el.currentSrc || el.src;
     if(el.tagName === 'IMG'){
       const v=document.createElement('video'); v.src=src; v.controls=true; v.playsInline=true;
@@ -77,6 +94,10 @@
     if(!el.dataset.osrc) el.dataset.osrc = (el.getAttribute('src')||'').split('#')[0].replace(/[?&]_r=\d+/,'');
     const n = (+el.dataset.r || 0), base = el.dataset.osrc;
     if(!base) return;
+    // Retry with cache-busting for the transient blossom-not-ready race (works on web AND the APK); after a
+    // few tries hand off to __blobFallback, which does the authenticated fetch → blob that recovers a
+    // cross-origin /api image the APK <img> couldn't load. (Don't short-circuit on the APK — that skipped
+    // the not-ready retry and left a just-generated artifact broken until reload.)
     if(n >= 5){ if(window.__blobFallback) window.__blobFallback(el); return; }
     el.dataset.r = n + 1;
     setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, 700 * (n + 1));
@@ -10104,13 +10125,51 @@
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
   function openLightbox(src, kind){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
     const bg=document.createElement('div'); bg.className='lightbox';
+    const close=()=>{ try{ bg.remove(); }catch(_){} document.removeEventListener('keydown', onKey); };
+    const onKey=(e)=>{ if(e.key==='Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    const isImg = kind!=='video' && kind!=='audio';
     let el;
     if(kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
     else if(kind==='audio'){ el=document.createElement('audio'); el.src=src; el.controls=true; el.autoplay=true; }
-    else { el=document.createElement('img'); el.src=src; }
+    else { el=document.createElement('img'); el.src=src;
+      el.onclick=(e)=>{ e.stopPropagation(); bg.classList.toggle('lb-zoom'); };   // tap the image to zoom (fit ↔ full-res, scrollable)
+    }
     bg.appendChild(el);
-    bg.onclick=(e)=>{ if(e.target===bg) bg.remove(); };   // click backdrop (not the media/controls) to close
+    // Always-tappable toolbar — a full-screen image leaves NO backdrop to tap, so mobile couldn't close it.
+    const bar=document.createElement('div'); bar.className='lb-bar';
+    const mkBtn=(label,title,fn)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
+    if(isImg){ bar.appendChild(mkBtn('⧉','Copy image', ()=>_lbCopyImg(src))); bar.appendChild(mkBtn('⤓','Save image', ()=>_lbSaveMedia(src))); }
+    bar.appendChild(mkBtn('✕','Close', close));
+    bg.appendChild(bar);
+    bg.onclick=(e)=>{ if(e.target===bg) close(); };   // tap the backdrop to close too
     document.body.appendChild(bg); }
+  // Copy an image to the clipboard (Clipboard API needs PNG on most browsers → convert via canvas).
+  async function _lbCopyImg(src){
+    try{
+      const hdr = _aiToken ? {'Authorization':'Bearer '+_aiToken} : {};
+      // Pass a Promise<Blob> to ClipboardItem so navigator.clipboard.write is invoked SYNCHRONOUSLY with the
+      // tap — iOS/Safari revoke the clipboard permission if you await first. Send the Bearer token too (the
+      // APK WebView is cross-origin to the API host, so cookies alone 403 on /api images).
+      const png = (async()=>{ const r=await fetch(src, {headers:hdr, credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status); let b=await r.blob(); if((b.type||'')!=='image/png') b=await _blobToPng(b); return b; })();
+      await navigator.clipboard.write([new ClipboardItem({'image/png': png})]);
+      toast('image copied');
+    }catch(e){ toast('copy failed — long-press the image to copy'); }
+  }
+  // Save/download media (works in the PWA and the APK WebView, where a plain <a download> on a
+  // cross-origin URL is ignored — fetch to a blob first, then download the object URL).
+  async function _lbSaveMedia(src){
+    try{
+      const r=await fetch(src, {headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status);
+      const b=await r.blob(); const u=URL.createObjectURL(b);
+      const a=document.createElement('a'); a.href=u; a.download=((src.split('/').pop()||'image').split('?')[0]) || 'image';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u), 5000);
+      toast('saved');
+    }catch(e){ toast('save failed'); }
+  }
+  function _blobToPng(blob){ return new Promise((res,rej)=>{ const img=new Image(); const u=URL.createObjectURL(blob);
+    img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); c.toBlob(b=>{ URL.revokeObjectURL(u); b?res(b):rej(new Error('toBlob')); }, 'image/png'); }catch(e){ URL.revokeObjectURL(u); rej(e); } };
+    img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img load')); }; img.src=u; }); }
 
   // ---------- right column: Hot / Trending (desktop) ----------
   // First paint: build all three sections. Hot is an infinite-scroll feed (see _hot below).

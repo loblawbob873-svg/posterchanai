@@ -223,6 +223,12 @@ class RelayStore:
         kind = int(ev["kind"])
         pubkey = ev["pubkey"]
         created = int(ev["created_at"])
+        # Reject far-future events (bad client clock or malicious): a stored future created_at permanently
+        # freezes replaceable updates for that pubkey/kind (every real update compares as "older" → rejected
+        # below) AND evades age-based retention (created_at never falls before the cutoff). 15-min skew
+        # tolerance, matching common relay policy (NIP-22 upper bound).
+        if created > int(time.time()) + 900:
+            return False
         tags = ev.get("tags") or []
         # NIP-40: parse the expiration timestamp (if any). An already-expired event is never
         # stored — applies to direct writes AND synced/bulk events uniformly.
@@ -283,9 +289,14 @@ class RelayStore:
             if kind == 5:
                 for t in tags:
                     if len(t) >= 2 and t[0] == "e":
-                        conn.execute(
-                            "DELETE FROM events WHERE id=? AND pubkey=?", (t[1], pubkey))
-                        conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
+                        # Author-gate BOTH deletes: strip the tag index ONLY if we actually removed the
+                        # event (it was the kind-5 author's own). Otherwise a kind-5 referencing ANOTHER
+                        # author's event id leaves the event but wipes its tag rows → silently unqueryable
+                        # by #e/#p/#t (a data-loss vector, since the firehose ingests every author's kind-5).
+                        r = conn.execute(
+                            "DELETE FROM events WHERE id=? AND pubkey=? RETURNING id", (t[1], pubkey)).fetchone()
+                        if r:
+                            conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
                     elif len(t) >= 2 and t[0] == "a":
                         parts = str(t[1]).split(":", 2)
                         if len(parts) == 3 and parts[1] == pubkey and parts[0].isdigit():
@@ -905,7 +916,10 @@ class RelayStore:
         conn = self._conn()
         total = 0
         for flt in (filters or []):
-            built = self._build_where(flt)
+            try:
+                built = self._build_where(flt)
+            except Exception:
+                continue   # malformed COUNT filter (e.g. kinds:"abc", since:"x") — skip it, don't crash the WS conn
             if built is None:
                 continue
             where, params = built

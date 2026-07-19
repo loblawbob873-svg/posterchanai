@@ -170,9 +170,11 @@ def transcode_video(
             '-y',  # Overwrite output file
         ]
         
-        # Add scale filter if needed
+        # Add scale filter if needed. scale_filter is already ',scale=W:H' — just strip the leading comma;
+        # do NOT prepend another 'scale=' (that built the invalid '-vf scale=scale=W:H', which made EVERY
+        # >1080p video fail to transcode with "Unrecognized option / Error splitting the argument list").
         if scale_filter:
-            ffmpeg_cmd.extend(['-vf', f'scale={scale_filter.lstrip(",")}'])
+            ffmpeg_cmd.extend(['-vf', scale_filter.lstrip(',')])
         
         ffmpeg_cmd.append(str(transcoded_path))
         

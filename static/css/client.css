@@ -1199,6 +1199,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
 .lightbox img,.lightbox video{max-width:100%;max-height:90vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(0,255,255,.4)}
 .lightbox audio{width:min(560px,100%)}
+.lb-bar{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:401;display:flex;gap:10px}
+.lb-btn{width:46px;height:46px;border-radius:50%;border:1px solid var(--neon);background:rgba(4,2,12,.72);color:#fff;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);padding:0}
+.lb-btn:active{transform:scale(.9)}
+/* tap-to-zoom: show the image at natural size and let the backdrop scroll */
+.lightbox.lb-zoom{align-items:flex-start;justify-content:flex-start;overflow:auto;cursor:zoom-in;-webkit-overflow-scrolling:touch}
+.lightbox.lb-zoom img{max-width:none;max-height:none;width:auto;height:auto;cursor:zoom-out}
 /* pointer-events:none — toasts are informational (no taps); the layer sits over the bottom-centre
    compose ✏️, so without this a visible toast swallows taps on the New Post button (you had to hit an
    uncovered edge). Toasts never need interaction, so the whole layer stays click-through. */

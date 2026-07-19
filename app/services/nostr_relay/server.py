@@ -477,6 +477,16 @@ class RelayServer:
         if exp is not None and exp <= int(time.time()):
             self._send(conn, ["OK", eid, False, "invalid: event expired"])
             return
+        # Reject far-future events (bad client clock): a stored future created_at freezes replaceable
+        # updates for that pubkey/kind + evades age retention. Send a distinct 'invalid' (NOT the retryable
+        # 'not stored') so a clock-skewed client doesn't retry a doomed write forever. (The store-level
+        # guard still covers the sync/firehose path, where a plain False is harmless.)
+        try:
+            if int(ev.get("created_at", 0)) > int(time.time()) + 900:
+                self._send(conn, ["OK", eid, False, "invalid: created_at too far in the future"])
+                return
+        except (ValueError, TypeError):
+            pass
         # Bridge blocklist: an account on a blocked bridge relay (mostr.pub etc.) is denied; learning
         # it from this event's profile/relay-list also bars everything else it posts (via is_member).
         # Our own fediverse-bridge puppets legitimately carry a NIP-48 proxy tag (pointing at the

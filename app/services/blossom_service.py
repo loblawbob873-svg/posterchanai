@@ -32,6 +32,7 @@ import base64
 
 import httpx
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
 from app.models import BlossomBlob, User
@@ -646,7 +647,20 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         expires_at=None, storage=storage, path=path,
     )
     db.add(blob)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Two concurrent first-uploads of the SAME new bytes race on the sha256 primary key — one
+        # commit wins, the other hits a duplicate-key IntegrityError. The bytes are content-addressed
+        # and already stored (identical), so this is just a dedup hit: roll back, re-query the row the
+        # winner committed, and return its descriptor (same as the pre-existing-blob path above).
+        db.rollback()
+        winner = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+        if winner is not None:
+            _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)   # bytes are identical + in RAM — seed the cache like the normal path
+            _meta_put(_meta_from_row(winner))
+            return _descriptor_fields(winner)
+        raise
     # Seed the read + metadata caches — the bytes are already in RAM and the row is immutable, so a
     # fetch right after upload (the common case) touches neither disk/proxy nor Postgres.
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
@@ -890,8 +904,15 @@ async def read_range(db: Session, blob: BlossomBlob, start: int, end: int):
     return _local_range()
 
 
-async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
-    """Best-effort removal of the underlying bytes (the row is deleted by the caller)."""
+async def delete_blob_bytes(db: Session, blob: BlossomBlob, fresh_client: bool = False) -> None:
+    """Best-effort removal of the underlying bytes (the row is deleted by the caller).
+
+    `fresh_client=True` MUST be passed when this runs off the app's main event loop (the cleanup
+    sweep thread drives it via asyncio.run on its own loop): the shared `_client()` is bound to the
+    main loop, so reusing it from another loop raises deep in httpx and the proxy DELETE silently
+    fails (caught below) — deleting the row but ORPHANING the bytes on the storage node. A private
+    client created inside the current loop (mirrors _mirror_blob) makes the proxy delete actually
+    happen. Short-lived: the delete is a single request that releases immediately."""
     cfg = _cfg(db)
     _cache_drop(blob.sha256)
     # Evict the metadata cache here so EVERY delete path invalidates it (router /delete, the cleanup
@@ -905,7 +926,12 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob) -> None:
             from urllib.parse import quote
             url = (f"{cfg['storage_url'].rstrip('/')}/api/storage/delete-file"
                    f"?username={_PROXY_USER}&file_path={quote(blob.path)}")
-            await _client().delete(url, headers=_proxy_headers(), timeout=httpx.Timeout(30.0, connect=10.0))
+            timeout = httpx.Timeout(30.0, connect=10.0)
+            if fresh_client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    await client.delete(url, headers=_proxy_headers())
+            else:
+                await _client().delete(url, headers=_proxy_headers(), timeout=timeout)
         elif blob.storage == "local":
             await asyncio.to_thread(lambda: os.path.isfile(blob.path) and os.remove(blob.path))
     except Exception as e:
@@ -971,7 +997,10 @@ def _cleanup_once() -> int:
         gone = []
         for blob in expired:
             try:
-                asyncio.run(delete_blob_bytes(db, blob))
+                # This runs in the cleanup daemon thread on a throwaway loop (asyncio.run), so the
+                # delete MUST use a fresh httpx client — the shared _client() belongs to the main
+                # loop and cross-loop reuse fails silently, orphaning the bytes on the storage node.
+                asyncio.run(delete_blob_bytes(db, blob, fresh_client=True))
             except Exception:
                 pass
             gone.append(blob.sha256)

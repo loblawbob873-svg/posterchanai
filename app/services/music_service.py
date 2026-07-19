@@ -175,6 +175,11 @@ def _is_done(obj) -> Optional[bool]:
                 r = _is_done(v)
                 if r is not None:
                     return r
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:               # a terminal status nested in a LIST payload (ACE-Step) — recurse in,
+            r = _is_done(v)         # else it's missed → 5-min poll timeout instead of an immediate error
+            if r is not None:
+                return r
     if status is None:
         return None
     if status in ("success", "succeeded", "completed", "complete", "done", "finished"):

@@ -204,6 +204,16 @@ class LibtorrentService:
         self._owners_path = self.resume_dir / ".owners.json"
         self._owners: dict[str, int] = self._load_owners()
 
+        # The .notified / .owners JSON files are written from BOTH the alert thread
+        # (torrent_finished / restore) and request handlers (add/remove), so serialize
+        # every write: an interleaved/partial write corrupts the JSON and, once the
+        # .notified file is unreadable, every completed torrent re-spams its "download
+        # complete" alert after the next restart. This lock + atomic temp-file replace
+        # in _save_notified/_save_owners prevents that.
+        self._file_lock = threading.Lock()
+        self._remove_lock = threading.Lock()   # guards the destructive remove() re-resolve — NOT the class
+                                                # singleton lock (reusing that risks a deadlock vs get_instance)
+
         # In-session tombstones: info_hashes removed by remove() this uptime. A late
         # save_resume_data_alert (periodic request still in flight when the torrent was
         # removed) must NOT rewrite the .resume file — that resurrects the torrent on the
@@ -296,7 +306,7 @@ class LibtorrentService:
         """Save resume data for all torrents."""
         logger.info("[BT] Saving resume data for all torrents...")
         count = 0
-        for info_hash, handle in self.torrents.items():
+        for info_hash, handle in list(self.torrents.items()):
             try:
                 if not handle.is_valid():
                     continue
@@ -384,11 +394,8 @@ class LibtorrentService:
                 logger.debug(f"[BT] Restored torrent ({'paused' if was_paused else 'running'}): {info_hash}")
             except Exception as e:
                 logger.error(f"[BT] Failed to load resume data from {resume_file}: {e}")
-                # Remove corrupted resume file
-                try:
-                    resume_file.unlink()
-                except Exception:
-                    pass
+                # Do NOT delete the resume file on a load error: a transient/version/add-torrent error would
+                # then PERMANENTLY destroy the torrent. Leave it in place so a later run can retry/recover.
 
         if count > 0:
             self._update_numbering()
@@ -445,7 +452,7 @@ class LibtorrentService:
         
         logger.info(f"[BT] Rechecking {len(self.torrents)} torrent(s) now that proxy is available...")
         rechecked = 0
-        for info_hash, handle in self.torrents.items():
+        for info_hash, handle in list(self.torrents.items()):
             try:
                 if handle.is_valid():
                     handle.force_recheck()
@@ -497,7 +504,7 @@ class LibtorrentService:
                     logger.warning(f"[BT] PROXY DOWN! Pausing all torrents for anonymity protection.")
                     proxy_was_down = True
                     self._proxy_available = False
-                    for info_hash, handle in self.torrents.items():
+                    for info_hash, handle in list(self.torrents.items()):
                         try:
                             if not (handle.flags() & lt.torrent_flags.paused):
                                 handle.unset_flags(lt.torrent_flags.auto_managed)
@@ -680,7 +687,7 @@ class LibtorrentService:
         except Exception as e:
             logger.error(f"[BT] Failed to get session status: {e}")
 
-        for info_hash, handle in self.torrents.items():
+        for info_hash, handle in list(self.torrents.items()):
             try:
                 status = handle.status()
                 info = handle.torrent_file()
@@ -803,9 +810,15 @@ class LibtorrentService:
         return set()
 
     def _save_notified(self) -> None:
+        # Atomic + serialized: write a temp file then os.replace() it into place under the
+        # shared file lock, so concurrent writers (alert thread + request handlers) can never
+        # leave a half-written .notified.json that would re-spam completion alerts on restart.
         try:
-            import json
-            self._notified_path.write_text(json.dumps(sorted(self._notified)))
+            import os, json
+            with self._file_lock:
+                tmp = self._notified_path.with_name(self._notified_path.name + ".tmp")
+                tmp.write_text(json.dumps(sorted(self._notified)))
+                os.replace(tmp, self._notified_path)
         except Exception as e:
             logger.error(f"[BT] could not save notified set: {e}")
 
@@ -820,9 +833,14 @@ class LibtorrentService:
         return {}
 
     def _save_owners(self) -> None:
+        # Same atomic + serialized write as _save_notified (written from _set_owner on add and
+        # from remove(), both racing the alert thread) to avoid a corrupt .owners.json.
         try:
-            import json
-            self._owners_path.write_text(json.dumps(self._owners))
+            import os, json
+            with self._file_lock:
+                tmp = self._owners_path.with_name(self._owners_path.name + ".tmp")
+                tmp.write_text(json.dumps(self._owners))
+                os.replace(tmp, self._owners_path)
         except Exception as e:
             logger.error(f"[BT] could not save owners map: {e}")
 
@@ -866,7 +884,21 @@ class LibtorrentService:
             logger.error(f"[BT] failed to file torrent-complete reminder: {e}")
 
     def remove(self, info_hash: str, delete_files: bool = False) -> bool:
-        """Remove a torrent and its resume data."""
+        """Remove a torrent and its resume data.
+
+        DESTRUCTIVE. Callers reach this from a user-facing positional number (`rm N` / `rmf N`)
+        that `_update_numbering` reindexes on every add/remove, so a stale number can name the
+        WRONG torrent — and `delete_files=True` is irreversible. We therefore act ONLY on the
+        stable `info_hash` (never a position) and re-resolve it to a live handle under the lock
+        immediately before removal, so a concurrent add/remove can't retarget the delete. The
+        volatile number→hash resolution itself lives in the callers; keep it out of this method.
+        """
+        with self._remove_lock:   # dedicated lock — NOT the class singleton-construction lock (self._lock)
+            return self._remove_locked(info_hash, delete_files)
+
+    def _remove_locked(self, info_hash: str, delete_files: bool) -> bool:
+        # Re-fetch under the lock (see remove() docstring): the mapping is validated here, at the
+        # last instant before the irreversible session.remove_torrent call, not at resolve time.
         handle = self.torrents.get(info_hash)
         if handle:
             # Tombstone every hash form BEFORE removal so a late resume-save alert (whichever

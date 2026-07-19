@@ -185,7 +185,7 @@
       if (typ === 'EVENT'){
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
         const ev = m[2]; if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
-        if (conn.trusted){ sub.seen.add(ev.id); sub.onEvent(ev); }
+        if (conn.trusted){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }
         else { this._vq.push({ ev, sub }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40); }
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
@@ -213,8 +213,16 @@
       try {
         const results = await worker.call('verifyBatch', { events: batch.map(b=>b.ev) });
         const valid = new Set(results.filter(r=>r.valid).map(r=>r.id));
-        for (const b of batch){ if (valid.has(b.ev.id) && b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ b.sub.seen.add(b.ev.id); b.sub.onEvent(b.ev); } }
+        for (const b of batch){ if (valid.has(b.ev.id) && b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ this._seenAdd(b.sub, b.ev.id); b.sub.onEvent(b.ev); } }
       } catch(e){ console.warn('verify batch failed', e); }
+    },
+    // Bound a sub's dedup Set: a live sub stays open for the whole session, so an uncapped `seen` grows
+    // without limit (one entry per event ever delivered) → a slow memory leak in the always-open PWA/APK.
+    // A Set keeps insertion order, so on overflow we evict the oldest ids. The 5000 cap dwarfs any relay's
+    // in-flight/dedup window, so dedup for recent events stays correct — only long-gone ids are dropped.
+    _seenAdd(sub, id){
+      sub.seen.add(id);
+      if (sub.seen.size > 5000){ const it = sub.seen.values(); for (let n = sub.seen.size - 5000; n > 0; n--){ sub.seen.delete(it.next().value); } }
     },
 
     // filters: array of filter objects. Returns subId. live=true keeps it open for new events.

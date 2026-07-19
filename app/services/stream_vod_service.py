@@ -96,7 +96,18 @@ def mark_golive(token: str) -> None:
             newest = _newest_mtime(d)
             if newest is not None and time.time() - newest < _END_QUIET_S:
                 return   # reconnect → preserve the original go-live
-        with open(marker, "w") as f:
+            # Not a reconnect. Don't blindly overwrite: an existing marker with settled footage is a
+            # PRIOR session that ENDED but was never claimed (the reaper hasn't run yet). Overwriting it
+            # with this later go-live would make claim() skip those older segments (mtime < new start),
+            # orphaning them for the sweep and losing the recording. Finalize the prior session first —
+            # claim() stages its segments and clears its marker — then write the fresh marker below. Only
+            # a genuinely empty/stale marker (no footage belongs to it) is overwritten outright.
+            prior = _golive_of(token)
+            if prior is not None and any(os.path.getmtime(f) >= prior - _GOLIVE_SKEW
+                                         for f in _quiet_segments(d)):
+                claim(token)   # preserve the ended-but-unclaimed session; removes the old marker
+        os.makedirs(d, exist_ok=True)   # claim() above can remove the emptied session dir — recreate it, or
+        with open(marker, "w") as f:    # the new go-live marker never lands and THIS stream's recording is lost
             f.write(str(int(time.time())))
     except Exception as e:
         logger.debug("[stream-vod] mark_golive(%s) failed: %s", token[:8], e)

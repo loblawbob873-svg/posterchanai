@@ -480,6 +480,22 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
                 await _backfill_ancestors(db, port, platform, instance_url, instance_host, post,
                                           token=token, max_ancestors=_max_anc)
             parent = _parent_event(db, instance_url, parent_id)
+            if parent and parent.nostr_event_id:
+                # The delivered-map row can outlive the event it points at (pruned/deleted). Confirm the
+                # parent event still exists before linking — else the reply carries a DANGLING `e` tag to a
+                # parent that never loads (the broken-thread symptom). On a DB blip, assume present.
+                try:
+                    from sqlalchemy import text
+                    _exists = db.execute(text("SELECT 1 FROM events WHERE id=:id LIMIT 1"),
+                                         {"id": parent.nostr_event_id}).first() is not None
+                except Exception:
+                    try:
+                        db.rollback()   # a failed SELECT aborts the PG txn — roll back so the later dedup-row commit isn't poisoned
+                    except Exception:
+                        pass
+                    _exists = True
+                if not _exists:
+                    parent = None
             if parent:
                 tags.append(["e", parent.nostr_event_id, "", "reply"])
                 if parent.nostr_pubkey:

@@ -268,21 +268,31 @@ async def _extract_media(text: str):
     """Pull direct image/gif/video URLs out of a note, download them, and return (text_without_those,
     [(bytes, mime), …]) so they post as real fediverse ATTACHMENTS instead of a bare URL (the reported
     'gif rendered as a URL' issue). Bounded in count/size; non-media and page URLs are left in text."""
-    import httpx
+    import httpx, re as _re
+    _blossom = _re.compile(r'/[0-9a-f]{64}(?:\.[a-z0-9]+)?$', _re.I)   # host/<sha256> blossom blob — usually EXTENSIONLESS
     media, consumed = [], []
+    fetched = 0
     for u in _URL_RE.findall(text or ""):
         if len(media) >= 4:
             break
         m = _MEDIA_EXT.search(u)
-        if not m:
+        # Accept a media extension OR a blossom sha-addressed blob (e.g. media.poster.place/<sha256>), which
+        # carries no extension — the old ext-only check left those as a bare LINK on the fediverse side
+        # instead of a real image attachment (the reported Nostr→Pleroma image-as-link bug).
+        if not m and not _blossom.search(urlparse(u).path):
             continue
+        if fetched >= 8:   # bound TOTAL downloads: an extensionless non-media 64-hex URL still costs a fetch,
+            break          # and the media>=4 cap counts attachments not fetches — so cap the fetches too
+        fetched += 1
         try:
             async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
                 r = await c.get(u, headers={"User-Agent": "posterchanai-bridge/1.0"})
             if r.status_code != 200 or len(r.content) > 40_000_000:
                 continue
-            mime = (r.headers.get("content-type", "").split(";")[0].strip()
-                    or _MIME.get(m.group(1).lower(), "application/octet-stream"))
+            ct = r.headers.get("content-type", "").split(";")[0].strip()
+            if not m and not ct.startswith(("image/", "video/")):
+                continue   # extensionless URL that isn't actually media (a page, not a blob) → leave it as a link
+            mime = ct or (_MIME.get(m.group(1).lower()) if m else None) or "application/octet-stream"
             media.append((r.content, mime))
             consumed.append(u)
         except Exception as e:

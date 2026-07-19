@@ -92,7 +92,7 @@
     for (const ev of evsNewestFirst){
       const k = ev.kind; let key = null;
       if (k === 0 || k === 3 || (k >= 10000 && k < 20000)) key = k + ':' + ev.pubkey;
-      else if (k >= 30000 && k < 40000){ const d = ((ev.tags || []).find(t => t[0] === 'd') || [])[1] || ''; key = k + ':' + ev.pubkey + ':' + d; }
+      else if (k >= 30000 && k < 40000){ const d = ((ev.tags || []).find(t => t && t[0] === 'd') || [])[1] || ''; key = k + ':' + ev.pubkey + ':' + d; }
       if (key !== null){ if (seen.has(key)) continue; seen.add(key); }
       out.push(ev);
     }
@@ -173,7 +173,13 @@
       for (const ev of mem.events.values()){
         if ((ev.kind===1 || ev.kind===6 || ev.kind===1068 || ev.kind===30023 || ev.kind===34550 || ev.kind===40) && (!filterFn || filterFn(ev))) out.push(ev);
       }
-      return out.sort((a,b)=>b.created_at-a.created_at);
+      // Collapse EDITED addressable/replaceable events to their LATEST version before returning —
+      // the cache keeps every version by id, so an edited kind-30023 article / 34550 community
+      // otherwise renders as one duplicate Home/Global card per revision. _latestReplaceable keys
+      // 30000-39999 by pubkey+kind+d-tag (regular kinds 1/6/1068/40 get no key and pass through
+      // untouched, so distinct notes/channels are never merged). Sort with the NIP-01 tiebreak
+      // (_newestFirst) so the surviving version is deterministic, matching the query() path.
+      return _latestReplaceable(out.sort(_newestFirst));
     },
     byKind(kind){ return [...mem.events.values()].filter(e=>e.kind===kind); },
     all(){ return [...mem.events.values()]; },
