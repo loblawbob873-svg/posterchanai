@@ -1319,6 +1319,54 @@
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
     Relay.worker.call('clearKey',{}); location.reload(); }
 
+  // Settings → Account → "Delete all my notes": NIP-09 delete EVERY kind-1 (posts AND replies) the user
+  // authored — and ONLY kind-1 (profile, follows, reactions, reposts, DMs, streams are untouched). Pages back
+  // through the user's kind-1 history via `until`, then asks the relay to delete them in batches (one kind-5
+  // carrying up to _DN_BATCH `e` tags — NIP-09 allows many). Best-effort broadcast to the wider write relays so
+  // copies elsewhere go too; local removal is immediate so the feed reflects it without a reload.
+  const _DN_BATCH = 100;
+  async function _deleteAllMyNotes(){
+    if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
+    const st=document.getElementById('set-del-notes-status'); const setS=(m)=>{ if(st) st.textContent=m; };
+    if(!confirm('Delete ALL your posts and replies? This asks relays to remove every note you’ve written (NIP-09) and CANNOT be undone.\n\nYour profile, follows, reactions and DMs are NOT affected.')) return;
+    setS('Finding your notes…');
+    const ids=new Set(); let until=Math.floor(Date.now()/1000)+1;
+    for(let round=0; round<80; round++){   // cap ~16k notes so a runaway can't loop forever
+      let batch=[];
+      try{ batch=await Relay.query([{ authors:[ME.pubkey], kinds:[1], until, limit:200 }]); }catch(_){ break; }
+      if(!batch || !batch.length) break;
+      let oldest=until;
+      batch.forEach(e=>{ ids.add(e.id); if(e.created_at && e.created_at<oldest) oldest=e.created_at; });
+      setS(`Found ${ids.size} notes…`);
+      if(batch.length<200 || oldest>=until) break;   // last page / no forward progress
+      until=oldest;   // next page ends just before the oldest note this round
+    }
+    if(!ids.size){ setS('No notes found to delete.'); return; }
+    if(!confirm(`Found ${ids.size} note(s). Permanently request their deletion now?`)){ setS(''); return; }
+    const all=[...ids]; let done=0, failed=0;
+    for(let i=0; i<all.length; i+=_DN_BATCH){
+      const chunk=all.slice(i, i+_DN_BATCH);
+      const tags=chunk.map(id=>['e', id]); tags.push(['k','1']);   // NIP-09: k = kind being deleted
+      try{
+        const r=await publish(5, '', tags, {quiet:true});
+        if(r && r.ok){ done+=chunk.length;
+          if(r.ev){ try{ Relay.publishTo(_writeRelays(), r.ev).catch(()=>{}); }catch(_){} }   // best-effort: other relays too
+          chunk.forEach(id=>{ try{ Store.removeEvent(id); }catch(_){} });
+        } else failed+=chunk.length;
+      }catch(_){ failed+=chunk.length; }
+      setS(`Deleted ${done}/${ids.size}…`);
+    }
+    try{ invalidateCounts(); }catch(_){}
+    setS(`Done — requested deletion of ${done} note(s)${failed?`, ${failed} failed`:''}. Other relays may take a moment to drop them.`);
+    if(VIEW==='home' || VIEW==='global' || VIEW==='profile'){ try{ switchView(VIEW); }catch(_){} }
+  }
+  // The wider relays to ALSO send a note deletion to (beyond our own local relay) — the common public relays a
+  // note may have federated to, so a copy elsewhere is asked to drop it too. Best-effort.
+  function _writeRelays(){
+    try{ if(typeof PUBLIC_FALLBACK_RELAYS!=='undefined' && PUBLIC_FALLBACK_RELAYS.length) return PUBLIC_FALLBACK_RELAYS; }catch(_){}
+    return STREAM_RELAYS;
+  }
+
   // Decide which relays to connect: the user's own list when they've enabled it (untrusted, so the
   // pool verifies signatures), otherwise the single built-in WoT relay (trusted).
   function userRelays(){ return (ClientSettings.get('relays')||[]).map(u=>String(u||'').trim()).filter(Boolean); }
@@ -2716,7 +2764,7 @@
     const paint=()=>{
       if(VIEW!=='streams') return;
       const rank=e=>({live:0,planned:1,ended:2}[streamStatus(e)] ?? 3);
-      const streams=_dedupAddr(evs).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
+      const streams=_dedupAddr(evs.filter(e=>!_isDeletedStream(e))).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
       try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
       const top=`<div class="streams-top">${_liveStream
         ? `<span class="live-badge">● LIVE</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
@@ -2735,6 +2783,7 @@
       if(!ext || !ext.length || VIEW!=='streams') return;
       const have=new Set(evs.map(e=>e.id)); let added=false;
       ext.forEach(e=>{ if(have.has(e.id)) return;
+        if(_isDeletedStream(e)) return;   // never resurrect a stream the user deleted from an external relay
         try{ if(!NT().verifyEvent(e)) return; }catch(_){ return; }   // drop unsigned/forged events
         evs.push(e); Store.saveEvent(e); needProfile(e.pubkey); added=true; });
       if(added) paint();
@@ -2819,6 +2868,10 @@
     try{
       const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true});
       if(!(r && r.ok)){ toast('couldn’t reach the relay — the stream was NOT deleted, try again'); return; }
+      // The 30311 also lives on the external stream relays — publish() only hit our local one, so ask them to
+      // remove it too (best-effort), else the profile/Streams re-fetch it from there and it comes back.
+      try{ if(r.ev) Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }catch(_){}
+      _markStreamDeleted(`30311:${e.pubkey}:${d}`);   // persistent guard: never re-render this address again
       try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
       // Drop the parked "ended" event too — otherwise the server publishes it when the feed stops and
       // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
@@ -2881,6 +2934,15 @@
   // (the ended event hasn't federated there yet), so without this the next render silently re-adopts it and
   // the user is stuck on "End stream" with no way back to "Go Live". Cleared when they genuinely go live again.
   let _endedStreams=new Set();
+  // Streams the user DELETED (NIP-09). PERSISTED (survives reload) + checked on every stream render, because
+  // a 30311 also lives on the external STREAM_RELAYS (zap.stream/nos.lol/damus) — the local relay honors the
+  // kind-5, but an external one may lag or ignore it, and renderStreams/the profile re-FETCH from those relays
+  // and re-cache the event, resurrecting it. Keyed by 30311 address `30311:<pubkey>:<d>`.
+  let _deletedStreams = new Set((()=>{ try{ return ClientSettings.get('deletedStreams', []) || []; }catch(_){ return []; } })());
+  function _streamAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return `30311:${e.pubkey}:${d}`; }
+  function _isDeletedStream(e){ return e && _deletedStreams.has(_streamAddr(e)); }
+  function _markStreamDeleted(addr){ if(!addr) return; _deletedStreams.add(addr);
+    try{ ClientSettings.set('deletedStreams', [..._deletedStreams].slice(-300)); }catch(_){} }
   let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
   function _copyFrom(el){  // copy WITHOUT unmasking a password field (temp textarea) — never expose the key
     const val=(el&&el.value)||'';
@@ -7825,7 +7887,7 @@
         return `<div class="media-grid">${items}</div>`; }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
-      if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> e.pubkey===pk || streamHost(e)===pk)).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
+      if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e)).slice(0,lim);
       return pinnedHtml + (n.length ? n.map(e=>noteHtml(e)).join('') : '<div class="empty">No posts yet.</div>');
@@ -9179,9 +9241,11 @@
             ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
+            <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)">🗑️ Delete all my notes</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:var(--danger)">🗑️ Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts from other relays into this one.</div>
+          <div class="muted small" id="set-del-notes-status"></div>
         </div>
       </section>
       <section class="set-card">
@@ -9218,6 +9282,7 @@
           else toast('delete failed: '+((r&&r.error)||''));
         }catch(_){ toast('delete failed'); }
       }; }
+    { const dn=$('#set-del-notes'); if(dn) dn.onclick=()=>_deleteAllMyNotes(); }
     { const cn=$('#set-copy-npub'); if(cn) cn.onclick=async()=>{ try{ await navigator.clipboard.writeText(ME.npub); toast('npub copied'); }catch(_){ window.prompt('Your npub:', ME.npub); } }; }
     { const sn=$('#set-show-nsec'); if(sn) sn.onclick=async()=>{
         let r; try{ r=await Relay.worker.call('exportNsec', {}); }catch(_){ r=null; }
