@@ -169,7 +169,8 @@ async def _thread_context(db: Session, hs: str, bot_token: str, room_id: str, ro
 
 
 async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
-                 platform: str, instance_url: str, token: str, raw: list, normalize) -> None:
+                 platform: str, instance_url: str, token: str, raw: list, normalize,
+                 ascending: bool = False) -> None:
     """Deliver new notifications oldest-first; first poll only sets the cursor (no backfill).
     For each delivered notification that concerns a post, record a MatrixNotifyMap row so the
     user can reply to the DM message and have it post back to the fediverse."""
@@ -178,11 +179,13 @@ async def _relay(db: Session, hs: str, bot_token: str, user: User, room_id: str,
         return
     cursor_key = f"matrix_notif_{platform}_since"
     since = _get_user_setting(db, user.id, cursor_key)
-    newest_id = raw[0].get("id")        # platform APIs return newest-first
-    if not since:
-        _commit_cursor(db, user.id, cursor_key, newest_id)
+    # Misskey's sinceId drain returns oldest-first (ascending); Pleroma's min_id returns newest-first.
+    # Deliver oldest-first in BOTH cases so the per-item cursor commit ends at the NEWEST delivered.
+    items = raw if ascending else list(reversed(raw))
+    if not since:   # (first poll is handled in _poll_user for both platforms; defensive fallback here)
+        _commit_cursor(db, user.id, cursor_key, (raw[-1] if ascending else raw[0]).get("id"))
         return
-    for n in reversed(raw):
+    for n in items:
         norm = normalize(n)
         # Skip a follow we've already DM'd (Pleroma/Misskey re-issue follow notifications with a fresh
         # id that slips past the cursor). Still advance the cursor so it isn't re-fetched forever.
@@ -262,12 +265,29 @@ async def _poll_user(db: Session, hs: str, bot_token: str, user: User) -> None:
             logger.warning(f"[matrix-notif] pleroma poll failed for user {user.id}: {e}")
     if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
         try:
-            raw = await misskey_service.fetch_notifications(
-                user.misskey_instance_url, user.misskey_api_token,
-                since_id=_get_user_setting(db, user.id, "matrix_notif_misskey_since") or None,
-            )
-            await _relay(db, hs, bot_token, user, room_id, "misskey", user.misskey_instance_url,
-                         user.misskey_api_token, raw, _norm_misskey)
+            if not (_get_user_setting(db, user.id, "matrix_notif_misskey_since") or None):
+                # First poll: establish the cursor without forwarding the backlog. No sinceId → newest-first.
+                raw = await misskey_service.fetch_notifications(
+                    user.misskey_instance_url, user.misskey_api_token, limit=1)
+                if raw:
+                    _set_user_setting(db, user.id, "matrix_notif_misskey_since", raw[0].get("id"))
+                    db.commit()
+            else:
+                # Drain forward. Misskey sinceId paginates ASCENDING (oldest-first): pass ascending=True so
+                # _relay delivers in order and the per-item cursor commit ends at the NEWEST delivered. (The
+                # old single-fetch treated it as newest-first → cursor crawled one id/poll → duplicate flood.)
+                for _ in range(_NOTIF_DRAIN_PAGES):
+                    cur = _get_user_setting(db, user.id, "matrix_notif_misskey_since") or None
+                    raw = await misskey_service.fetch_notifications(
+                        user.misskey_instance_url, user.misskey_api_token,
+                        since_id=cur, limit=_NOTIF_PAGE)
+                    if not raw:
+                        break
+                    raw = sorted(raw, key=lambda n: n.get("id") or "")   # sinceId paginates ascending
+                    await _relay(db, hs, bot_token, user, room_id, "misskey", user.misskey_instance_url,
+                                 user.misskey_api_token, raw, _norm_misskey, ascending=True)
+                    if len(raw) < _NOTIF_PAGE:
+                        break
         except Exception as e:
             logger.warning(f"[matrix-notif] misskey poll failed for user {user.id}: {e}")
 

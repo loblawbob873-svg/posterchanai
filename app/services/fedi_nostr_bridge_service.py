@@ -184,6 +184,13 @@ def _existing_mirror(db: Session, instance_url: str, uri: str | None, note_id: s
 _inflight: set = set()
 
 
+class _PublishFailed(Exception):
+    """Raised by _deliver when the relay PUBLISH failed — as opposed to an intentional skip (which
+    returns None). Lets the drain distinguish 'this note never landed, retry it next poll' from
+    'correctly skipped, advance past it'. Without it a single local-relay restart silently drops every
+    in-flight note from the mirror (cursor advances past notes that were never delivered)."""
+
+
 # The reply-addressing block at the very start of a note: a run of mention tokens — either a resolved
 # `nostr:npub…` ref (fixed 58-char bech32 body, anchored so it can't swallow a glued word) OR an
 # unresolved literal `@handle` (puppet provisioning failed). Only a run of 3+ is treated as an
@@ -255,6 +262,8 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
         try:
             await _deliver(db, port, platform, instance_url, instance_host, raw, anc,
                            backfill=False, token=token)
+        except _PublishFailed:
+            raise   # relay publish failed mid-backfill — abort so the WHOLE reply retries (no orphaned thread)
         except Exception as e:
             logger.debug("[fedi-bridge] ancestor deliver failed: %s", e)
 
@@ -428,8 +437,11 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
     host = _host_of(acct, instance_host)
     if _domain_blocked(host, _blocked_domains()) or _author_muted(acct, host, instance_host):
         return None, None
-    eid = await _deliver(db, port, platform, instance_url, instance_host, q_raw, qpost,
-                         backfill=False, token=token, _depth=depth + 1)
+    try:
+        eid = await _deliver(db, port, platform, instance_url, instance_host, q_raw, qpost,
+                             backfill=False, token=token, _depth=depth + 1)
+    except _PublishFailed:
+        return None, None   # quote is secondary — skip the embed rather than abort the parent's delivery
     if not eid:
         return None, None
     row = _existing_mirror(db, instance_url, quri, qpost.get("id"))
@@ -513,7 +525,7 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         ok, msg = await ident.publish(port, ev)
         if not ok:
             logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
-            return None
+            raise _PublishFailed(msg or "publish failed")   # NOT an intentional skip — caller must retry, not advance
         row_kw = dict(platform=platform, instance_url=instance_url, note_id=post["id"],
                       note_uri=uri, author_acct=p["acct"], nostr_event_id=ev["id"],
                       nostr_pubkey=p["pubkey_hex"])
@@ -703,8 +715,11 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
                 await _process(db, port, platform, instance_url, instance_host,
                                blocked_domains, include_replies, raw)
                 last = raw.get("id") or last
-            except (httpx.TransportError, asyncio.TimeoutError) as e:
-                logger.warning("[fedi-bridge] %s drain transient error, retrying next cycle: %s", ttype, e)
+            except (httpx.TransportError, asyncio.TimeoutError, _PublishFailed) as e:
+                # A relay PUBLISH failure (local relay restart, dead socket) must NOT advance the cursor —
+                # else this in-flight note is skipped forever (permanently missing from the mirror). Stop
+                # the page here; `last` holds the last delivered note, so it retries next poll.
+                logger.warning("[fedi-bridge] %s drain transient/publish error, retrying next cycle: %s", ttype, e)
                 transient = True
                 break
             except Exception as e:

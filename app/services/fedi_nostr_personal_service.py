@@ -224,11 +224,14 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                         body += ("\n" if body else "") + m["url"]
                 return bool(await _wrap_dm(port, puppet, recipient, body or "​"))
             # Public/unlisted mention → properly threaded public note (e/p + ancestor backfill) + p-tag.
-            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri
+            from app.services.fedi_nostr_bridge_service import _deliver, _seen, _canonical_uri, _PublishFailed
             uri = _canonical_uri("pleroma", user.pleroma_instance_url, post)
             if status.get("id") and not _seen(db, user.pleroma_instance_url, status["id"], uri):
-                r = await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
-                                   status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
+                try:
+                    r = await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
+                                       status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
+                except _PublishFailed:
+                    return False   # relay publish failed — do NOT advance the cursor; retry next poll
                 return r is not None
             return True
         if ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:

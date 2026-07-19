@@ -251,16 +251,19 @@ def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social
     return False
 
 
-async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, norm: dict) -> None:
+async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, norm: dict) -> bool:
+    """True = delivered (or an intentional dupe-skip) → the caller may advance the cursor past it.
+    False = the Telegram send FAILED (429/network/etc.) → the caller must NOT advance past it or the
+    notification is silently lost with no retry."""
     if is_dupe_follow(db, user, norm):
-        return  # a follow we've already announced (Pleroma/Misskey re-issued it past the since_id cursor)
+        return True  # a follow we've already announced (re-issued past the cursor) — safe to advance past
     resp = await tg.send_message(chat_id, _format(norm), parse_mode="")
     msg_id = (resp or {}).get("result", {}).get("message_id")
     if not msg_id:
-        logger.warning(f"[social] telegram send returned no message_id for user {user.id}: {resp}")
-        return
+        logger.warning(f"[social] telegram send FAILED for user {user.id} (cursor held, will retry): {resp}")
+        return False
     if norm.get("encrypted"):
-        return  # informational only — no reply target to map
+        return True  # informational only — no reply target to map
     db.add(SocialReplyMap(
         user_id=user.id,
         telegram_chat_id=chat_id,
@@ -274,6 +277,7 @@ async def _deliver(db: Session, tg: TelegramService, user: User, chat_id: str, n
     # Commit each mapping right after its message is sent, so a mid-batch failure can't
     # lose the mapping for an already-delivered message (or bleed it into a later commit).
     db.commit()
+    return True
 
 
 async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
@@ -294,38 +298,61 @@ async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: 
             min_id=user.pleroma_notif_since, limit=_NOTIF_PAGE)
         if not raw:
             break
+        last_ok = None
         for n in reversed(raw):       # API returns newest-first → deliver oldest-first (chronological)
-            await _deliver(db, tg, user, chat_id, _norm_pleroma(n))
-        newid = raw[0].get("id")      # advance to the newest delivered
-        user.pleroma_notif_since = newid
-        _prune(db)
-        try:
-            db.commit()
-        except Exception:             # poll txn killed (idle timeout) → persist the cursor in a fresh
-            db.rollback()             # session so we don't re-deliver this whole page next poll
-            from app.database import commit_in_fresh_session
-            commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "pleroma_notif_since", newid))
-        if len(raw) < _NOTIF_PAGE:    # partial page → caught up
+            if not await _deliver(db, tg, user, chat_id, _norm_pleroma(n)):
+                break                 # Telegram send failed → stop; advance only to the last delivered
+            last_ok = n.get("id")
+        if last_ok:                   # advance to the newest SUCCESSFULLY-delivered (not the newest fetched)
+            user.pleroma_notif_since = last_ok
+            _prune(db)
+            try:
+                db.commit()
+            except Exception:         # poll txn killed (idle timeout) → persist the cursor in a fresh
+                db.rollback()         # session so we don't re-deliver this whole page next poll
+                from app.database import commit_in_fresh_session
+                commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "pleroma_notif_since", last_ok))
+        if not last_ok or len(raw) < _NOTIF_PAGE:   # send failure, or partial page (caught up) → stop draining
             break
 
 
 async def _relay_misskey(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
-    raw = await misskey_service.fetch_notifications(
-        user.misskey_instance_url, user.misskey_api_token, since_id=user.misskey_notif_since
-    )
-    if not raw:
-        return
-    newest_id = raw[0].get("id")
     if not user.misskey_notif_since:
-        # First poll: establish the cursor without forwarding the backlog.
-        user.misskey_notif_since = newest_id
-        db.commit()
+        # First poll: establish the cursor without forwarding the backlog. With no sinceId, Misskey
+        # returns newest-first, so raw[0] is the newest.
+        raw = await misskey_service.fetch_notifications(
+            user.misskey_instance_url, user.misskey_api_token, limit=1)
+        if raw:
+            user.misskey_notif_since = raw[0].get("id")
+            db.commit()
         return
-    for n in reversed(raw):
-        await _deliver(db, tg, user, chat_id, _norm_misskey(n))
-    user.misskey_notif_since = newest_id
-    _prune(db)
-    db.commit()
+    # Drain forward with sinceId. Unlike Pleroma's min_id (newest-first), Misskey's sinceId paginates
+    # ASCENDING (oldest-first), so the page is already chronological: deliver in order and advance to the
+    # LAST (newest) delivered id. (The old code treated raw[0] as newest and reversed the page → the cursor
+    # crawled one id per poll and re-sent the batch tail forever — a perpetual duplicate flood.)
+    for _ in range(_NOTIF_DRAIN_PAGES):
+        raw = await misskey_service.fetch_notifications(
+            user.misskey_instance_url, user.misskey_api_token,
+            since_id=user.misskey_notif_since, limit=_NOTIF_PAGE)
+        if not raw:
+            break
+        raw = sorted(raw, key=lambda n: n.get("id") or "")   # sinceId paginates ascending — make it explicit
+        last_ok = None
+        for n in raw:
+            if not await _deliver(db, tg, user, chat_id, _norm_misskey(n)):
+                break                 # Telegram send failed → stop; advance only to the last delivered
+            last_ok = n.get("id")
+        if last_ok:
+            user.misskey_notif_since = last_ok
+            _prune(db)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                from app.database import commit_in_fresh_session
+                commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "misskey_notif_since", last_ok))
+        if not last_ok or len(raw) < _NOTIF_PAGE:
+            break
 
 
 def _nostr_cfg(user: User) -> tuple[bytes, list, dict]:
