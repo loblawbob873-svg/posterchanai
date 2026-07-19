@@ -29,7 +29,13 @@ _cache: dict | None = None
 
 def _load() -> dict:
     global _cache
-    if _cache is not None:
+    # Only TRUST a cache that actually loaded the operator key. `_load()` used to cache the FIRST read for the
+    # life of the process — so a transient read failure (the keyfile being atomically os.replace()'d by a
+    # sibling process at that instant, an FS hiccup, or the file not yet written on a racing startup) latched
+    # an empty {} → operator_nsec=None FOREVER → that process could never get the operator key → hydrate_from_db
+    # read 0 relay settings, so recording / bridge-token / every shareable setting silently fell back to
+    # build-time DEFAULTS in that process (the "VODs don't save, hydrate returns 0" bug). Re-read until it loads.
+    if _cache is not None and _cache.get("operator_nsec"):
         return _cache
     try:
         with open(_KEYFILE, "r") as f:
@@ -38,7 +44,10 @@ def _load() -> dict:
         data = {}
     data.setdefault("operator_nsec", None)
     data.setdefault("storage", {})
-    _cache = data
+    # Don't cache a read that produced NO operator key — it may be transient/racing; a later call re-reads
+    # and picks up the real key once it's there. Once the key is present, the cache is trusted (above).
+    if data.get("operator_nsec"):
+        _cache = data
     return data
 
 
