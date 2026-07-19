@@ -6613,7 +6613,8 @@
       if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
       if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
       return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
-    });
+    }).sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));   // NEWEST first — else a fresh upload/VOD is buried at the
+                                                       // END of a big (3000+) oldest-first Blossom /list, past the 60-per-page window (the "my recording isn't in the drive" bug)
     if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; }   // reset paging on folder change
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
     grid.innerHTML = inFolder.length ? (_shown.map(b=>{
