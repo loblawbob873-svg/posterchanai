@@ -8964,7 +8964,10 @@
       if(mime.startsWith('image/')) return head+`<div class="ai-media"><img src="data:${mime};base64,${d.data}"></div>`;
       return head+`<a class="ai-file" href="data:${mime};base64,${d.data}" download="${enc(d.filename||'attachment')}">📎 ${enc(d.filename||'attachment')}</a>`; }
     if(d.type==='images' && Array.isArray(d.images)){
-      const items=d.images.slice(0,12).map(im=>{ const src=im.thumb_id?('/api/proxy-image/'+im.thumb_id):(im.img_src||im.thumbnail_src||im.thumbnail||''); const full=im.img_src||src; return src?`<img loading="lazy" src="${enc(src)}" data-full="${enc(full)}">`:''; }).join('');
+      // _absUrl: the proxy route is RELATIVE (/api/proxy-image/…) and AUTHED — on the APK a relative /api URL
+      // resolves to the localhost WebView origin (404 → empty box), so hit the real API host; and since a
+      // cross-origin <img> can't carry the Bearer, onerror hands off to __blobFallback (authed fetch → blob).
+      const items=d.images.slice(0,12).map(im=>{ const src=im.thumb_id?_absUrl('/api/proxy-image/'+im.thumb_id):(im.img_src||im.thumbnail_src||im.thumbnail||''); const full=im.img_src||src; return src?`<img loading="lazy" src="${enc(src)}" data-full="${enc(full)}" onerror="window.__blobFallback(this)">`:''; }).join('');
       return head+`<div class="ai-imggrid">${items}</div>`;
     }
     if(d.type==='search' && Array.isArray(d.results)){
@@ -10145,7 +10148,25 @@
     bg.onclick=(e)=>{ if(e.target===bg) close(); };   // tap the backdrop to close too
     document.body.appendChild(bg); }
   // Copy an image to the clipboard (Clipboard API needs PNG on most browsers → convert via canvas).
+  // In the Capacitor APK the WebView can't do navigator.clipboard.write OR a programmatic <a download>
+  // (Android blocks both) — but the native @capacitor/share + @capacitor/filesystem plugins ARE bundled.
+  // So on-device, BOTH copy and save funnel into the OS share sheet (which offers Copy, Save to Photos,
+  // Send…). fetch→base64→cache file→Share.share. Returns true if it handled it, false to fall through to web.
+  function _isNativeApp(){ try{ return !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()); }catch(_){ return false; } }
+  function _blobToB64(blob){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(',')[1]||''); fr.onerror=()=>rej(new Error('read')); fr.readAsDataURL(blob); }); }
+  async function _nativeShareMedia(src){
+    const P=(window.Capacitor&&Capacitor.Plugins)||{}; const Filesystem=P.Filesystem, Share=P.Share;
+    if(!Filesystem||!Share) return false;
+    const hdr = _aiToken ? {'Authorization':'Bearer '+_aiToken} : {};
+    const r=await fetch(src, {headers:hdr, credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status);
+    const b64=await _blobToB64(await r.blob());
+    let name=((src.split('/').pop()||'image').split('?')[0])||'image'; if(!/\.[a-z0-9]{2,4}$/i.test(name)) name+='.png';
+    const w=await Filesystem.writeFile({ path:name, data:b64, directory:'CACHE' });
+    await Share.share({ files:[w.uri], dialogTitle:'Save or share image' });   // Capacitor 6: images ride in `files`
+    return true;
+  }
   async function _lbCopyImg(src){
+    if(_isNativeApp()){ try{ if(await _nativeShareMedia(src)) return; }catch(e){ toast('couldn’t share image'); return; } }
     try{
       const hdr = _aiToken ? {'Authorization':'Bearer '+_aiToken} : {};
       // Pass a Promise<Blob> to ClipboardItem so navigator.clipboard.write is invoked SYNCHRONOUSLY with the
@@ -10159,6 +10180,7 @@
   // Save/download media (works in the PWA and the APK WebView, where a plain <a download> on a
   // cross-origin URL is ignored — fetch to a blob first, then download the object URL).
   async function _lbSaveMedia(src){
+    if(_isNativeApp()){ try{ if(await _nativeShareMedia(src)) return; }catch(e){ toast('couldn’t save image'); return; } }
     try{
       const r=await fetch(src, {headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status);
       const b=await r.blob(); const u=URL.createObjectURL(b);

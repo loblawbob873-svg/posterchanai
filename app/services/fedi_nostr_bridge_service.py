@@ -46,10 +46,11 @@ _MAX_ANCESTORS = 8             # DEFAULT ancestors backfilled (root-first) to an
                                # Delivered oldest→newest so each ancestor's parent is mirrored just before it →
                                # NIP-10 e-tag linked. Kept conservative because the personal-notification plane
                                # reuses this default and has NO per-poll drain budget.
-_BRIDGE_MAX_ANCESTORS = 15     # WIDER window for the timeline-bridge drain ONLY (which IS budget-gated per
-                               # post, see _drain_timeline): lets deep UNLISTED sub-threads — which enter Nostr
-                               # ONLY as backfilled ancestors, so their parent must fall inside this window to
-                               # link — thread correctly, without widening the ungated personal plane.
+_BRIDGE_MAX_ANCESTORS = 8      # bridge-drain ancestor window. Kept SMALL (== _MAX_ANCESTORS) so ONE reply's
+                               # backfill (≤8 publishes) can never run the poll past _POLL_TIMEOUT — the
+                               # earlier 15 + a per-ancestor deadline break wedged the poll on timeout AND
+                               # orphaned replies (the break skipped the immediate parent). The immediate
+                               # parent is always ancestors[-1], so it's always in this window → replies thread.
 _BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
 _MAX_QUOTE_DEPTH = 2           # cap quote-of-quote recursion when mirroring referenced notes
 
@@ -182,10 +183,6 @@ def _existing_mirror(db: Session, instance_url: str, uri: str | None, note_id: s
 # Notes currently mid-delivery this cycle — breaks a same-cycle quote CYCLE (A quotes B, B quotes A)
 # from re-entering _deliver and double-publishing before the FediBridgeDelivered row commits.
 _inflight: set = set()
-_drain_deadline: float = 0.0   # monotonic deadline for the CURRENT bridge drain (0 = unbounded). _backfill_
-                               # ancestors stops past it so ONE deep-thread reply's ancestor chain can't run
-                               # the poll past _POLL_TIMEOUT — which cancels it mid-page, so the cursor never
-                               # commits and the whole bridge wedges in a timeout loop (no new posts mirror).
 
 
 class _PublishFailed(Exception):
@@ -245,8 +242,6 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
     so each is delivered before its child and never triggers a further backfill (recursion guard).
     `token` lets the personal plane backfill from the USER's instance (else the bridge read account)."""
     token = token or _get("fedi_bridge_access_token")
-    if _drain_deadline and time.monotonic() > _drain_deadline:
-        return   # out of the poll budget — skip the whole backfill (its fetch_context HTTP + deliveries)
     try:
         ctx = await pleroma_service.fetch_context(instance_url, token, post["id"])
         ancestors = ctx.get("ancestors") or []
@@ -254,9 +249,7 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
         logger.debug("[fedi-bridge] ancestor fetch failed for %s: %s", post.get("id"), e)
         return
     blocked = _blocked_domains()
-    for raw in ancestors[-max_ancestors:]:            # closest N (always includes the immediate parent)
-        if _drain_deadline and time.monotonic() > _drain_deadline:
-            break   # out of the poll budget — thread under whatever ancestors landed; the rest backfill next cycle
+    for raw in ancestors[-max_ancestors:]:            # closest N (always includes the immediate parent); ≤8
         anc = _norm(platform, raw)
         if not anc.get("id"):
             continue
@@ -778,25 +771,22 @@ async def poll_once(db: Session) -> None:
     port = _port()
     await _refresh_moderation(instance_url, token)
 
-    deadline = time.monotonic() + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll
-    global _drain_deadline
-    _drain_deadline = deadline   # bound _backfill_ancestors too (see the var) — cleared in finally below
-    try:
-        # Drain the LOCAL timeline FIRST (when it's a distinct feed): it's low-volume and finishes fast, so
-        # the instance's OWN users — whose posts the federated firehose dilutes/drops (an active local
-        # account got ~7% of a week mirrored) — are never starved by the high-volume global drain. Wrapped so
-        # a local-drain failure can't break the main global mirror. Skip when the configured type IS local.
-        if ttype != "local":
-            try:
-                await _drain_timeline(db, port, platform, instance_url, token, instance_host,
-                                      blocked_domains, include_replies, "local", "fedi_bridge_local_since", deadline)
-            except Exception as e:
-                logger.warning("[fedi-bridge] local drain failed: %s", e)
+    deadline = time.monotonic() + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll. Bounds
+                                                  # the per-POST loop in _drain_timeline (not backfill — that's
+                                                  # bounded by the small _BRIDGE_MAX_ANCESTORS cap instead).
+    # Drain the LOCAL timeline FIRST (when it's a distinct feed): it's low-volume and finishes fast, so
+    # the instance's OWN users — whose posts the federated firehose dilutes/drops (an active local
+    # account got ~7% of a week mirrored) — are never starved by the high-volume global drain. Wrapped so
+    # a local-drain failure can't break the main global mirror. Skip when the configured type IS local.
+    if ttype != "local":
+        try:
+            await _drain_timeline(db, port, platform, instance_url, token, instance_host,
+                                  blocked_domains, include_replies, "local", "fedi_bridge_local_since", deadline)
+        except Exception as e:
+            logger.warning("[fedi-bridge] local drain failed: %s", e)
 
-        await _drain_timeline(db, port, platform, instance_url, token, instance_host,
-                              blocked_domains, include_replies, ttype, "fedi_bridge_global_since", deadline)
-    finally:
-        _drain_deadline = 0.0   # clear so the personal plane (shares _backfill_ancestors) stays unbounded
+    await _drain_timeline(db, port, platform, instance_url, token, instance_host,
+                          blocked_domains, include_replies, ttype, "fedi_bridge_global_since", deadline)
     # NOTE: deletion propagation used to run here — it's now a SEPARATE scheduled job so its HTTP
     # status checks can't eat this poll's time budget (the "poll exceeded 90s" cause).
 
