@@ -10196,7 +10196,11 @@
     const b64=await _blobToB64(await r.blob());
     let name=((src.split('/').pop()||'image').split('?')[0])||'image'; if(!/\.[a-z0-9]{2,4}$/i.test(name)) name+='.png';
     const w=await Filesystem.writeFile({ path:name, data:b64, directory:'CACHE' });
-    await Share.share({ files:[w.uri], dialogTitle:'Save or share image' });   // Capacitor 6: images ride in `files`
+    // The sheet OPENING is the success — from here the user saves/copies/sends via the OS. Share.share
+    // REJECTS when they just dismiss the sheet (a cancel, not a failure), so swallow it: nagging "couldn't
+    // save" after the sheet already appeared is exactly the confusing double-signal to avoid. Only a real
+    // fetch/writeFile failure ABOVE (before the sheet) should surface an error to the caller.
+    try{ await Share.share({ files:[w.uri], dialogTitle:'Save or share image' }); }catch(_){}   // Capacitor 6: images ride in `files`
     return true;
   }
   async function _lbCopyImg(src){
