@@ -254,6 +254,21 @@ def _rmdir_if_empty(d: str) -> None:
 
 
 def _global_enabled() -> bool:
+    if (settings_store.get("stream_record_enabled", "") or "").strip().lower() == "true":
+        return True
+    # The per-process settings cache can be stuck unhydrated (0 settings) in the reaper/worker process even
+    # though the relay authoritatively holds stream_record_enabled=true — and when that happens EVERY ended
+    # stream is silently dropped instead of saved. Before concluding recording is off, force a fresh
+    # hydrate_from_db (reads the relay's Postgres directly — cheap + authoritative) and re-check. A flaky
+    # cache must never cost the user their recordings.
+    try:
+        db = SessionLocal()
+        try:
+            settings_store.hydrate_from_db(db)
+        finally:
+            db.close()
+    except Exception:
+        pass
     return (settings_store.get("stream_record_enabled", "") or "").strip().lower() == "true"
 
 
