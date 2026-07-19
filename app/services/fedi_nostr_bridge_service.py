@@ -42,7 +42,14 @@ _mod_cache: dict = {"at": 0.0, "blocked_accts": set()}
 _DELETION_INTERVAL = 300       # how often the (separate) deletion job runs — deletions are rare
 _DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion per cycle
 _DELETION_CONCURRENCY = 6      # parallel status checks (was a 25-deep serial loop inside the poll)
-_MAX_ANCESTORS = 8             # cap ancestors backfilled to anchor an orphan reply's thread
+_MAX_ANCESTORS = 8             # DEFAULT ancestors backfilled (root-first) to anchor a reply's thread.
+                               # Delivered oldest→newest so each ancestor's parent is mirrored just before it →
+                               # NIP-10 e-tag linked. Kept conservative because the personal-notification plane
+                               # reuses this default and has NO per-poll drain budget.
+_BRIDGE_MAX_ANCESTORS = 15     # WIDER window for the timeline-bridge drain ONLY (which IS budget-gated per
+                               # post, see _drain_timeline): lets deep UNLISTED sub-threads — which enter Nostr
+                               # ONLY as backfilled ancestors, so their parent must fall inside this window to
+                               # link — thread correctly, without widening the ungated personal plane.
 _BACKFILL_PAGES = 3            # pages of recent history to mirror on first connect (≈60 posts)
 _MAX_QUOTE_DEPTH = 2           # cap quote-of-quote recursion when mirroring referenced notes
 
@@ -220,7 +227,8 @@ def _emoji_tags(content: str, *emoji_maps: dict) -> list:
 
 
 async def _backfill_ancestors(db: Session, port: int, platform: str, instance_url: str,
-                              instance_host: str, post: dict, token: str = "") -> None:
+                              instance_host: str, post: dict, token: str = "",
+                              max_ancestors: int = _MAX_ANCESTORS) -> None:
     """Mirror a reply's ancestor chain (toward the conversation root) so the reply threads under a
     real parent instead of appearing as an orphan with missing context. Ancestors come root-first,
     so each is delivered before its child and never triggers a further backfill (recursion guard).
@@ -233,7 +241,7 @@ async def _backfill_ancestors(db: Session, port: int, platform: str, instance_ur
         logger.debug("[fedi-bridge] ancestor fetch failed for %s: %s", post.get("id"), e)
         return
     blocked = _blocked_domains()
-    for raw in ancestors[-_MAX_ANCESTORS:]:           # closest N (always includes the immediate parent)
+    for raw in ancestors[-max_ancestors:]:            # closest N (always includes the immediate parent)
         anc = _norm(platform, raw)
         if not anc.get("id"):
             continue
@@ -430,7 +438,8 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
 
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
-                   extra_ptags: list | None = None, _depth: int = 0) -> str | None:
+                   extra_ptags: list | None = None, _depth: int = 0,
+                   _max_anc: int = _MAX_ANCESTORS) -> str | None:
     # Only a PUBLIC-audience status may become a public Nostr note (see _is_public_audience).
     if not _is_public_audience(raw):
         return None
@@ -456,7 +465,8 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         parent_id = post.get("in_reply_to_id")
         if parent_id:
             if backfill and not _parent_event(db, instance_url, parent_id):
-                await _backfill_ancestors(db, port, platform, instance_url, instance_host, post, token=token)
+                await _backfill_ancestors(db, port, platform, instance_url, instance_host, post,
+                                          token=token, max_ancestors=_max_anc)
             parent = _parent_event(db, instance_url, parent_id)
             if parent:
                 tags.append(["e", parent.nostr_event_id, "", "reply"])
@@ -547,7 +557,8 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
     uri = _canonical_uri(platform, instance_url, post)
     if _seen(db, instance_url, post["id"], uri):
         return
-    await _deliver(db, port, platform, instance_url, instance_host, raw, post)
+    await _deliver(db, port, platform, instance_url, instance_host, raw, post,
+                   _max_anc=_BRIDGE_MAX_ANCESTORS)   # bridge drain only — personal plane uses the default 8
 
 
 # --- deletions --------------------------------------------------------------
@@ -683,6 +694,11 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
         last = None
         transient = False
         for raw in raw_posts:
+            if time.monotonic() > deadline:
+                break   # out of the poll budget mid-page: `last` holds the cursor (committed just below), the
+                        # rest of the page + its ancestor backfills resume next poll. This per-POST check (the
+                        # loop above only checks per-PAGE) keeps a wide-window ancestor backfill from running
+                        # the poll past _POLL_TIMEOUT and getting cancelled before the cursor advances.
             try:
                 await _process(db, port, platform, instance_url, instance_host,
                                blocked_domains, include_replies, raw)
