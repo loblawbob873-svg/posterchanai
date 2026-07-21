@@ -664,13 +664,19 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .tltab.on::after{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:-1px;
   width:min(72px,64%);height:3px;border-radius:3px 3px 0 0;
   background:linear-gradient(90deg,var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
+.tl-cmp-tools .btn{white-space:nowrap}   /* never let "⤢ More" wrap to two lines on a narrow phone */
 @media(max-width:820px){
   .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
   .tl-cmp-av{width:32px;height:32px}
   .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
+  .tl-cmp-tools{gap:6px}
+  .tl-cmp-tools .btn{padding:7px 10px;font-size:13px}
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
 }
+/* Tiny phones: the status line is the only expendable thing in the tools row — dropping it keeps
+   📎 / ⤢ More / Post at a tappable size instead of letting them all squeeze. */
+@media(max-width:380px){ .tl-cmp-status{display:none} }
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13.5px;text-transform:uppercase;letter-spacing:1.5px}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}
 .psearch:hover{background:rgba(0,255,255,.08)}

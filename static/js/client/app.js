@@ -2068,8 +2068,15 @@
     // textarea first, and collapsing hides .tl-cmp-tools mid-gesture, so the element disappears between
     // mousedown and mouseup and no click is ever produced (that's why ⤢ More did nothing on an empty box).
     box.addEventListener('mousedown', e=>{ if(e.target.closest('button')) e.preventDefault(); });   // keep focus on the textarea
-    ta.addEventListener('blur', ()=>{ if(box.contains(document.activeElement)) return;
-      if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; } });
+    // Belt and braces for touch, where blur can beat the synthesized mousedown: defer the collapse and
+    // cancel it on any pointerdown inside the composer, so a tap on a tool button can never hide the
+    // button out from under itself mid-gesture.
+    let _collapseT=null;
+    box.addEventListener('pointerdown', ()=>clearTimeout(_collapseT));
+    ta.addEventListener('blur', ()=>{ clearTimeout(_collapseT); _collapseT=setTimeout(()=>{
+      if(box.contains(document.activeElement)) return;
+      if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; }
+    }, 180); });
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
@@ -2167,7 +2174,12 @@
     // Don't hijack horizontal drags that belong to scrollable/interactive children.
     // `.dm-thread` (an OPEN conversation), not `.dm-wrap` (the whole Messages pane) — so the
     // conversation LIST stays swipeable (swipe back to Notifications) while an open chat isn't yanked out from under you.
-    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.scrollx,.dm-thread'));
+    // `.media-car` matters: a horizontal drag across the media carousel is PAGING, not view-navigation.
+    // (Dragging the image itself was already covered by `img`, but the track's padding/gaps were not, so
+    // a swipe that started off-image yanked the whole view sideways instead of advancing the carousel.)
+    // `.notif-tabs` scrolls horizontally when its six tabs overflow — dragging it must scroll the bar,
+    // not navigate away from Notifications.
+    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.media-car,.notif-tabs,.scrollx,.dm-thread'));
     const indicator = ()=>{ if(!ind || !ind.isConnected){ ind=document.createElement('div'); ind.className='ptr-ind'; ind.textContent='↻'; document.body.appendChild(ind); } return ind; };
     const resetInd = ()=>{ if(ind){ ind.style.opacity=''; ind.style.transform=''; ind.classList.remove('ready','spin'); } };
     feed.addEventListener('touchstart', e=>{
