@@ -7308,18 +7308,34 @@
   let _followSeen={}; try{ _followSeen=JSON.parse(localStorage.getItem('pc_follow_seen')||'{}')||{}; }catch(_){ _followSeen={}; }
   let _followSeeded=false;   // true once the follower seed (below) has run — before that, notifList must NOT persist pins
   let _followReady=false;    // true after the follows (kind-3) sub reaches EOSE — only then is a kind-3 a genuinely NEW follow
+  // THE fix for recurring follow-spam: a STABLE floor for followers met from history, captured once,
+  // persisted, and NEVER advanced. The old code clamped with `seenNotif.last` — which
+  // renderNotifications resets to NOW on every view of the tab — so Math.min(created_at, now) ===
+  // created_at for any past event and the clamp silently became a no-op after the first render. That's
+  // why an old follower re-saving their contact list (kind 3 is republished in full on every edit, with
+  // a fresh created_at) kept floating back to the top as a brand-new "followed you".
+  let _notifEpoch = +(localStorage.getItem('pc_notif_epoch')||0);
+  if(!_notifEpoch){ _notifEpoch = Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_notif_epoch', String(_notifEpoch)); }catch(_){} }
+  // One-time repair of installs poisoned by the old clamp: they persisted pins at the contact-list SAVE
+  // time, so existing users carry a pile of long-time followers pinned as if they'd just followed.
+  // Clamping every stored pin to the epoch says exactly "not newer than when we started tracking".
+  if(!localStorage.getItem('pc_notif_epoch_migrated')){
+    let _ch=false; for(const k in _followSeen){ if(!(_followSeen[k]>0) || _followSeen[k]>_notifEpoch){ _followSeen[k]=_notifEpoch; _ch=true; } }
+    if(_ch) try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){}
+    try{ localStorage.setItem('pc_notif_epoch_migrated','1'); }catch(_){}
+  }
   // Treat a 0/falsy stored value as UNSET (old builds persisted 0 when seenNotif.last was 0 → "55 years ago"),
   // so it gets repaired to a real time on next access instead of sticking.
   function _followTs(pk, fallback){ if(!_followSeen[pk]){ _followSeen[pk]=fallback||Math.floor(Date.now()/1000); try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} } return _followSeen[pk]; }
   // Pin a follower we're meeting from HISTORY (the seed, the relay's pre-EOSE backlog, the Store cache) —
-  // never at their kind-3's created_at, which is just their last contact-list SAVE. Keep them at/below the
-  // seen line so an old follower re-saving their list can't float to the top as a brand-new "followed you".
-  function _followTsOld(pk, created){ return _followTs(pk, seenNotif.last ? Math.min(created, seenNotif.last) : created); }
+  // never at their kind-3's created_at, which is just their last contact-list SAVE. The epoch floor holds
+  // them below the line permanently, however many times they re-save.
+  function _followTsOld(pk, created){ return _followTs(pk, Math.min(created, _notifEpoch)); }
   // Unpinned kind-3 (seed missed them / storage cleared) gets the same conservative time, so the ORDER is
   // right even when nothing has been recorded yet — the pin is a cache, not the thing correctness rests on.
   function _notifTs(e){
     if(e.kind!==3) return e.created_at;
-    return _followSeen[e.pubkey] || (seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at);
+    return _followSeen[e.pubkey] || Math.min(e.created_at, _notifEpoch);
   }
   async function watchNotifications(){
     seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0);
@@ -7349,10 +7365,10 @@
       }
       let changed=false;
       for(const e of followers){ FOLLOWERS.add(e.pubkey);
-        // Pin an existing follower at/below the "seen" line so a later re-save can't float them to the top,
-        // but not to epoch (which timeAgo would render as "55 years ago") when seenNotif.last is 0. Also
-        // REPAIRS a stale 0 persisted by the old build (falsy → treated as unset here).
-        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= seenNotif.last ? Math.min(e.created_at, seenNotif.last) : e.created_at; changed=true; } }
+        // Pin an existing follower at/below the STABLE epoch so a later re-save can't float them to the
+        // top. Anyone in this seed already followed us before we started tracking, so their kind-3's
+        // created_at (their last contact-list save) must never be taken as "when they followed you".
+        if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= Math.min(e.created_at, _notifEpoch); changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
       // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
       // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
@@ -7369,9 +7385,15 @@
         onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ needProfile(ev.pubkey);
           FOLLOWERS.add(ev.pubkey);
           const firstTime = !_followSeen[ev.pubkey];
-          const live = _followReady;
-          const ts = live ? _followTs(ev.pubkey, ev.created_at) : _followTsOld(ev.pubkey, ev.created_at);
-          if(live && firstTime && ts>seenNotif.last) bumpNotif();   // only a post-EOSE, never-seen follower badges
+          // "Never recorded" only means "genuinely new" if the seed actually populated _followSeen. When
+          // the seed failed, or was capped (limit:1000) on a big account, firstTime just means "we never
+          // looked" — pinning those at their re-save time is precisely what produced the flood. Treat them
+          // as history instead, and record a genuine new follow at the time WE observed it rather than at
+          // the follower's contact-list save time.
+          const genuine = _followReady && _followSeeded && firstTime;
+          const ts = genuine ? _followTs(ev.pubkey, Math.floor(Date.now()/1000))
+                             : _followTsOld(ev.pubkey, ev.created_at);
+          if(genuine && ts>seenNotif.last) bumpNotif();   // only a post-EOSE, never-seen follower badges
           if(VIEW==='notifications') renderNotifications(); } },
         onEose: ()=>{ _followReady=true; if(VIEW==='notifications') renderNotifications(); }
       });
