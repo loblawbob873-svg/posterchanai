@@ -2119,12 +2119,17 @@
             <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF">😀</button>
             <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll">📊</button>
             <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools">🤖</button>
-            <button class="tl-cmp-btn" id="tl-cmp-cw" title="Mark sensitive / NSFW (NIP-36)">🔞</button>
+            <!-- Background / Schedule / Sensitive live behind ⋯ deliberately. Five icons + Post is
+                 exactly what fits one row at 360px (~269px of 279px); a sixth wraps Post onto its
+                 own line, which is the regression the .tl-cmp-tools comment already records. -->
+            <button class="tl-cmp-btn" id="tl-cmp-more" title="More — background, schedule, sensitive">⋯</button>
             <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
             <button class="btn btn-neon tl-cmp-post" id="tl-cmp-post">Post</button>
             <input type="file" id="tl-cmp-file" multiple hidden>
           </div>
           <div class="tl-cmp-cw hidden" id="tl-cmp-cwrow"><input class="input" id="tl-cmp-cwreason" maxlength="120" placeholder="🔞 sensitive — reason (optional)"></div>
+          <div class="cmp-bg-strip hidden" id="tl-cmp-bgs" aria-label="post background"></div>
+          <div class="cmp-sched-row hidden" id="tl-cmp-schedrow"><span class="muted small">Publish at</span><input type="datetime-local" id="tl-cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="tl-cmp-sched-go">Schedule</button><span class="muted small" id="tl-cmp-sched-when"></span></div>
           <div class="tl-cmp-poll hidden" id="tl-cmp-pollbox">
             <div class="muted small">Poll options</div>
             <div id="tl-cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -2151,6 +2156,9 @@
     // Always open, like ditto — a one-line box that only unfolds on focus read as a search field and hid
     // the attach/post controls behind an extra interaction. It just grows with the text from here.
     const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),320)+'px'; };
+    // Declared before reset() so it can disarm the 🎨 choice: clearing only the button's .on class
+    // would leave a background armed and silently style the NEXT post too.
+    let _tlBg=null, _tlBgClear=()=>{};
     // Clear the PANELS too, not just the text — a posted poll leaving its options behind would silently
     // attach them to the next thing you wrote.
     const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; _aiLastTags='';
@@ -2160,6 +2168,8 @@
         if(w) w.innerHTML='<input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2">';
         const mu=$('#tl-cmp-poll-multi',box); if(mu) mu.checked=false; }
       if(cw){ cw.classList.add('hidden'); const r=$('#tl-cmp-cwreason',box); if(r) r.value=''; }
+      _tlBgClear();
+      const bgs=$('#tl-cmp-bgs',box); if(bgs) bgs.classList.add('hidden');
       $$('.tl-cmp-btn.on',box).forEach(b=>b.classList.remove('on'));
       grow(); };
     if(_tlCmpText) ta.value=_tlCmpText;   // restore text carried across a tab switch
@@ -2190,10 +2200,9 @@
       const add=$('#tl-cmp-poll-add',box);
       if(add) add.onclick=()=>{ const wrap=$('#tl-cmp-poll-opts',box); const i=document.createElement('input');
         i.className='input poll-opt-in'; i.placeholder='Option '+(wrap.children.length+1); wrap.appendChild(i); i.focus(); }; }
-    // 🔞 content warning — inline (NIP-36).
-    { const cb=$('#tl-cmp-cw',box);
-      if(cb) cb.onclick=()=>{ const on=cwRow.classList.toggle('hidden')===false; cb.classList.toggle('on',on);
-        if(on){ const r=$('#tl-cmp-cwreason',box); if(r) r.focus(); } }; }
+    // 🔞 content warning (NIP-36) — toggled from the ⋯ menu.
+    const toggleCw=()=>{ const on=cwRow.classList.toggle('hidden')===false;
+      if(on){ const r=$('#tl-cmp-cwreason',box); if(r) r.focus(); } };
     // 🤖 AI — inline, using the module-level helpers (they used to be private to compose()).
     { const ab=$('#tl-cmp-ai',box); if(ab) ab.onclick=e=>{ e.stopPropagation();
         openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']], a=>{
@@ -2201,26 +2210,108 @@
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
           else if(a==='translate') composeTranslate(ta, ab); }); }; }
-    post.onclick=async()=>{
-      const text=ta.value.trim(); if(!text) return;
+    // 🎨 Background post — same swatches and renderer the modal uses (CMP_BGS/renderBgPost are
+    // module-level), so the two composers can't drift. Short text only; picking one is exclusive.
+    const bgsRow=$('#tl-cmp-bgs',box);
+    let toggleBg=()=>{};
+    {
+      if(bgsRow){
+        const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on';
+        none.title='no background'; none.textContent='✕'; bgsRow.appendChild(none);
+        const marks=[none];
+        const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); };
+        none.onclick=()=>pick(none,null);
+        _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
+        CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch';
+          s.title=bg.id; s.style.background=_bgCss(bg); bgsRow.appendChild(s); marks.push(s);
+          s.onclick=()=>{ if(ta.value.trim().length>_BG_MAX){ st.textContent=`background needs ${_BG_MAX} characters or fewer`; return; } pick(s,bg); }; });
+        toggleBg=()=>{ const show=bgsRow.classList.toggle('hidden')===false;
+          if(!show && _tlBg) pick(none,null);   // collapsing the row must not leave a hidden background armed
+        };
+      } }
+    // One builder for Post / 🎨 / ⏰ so a scheduled or styled post is byte-identical to an immediate one.
+    // Returns null (after setting a status message) when the input isn't publishable.
+    const buildEvent=async()=>{
+      const text=ta.value.trim(); if(!text){ st.textContent='write something first'; return null; }
       const isPoll=!pollBox.classList.contains('hidden');
-      const labels=isPoll ? $$('.poll-opt-in',pollBox).map(i=>i.value.trim()).filter(Boolean) : [];
-      if(isPoll && labels.length<2){ st.textContent='add at least 2 poll options'; return; }
-      post.disabled=true; st.textContent='posting…';
       const tags=[];
-      if(isPoll){ tags.push(['polltype', $('#tl-cmp-poll-multi',box).checked?'multiplechoice':'singlechoice']);
-        labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l])); }
+      if(isPoll){
+        const labels=$$('.poll-opt-in',pollBox).map(i=>i.value.trim()).filter(Boolean);
+        if(labels.length<2){ st.textContent='add at least 2 poll options'; return null; }
+        tags.push(['polltype', $('#tl-cmp-poll-multi',box).checked?'multiplechoice':'singlechoice']);
+        labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l]));
+      }
+      const cwOf=t=>{ if(!cwRow.classList.contains('hidden')) t.push(['content-warning', ($('#tl-cmp-cwreason',box).value||'').trim()]); };
+      // 🎨 renders the text to an image and posts THAT, so the styled text survives in every client.
+      // A poll can't also be a background (its question must stay readable text), so poll wins.
+      if(_tlBg && !isPoll){
+        if(text.length>_BG_MAX){ st.textContent=`background needs ${_BG_MAX} characters or fewer`; return null; }
+        st.textContent='rendering…';
+        const blob=await renderBgPost(text, _tlBg);
+        st.textContent='uploading…';
+        const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
+        const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); cwOf(btags);
+        return {kind:1, content:url, tags:btags, what:'posted 🎨'};
+      }
       mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
       imetaTagsFor(text).forEach(t=>tags.push(t));
-      if(!cwRow.classList.contains('hidden')) tags.push(['content-warning', ($('#tl-cmp-cwreason',box).value||'').trim()]);
+      cwOf(tags);
+      // A poll is kind 1068 (NIP-88); its question is the post text and the options are tags.
+      return {kind:isPoll?1068:1, content:text, tags, what:isPoll?'poll posted':'posted'};
+    };
+    post.onclick=async()=>{
+      if(!ta.value.trim()) return;
+      post.disabled=true; st.textContent='posting…';
       try{
-        // A poll is kind 1068 (NIP-88); its question is the post text and the options are tags.
-        const r=await publish(isPoll?1068:1, text, tags);
-        if(r && r.ok){ reset(); toast(isPoll?'poll posted':'posted'); if(VIEW==='home'||VIEW==='global') renderView(true); return; }
+        const ev=await buildEvent();
+        if(!ev){ post.disabled=false; return; }
+        const r=await publish(ev.kind, ev.content, ev.tags);
+        if(r && r.ok){ reset(); toast(ev.what); if(VIEW==='home'||VIEW==='global') renderView(true); return; }
         st.textContent='';   // publish() raises its own failure toast
-      }catch(err){ st.textContent='post failed: '+((err&&err.message)||err); }
+      }catch(err){
+        if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
+        else st.textContent='post failed: '+((err&&err.message)||err);
+      }
       post.disabled=false;
     };
+    // ⏰ Schedule — signs the note with a FUTURE created_at; the backend broadcasts it at that time.
+    let toggleSched=()=>{};
+    { const srow=$('#tl-cmp-schedrow',box), sat=$('#tl-cmp-sched-at',box),
+            sgo=$('#tl-cmp-sched-go',box), swhen=$('#tl-cmp-sched-when',box);
+      if(srow && sat && sgo){
+        // Live readout so the time you picked is unambiguous rather than a silent default.
+        const updWhen=()=>{ const ts=Math.floor(new Date(sat.value).getTime()/1000);
+          if(!sat.value || isNaN(ts)){ swhen.textContent=''; return; }
+          const mins=Math.round((ts-Date.now()/1000)/60);
+          const rel = mins<1?'now' : mins<60?`in ${mins} min` : mins<1440?`in ${(mins/60).toFixed(mins%60?1:0)} h` : `in ${Math.round(mins/1440)} d`;
+          swhen.textContent=`→ publishes ${new Date(ts*1000).toLocaleString()} (${rel})`; };
+        sat.addEventListener('input', updWhen);
+        $$('.sched-chip',srow).forEach(c=> c.onclick=()=>{ sat.value=_dtLocal(new Date(Date.now()+(+c.dataset.min)*60000)); updWhen(); });
+        toggleSched=()=>{ const show=srow.classList.toggle('hidden')===false;
+          if(show){ sat.min=_dtLocal(new Date(Date.now()+60*1000));
+            if(!sat.value) sat.value=_dtLocal(new Date(Date.now()+10*60*1000)); updWhen(); sat.focus(); } };
+        sgo.onclick=async()=>{
+          const whenTs=Math.floor(new Date(sat.value).getTime()/1000);
+          if(!sat.value || isNaN(whenTs)){ st.textContent='pick a date & time'; return; }
+          if(whenTs < Math.floor(Date.now()/1000)+30){ st.textContent='pick a time at least a minute from now'; return; }
+          sgo.disabled=true; st.textContent='scheduling…';
+          try{
+            const ev=await buildEvent();
+            if(!ev){ sgo.disabled=false; return; }
+            const r=await Scheduled.create(ev.kind, ev.content, ev.tags, whenTs);
+            if(r && r.ok){ reset(); srow.classList.add('hidden'); sat.value=''; swhen.textContent='';
+              toast('scheduled'); if(VIEW==='drafts') renderView(true); }
+            else st.textContent='schedule failed'+((r&&r.error)?': '+r.error:'');
+          }catch(err){ st.textContent='schedule failed: '+((err&&err.message)||err); }
+          sgo.disabled=false;
+        };
+      } }
+    // ⋯ overflow — keeps the icon row at five so Post stays on one line at 360px.
+    { const mb=$('#tl-cmp-more',box); if(mb) mb.onclick=e=>{ e.stopPropagation();
+        openMenuPopover(mb, [['bg','🎨 Background'],['sched','⏰ Schedule'],['cw','🔞 Sensitive']], a=>{
+          if(a==='bg') toggleBg();
+          else if(a==='sched') toggleSched();
+          else if(a==='cw') toggleCw(); }); }; }
   }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
