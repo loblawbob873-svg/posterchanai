@@ -20,6 +20,8 @@ import logging
 import time
 from datetime import datetime
 
+import httpx
+from sqlalchemy.exc import OperationalError, InterfaceError
 from sqlalchemy.orm import Session
 
 from app.models import User, FediBridgeDelivered, FediBridgeMap
@@ -135,7 +137,19 @@ async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -
                     body += ("\n" if body else "") + m["url"]
             wrap_id = await _wrap_dm(port, puppet, recipient, body or "​")
             if not wrap_id:
-                stop = True            # publish failed → STOP; don't advance past it, retry next cycle
+                # Retry once, then SKIP. A permanently un-publishable wrap (puppet not in the relay's
+                # allowlist because its kind-0 publish failed, oversized event) otherwise re-fetched the
+                # same page forever and every LATER DM for this user was never bridged — indefinitely,
+                # with only a debug line. _deliver_notifications already guards this with _notif_poison.
+                _k = f"{user.id}|{st.get('id')}"
+                if _dm_poison.get(_k):
+                    _dm_poison.pop(_k, None)
+                    logger.warning("[fedi-personal] DM %s un-publishable twice — skipping so the drain "
+                                   "can't wedge", st.get("id"))
+                    last = st.get("id") or last      # advance PAST the poison item
+                    continue
+                _dm_poison[_k] = True
+                stop = True            # first failure → STOP; don't advance, retry next cycle
                 break
             db.add(FediBridgeMap(user_id=user.id, nostr_event_id=wrap_id, kind="dm",
                                  platform="pleroma", instance_url=inst,
@@ -273,14 +287,21 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             await _bridge_follow(db, port, puppet, recipient, broadcast)
             return True
         return True                                  # follow-accepted + untracked types (poll/update/…) → skip
+    except (OperationalError, InterfaceError, httpx.TransportError, asyncio.TimeoutError) as e:
+        # INFRASTRUCTURE, not a poison item. Returning True here advanced the cursor past a perfectly
+        # good notification on a DB blip or a dropped socket — permanently unmirrored, and only a DEBUG
+        # line to show for it. Report failure so the caller holds the cursor and retries next cycle.
+        logger.warning("[fedi-personal] notif deliver transient (%s): %s", ntype, e)
+        return False
     except Exception as e:
-        logger.debug("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
+        logger.warning("[fedi-personal] notif deliver failed (%s): %s", ntype, e)
         return True                                  # poison item → skip so the drain can't wedge
 
 
 _puppet_follows: dict = {}      # follower puppet pubkey -> set of followed pubkeys we've published
                                 # (so a momentary empty relay read can never SHRINK the list)
 _notif_poison: dict = {}        # user_id -> notification id that failed to publish LAST cycle. A second
+_dm_poison: dict = {}     # (user|status id) -> seen once; second failure skips it (see _deliver_dms)
                                 # failure on the same id = un-deliverable (e.g. a relay-blocked author);
                                 # skip it so it can't head-of-line-block every later notification forever.
 

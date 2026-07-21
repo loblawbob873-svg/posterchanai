@@ -222,16 +222,19 @@ async def admin_create_user(instance_url: str, admin_token: str, nickname: str, 
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=20) as client:
         resp = await client.post(url, json=body, headers=headers)
     if resp.status_code in (200, 201):
-        return {"ok": True, "error": None}
+        return {"ok": True, "error": None, "created": True}
     txt = resp.text or ""
-    # Pleroma returns the nickname already-taken as an error string; treat as ok (user exists).
+    # Pleroma returns the nickname already-taken as an error string; treat as ok (user exists) — but
+    # flag created=False. The caller MUST NOT then confirm/approve it: the nickname comes from the
+    # requester's own Nostr profile, so approving an account we didn't create let anyone force-approve
+    # and email-confirm somebody else's PENDING registration, defeating the instance's manual approval.
     if "already" in txt.lower() or "taken" in txt.lower() or resp.status_code == 409:
-        return {"ok": True, "error": None}
+        return {"ok": True, "error": None, "created": False}
     if resp.status_code in (401, 403) or "staff" in txt.lower():
         return {"ok": False, "error": "the configured admin token is NOT a Pleroma admin/moderator "
                                       "(staff) account. Set 'Admin Token' in Admin → Services → "
                                       "Nostr ↔ Fediverse Bridge to a staff account's token."}
-    return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}"}
+    return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}", "created": False}
 
 
 async def admin_confirm_approve(instance_url: str, admin_token: str, nickname: str) -> None:

@@ -54,7 +54,12 @@ def _port() -> int:
         return 3052
 
 
-_allowed_cache: dict = {"at": 0.0, "set": frozenset(), "uid": {}, "all_uid": {}}
+# "at" starts negative for the same reason as _mod_cache in the bridge service: time.monotonic() is
+# seconds since BOOT, so a 0.0 seed made the freshness test "has the host been up 30s?". Starting within
+# 30s of a reboot, _refresh_allowed returned WITHOUT querying, the author set stayed empty, and
+# _send_pub_req(first=True) returned 0 without sending any REQ — so the whole 6h replay window was
+# skipped and interactions made during the reboot never federated.
+_allowed_cache: dict = {"at": -3600.0, "set": frozenset(), "uid": {}, "all_uid": {}}
 
 
 def _refresh_allowed() -> None:
@@ -169,7 +174,12 @@ def _is_reply(ev: dict) -> bool:
     missed unmarked positional replies (e.g. `["e", <id>]`), which is how a reply to a native Nostr user
     slipped through and federated out — this covers both markings."""
     tags = ev.get("tags", [])
-    has_quote = any(len(t) >= 2 and t[0] == "q" and t[1] for t in tags)
+    # The ids a `q` tag quotes — an unmarked e-tag naming one of THOSE is the quote reference, not a
+    # reply. This used to be a single has_quote boolean, so ONE q tag disabled reply-detection for
+    # EVERY unmarked e-tag in the note: a positional-NIP-10 reply that also quoted something was read
+    # as top-level and cross-posted to the fediverse as a standalone PUBLIC status, leaking a
+    # Nostr-side conversation. Now only the quoted ids are exempt.
+    quoted_ids = {t[1] for t in tags if len(t) >= 2 and t[0] == "q" and t[1]}
     for t in tags:
         if len(t) >= 2 and t[0] == "e" and t[1]:
             marker = t[3] if len(t) >= 4 else ""
@@ -177,9 +187,49 @@ def _is_reply(ev: dict) -> bool:
                 return True
             if marker == "mention":
                 continue                          # quote/embed reference, not a reply
-            if not marker and not has_quote:      # deprecated positional e-tag, not a quote-post → reply
+            if not marker and t[1] not in quoted_ids:   # deprecated positional e-tag → reply
                 return True
     return False
+
+
+def _persist_delivered(inst: str, note_id: str, note_uri, eid: str, pk: str) -> None:
+    """Write the dedup row on a FRESH session. The post is already live on the fediverse by the time we
+    get here, so losing this row to a poisoned/aborted transaction is not cosmetic: the global mirror
+    then re-imports the user's OWN status as a puppet note (the echo the row exists to prevent), and the
+    reconnect replay can re-run the cross-post once the server's Idempotency-Key cache expires. The
+    mirror plane already has this fallback (_deliver); the write-back didn't."""
+    try:
+        from app.database import SessionLocal
+        s2 = SessionLocal()
+        try:
+            if not s2.query(FediBridgeDelivered).filter(
+                    FediBridgeDelivered.instance_url == inst,
+                    FediBridgeDelivered.note_id == note_id).first():
+                s2.add(FediBridgeDelivered(platform="pleroma", instance_url=inst, note_id=note_id,
+                                           note_uri=note_uri, author_acct=None,
+                                           nostr_event_id=eid, nostr_pubkey=pk))
+                s2.commit()
+        finally:
+            s2.close()
+    except Exception as e:
+        logger.warning("[fedi-writeback] dedup row re-persist failed (%s): %s", note_id, e)
+
+
+async def _parent_visibility(inst: str, token: str, status_id: str) -> str:
+    """The audience to reply with: the parent status's own visibility. Unknown → "unlisted", which is
+    the safe direction (never widens the audience beyond the post being answered)."""
+    if not status_id:
+        return "unlisted"
+    try:
+        st = await pleroma_service.fetch_status(inst, token, status_id)
+        v = ((st or {}).get("visibility") or "").strip().lower()
+        if v in ("public", "unlisted", "private", "direct"):
+            return v
+        if v == "home":          # Misskey naming for unlisted
+            return "unlisted"
+    except Exception as e:
+        logger.debug("[fedi-writeback] parent visibility lookup failed (%s): %s", status_id, e)
+    return "unlisted"
 
 
 def _target_row(db, ev: dict):
@@ -586,15 +636,27 @@ async def _handle(db, ev: dict) -> None:
                 text = f"@{row.author_acct} {text}".strip()
             # Idempotency-Key = the Nostr event id → even a crash/replay double-send can't create a
             # duplicate fediverse status (server dedups on the key).
+            # INHERIT the parent's audience. post_status defaults to "public", and the mirror admits
+            # unlisted/home parents (_PUBLIC_AUDIENCE), so a reply to an unlisted thread was federating
+            # publicly — listed in the instance's public/federated timelines and hashtag search while
+            # the post it answers deliberately isn't. Fall back to unlisted (not public) when the
+            # parent's audience can't be determined, so an unknown parent fails quiet, not loud.
+            vis = await _parent_visibility(inst, token, target_id)
             status = await pleroma_service.post_status(inst, token, text, in_reply_to_id=target_id,
-                                                       media=media or None, idempotency_key=eid)
+                                                       media=media or None, idempotency_key=eid,
+                                                       visibility=vis)
             # Record so the global mirror won't re-publish the user's own reply as a puppet note.
+            # NOTE: if this commit fails the STATUS IS ALREADY LIVE — see the fresh-session retry below.
             if isinstance(status, dict) and status.get("id"):
-                db.add(FediBridgeDelivered(
-                    platform="pleroma", instance_url=inst, note_id=status["id"],
-                    note_uri=status.get("uri") or status.get("url"), author_acct=None,
-                    nostr_event_id=eid, nostr_pubkey=pk))
-                db.commit()
+                try:
+                    db.add(FediBridgeDelivered(
+                        platform="pleroma", instance_url=inst, note_id=status["id"],
+                        note_uri=status.get("uri") or status.get("url"), author_acct=None,
+                        nostr_event_id=eid, nostr_pubkey=pk))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    _persist_delivered(inst, status["id"], status.get("uri") or status.get("url"), eid, pk)
         # Mark seen only AFTER success — a transient failure stays un-seen so the next replay retries.
         _seen_events.add(eid)
         if len(_seen_events) > _SEEN_CAP:

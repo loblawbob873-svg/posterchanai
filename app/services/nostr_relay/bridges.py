@@ -30,8 +30,22 @@ def relay_domain(s: str) -> str:
         return ""
 
 
+def _norm_host(host: str) -> str:
+    """Canonical host for blocklist matching: lowercase, strip a trailing FQDN dot and any :port.
+    Without this `mostr.pub.` (a legal absolute form that resolvers treat identically) and
+    `mostr.pub:443` both slipped past a blocked-domain check."""
+    h = (host or "").strip().lower()
+    if h.startswith("[") and "]" in h:          # [v6]:port
+        h = h[1:h.index("]")]
+    elif h.count(":") == 1:
+        h = h.split(":", 1)[0]
+    return h.rstrip(".")
+
+
 def _match(host: str, domains) -> bool:
-    return bool(host) and any(host == d or host.endswith("." + d) for d in domains)
+    host = _norm_host(host)
+    ds = {_norm_host(d) for d in (domains or ())}
+    return bool(host) and any(host == d or host.endswith("." + d) for d in ds)
 
 
 def has_proxy_tag(ev: dict) -> bool:

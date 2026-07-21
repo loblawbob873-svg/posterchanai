@@ -111,6 +111,13 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             eid = ev.get("id")
             if not _is_evid(eid) or eid in existing:
                 continue
+            # VERIFY FIRST. Everything below reads ev["pubkey"]/["content"]/["tags"] and can mark an
+            # identity as bridged — and mark_bridged_identity blocks even WoT members and primes their
+            # stored events for purge. Acting on an UNVERIFIED event let a hostile/compromised upstream
+            # relay hand us a forged, unsigned event carrying a victim's pubkey and permanently block
+            # them. server.py already verifies before this same check; this path didn't.
+            if not verify_event(ev):
+                continue
             # Learn + drop bridge accounts (mostr.pub etc.) so the gate rejects everything they post.
             # A kind-0 nip05 on the bridge domain marks the account even when it's a WoT member
             # (DomainPolicy); weaker hints stay member-exempt (handled inside mark_bridged).
@@ -125,8 +132,6 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
             if block_bridged and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
                 continue
             if not gate.is_member(ev.get("pubkey", "")):
-                continue
-            if not verify_event(ev):
                 continue
             if int(ev.get("kind", 1)) == 1:
                 _content = ev.get("content", "")

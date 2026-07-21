@@ -159,7 +159,13 @@ async def enable(db, user, by_admin: bool = False) -> dict:
         r = await pleroma_service.admin_create_user(inst, admin, nickname, email, password)
         if not r.get("ok"):
             return {"ok": False, "error": "Could not create fediverse account: " + (r.get("error") or "")}
-        await pleroma_service.admin_confirm_approve(inst, admin, nickname)
+        # ONLY approve an account we actually created this call. `nickname` is derived from the
+        # requester's own kind-0, and admin_create_user reports ok for an already-taken nickname — so
+        # approving unconditionally force-approved arbitrary pending registrations on the operator's
+        # instance. An existing account either already belongs to this user (the token mint below
+        # succeeds) or isn't ours to touch.
+        if r.get("created"):
+            await pleroma_service.admin_confirm_approve(inst, admin, nickname)
         try:
             token = await pleroma_service.password_grant(inst, nickname, password, scopes="read write follow")
         except Exception as e:

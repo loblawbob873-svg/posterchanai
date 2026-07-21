@@ -208,7 +208,7 @@ _MENTION_TOKEN = r'(?:nostr:npub1[0-9a-z]{58}|@[A-Za-z0-9_](?:[A-Za-z0-9_.\-]*[A
 _LEADING_MENTIONS_RE = re.compile(r'^(?:' + _MENTION_TOKEN + r'\s+){3,}', re.I)
 
 
-def _build_content(post: dict, quote_bech: str | None = None) -> str:
+def _build_content(post: dict, quote_bech: str | None = None, q_raw: dict | None = None) -> str:
     """The kind-1 note body: the post text plus any media URLs (Nostr clients render image/video
     URLs inline). When the post quotes another that we mirrored, append a `nostr:<note>` reference so
     clients embed the quoted note's CONTENT (NIP-18); otherwise fall back to an inline text snippet."""
@@ -224,10 +224,18 @@ def _build_content(post: dict, quote_bech: str | None = None) -> str:
         if quote_bech:
             parts.append(f"\nnostr:{quote_bech}")
         else:
-            qacct = q.get("acct") or "?"
-            qtext = (q.get("text") or "").strip()
-            snippet = (qtext[:280] + "…") if len(qtext) > 280 else qtext
-            parts.append(f"\n↪ quoting @{qacct}: {snippet}".rstrip())
+            # Audience-check the QUOTED post before inlining any of it. This branch is reached exactly
+            # when _deliver REFUSED to mirror the quote as its own event — including when it refused
+            # because the quote is followers-only/direct — and it was then pasting that post's author
+            # handle and first 280 chars into a PUBLIC kind-1 anyway. Without the raw object we can't
+            # prove it's public, so fail closed and name nothing.
+            if q_raw is not None and _is_public_audience(q_raw):
+                qacct = q.get("acct") or "?"
+                qtext = (q.get("text") or "").strip()
+                snippet = (qtext[:280] + "…") if len(qtext) > 280 else qtext
+                parts.append(f"\n↪ quoting @{qacct}: {snippet}".rstrip())
+            else:
+                parts.append("\n↪ quoting a post that isn’t public")
     return "\n".join(parts).strip() or "​"   # never publish empty content
 
 
@@ -366,8 +374,14 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
             _linked_user_lkg.pop(uid, None)          # 'skip' or 'ok' with no usable keys → forget them
     # Prune users who dropped out of the query entirely (account deleted / nostr_npub cleared) — else a
     # stale handle->pubkey mapping would linger for the process lifetime and misroute (phantom) mentions.
-    for uid in [i for i in _linked_user_lkg if i not in now_ids]:
-        _linked_user_lkg.pop(uid, None)
+    # Only prune when the rebuild was CLEAN. On `partial` a resolve raised, so that user's uid never
+    # entered now_ids and the prune below treated them as "gone" — discarding exactly the last-known-good
+    # entry this map exists to protect. They then became permanently un-mentionable: a mirrored note
+    # @-mentioning them p-tags only their puppet, never their real key, and for a user on the bridge's
+    # own read instance that p-tag is their ONLY notification path.
+    if not partial:
+        for uid in [i for i in _linked_user_lkg if i not in now_ids]:
+            _linked_user_lkg.pop(uid, None)
     # Rebuild the lookup from last-known-good (so a user who merely failed to resolve this cycle stays
     # mentionable instead of vanishing for a whole TTL), then let THIS cycle's fresh resolutions win any
     # key collision — e.g. a fedi handle reassigned between users routes to the CURRENT owner.
@@ -422,9 +436,21 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         if real and ["p", real] not in ptags:
             ptags.append(["p", real])
         ref = "nostr:" + p["npub"]
-        for token in ("@" + acct, "@" + username):
-            if token and token != "@" and token in content:
-                content = content.replace(token, ref)
+        # Replace @acct (fully qualified) plainly, but the BARE @username only where it isn't followed
+        # by more handle characters. A global str.replace of "@bob" rewrote the LOCAL @bob to the REMOTE
+        # bob@other.host's npub when a note mentioned both, and turned an unrelated "@anna_x" into
+        # "nostr:npub1…a_x" — a malformed reference no client can resolve.
+        # Boundary-guard the qualified form too: a plain str.replace of "@ann" also matched INSIDE
+        # "@anna_x" (and "@bob@other.host" inside "@bob@other.host.evil"), producing a malformed
+        # nostr: reference no client can resolve.
+        if acct:
+            content = re.sub(r"@" + re.escape(acct) + r"(?![A-Za-z0-9_.\-@])", ref, content)
+        # The BARE "@username" form means the LOCAL user on the fediverse, so only a local mention may
+        # claim it. Letting a remote account do so rewrote the local @bob to the REMOTE bob's npub when
+        # a note mentioned both. The negative lookahead stops "@ann" from eating "@anna_x".
+        _mhost2 = acct.rsplit("@", 1)[-1].lower() if "@" in acct else ""
+        if username and (not _mhost2 or _mhost2 == (instance_host or "").lower()):
+            content = re.sub(r"@" + re.escape(username) + r"(?![A-Za-z0-9_.\-@])", ref, content)
     return content, ptags
 
 
@@ -546,7 +572,9 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
                 tags.append(["p", pk])
 
         # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
-        content = _build_content(post, quote_bech)
+        # Pass the RAW quoted status so the snippet fallback can audience-check it (the normalizers
+        # drop `visibility`, so `post["quote"]` alone can never prove the quote is public).
+        content = _build_content(post, quote_bech, _raw_quote_status(platform, raw))
         content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content,
                                                          raw.get("mentions") or [], _blocked_domains())
         # Fediverse replies prefix the body with the full @-recipient list (which fedi clients hide);
@@ -865,9 +893,14 @@ async def poll_once(db: Session) -> None:
     instance_host = urlparse(instance_url).netloc.split(":")[0].lower()
     blocked_domains = _blocked_domains()
     port = _port()
+    # Anchor the budget BEFORE the moderation fetch. _refresh_moderation makes two HTTP calls (15s
+    # timeout each), so anchoring after it could put the drain's deadline at 30+70=100s while _job
+    # cancels at _POLL_TIMEOUT=90 — turning the clean "stop and resume next poll" path into a hard
+    # mid-page cancellation.
+    _budget_start = time.monotonic()
     await _refresh_moderation(instance_url, token)
 
-    deadline = time.monotonic() + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll. Bounds
+    deadline = _budget_start + _DRAIN_BUDGET   # ONE budget shared by both timeline drains this poll. Bounds
                                                   # the per-POST loop in _drain_timeline AND (threaded down as
                                                   # _deadline) each post's ancestor backfill + the fresh-connect
                                                   # _backfill_recent — so no single deep reply overruns _POLL_TIMEOUT.
@@ -902,7 +935,14 @@ def cleanup_state() -> None:
     db = SessionLocal()
     try:
         cutoff = datetime.utcnow() - timedelta(days=max(1, keep_days))
-        db.query(FediBridgeDelivered).filter(FediBridgeDelivered.created_at < cutoff).delete()
+        # Keep note_id="" rows: those are the write-back TOMBSTONES/markers _check_deletions goes out
+        # of its way to preserve ("a permanent marker, not bookkeeping to reap"). Reaping them let a
+        # reply to an old thread pull the user's own status back through fetch_context, where _seen no
+        # longer knew about it — so their post was re-published under a PUPPET key, appearing twice in
+        # the global timeline under two identities.
+        (db.query(FediBridgeDelivered)
+           .filter(FediBridgeDelivered.created_at < cutoff, FediBridgeDelivered.note_id != "")
+           .delete(synchronize_session=False))
         db.commit()
     except Exception as e:
         db.rollback()
