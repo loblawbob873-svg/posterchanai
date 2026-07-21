@@ -7821,10 +7821,20 @@
       // being silently dropped onto a still-CONNECTING socket (relay.js `_send`); this fixes the cause, so
       // the retries now only cover genuine relay lag.
       try{ await Relay.ready(); }catch(_){}
-      let followers=[];
-      for(let attempt=0; attempt<4 && !followers.length; attempt++){
+      // Retry until the read is COMPLETE, not merely non-empty. query() sets `complete` only when every
+      // relay EOSE'd; a timeout resolves with whatever arrived. Stopping at the first non-empty answer
+      // accepted a PARTIAL follower list as the seed — and every follower missing from it was then
+      // "never recorded", so the next time they re-saved their contact list (~25 of them do daily) the
+      // live sub scored it genuine=true and pinned it at NOW: an old follower resurfacing as a brand-new
+      // "followed you", with a badge. Keep the best (longest) answer across attempts.
+      let followers=[], seedComplete=false;
+      for(let attempt=0; attempt<4 && !seedComplete; attempt++){
         if(attempt>0) await new Promise(r=>setTimeout(r, 600*attempt));
-        try{ followers = (await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]))||[]; }catch(_){ followers=[]; }
+        try{
+          const r = (await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]))||[];
+          if(r.length >= followers.length) followers = r;
+          if(r.complete) seedComplete = true;
+        }catch(_){}
       }
       let changed=false;
       for(const e of followers){ FOLLOWERS.add(e.pubkey);
@@ -7833,11 +7843,11 @@
         // created_at (their last contact-list save) must never be taken as "when they followed you".
         if(!_followSeen[e.pubkey]){ _followSeen[e.pubkey]= Math.min(e.created_at, _notifEpoch); changed=true; } }
       if(changed){ try{ localStorage.setItem('pc_follow_seen', JSON.stringify(_followSeen)); }catch(_){} }
-      // Only a seed that actually RETURNED followers proves the read worked. Relay.query is cache-first, so
-      // a cold cache answers with nothing — and claiming "seeded" off that empty answer is what let old
-      // followers keep resurfacing: notifList would then pin them at their fresh re-save time. (Harmless if
-      // you genuinely have no followers: there's no kind-3 to mis-pin.)
-      _followSeeded = followers.length>0;
+      // Seeded ONLY on a complete read that returned followers. A partial or empty answer must not be
+      // claimed as the baseline: everything absent from it would score as a never-seen follower and get
+      // pinned at its re-save time. (Harmless when you genuinely have no followers — there's no kind-3
+      // to mis-pin.)
+      _followSeeded = seedComplete && followers.length>0;
       if(VIEW==='notifications') renderNotifications();   // reflect the seeded ordering once the async seed lands
     }catch(_){}
       // Sub B — follows (kind-3), subscribed only AFTER the seed above, so every kind-3 is judged against a
