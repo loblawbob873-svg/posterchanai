@@ -105,9 +105,9 @@ async def process_media(
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
     # (e.g. `dildo zoom meme top text`). Strip them here; apply motion then
     # caption to the produced files after dispatch.
+    from app.services.command_service import CommandService
     arg = req.arg or ""
-    motion = None
-    trippy = False
+    mods = []
     meme_text = None
     character = None
     if command not in ("compress", "clip", "convert"):
@@ -124,19 +124,18 @@ async def process_media(
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
             _toks, _low = _toks[:_i], _low[:_i]
-        # Trailing motion cluster (cap 2): one geometry motion + the `trippy`
-        # colour pass, either order, at the very END — so a caption word like
-        # "trippy" mid-text is never mistaken for a motion.
-        _motions = ("zoom", "shake", "medshake", "beginshake", "pulse", "trippy", "glow", "alive")
-        for _ in range(2):
-            if not _low or _low[-1] not in _motions:
+        # Trailing modifier cluster (cap 3 = one movement + glow + trippy, the most that can
+        # validly combine), in any order, at the very END — so a caption word like "trippy"
+        # mid-text is never mistaken for a modifier. Rules live in CommandService so this path
+        # (fediverse bots) accepts exactly what the web UI and Telegram do.
+        for _ in range(3):
+            if not _low or _low[-1] not in CommandService.MOTION_ARGS:
                 break
-            _t = _low.pop()
+            mods.insert(0, _low.pop())
             _toks.pop()
-            if _t == "trippy":
-                trippy = True
-            elif motion is None:
-                motion = _t
+        mods, _combo_err = CommandService.check_motion_combo(command, mods)
+        if _combo_err:
+            return {"error": _combo_err}
         arg = " ".join(_toks)
 
     attachments = []
@@ -319,23 +318,12 @@ async def process_media(
             if end <= start:
                 return {"error": "end time must be after start time"}
             outputs, summary = await asyncio.to_thread(media_service.clip_attachment, attachments, start, end)
-        # Freeze-type motions (zoom/shake/pulse/alive) would kill an already-animated effect;
-        # overlay-type motions (glow) keep the motion. Match the command-path gate.
-        from app.services.command_service import CommandService
-        if motion and outputs and (command not in CommandService.ANIMATED_EFFECTS
-                                   or motion in CommandService.OVERLAY_MOTIONS):
-            _apply = {
-                "zoom": effects_service.apply_zoom,
-                "shake": effects_service.apply_shake,
-                "medshake": effects_service.apply_medshake,
-                "beginshake": effects_service.apply_beginshake,
-                "pulse": effects_service.apply_pulse,
-                "glow": effects_service.apply_glow,
-                "alive": effects_service.apply_alive,
-            }.get(motion, effects_service.apply_zoom)
-            outputs = await asyncio.to_thread(_apply, outputs)
-        if trippy and outputs:
-            outputs = await asyncio.to_thread(effects_service.apply_trippy, outputs)
+        # Modifiers, already ordered + validated by check_motion_combo: the movement builds the
+        # frames, then glow/trippy recolour those real frames (keeping the motion).
+        for _mod in (mods if outputs else []):
+            _apply = CommandService.motion_applier(_mod)
+            if _apply:
+                outputs = await asyncio.to_thread(_apply, outputs)
         if character and outputs:
             outputs = await asyncio.to_thread(effects_service.apply_character, outputs, character)
         if meme_text and outputs:

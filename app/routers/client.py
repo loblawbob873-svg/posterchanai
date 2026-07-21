@@ -703,6 +703,15 @@ async def client_effects():
         "effects": [{"name": n, "desc": desc(n)} for n in effects],
         "motions": ["zoom", "shake", "medshake", "beginshake", "pulse", "glow", "alive", "trippy"],
         "chars": chars,
+        # Combination rules, straight from CommandService.check_motion_combo, so the studio
+        # can only build commands the renderer will actually accept (one movement; looks
+        # stack; no movement on an already-animated effect).
+        "rules": {
+            "movement": list(CS.MOVEMENT_MOTIONS),
+            "looks": list(CS.LOOK_MOTIONS),
+            "animated": sorted(CS.ANIMATED_EFFECTS),
+            "stillOnly": list(CS.STILL_ONLY_MOTIONS),
+        },
     })
 
 

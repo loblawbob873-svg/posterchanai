@@ -98,24 +98,37 @@ offers to share the card to your connected platforms.
 ### Motion & colour modifiers
 
 Append a modifier to **any** effect to animate or recolour its output. Syntax:
-`<effect> [motion] [trippy] [meme <text>]` — e.g. `dildo zoom`, `whoabuddy pulse trippy`,
-`fire shake meme TOP TEXT`.
+`<effect> [movement] [glow] [trippy] [meme <text>]` — e.g. `dildo zoom`, `whoabuddy pulse trippy`,
+`fire shake glow meme TOP TEXT`.
 
-| Modifier | Effect |
+There are two kinds, and the rule is simply **one movement + any of the looks**:
+
+| Movement (pick ONE) | Effect |
 |---|---|
 | `zoom` | Slow Ken Burns zoom-out pan |
 | `shake` | Strong camera shake |
 | `medshake` | Gentler camera shake |
 | `beginshake` | Shakes hard at the start, then settles |
 | `pulse` | Rhythmic zoom in/out (bass-thump) |
-| `glow` | The glow look (colour pop + a sweeping light) over the output — e.g. `alive glow`, `dildo glow` |
-| `alive` | 3D-parallax the output (opt-in motion) — e.g. `dildo alive`, `bullethole alive`. Stamps/overlays are a STILL image by default; add this (or `zoom`/`shake`) to make them move |
-| `trippy` | Psychedelic hue-cycle — **composes on top** of any one motion above (the only stackable modifier; geometry motions don't stack with each other) |
+| `alive` | 3D parallax — needs a STILL, so it's skipped on effects that output a video |
 
-`glow` and `alive` also work as standalone effects AND compose: `alive glow` = 3D parallax with
-the glow look layered on. In Telegram these are the two-column motion menu (left = motion, right =
-the same motion **+ trippy**); typed combos like `dildo zoom trippy` work in the web UI,
-and the fedi bots.
+| Look (stack freely) | Effect |
+|---|---|
+| `glow` | Colour pop + a sweeping light over the real frames — e.g. `dildo zoom glow`, `alive glow` |
+| `trippy` | Psychedelic hue-cycle over the real frames |
+
+Each movement is a full re-render of every frame, so two of them would only fight over the same
+frames — a second one is **refused with the reason** rather than silently dropped, which is what
+older builds did (`curb zoom glow` quietly rendered as plain `curb glow`). The looks recolour the
+frames a movement produced, so they layer on top of it and on each other in a fixed order
+(movement → `glow` → `trippy`), meaning the same set of modifiers renders the same however you
+type it.
+
+`glow` and `alive` also work as standalone effects, and compose as modifiers: `alive glow` = 3D
+parallax with the glow look layered on. The web client's Effects studio greys out any modifier the
+picked effect can't take; Telegram offers the same set as its two-column motion menu (left =
+movement, right = the same movement **+ trippy**); typed combos like `dildo zoom trippy` work in
+the web UI, Telegram and the fedi bots alike.
 
 **Multiple images → one movie:** attach several images to an audio/clip effect (whoabuddy, prayer,
 sopranos, the TV themes, …) and they play as a **slideshow in upload order** over the one audio

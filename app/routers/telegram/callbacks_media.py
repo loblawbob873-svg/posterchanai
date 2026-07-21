@@ -225,21 +225,10 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                 _eff = _action.split(":", 1)[1]
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):
                     await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
-                elif _eff in CommandService.ANIMATED_EFFECTS:
-                    # Already-animated effect — zoom/shake would freeze it, so skip the motion
-                    # menu, but STILL offer the caption (meme text overlays fine on the video).
-                    _effect_caption_pending[chat_id] = {"eff": _eff, "motion": "", "ts": time.time()}
-                    await telegram_service.send_message(
-                        chat_id, "📝 Add a caption?",
-                        reply_markup={"inline_keyboard": [[
-                            {"text": "✍️ Add text", "callback_data": "media:capq:add"},
-                            {"text": "▶️ No, render", "callback_data": "media:capq:skip"},
-                        ]]},
-                    )
                 else:
                     # Left column = motion alone; right column = the same motion
                     # with the trippy hue-cycle layered on top (the only combo
-                    # that composes — geometry motions don't stack). 🌈 Trippy
+                    # that composes — movements don't stack). 🌈 Trippy
                     # alone + ❌ None on the last row.
                     _rows = [
                         [
@@ -271,6 +260,17 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                             {"text": "❌ None", "callback_data": f"media:mo:none:{_eff}"},
                         ],
                     ]
+                    # Hide the buttons check_motion_combo would refuse: a motion that repeats the
+                    # effect itself (glow on glow), and `alive` (3D parallax on a still) for the
+                    # effects that always output a video. The rest — zoom/shake/pulse/trippy —
+                    # re-render an animated effect's real frames now, so they're offered for it.
+                    _self = {"al": "alive", "gl": "glow"}
+                    def _keep(b):
+                        _code = b["callback_data"].split(":")[2]
+                        if _self.get(_code) == _eff:
+                            return False
+                        return not (_code == "al" and _eff in CommandService.ANIMATED_EFFECTS)
+                    _rows = [r for r in ([b for b in row if _keep(b)] for row in _rows) if r]
                     await telegram_service.send_message(
                         chat_id, "✨ Add motion?", reply_markup={"inline_keyboard": _rows},
                     )

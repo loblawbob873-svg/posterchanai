@@ -164,8 +164,19 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "feltedtables", "glow", "prayer", "alive", "feliz",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
+    # Effects whose output is ALWAYS a video (they animate the still themselves).
     ANIMATED_EFFECTS = {"chimp", "clay", "reze"}
     OVERLAY_MOTIONS = {"glow"}
+    # --- effect modifier combination rules (ONE source of truth: the command path, the
+    # media API and the web studio all resolve combos through check_motion_combo) ---
+    # MOVEMENTS animate the output; each one is a full re-render of every frame, so two of
+    # them just fight over the same frames — at most one. LOOKS recolour/relight the real
+    # frames, so they compose with a movement and with each other. Order: movement → glow →
+    # trippy. `alive` is the one movement that genuinely can't run on a video (3D parallax
+    # needs a still), so it's refused on the always-animated effects.
+    MOVEMENT_MOTIONS = ("zoom", "shake", "medshake", "beginshake", "pulse", "alive")
+    LOOK_MOTIONS = ("glow", "trippy")
+    STILL_ONLY_MOTIONS = ("alive",)
     PHRASE_COMMANDS = {}
 
     def __init__(self, db: Session, user: Optional["User"] = None, is_bot: bool = False):
@@ -226,6 +237,52 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                 return canonical, ""
 
         return None, message
+
+    @classmethod
+    def check_motion_combo(cls, command: str, mods) -> Tuple[list, Optional[str]]:
+        """Resolve effect modifiers against the combination rules.
+
+        Returns `(mods_in_apply_order, error)`. `error` is a user-facing message when the
+        combination can't render — a second movement, `alive` on an effect that outputs a
+        video, or a modifier repeating the base effect. Callers should refuse the whole
+        command in that case: the old parsers silently kept ONE motion and dropped the rest,
+        so `curb zoom glow` quietly rendered as plain `curb glow`.
+        """
+        seen, picked = set(), []
+        for m in (mods or []):
+            m = (m or "").strip().lower()
+            if m in cls.MOTION_ARGS and m not in seen:
+                seen.add(m)
+                picked.append(m)
+        moves = [m for m in picked if m in cls.MOVEMENT_MOTIONS]
+        if len(moves) > 1:
+            return [], (f"⚠️ '{moves[0]}' and '{moves[1]}' are both movements — an effect takes "
+                        f"only one. Pick one, then add glow and/or trippy on top.")
+        _still = [m for m in moves if m in cls.STILL_ONLY_MOTIONS]
+        if _still and command in cls.ANIMATED_EFFECTS:
+            return [], (f"⚠️ '{_still[0]}' needs a still image and '{command}' outputs a video, so "
+                        f"it would do nothing. zoom, shake, pulse, glow and trippy all work on it.")
+        if command in picked:
+            return [], f"⚠️ '{command}' is already the effect — drop the extra '{command}'."
+        # movement first (it builds the frames), then the looks over those frames in a FIXED
+        # order (glow's light sweep, then trippy's hue cycle over the lot) — so the same set of
+        # modifiers renders identically no matter what order they were typed in.
+        return moves + [m for m in cls.LOOK_MOTIONS if m in picked], None
+
+    @staticmethod
+    def motion_applier(mod: str):
+        """effects_service function that applies a single modifier (used by every path)."""
+        from app.services import effects_service
+        return {
+            "zoom": effects_service.apply_zoom,
+            "shake": effects_service.apply_shake,
+            "medshake": effects_service.apply_medshake,
+            "beginshake": effects_service.apply_beginshake,
+            "pulse": effects_service.apply_pulse,
+            "alive": effects_service.apply_alive,
+            "glow": effects_service.apply_glow,
+            "trippy": effects_service.apply_trippy,
+        }.get(mod)
 
     async def execute_command(
         self,
@@ -336,9 +393,9 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                                f"Ask an admin to enable it for your account."}
 
         # Trailing subcommands on an effect, applied to its output in order:
-        #   <effect> [zoom|shake] [meme <text>]
-        # e.g. `dildo zoom meme top text`. `meme <text>` consumes the rest as the
-        # caption; zoom/shake is a single token before it. Re-enter with all the
+        #   <effect> [movement] [glow] [trippy] [char <name>] [meme <text>]
+        # e.g. `dildo zoom glow meme top text`. `meme <text>` consumes the rest as the
+        # caption; the modifiers are the tokens before it. Re-enter with all the
         # trailing parts stripped so the base effect renders untouched, then
         # transform the files (motion first, caption last so it sits on top).
         if command in self.MOTION_EFFECTS and arg:
@@ -363,24 +420,22 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                     _character = _toks[_ci + 1].lower()
                     _toks = _toks[:_ci] + _toks[_ci + 2:]
                     _low = [t.lower() for t in _toks]
-            # Trailing motion cluster: at most one geometry motion (zoom/shake/
-            # medshake/beginshake/pulse) plus the `trippy` colour pass, in either
-            # order, at the very END of the arg. Only TRAILING tokens are consumed
-            # (cap 2), so a caption word like "trippy" mid-text — e.g. `meme so
-            # trippy bro` — is never mistaken for a motion. Geometry motions don't
-            # stack (they'd fight over the crop); trippy layers on top.
-            _motion = None
-            _trippy = False
-            for _ in range(2):
+            # Trailing modifier cluster: one movement plus the looks (glow/trippy), in any
+            # order, at the very END of the arg. Only TRAILING tokens are consumed (cap 3 =
+            # the most that can validly combine), so a caption word like "trippy" mid-text —
+            # e.g. `meme so trippy bro` — is never mistaken for a modifier.
+            _mods = []
+            for _ in range(3):
                 if not _low or _low[-1] not in self.MOTION_ARGS:
                     break
-                _t = _low.pop()
+                _mods.insert(0, _low.pop())
                 _toks.pop()
-                if _t == "trippy":
-                    _trippy = True
-                elif _motion is None:
-                    _motion = _t
-            if _motion or _trippy or _meme_text or _character:
+            # Refuse combinations that can't render, with the reason — rather than rendering
+            # a silently different effect (the old parse kept one motion and dropped the rest).
+            _mods, _combo_err = self.check_motion_combo(command, _mods)
+            if _combo_err:
+                return {"type": "text", "content": _combo_err}
+            if _mods or _meme_text or _character:
                 import asyncio
                 from app.services import effects_service
                 inner = await self._execute_command_inner(
@@ -388,25 +443,20 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                 )
                 if isinstance(inner, dict) and inner.get("type") == "files" and inner.get("files"):
                     files = inner["files"]
-                    # Freeze-type motions (zoom/shake/pulse/alive) extract a single still frame,
-                    # which would kill an already-animated effect — skip those for ANIMATED_EFFECTS.
-                    # Overlay-type motions (glow) recolour/relight the real frames and KEEP the
-                    # motion (like trippy), so they're allowed on animated effects too.
-                    if _motion and (command not in self.ANIMATED_EFFECTS or _motion in self.OVERLAY_MOTIONS):
-                        _apply = {
-                            "zoom": effects_service.apply_zoom,
-                            "shake": effects_service.apply_shake,
-                            "medshake": effects_service.apply_medshake,
-                            "beginshake": effects_service.apply_beginshake,
-                            "pulse": effects_service.apply_pulse,
-                            "glow": effects_service.apply_glow,
-                            "alive": effects_service.apply_alive,
-                        }.get(_motion, effects_service.apply_zoom)
-                        files = await asyncio.to_thread(_apply, files)
-                    # trippy recolours frame-by-frame (keeps motion) → safe to layer
-                    # on top of a geometry motion, and even on animated effects.
-                    if _trippy:
-                        files = await asyncio.to_thread(effects_service.apply_trippy, files)
+                    # `alive` is 3D parallax on a STILL — check_motion_combo catches the effects
+                    # that ALWAYS output video, but plenty produce a clip only for some inputs.
+                    # Say it was skipped rather than returning an un-parallaxed file.
+                    if "alive" in _mods and not any(
+                            (f.get("content_type") or "").startswith("image/") for f in files):
+                        inner["content"] = ((inner.get("content") or "").rstrip()
+                                            + f"\n\n⚠️ 'alive' needs a still image, but {command} "
+                                              f"produced a video — it was skipped.")
+                    # check_motion_combo ordered these: the movement builds the frames, then
+                    # glow/trippy recolour those real frames (keeping the motion).
+                    for _mod in _mods:
+                        _apply = self.motion_applier(_mod)
+                        if _apply:
+                            files = await asyncio.to_thread(_apply, files)
                     if _character:
                         files = await asyncio.to_thread(effects_service.apply_character, files, _character)
                     if _meme_text:
@@ -643,9 +693,11 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
 
         # Motion/colour modifiers — appended to any effect, not standalone commands.
         help_text += (
-            "\n**Effect modifiers** (append to any effect): "
-            "`zoom` `shake` `medshake` `beginshake` `pulse` motion, and/or `trippy` "
-            "colours — e.g. `dildo zoom trippy`, `whoabuddy pulse trippy`.\n"
+            "\n**Effect modifiers** (append to any effect): ONE movement — "
+            "`zoom` `shake` `medshake` `beginshake` `pulse` `alive` — plus any of the looks "
+            "`glow` `trippy`, which stack on top. E.g. `dildo zoom trippy`, "
+            "`whoabuddy pulse glow`. Two movements, or any movement on an already-animated "
+            "effect (`chimp` `clay` `reze`), is refused rather than half-applied.\n"
         )
 
         return {"type": "text", "content": help_text}

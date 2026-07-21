@@ -5801,7 +5801,8 @@
         <div class="fxs-empty hidden" id="fxs-none">No effect matches that.</div>
         ${enhance.length?`<div class="fxs-sec">✨ Enhance <span class="fxs-hint">or pick one of these instead</span></div>
         <div class="fxs-grid">${enhance.map(o=>chip(o,'fxs-eff')).join('')}</div>`:''}
-        <div class="fxs-sec">🌀 Motion <span class="fxs-hint">one movement · glow / alive / trippy stack</span></div>
+        <div class="fxs-sec">🌀 Motion <span class="fxs-hint">one movement · glow / trippy stack</span>
+          <span class="fxs-why hidden" id="fxs-note"></span></div>
         <div class="fxs-grid">${motions.map(m=>chip(m,'fxs-mot')).join('')}</div>
         ${chars.length?`<div class="fxs-sec">🧷 Sticker <span class="fxs-hint">optional overlay</span></div>
         <div class="fxs-grid">${chars.map(c=>chip(c,'fxs-char')).join('')}</div>`:''}
@@ -5826,12 +5827,25 @@
         return _fxJoin(S); };
       // Repaint selection + the live command. The command line is the whole point of the footer: it
       // shows exactly what will be sent, which the old studio only revealed by looking at the input.
+      const note=$('#fxs-note',root);
       const sync=()=>{
+        // Drop any modifier the current base effect can't take (e.g. you picked `chimp` after
+        // `zoom`) — the studio must never show a command the renderer will refuse.
+        S.mods = S.mods.filter(m=>!_fxModBlock(cat, S.effect, m));
+        let why='';
         $$('.fxs-chip',root).forEach(b=>{ const v=b.dataset.pick;
           const on = b.classList.contains('fxs-eff') ? S.effect===v
                    : b.classList.contains('fxs-mot') ? S.mods.includes(v)
                    : S.char===v;
-          b.classList.toggle('on', !!on); });
+          b.classList.toggle('on', !!on);
+          if(b.classList.contains('fxs-mot')){
+            const bl=_fxModBlock(cat, S.effect, v);
+            b.classList.toggle('off', !!bl);
+            b.disabled=!!bl; b.title=bl||'';
+            if(bl && !why) why=bl;
+          } });
+        note.textContent = why ? `— ${why}` : '';
+        note.classList.toggle('hidden', !why);
         const c=build();
         cmdEl.textContent = c || 'nothing picked yet';
         cmdEl.classList.toggle('muted', !c);
@@ -5843,11 +5857,13 @@
         e.preventDefault(); const v=b.dataset.pick;
         if(b.classList.contains('fxs-eff')) S.effect = (S.effect===v) ? '' : v;          // tap again to unset
         else if(b.classList.contains('fxs-mot')){
-          if(_FX_GEO.includes(v)){                                                       // ONE movement…
+          if(_fxModBlock(cat, S.effect, v)) return;                                       // refused combo — sync() already greyed it
+          const MOVE=_fxMove(cat);
+          if(MOVE.includes(v)){                                                           // ONE movement…
             const had=S.mods.includes(v);
-            S.mods=S.mods.filter(m=>!_FX_GEO.includes(m));
-            if(!had) S.mods.push(v);                                                     // …and tapping it again clears it
-          } else S.mods = S.mods.includes(v) ? S.mods.filter(m=>m!==v) : S.mods.concat(v);   // glow/alive/trippy compose
+            S.mods=S.mods.filter(m=>!MOVE.includes(m));
+            if(!had) S.mods.push(v);                                                      // …and tapping it again clears it
+          } else S.mods = S.mods.includes(v) ? S.mods.filter(m=>m!==v) : S.mods.concat(v);    // glow/trippy compose
         }
         else S.char = (S.char===v) ? '' : v;
         sync();
@@ -5885,12 +5901,27 @@
       else if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; }
     }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
-  // Combined-effects rules (match the bot/Telegram): an effect takes ONE geometry motion
-  // (zoom/shake/medshake/beginshake/pulse — they don't stack); glow/alive/trippy COMPOSE (toggle).
-  // The studio input is the state; these parse + rewrite it so taps build a valid command.
-  const _FX_GEO=['zoom','shake','medshake','beginshake','pulse'];
+  // Combined-effects rules — the SERVER owns them (CommandService.check_motion_combo, served by
+  // /client/effects as `rules`); these are the fallback for an older backend. An effect takes ONE
+  // movement (each is a full re-render of every frame, so two just fight over the same frames);
+  // the looks (glow/trippy) recolour real frames and compose with a movement and each other.
+  // `alive` is 3D parallax on a still, so it can't run on an effect that outputs a video.
+  const _FX_MOVE=['zoom','shake','medshake','beginshake','pulse','alive'];
+  const _FX_ANIM=['chimp','clay','reze'];
+  const _fxMove=cat=>((cat&&cat.rules&&cat.rules.movement)||_FX_MOVE);
+  const _fxAnim=cat=>((cat&&cat.rules&&cat.rules.animated)||_FX_ANIM);
+  const _fxStill=cat=>((cat&&cat.rules&&cat.rules.stillOnly)||['alive']);
+  // Why this modifier can't go with the picked base effect ('' = it can). Mirrors the server's
+  // refusals so the studio simply won't build a command that comes back as an error.
+  function _fxModBlock(cat, effect, mod){
+    if(!effect) return '';
+    if(mod===effect) return 'already the effect you picked';
+    if(_fxStill(cat).includes(mod) && _fxAnim(cat).includes(effect))
+      return `${mod} needs a still and ${effect} outputs a video`;
+    return '';
+  }
   // parse the studio command into effect + mods + char(sticker) + meme(caption). Order on rebuild:
-  // `effect [motion] [glow] [alive] [trippy] [char <name>] [meme <text>]` (char MUST precede meme).
+  // `effect [movement] [glow] [trippy] [char <name>] [meme <text>]` (char MUST precede meme).
   function _fxParse(v){
     const t=(v||'').trim().split(/\s+/).filter(Boolean);
     const mi=t.indexOf('meme'); const pre=mi>=0?t.slice(0,mi):t; const meme=mi>=0?t.slice(mi):[];
@@ -5902,8 +5933,11 @@
   function _fxSetEffect(ta, eff){ const p=_fxParse(ta.value); p.effect=eff; ta.value=_fxJoin(p); }
   function _fxApplyMod(ta, mod){ const p=_fxParse(ta.value);
     if(mod==='meme '){ if(!p.meme.length) p.meme=['meme']; ta.value=_fxJoin(p)+' '; return; }
-    if(_FX_GEO.includes(mod)){ p.mods=p.mods.filter(m=>!_FX_GEO.includes(m) && m!==mod); p.mods.push(mod); }   // ONE geometry motion
-    else { p.mods.includes(mod) ? (p.mods=p.mods.filter(m=>m!==mod)) : p.mods.push(mod); }                      // glow/alive/trippy compose (toggle)
+    const blocked=_fxModBlock(_fxCatalog, p.effect, mod);
+    if(blocked){ toast(`${mod}: ${blocked}`); return; }                                             // don't build a command the renderer refuses
+    const MOVE=_fxMove(_fxCatalog);
+    if(MOVE.includes(mod)){ p.mods=p.mods.filter(m=>!MOVE.includes(m) && m!==mod); p.mods.push(mod); }   // ONE movement
+    else { p.mods.includes(mod) ? (p.mods=p.mods.filter(m=>m!==mod)) : p.mods.push(mod); }               // glow/trippy compose (toggle)
     ta.value=_fxJoin(p); }
   function _fxApplyChar(ta, name){ const p=_fxParse(ta.value); p.char=(p.char===name)?'':name; ta.value=_fxJoin(p); }   // sticker overlay — single, toggle
   async function doRepost(id,pk,btn){
