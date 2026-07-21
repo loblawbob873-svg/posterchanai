@@ -1287,6 +1287,21 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .lb-btn{width:46px;height:46px;border-radius:50%;border:1px solid var(--neon);background:rgba(4,2,12,.72);color:#fff;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);padding:0}
 .lb-btn:active{transform:scale(.9)}
 /* tap-to-zoom: show the image at natural size and let the backdrop scroll */
+/* Lightbox gallery paging (multi-attachment posts): arrows + an n / N counter. */
+.lb-nav{position:fixed;top:50%;transform:translateY(-50%);z-index:401;
+  width:52px;height:52px;padding:0;border-radius:50%;border:1px solid var(--neon);
+  background:rgba(4,2,12,.72);color:#fff;font-size:30px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.lb-nav:active{transform:translateY(-50%) scale(.9)}
+.lb-nav[disabled]{opacity:.25;pointer-events:none}
+.lb-prev{left:calc(10px + env(safe-area-inset-left))}
+.lb-next{right:calc(10px + env(safe-area-inset-right))}
+.lb-count{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));
+  z-index:401;padding:5px 13px;border-radius:13px;background:rgba(4,2,12,.72);border:1px solid var(--line);
+  color:#fff;font-size:13px;font-weight:600;letter-spacing:.4px}
+.lightbox.lb-zoom .lb-nav,.lightbox.lb-zoom .lb-count{display:none}   /* zoomed = panning, not paging */
+@media(max-width:820px){ .lb-nav{width:44px;height:44px;font-size:26px} }
 .lightbox.lb-zoom{align-items:flex-start;justify-content:flex-start;overflow:auto;cursor:zoom-in;-webkit-overflow-scrolling:touch}
 .lightbox.lb-zoom img{max-width:none;max-height:none;width:auto;height:auto;cursor:zoom-out}
 /* pointer-events:none — toasts are informational (no taps); the layer sits over the bottom-centre

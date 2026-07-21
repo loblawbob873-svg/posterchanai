@@ -4762,7 +4762,7 @@
         else if(/^audio\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'audio'); }
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
         return; }   // docs: fall through to the link (download / new tab)
-      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
+      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src, null, _lbGroup(im)); return; }
       const xv=e.target.closest('.xt-verify'); if(xv){ e.stopPropagation();   // Monero tip: copy a ready-to-run verify command for the viewer's own wallet
         const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
         if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
@@ -10419,25 +10419,79 @@
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
-  function openLightbox(src, kind){ try{ const x=new URL(src, location.href); x.searchParams.delete('thumb'); src=x.href; }catch(_){}  // always full-res, never the ?thumb=1 grid image
+  // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
+  // with the arrow keys / on-screen arrows / swipe, like every other client. null when there's nothing to
+  // page through (a lone attachment, or an image sitting inline in the text).
+  function _lbGroup(im){
+    const box = im && im.closest && im.closest('.media-car, .media-row, .media-grid');
+    if(!box) return null;
+    const els=[...box.querySelectorAll('img,video')];
+    if(els.length<2) return null;
+    const i=els.indexOf(im);
+    return { items: els.map(el=>({ src: el.currentSrc||el.src, kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
+  }
+  function openLightbox(src, kind, group){
+    const norm=(u)=>{ try{ const x=new URL(u, location.href); x.searchParams.delete('thumb'); return x.href; }catch(_){ return u; } };   // always full-res, never the ?thumb=1 grid image
+    const multi = !!(group && group.items && group.items.length>1);
+    const items = multi ? group.items.map(it=>({ src:norm(it.src), kind:it.kind }))
+                        : [{ src:norm(src), kind:kind||null }];
+    let idx = multi ? Math.max(0, Math.min(items.length-1, group.i||0)) : 0;
+
     const bg=document.createElement('div'); bg.className='lightbox';
     const close=()=>{ try{ bg.remove(); }catch(_){} document.removeEventListener('keydown', onKey); };
-    const onKey=(e)=>{ if(e.key==='Escape') close(); };
+    const onKey=(e)=>{
+      if(e.key==='Escape'){ close(); return; }
+      if(items.length<2) return;
+      if(e.key==='ArrowRight'){ e.preventDefault(); go(1); }
+      else if(e.key==='ArrowLeft'){ e.preventDefault(); go(-1); }
+    };
     document.addEventListener('keydown', onKey);
-    const isImg = kind!=='video' && kind!=='audio';
-    let el;
-    if(kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
-    else if(kind==='audio'){ el=document.createElement('audio'); el.src=src; el.controls=true; el.autoplay=true; }
-    else { el=document.createElement('img'); el.src=src;
-      el.onclick=(e)=>{ e.stopPropagation(); bg.classList.toggle('lb-zoom'); };   // tap the image to zoom (fit ↔ full-res, scrollable)
-    }
-    bg.appendChild(el);
+
     // Always-tappable toolbar — a full-screen image leaves NO backdrop to tap, so mobile couldn't close it.
     const bar=document.createElement('div'); bar.className='lb-bar';
     const mkBtn=(label,title,fn)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
-    if(isImg){ bar.appendChild(mkBtn('⧉','Copy image', ()=>_lbCopyImg(src))); bar.appendChild(mkBtn('⤓','Save image', ()=>_lbSaveMedia(src))); }
-    bar.appendChild(mkBtn('✕','Close', close));
+    // Read items[idx] at CLICK time, not now — the toolbar outlives each individual slide.
+    const copyB=mkBtn('⧉','Copy image', ()=>_lbCopyImg(items[idx].src));
+    const saveB=mkBtn('⤓','Save image', ()=>_lbSaveMedia(items[idx].src));
+    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(mkBtn('✕','Close', close));
     bg.appendChild(bar);
+
+    let cur=null;
+    const render=()=>{
+      const it=items[idx]; const isImg = it.kind!=='video' && it.kind!=='audio';
+      let el;
+      if(it.kind==='video'){ el=document.createElement('video'); el.src=it.src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
+      else if(it.kind==='audio'){ el=document.createElement('audio'); el.src=it.src; el.controls=true; el.autoplay=true; }
+      else { el=document.createElement('img'); el.src=it.src;
+        el.onclick=(e)=>{ e.stopPropagation(); bg.classList.toggle('lb-zoom'); };   // tap the image to zoom (fit ↔ full-res, scrollable)
+      }
+      // Keep the media a DIRECT child of .lightbox — the zoom/centring CSS is written against that shape.
+      if(cur) bg.replaceChild(el, cur); else bg.insertBefore(el, bg.firstChild);
+      cur=el; bg.classList.remove('lb-zoom');   // a fresh slide starts fitted, not stuck at the last one's zoom
+      copyB.style.display=saveB.style.display=isImg?'':'none';
+      if(count) count.textContent=(idx+1)+' / '+items.length;
+      if(prev) prev.disabled = idx<=0;
+      if(next) next.disabled = idx>=items.length-1;
+    };
+    const go=(d)=>{ const n=Math.max(0, Math.min(items.length-1, idx+d)); if(n===idx) return; idx=n; render(); };
+
+    let prev=null, next=null, count=null;
+    if(items.length>1){
+      prev=document.createElement('button'); prev.className='lb-nav lb-prev'; prev.type='button'; prev.textContent='‹'; prev.setAttribute('aria-label','Previous');
+      next=document.createElement('button'); next.className='lb-nav lb-next'; next.type='button'; next.textContent='›'; next.setAttribute('aria-label','Next');
+      prev.onclick=(e)=>{ e.stopPropagation(); go(-1); };
+      next.onclick=(e)=>{ e.stopPropagation(); go(1); };
+      count=document.createElement('div'); count.className='lb-count';
+      bg.appendChild(prev); bg.appendChild(next); bg.appendChild(count);
+      // Swipe between slides on touch — but only when not zoomed, or it would fight panning.
+      let sx=0, sy=0, tracking=false;
+      bg.addEventListener('touchstart', e=>{ if(bg.classList.contains('lb-zoom')||e.touches.length!==1){ tracking=false; return; }
+        tracking=true; sx=e.touches[0].clientX; sy=e.touches[0].clientY; }, {passive:true});
+      bg.addEventListener('touchend', e=>{ if(!tracking) return; tracking=false;
+        const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+        if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)*1.5) go(dx<0?1:-1); }, {passive:true});
+    }
+    render();
     bg.onclick=(e)=>{ if(e.target===bg) close(); };   // tap the backdrop to close too
     document.body.appendChild(bg); }
   // Copy an image to the clipboard (Clipboard API needs PNG on most browsers → convert via canvas).
