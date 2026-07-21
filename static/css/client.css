@@ -548,14 +548,8 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .usercount .live-ico{width:14px;height:14px;color:var(--neon2);vertical-align:-2px;margin-right:2px;filter:drop-shadow(0 0 6px rgba(255,0,255,.9));animation:conn-pulse 1.6s ease-in-out infinite}
 .usercount .uc-stat{white-space:nowrap}
 .usercount .relay-ico{width:15px;height:15px;color:var(--green);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(0,255,136,.6))}
-/* Desktop Drafts button (topbar, beside New post) — saves a nav row on desktop; mobile keeps Drafts in the
-   ☰ More sheet, so this button is hidden ≤820px. Its draft-count badge sits at the top-right corner. */
-/* Matches .compose-btn ("New post") so the two topbar buttons are a consistent pair; the right margin
-   keeps them from smashing together (esp. when the right column is open and the topbar is narrower). */
-.drafts-btn-d,.calls-btn-d{position:relative;flex-shrink:0;white-space:nowrap;margin:0 10px 0 0;padding:9px 16px;font-size:15px}
-.drafts-btn-d.active,.calls-btn-d.active{box-shadow:inset 0 0 0 2px #fff}
-.drafts-btn-d .badge{position:absolute;top:-6px;right:-6px}
-@media (max-width:820px){ .drafts-btn-d,.calls-btn-d{display:none} }
+/* Drafts + Calls are sidebar nav rows now (was: topbar buttons). Mobile still reaches both through the
+   ☰ More sheet, which already lists them — the sidebar is hidden ≤820px. */
 /* Instance quick-pick chips (User Settings → Media, native app). Wrap on small screens. */
 .instance-pick{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .instance-chip{background:var(--panel2,#1a1a2e);border:1px solid var(--line,#333);color:var(--text,#eee);border-radius:16px;
@@ -629,6 +623,33 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
 .searchbox .input{margin:0;padding:9px 14px;font-size:16.5px}
+/* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
+   sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */
+@media(min-width:821px){ .searchbox{display:none} }
+.nav-search{flex-shrink:0;margin:0 0 10px}
+.nav-search .input{width:100%;margin:0;padding:9px 13px;font-size:15px}
+
+/* ===== timeline header: inline compose + Home/Nostrverse tabs (ditto.pub-style) =====
+   Emitted as DIRECT children of #feed, not wrapped: .tl-tabs is position:sticky, and a sticky element can
+   only stick within its own parent — nesting it in a short wrapper would scroll the tabs away instantly. */
+.tl-compose{display:flex;align-items:center;gap:10px;width:100%;margin:10px 0 0;padding:11px 14px;
+  border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--muted);
+  cursor:pointer;font-family:inherit;font-size:15.5px;text-align:left;transition:.15s}
+.tl-compose:hover{border-color:var(--cyan);color:var(--cyan)}
+.tl-compose-av{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
+.tl-compose-ph{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-compose-ic{flex-shrink:0;color:var(--neon);font-size:17px}
+.tl-tabs{display:flex;gap:8px;position:sticky;top:0;z-index:3;background:var(--bg);padding:10px 0;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.tltab{flex:1;padding:9px 14px;border:1px solid var(--line);border-radius:13px;background:var(--panel);
+  color:var(--muted);cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:600;white-space:nowrap}
+.tltab:hover{border-color:var(--cyan);color:var(--cyan)}
+.tltab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
+@media(max-width:820px){
+  .tl-compose{margin-top:8px;padding:9px 12px;font-size:15px}
+  .tl-compose-av{width:30px;height:30px}
+  .tl-tabs{padding:8px 0}
+  .tltab{padding:8px 12px;font-size:14px}
+}
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13.5px;text-transform:uppercase;letter-spacing:1.5px}
 .psearch{display:flex;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);cursor:pointer}
 .psearch:hover{background:rgba(0,255,255,.08)}

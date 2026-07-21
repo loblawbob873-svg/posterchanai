@@ -1137,8 +1137,8 @@
         apply(ClientSettings.get('gamesOpen', false));
         gt.onclick=()=>{ const o=!ClientSettings.get('gamesOpen', false); ClientSettings.set('gamesOpen', o); apply(o); }; } }
     $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
-    { const dd=$('#btn-drafts-d'); if(dd) dd.onclick = ()=>switchView('drafts'); }   // desktop Drafts button (next to New post; hidden on mobile via CSS)
-    { const cc=$('#btn-calls-d'); if(cc) cc.onclick = ()=>switchView('calls'); }   // desktop Calls button (next to Drafts; hidden on mobile — mobile uses the nav/sheet)
+    // Drafts + Calls are plain sidebar .nav-item[data-view] rows now, so the generic handler above already
+    // wires their clicks and active state — no special-casing needed.
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     bindSearch();
@@ -1765,8 +1765,9 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    { const dd=$('#btn-drafts-d'); if(dd) dd.classList.toggle('active', v==='drafts'); }   // desktop Drafts topbar btn is not a .nav-item — highlight it explicitly
-    { const cc=$('#btn-calls-d'); if(cc) cc.classList.toggle('active', v==='calls'); }   // same for the desktop Calls topbar btn
+    // Home/Nostrverse carry their own inline compose bar above the tabs, so the topbar "New post" would be
+    // a second button for the same action. Every OTHER view still needs it.
+    { const cb=$('#btn-compose'); if(cb) cb.classList.toggle('hidden', v==='home'||v==='global'); }
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
@@ -2019,6 +2020,24 @@
   }
   function _resetLive(){ _livePending=[]; _updateNewPostsPill(); }
   function _hidePill(){ const p=document.getElementById('new-posts-pill'); if(p) p.classList.add('hidden'); }
+  // ditto.pub-style timeline header: an inline compose bar, then the Home ⇄ Nostrverse tab switch. Home has
+  // no sidebar row any more, so these tabs are the ONLY way to reach it — they must render on BOTH views,
+  // and in the media-grid branch too, or toggling ▦ would strand the user with no way back.
+  function _timelineHeaderHtml(){
+    const canPost = !!(ME && !GUEST);
+    const av=(Store.profile(ME&&ME.pubkey)||{}).picture||LOGO;
+    return (canPost?`<button class="tl-compose" id="tl-compose">
+        <img class="tl-compose-av" src="${enc(av)}" onerror="this.src='${LOGO}'" alt="">
+        <span class="tl-compose-ph">What’s on your mind?</span><span class="tl-compose-ic">✎</span></button>`:'')
+      +`<div class="tl-tabs" role="tablist">
+        <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
+        <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
+      </div>`;
+  }
+  function _bindTimelineHeader(feed){
+    { const c=$('#tl-compose',feed); if(c) c.onclick=()=>compose(); }
+    $$('.tltab',feed).forEach(b=> b.onclick=()=>{ const v=b.dataset.tl; if(v!==VIEW) switchView(v); });
+  }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
     const feed=$('#feed'); if(!feed) return;
@@ -2034,16 +2053,18 @@
       // accumulate in Store); like the old Pics view it doesn't live-prepend (see flushLive).
       const pics=[]; const seen=new Set();
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
-      feed.innerHTML = pics.length
+      feed.innerHTML = _timelineHeaderHtml() + (pics.length
         ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && isSensitive(x.e);
             return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
-        : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+        : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`);
+      _bindTimelineHeader(feed);
       $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
       if(preserveScroll) feed.scrollTop=top;
       return;
     }
     if(_profObs) _profObs.disconnect();   // drop observations on the notes we're about to replace (hydrate re-observes)
-    feed.innerHTML = notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Global.':''}</div>`;
+    feed.innerHTML = _timelineHeaderHtml() + (notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`);
+    _bindTimelineHeader(feed);
     hydrate(feed); if(preserveScroll) feed.scrollTop=top;
   }
   // ---------- infinite scroll-back ----------
@@ -10027,10 +10048,14 @@
   }
 
   // ---------- search (NIP-50 posts + profile lookup) ----------
+  // Two search inputs exist — the sidebar one (desktop) and the topbar one (mobile) — and CSS shows exactly
+  // one at any width. Bind BOTH, or search silently dies on whichever breakpoint went unwired.
   function bindSearch(){
-    const inp=$('#search-input'); if(!inp) return; let t=null;
-    inp.addEventListener('input', ()=>{ clearTimeout(t); const q=inp.value.trim(); if(q.length<2) return; t=setTimeout(()=>runSearch(q),350); });
-    inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); if(q) runSearch(q); } });
+    ['#nav-search-input','#search-input'].forEach(sel=>{
+      const inp=$(sel); if(!inp) return; let t=null;
+      inp.addEventListener('input', ()=>{ clearTimeout(t); const q=inp.value.trim(); if(q.length<2) return; t=setTimeout(()=>runSearch(q),350); });
+      inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=inp.value.trim(); if(q) runSearch(q); } });
+    });
   }
   async function nip05Resolve(addr){
     addr=(addr||'').trim().replace(/^@+/,'');   // accept fedi-style "@name@domain" (leading @) too
