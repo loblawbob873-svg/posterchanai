@@ -756,7 +756,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .more-item{position:relative}
 .more-item .news-badge{position:absolute;top:8px;right:8px;margin:0}
 .news-wrap{max-width:820px;margin:0 auto;padding:0 6px 40px}
-#news-head{position:sticky;top:0;z-index:2;background:var(--bg)}
+/* top:-8px + the matching padding swallow .feed's 8px top padding — with top:0 a sliver of the
+   scrolling list stayed visible ABOVE the bar. Same fix as .tl-tabs / .notif-tabs / .fc-bar. */
+#news-head{position:sticky;top:-8px;padding-top:8px;z-index:3;background:var(--bg)}
 .news-chips{display:flex;gap:8px;overflow-x:auto;padding:10px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .news-chips::-webkit-scrollbar{display:none}
 .news-chip{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:14px;cursor:pointer;white-space:nowrap;transition:.15s}
@@ -1914,7 +1916,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media (min-width:821px) and (max-width:1366px){ body{ zoom:.70 } .app{ height:calc(100dvh / .70) } .main{ height:100% } }
 
 /* ---- 4chan browser (Discover) — themed to match the note UI, mobile-first ---- */
-.fc-bar,.fc-thread-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;position:sticky;top:0;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
+.fc-bar,.fc-thread-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:18px 12px 10px;position:sticky;top:-8px;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
 .fc-tab{padding:6px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--muted);cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;white-space:nowrap}
 .fc-tab:hover{border-color:var(--cyan);color:var(--cyan)}
 .fc-tab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent;box-shadow:var(--glow)}
