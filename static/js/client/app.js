@@ -7449,7 +7449,17 @@
     for(const e of evs){ if(e.kind===3){ if(seen3.has(e.pubkey)) continue; seen3.add(e.pubkey); } out.push(e); }
     return out.slice(0,2000);
   }
-  function bumpNotif(){ const n=notifList().filter(e=>e.kind!==3 && _notifTs(e)>seenNotif.last).length + (_updBadge?1:0); $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+  // Follows DO light the bell now. The extra `ts > _notifEpoch` test (rather than just dropping the old
+  // `kind!==3` exclusion) is what makes that safe: history followers are pinned at/below the epoch, and on
+  // a fresh install seenNotif.last is 0 — so a bare `ts > seenNotif.last` would count every existing
+  // follower as unread and open the app with a badge of hundreds. Only a follow recorded AFTER we started
+  // tracking is genuinely unread.
+  function bumpNotif(){ const n=notifList().filter(e=>{
+      const ts=_notifTs(e);
+      if(ts<=seenNotif.last) return false;
+      return e.kind===3 ? ts>_notifEpoch : true;
+    }).length + (_updBadge?1:0);
+    $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
