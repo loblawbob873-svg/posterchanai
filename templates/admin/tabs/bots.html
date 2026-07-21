@@ -97,7 +97,6 @@
                         <option value="misskey">Misskey</option>
                         <option value="pleroma">Pleroma</option>
                         <option value="nostr">Nostr</option>
-                        <option value="matrix">Matrix</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -211,40 +210,13 @@
                 </div>
             </div>
 
-            <!-- Matrix credentials -->
-            <div id="bot_grp_matrix" style="display:none">
-                <div class="form-group">
-                    <label for="bot_f_matrix_server">Matrix server</label>
-                    <input type="text" id="bot_f_matrix_server" placeholder="https://matrix.example">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="bot_f_matrix_user_id">User ID</label>
-                        <input type="text" id="bot_f_matrix_user_id" placeholder="@bot:matrix.example">
-                    </div>
-                    <div class="form-group">
-                        <label for="bot_f_matrix_access_token">Access token</label>
-                        <input type="password" id="bot_f_matrix_access_token">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="bot_f_matrix_room_id">Default room ID</label>
-                        <input type="text" id="bot_f_matrix_room_id">
-                    </div>
-                    <div class="form-group">
-                        <label for="bot_f_matrix_admins">Admins <span class="bots-dim">(comma-separated)</span></label>
-                        <input type="text" id="bot_f_matrix_admins">
-                    </div>
-                </div>
-            </div>
+            
 
             <!-- Features → main.py modes (text bots only) -->
             <div id="bot_grp_features" class="form-group">
                 <label>Features</label>
                 <div class="bot-features">
                     <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
-                    <label id="bot_ft_matrix_label"><input type="checkbox" id="bot_ft_matrix" onchange="onBotFormChange()"> Also connect to Matrix (room)</label>
                     <label><input type="checkbox" id="bot_ft_nitter" onchange="onBotFormChange()"> Nitter feeds</label>
                     <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
@@ -363,7 +335,7 @@
             <!-- Nitter feeds -->
             <div id="bot_grp_nitter" style="display:none">
                 <div class="form-group">
-                    <label for="bot_f_nitter_feeds">Nitter feeds <span class="bots-dim">(one per line: RSS URL, optionally a space then a Matrix room ID to post that feed to)</span></label>
+                    <label for="bot_f_nitter_feeds">Nitter feeds <span class="bots-dim">(one per line: RSS URL, optionally a space then a target</span></label>
                     <textarea id="bot_f_nitter_feeds" rows="4" placeholder="https://nitter.net/USERNAME/rss !roomid:server.tld"></textarea>
                 </div>
                 <div class="form-group">
@@ -463,16 +435,7 @@
                 </div>
             </div>
 
-            <!-- Matrix extras -->
-            <div id="bot_grp_matrix_extra" style="display:none">
-                <div class="form-group">
-                    <label for="bot_f_shamebot_rooms">Shamebot rooms <span class="bots-dim">(comma-separated room IDs, optional)</span></label>
-                    <input type="text" id="bot_f_shamebot_rooms">
-                </div>
-                <div class="form-group">
-                    <label for="bot_f_stickers_enabled"><input type="checkbox" id="bot_f_stickers_enabled"> Enable stickers (post media with !name)</label>
-                </div>
-            </div>
+            
 
             <!-- Escape hatch: only appears if a bot has exotic keys none of the fields cover. -->
             <div class="form-group" id="bot_grp_advanced" style="display:none">

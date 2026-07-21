@@ -154,67 +154,11 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                     </fieldset>
                 </div>
 
-                <!-- Social Tab (Matrix + Pleroma + Misskey) -->
+                <!-- Social Tab (Pleroma + Misskey) -->
                 <div class="user-tab-content" id="user-tab-social">
-                    <fieldset>
-                        <legend>Matrix Integration</legend>
-                        <p class="fieldset-info">Connect to a Matrix homeserver to post messages directly from the Telegram bot's <code>post</code> command. You will be prompted to choose a room when posting.</p>
+                    
 
-                        <div class="form-group">
-                            <label for="matrixHomeserver">Homeserver URL</label>
-                            <input type="url" id="matrixHomeserver" placeholder="https://matrix.org">
-                            <small>The URL of your Matrix homeserver</small>
-                        </div>
-
-                        <div id="matrixLoginSection">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="matrixUsername">Username</label>
-                                    <input type="text" id="matrixUsername" placeholder="@you:matrix.org">
-                                </div>
-                                <div class="form-group">
-                                    <label for="matrixPassword">Password</label>
-                                    <input type="password" id="matrixPassword" placeholder="••••••••">
-                                </div>
-                            </div>
-                            <div class="form-group" id="matrixAuthSection">
-                                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                    <button type="button" class="btn-primary" id="matrixConnectBtn">Connect</button>
-                                    <button type="button" class="btn-danger" id="matrixDisconnectBtn" style="display: none;">Disconnect</button>
-                                </div>
-                                <div id="matrixStatus" class="test-result" style="margin-top: 8px;"></div>
-                                <small>Your password is used only to obtain an access token and is never stored.</small>
-                            </div>
-                        </div>
-
-                        <div class="form-group" id="matrixConnectedInfo" style="display: none;">
-                            <div class="settings-status success" id="matrixConnectedMsg"></div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="matrixNotifEnabled"> Relay fediverse notifications to Matrix DM
-                            </label>
-                            <small>Forward new notifications (mentions, replies, DMs, follows, reactions) from your connected Misskey/Pleroma accounts to a Matrix DM from the bot. Reply to a forwarded message to respond on that platform. Independent of the Telegram relay toggle.</small>
-                        </div>
-
-                        <p class="fieldset-info" style="margin-top: 12px;">📰 If the admin has set up a <strong>Fediverse Timeline room</strong>, your ❤ favourites, 🔁 boosts and thread replies there are performed under <em>your own</em> linked Misskey/Pleroma account below — connect one to take part.</p>
-                    </fieldset>
-
-                    <fieldset style="margin-top: 24px;">
-                        <legend>Matrix Bot (Notifications &amp; Commands)</legend>
-                        <p class="fieldset-info">Configure the <a href="https://chat.poster.place" target="_blank">posterchan Matrix bot</a> to send you DMs and respond to commands. Enter the bot's Matrix user ID below, then send it a DM to start a chat.</p>
-
-                        <div class="form-group">
-                            <label for="matrixDmBotUserId">Bot User ID</label>
-                            <input type="text" id="matrixDmBotUserId" placeholder="@posterchan:chat.poster.place">
-                            <small>The Matrix user ID of the bot to DM (e.g. <code>@posterchan:chat.poster.place</code>). The bot will respond to all messages in your DM conversation.</small>
-                        </div>
-                        <div class="form-group">
-                            <button type="button" class="btn-secondary" id="matrixTestDmBtn">Send Test DM</button>
-                            <span id="matrixDmStatus" class="test-result" style="margin-top: 8px; display: block;"></span>
-                        </div>
-                    </fieldset>
+                    
 
                     <fieldset style="margin-top: 24px;">
                         <legend>Pleroma Integration</legend>

@@ -9,7 +9,6 @@ const BOT_KNOWN_KEYS = [
     'nostr_profile_name', 'nostr_profile_nip05', 'nostr_profile_picture',
     'nostr_rate_per_user', 'nostr_rate_global', 'nostr_rate_window', 'nostr_rate_exempt',
     'nostr_random_reply_quiet', 'nostr_random_reply_per_hour',
-    'matrix_server', 'matrix_user_id', 'matrix_access_token', 'matrix_room_id', 'matrix_admins',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
     'nitter_poll_seconds', 'shamebot_rooms', 'trusted_media_hosts',
@@ -145,26 +144,19 @@ async function deleteBotPosts() {
 function onBotFormChange() {
     const type = _val('bot_f_type');
     const platform = _val('bot_f_platform');
-    const isMatrix = platform === 'matrix';
     const isImage = type === 'image';
     const ck = (cid) => { const e = _g(cid); return !!(e && e.checked); };
     const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
 
-    // Matrix can be a SECONDARY connection on a misskey/pleroma bot (e.g. a Matrix listener
-    // that also posts to misskey). The "Also connect to Matrix" checkbox only makes sense then.
-    const matrixSecondary = ck('bot_ft_matrix');
     const isNostr = platform === 'nostr';
-    show('bot_grp_fedi', !isMatrix && !isNostr);   // server/username/token: Misskey/Pleroma only
+    show('bot_grp_fedi', !isNostr);   // server/username/token: Misskey/Pleroma only
     show('bot_grp_nostr', isNostr);                // Nostr: secret key + relays + media host
-    show('bot_grp_matrix', isMatrix || (matrixSecondary && !isImage));
-    show('bot_grp_matrix_extra', (isMatrix || matrixSecondary) && !isImage);
-    show('bot_ft_matrix_label', !isMatrix && !isImage);   // the checkbox itself
     show('bot_grp_features', !isImage);
 
     // Per-PLATFORM feature applicability — hide (and uncheck, so it's never saved) any feature the
     // selected platform can't run. Fediverse-only features need the Pleroma/Misskey DB or admin
-    // token (block / welcome / report / unfollow → don't apply to Nostr or Matrix); Nostr-only are
-    // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse/Matrix). Cross-platform
+    // token (block / welcome / report / unfollow → don't apply to Nostr); Nostr-only are
+    // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse). Cross-platform
     // ones (reply / Nitter / hashtag) always show.
     const isFedi = platform === 'pleroma' || platform === 'misskey';
     const showFeat = (f, on) => {
@@ -189,15 +181,15 @@ function onBotFormChange() {
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
     show('bot_grp_report', !isImage && ck('bot_ft_report'));
     show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
-    show('bot_grp_media', !isImage && (ck('bot_ft_reply') || ck('bot_ft_nitter') || matrixSecondary));
+    show('bot_grp_media', !isImage && (ck('bot_ft_reply') || ck('bot_ft_nitter')));
     show('bot_grp_voice', !isImage);
 
     // Scheduled auto-posting: offered for text bots; detail fields appear once enabled.
-    // The Rooms field is Matrix-only (fedi bots post to their own account, not rooms).
+    // Rooms field (fedi bots post to their own account, not rooms).
     const autopostOn = !isImage && ck('bot_f_auto_post_enabled');
     show('bot_grp_autopost_toggle', !isImage);
     show('bot_grp_autopost', autopostOn);
-    show('bot_grp_autopost_rooms', autopostOn && isMatrix);
+    show('bot_grp_autopost_rooms', autopostOn);
 
     // Schedule cadence (interval/quiet/cap) is shared: text bots show it once auto-post is on,
     // image bots always (they're now interval-configurable; blank intervals = fixed hours).
@@ -242,7 +234,6 @@ function openBotModal(id) {
     const plat = b ? b.platform : 'misskey';
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
     _setChk('bot_ft_reply', modes.includes('--' + plat));               // reply on the bot's own platform
-    _setChk('bot_ft_matrix', plat !== 'matrix' && modes.includes('--matrix'));  // matrix as a secondary connection
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
     _setChk('bot_ft_stats', cfg.stats_enabled);   // stats is a CONFIG flag (not a main.py mode — argparse rejects unknown)
 
@@ -269,7 +260,6 @@ function _buildModes(type, platform) {
     if (type === 'image') return '';
     const modes = new Set();
     if (_g('bot_ft_reply').checked) modes.add('--' + platform);          // reply on own platform
-    if (platform !== 'matrix' && _g('bot_ft_matrix').checked) modes.add('--matrix');  // secondary matrix
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.add(flag); });
     return [...modes].join(',');
 }

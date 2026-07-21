@@ -9884,7 +9884,7 @@
       const on=$('#set-blossom-on'); if(on){ on.checked=true; const body=$('#set-blossom-body'); if(body) body.classList.remove('disabled'); } }
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
-  // saves text/toggles via PUT, and wires the real connect flows (Telegram link, Matrix login,
+  // saves text/toggles via PUT, and wires the real connect flows (Telegram link,
   // Pleroma OAuth, Misskey MiAuth, Nostr key) to their existing endpoints.
   let _usMail=[];
   let _nostrPrefsLoaded=false;   // load relay/media prefs from Nostr ONCE per session, not on every re-render
@@ -9979,17 +9979,6 @@
           <label class="fld">Nitter feeds <span class="muted small">(one RSS URL per line)</span><textarea class="input" id="us-nitter" rows="4">${enc(s.nitter_feeds||'')}</textarea></label>
         </div>
         <div class="us-pane" data-pane="social">
-          <div class="us-conn"><div class="set-title small">Matrix</div>
-            <label class="fld">Homeserver<input class="input" id="us-mx-hs" value="${enc(s.matrix_homeserver||'')}" placeholder="https://matrix.org"></label>
-            ${s.matrix_has_access_token
-              ? `<div class="muted small">✓ Connected as ${enc(s.matrix_user_id||'')}</div><button class="btn btn-ghost small" id="us-mx-disc" style="color:var(--danger)">Disconnect</button>`
-              : `<label class="fld">Username<input class="input" id="us-mx-user" placeholder="@you:matrix.org"></label>
-                 <label class="fld">Password<input class="input" id="us-mx-pass" type="password"></label>
-                 <button class="btn btn-ghost small" id="us-mx-conn">Connect</button>`}
-            <label class="fld">DM bot user id<input class="input" id="us-mx-bot" value="${enc(s.matrix_dm_bot_user_id||'')}" placeholder="@posterchan:server"></label>
-            <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Matrix DM<label class="switch"><input type="checkbox" id="us-mx-notif" ${s.matrix_notif_enabled?'checked':''}><span class="slider"></span></label></label>
-            <div class="us-stat muted small" id="us-mx-stat"></div>
-          </div>
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
             ${s.pleroma_has_access_token
@@ -10209,11 +10198,6 @@
         }catch(_){ box.textContent='failed'; } }; }
     { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!confirm('Unlink Telegram?'))return;
         await fetch('/api/telegram/unlink',{method:'POST'}); toast('unlinked'); renderUserSettings(); }; }
-    // Matrix
-    { const c=$('#us-mx-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mx-stat'); st.textContent='connecting…';
-        const r=await fetch('/api/matrix/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({homeserver:$('#us-mx-hs').value.trim(),username:$('#us-mx-user').value.trim(),password:$('#us-mx-pass').value})});
-        const d=await r.json().catch(()=>({})); if(r.ok){ toast('Matrix connected'); renderUserSettings(); } else st.textContent=d.detail||'connect failed'; }; }
-    { const d=$('#us-mx-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Matrix?'))return; await fetch('/api/matrix/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Wait for an account link to actually land, then re-render.
     //
     // This used to rely SOLELY on the callback page doing window.opener.postMessage(...). When the OAuth page
@@ -10278,10 +10262,9 @@
       }
       const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
-        matrix_notif_enabled:$('#us-mx-notif').checked, matrix_homeserver:$('#us-mx-hs').value.trim(),
-        fedi_bridge_enabled:(($('#us-fedi-bridge')||{}).checked)||false,
+                fedi_bridge_enabled:(($('#us-fedi-bridge')||{}).checked)||false,
         fedi_crosspost_enabled:(($('#us-fedi-crosspost')||{}).checked)||false,
-        matrix_dm_bot_user_id:$('#us-mx-bot').value.trim(), pleroma_instance_url:$('#us-plr-url').value.trim(),
+        pleroma_instance_url:$('#us-plr-url').value.trim(),
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };

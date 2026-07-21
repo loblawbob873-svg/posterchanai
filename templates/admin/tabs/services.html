@@ -189,7 +189,7 @@
             <label for="social_notif_enabled">
                 <input type="checkbox" id="social_notif_enabled" name="social_notif_enabled"> Enable Social Notification Relay
             </label>
-            <small>Master kill-switch for forwarding Misskey/Pleroma/Matrix notifications to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
+            <small>Master kill-switch for forwarding Misskey/Pleroma notifications to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
         </div>
         <div class="form-group">
             <label for="social_notif_poll_seconds">Poll Interval (seconds)</label>
@@ -198,81 +198,7 @@
         </div>
     </fieldset>
 
-    <fieldset>
-        <legend>Fediverse Timeline → Matrix Bridge</legend>
-        <div class="form-group">
-            <label for="fedi_timeline_enabled">
-                <input type="checkbox" id="fedi_timeline_enabled" name="fedi_timeline_enabled"> Enable Timeline Bridge
-            </label>
-            <small>Mirror one Misskey/Pleroma timeline into a single Matrix room. Members can ❤ favourite, 🔁 boost, or thread-reply from Element; each action runs under that member's own linked fediverse account (set in User Settings → Social). Restart after changing.</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="fedi_timeline_platform">Source Platform</label>
-                <select id="fedi_timeline_platform" name="fedi_timeline_platform">
-                    <option value="misskey">Misskey</option>
-                    <option value="pleroma">Pleroma / Mastodon</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="fedi_timeline_type">Timeline</label>
-                <select id="fedi_timeline_type" name="fedi_timeline_type">
-                    <option value="home">Home</option>
-                    <option value="global">Global</option>
-                    <option value="local">Local</option>
-                </select>
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="fedi_timeline_instance_url">Source Instance URL</label>
-            <input type="url" id="fedi_timeline_instance_url" name="fedi_timeline_instance_url" placeholder="https://misskey.example">
-        </div>
-        <div class="form-group">
-            <label for="fedi_timeline_token">Source Read Token</label>
-            <input type="text" id="fedi_timeline_token" name="fedi_timeline_token" placeholder="API token used to read the feed">
-            <small>Misskey API token / Pleroma access token of the account whose timeline is mirrored.</small>
-        </div>
-        <div class="form-group">
-            <label for="fedi_timeline_matrix_homeserver">Matrix Homeserver URL</label>
-            <input type="url" id="fedi_timeline_matrix_homeserver" name="fedi_timeline_matrix_homeserver" placeholder="https://matrix.example">
-        </div>
-        <div class="form-group">
-            <label for="fedi_timeline_matrix_bot_token">Matrix Bot Access Token</label>
-            <input type="text" id="fedi_timeline_matrix_bot_token" name="fedi_timeline_matrix_bot_token" placeholder="Access token that posts into the room">
-        </div>
-        <div class="form-group">
-            <label for="fedi_timeline_room_id">Matrix Room ID</label>
-            <input type="text" id="fedi_timeline_room_id" name="fedi_timeline_room_id" placeholder="!roomid:matrix.example">
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="fedi_timeline_poll_seconds">Poll Interval (seconds)</label>
-                <input type="number" id="fedi_timeline_poll_seconds" name="fedi_timeline_poll_seconds" value="90" min="15">
-            </div>
-            <div class="form-group">
-                <label for="fedi_timeline_include_replies">
-                    <input type="checkbox" id="fedi_timeline_include_replies" name="fedi_timeline_include_replies"> Include replies (threaded)
-                </label>
-                <small>Post federated replies as Matrix thread children.</small>
-            </div>
-            <div class="form-group">
-                <label for="fedi_timeline_inline_replies">
-                    <input type="checkbox" id="fedi_timeline_inline_replies" name="fedi_timeline_inline_replies"> Show replies inline (fediverse-style)
-                </label>
-                <small>Render replies as inline rich-replies in the main timeline (each quotes its parent, click to jump) instead of hiding them in a Matrix thread pane. Off = grouped threads.</small>
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="matrix_notif_enabled">
-                <input type="checkbox" id="matrix_notif_enabled" name="matrix_notif_enabled"> DM personal fedi notifications to Matrix
-            </label>
-            <small>Each user who has opted into notifications (User Settings → Telegram) and linked Matrix gets their Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private DM from the bot. Uses the bot account configured above. <strong>Requires "Enable Timeline Bridge" above</strong> — turning that off stops these DMs too.</small>
-        </div>
-        <div class="form-group">
-            <label for="matrix_notif_poll_seconds">Notification Poll Interval (seconds)</label>
-            <input type="number" id="matrix_notif_poll_seconds" name="matrix_notif_poll_seconds" value="60" min="15">
-        </div>
-    </fieldset>
+    
 
     <fieldset>
         <legend>Nostr ↔ Fediverse Bridge</legend>
