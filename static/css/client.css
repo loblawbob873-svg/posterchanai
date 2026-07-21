@@ -643,7 +643,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    Emitted as DIRECT children of #feed, not wrapped: .tl-tabs is position:sticky, and a sticky element can
    only stick within its own parent — nesting it in a short wrapper would scroll the tabs away instantly. */
 .tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
-  border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+  border:0;border-radius:16px;background:var(--panel)}
 .tl-cmp-av{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 .tl-cmp-body{flex:1;min-width:0}
 .tl-cmp-ta{width:100%;min-height:54px;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);
