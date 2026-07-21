@@ -27,7 +27,6 @@ from app.routers.pleroma import router as pleroma_router
 from app.routers.nostr import router as nostr_router
 from app.routers.blossom import router as blossom_router
 from app.routers.client import router as client_router
-from app.routers.matrix import router as matrix_router
 from app.services.load_balancer import NoHealthyServersError
 from fastapi.responses import JSONResponse
 
@@ -212,7 +211,6 @@ app.include_router(pleroma_router)
 app.include_router(nostr_router)
 app.include_router(blossom_router)
 app.include_router(client_router)
-app.include_router(matrix_router)
 # OpenAI-compatible API: use OPENAI_API_PREFIX if app is behind a reverse proxy subpath
 _openai_prefix = os.getenv("OPENAI_API_PREFIX", "").strip().rstrip("/")
 app.include_router(openai_api.router, prefix=_openai_prefix)
@@ -371,7 +369,7 @@ async def startup():
         app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
         if app_port == 3051:
             try:
-                # Background pollers (fedi-timeline bridge + social/nitter/matrix-notif/logs)
+                # Background pollers (social/nitter/logs)
                 # run in a SEPARATE worker process so their polling/bridging doesn't contend
                 # with the web/API event loop (the bridge could otherwise stall the reactor).
                 # They're DB-mediated, so the app's reply/action endpoints keep working.
@@ -690,7 +688,7 @@ async def shutdown():
     app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
     if app_port == 3051:
         # Stop the background worker process (fedi-timeline bridge + social/nitter/
-        # matrix-notif/logs pollers all run there now).
+        # logs pollers all run there now).
         try:
             from app.worker import stop_worker_process
             stop_worker_process()

@@ -28,7 +28,7 @@ from app.models import User, FediBridgeDelivered, FediBridgeMap
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import nip17
-from app.services.fedi_timeline_service import _norm_pleroma
+from app.services.fedi_normalize import _norm_pleroma
 from app.services.fedi_nostr_bridge_service import _blocked_domains, _domain_blocked, _host_of, _is_public_audience
 
 logger = logging.getLogger(__name__)

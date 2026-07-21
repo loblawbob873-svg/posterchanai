@@ -29,7 +29,7 @@ from app.models import FediBridgeDelivered, FediPuppet
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import bech32
-from app.services.fedi_timeline_service import (   # reuse the proven normalizers + emoji parsing
+from app.services.fedi_normalize import (   # proven normalizers, extracted from the old Matrix bridge
     _norm, _canonical_uri, emoji_tags_for)
 
 logger = logging.getLogger(__name__)

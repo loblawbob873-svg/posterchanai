@@ -33,57 +33,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# --- Ephemeral media-cache DB (fedi-timeline URL->mxc) ---------------------------------------
-# The bridge writes a cache row per media upload (avatar/image/video). That high-frequency churn
-# is kept OUT of the main DB so it doesn't (a) contend on SQLite's single write-lock with the web
-# UI/chat or (b) grow the main DB. It's a PURE cache (regenerable), so it lives in its own SQLite
-# file on /tmp (tmpfs = RAM): isolated write-lock, no disk maintenance, cleared only on host reboot
-# (posterchanai.service has PrivateTmp=no, so it survives ordinary restarts/deploys). The model
-# (MatrixAvatarCache) is shared; only the engine/session differ.
-FEDI_CACHE_DB_PATH = os.getenv("FEDI_CACHE_DB", "/tmp/posterchanai_fedi_cache.db")
-cache_engine = engine
-CacheSessionLocal = SessionLocal
-
-
-def init_fedi_cache_db():
-    """Create the media-cache table in the ephemeral /tmp cache DB and, ONCE ever, migrate the
-    existing rows from the main DB so the cutover doesn't cold-start. The one-time guard is a
-    Setting in the (durable) main DB, so after a host reboot wipes /tmp the cache simply rewarms
-    from live traffic rather than re-seeding from an increasingly stale main-DB snapshot."""
-    from app.models import MatrixAvatarCache
-    if cache_engine is engine:
-        return   # Postgres: the cache lives in the main DB (created by create_all) — no separate cache, no migration
-    MatrixAvatarCache.__table__.create(bind=cache_engine, checkfirst=True)
-    cs = CacheSessionLocal()
-    ms = SessionLocal()
-    import os as _os
-    _guard = str(FEDI_CACHE_DB_PATH) + ".migrated"   # durable one-time guard (no SQL Setting table)
-    try:
-        if _os.path.exists(_guard):
-            return
-        copied = 0
-        # Copy existing rows main -> cache. The guard is written ONLY if this succeeds, so a failed
-        # copy is retried on the next start instead of being recorded as done (cold cache).
-        if inspect(engine).has_table("matrix_avatar_cache") and cs.query(MatrixAvatarCache).first() is None:
-            for r in ms.query(MatrixAvatarCache).all():
-                cs.merge(MatrixAvatarCache(author_avatar_url=r.author_avatar_url, mxc=r.mxc,
-                                           width=r.width, height=r.height, fetched_at=r.fetched_at))
-                copied += 1
-            cs.commit()
-        try:
-            open(_guard, "w").close()
-        except Exception:
-            pass
-        logger.info(f"[fedi-cache] cache DB at {FEDI_CACHE_DB_PATH}; migrated {copied} rows from main DB")
-    except Exception as e:
-        logger.warning(f"[fedi-cache] one-time migration failed (will retry next start): {e}")
-        cs.rollback()
-        ms.rollback()
-    finally:
-        cs.close()
-        ms.close()
-
-
 def commit_in_fresh_session(mutate) -> bool:
     """Apply a small write in a FRESH, short-lived session and commit it.
 

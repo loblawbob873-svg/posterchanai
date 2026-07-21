@@ -28,7 +28,7 @@ from app.services.nostr import bridge_keys, nostr_service
 from app.services.nostr.event import build_event as _build_event
 # HTML→text + custom-emoji parsing shared with the timeline/note mirror (no import cycle: neither
 # fedi_timeline_service nor this module imports the other's owner).
-from app.services.fedi_timeline_service import _strip_html, _emoji_url_map, emoji_tags_for
+from app.services.fedi_normalize import _strip_html, _emoji_url_map, emoji_tags_for
 
 logger = logging.getLogger(__name__)
 
