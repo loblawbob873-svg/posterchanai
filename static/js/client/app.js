@@ -1136,7 +1136,10 @@
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
         apply(ClientSettings.get('gamesOpen', false));
         gt.onclick=()=>{ const o=!ClientSettings.get('gamesOpen', false); ClientSettings.set('gamesOpen', o); apply(o); }; } }
-    $('#btn-compose').onclick = ()=>compose(); $('#btn-compose-m').onclick = ()=>compose();
+    // Guarded: #btn-compose moved to the sidebar, and an unguarded null here would throw mid-init and take
+    // every later binding on this line's block down with it.
+    { const cb=$('#btn-compose'); if(cb) cb.onclick=()=>compose(); }
+    { const cm=$('#btn-compose-m'); if(cm) cm.onclick=()=>compose(); }
     // Drafts + Calls are plain sidebar .nav-item[data-view] rows now, so the generic handler above already
     // wires their clicks and active state — no special-casing needed.
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
