@@ -89,12 +89,27 @@ def acct_of(account: dict, instance_host: str = "") -> str:
 
 
 def nip05_name_for(acct: str) -> str:
-    """Stable local-part for a handle: alice@mastodon.social → alice_mastodon.social. Unique as long
-    as the handle is (it is, host-qualified), so it maps 1:1 to a puppet without a disambiguator."""
-    local, _, host = (acct or "").partition("@")
+    """Stable local-part for a handle: alice@mastodon.social → alice_mastodon.social.
+
+    NOT 1:1 on the sanitized form alone — that was the old assumption and it was wrong. _sanitize drops
+    disallowed characters AND strips leading/trailing "._-", so `alice`, `_alice_` and `_alice` all
+    collapse to `alice`; the [:64] truncation collides long handles too. Live data had three distinct
+    accounts sharing one name. Since the relay's NIP-05 map is last-write-wins, that let anyone who could
+    register `_victim_` on the same instance take over the victim's verified name.
+
+    So: when sanitising is lossy (or truncating), append a short digest of the FULL original acct. Handles
+    that sanitise cleanly keep the pretty name they already have, so existing puppets are unaffected."""
+    raw = (acct or "").strip().lower()
+    local, _, host = raw.partition("@")
     base = _sanitize(local) or "user"
     h = _sanitize(host)
-    return (f"{base}_{h}" if h else base)[:64].strip("._-")
+    name = (f"{base}_{h}" if h else base)[:64].strip("._-")
+    # Lossy if the round-trip doesn't reproduce the original handle exactly.
+    expected = f"{local}_{host}" if host else local
+    if name != expected:
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:6]
+        name = f"{name[:56].strip('._-')}_{digest}"
+    return name
 
 
 def puppet_for(account: dict, instance_host: str = "") -> dict:

@@ -141,6 +141,15 @@ async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -
                                  platform="pleroma", instance_url=inst,
                                  peer_pubkey=puppet["pubkey_hex"], target_id=st.get("id"),
                                  visibility="direct"))
+            # COMMIT the routing row. SessionLocal is autocommit=False and _job ends in db.close() (=
+            # rollback), so this row was being discarded while the cursor advanced in a SEPARATE fresh
+            # session — the DM was consumed and its conversation target lost, so a Nostr reply posted as a
+            # brand-new direct status instead of threading (writeback's _handle_dm_reply found row=None).
+            try:
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning("[fedi-personal] DM map commit failed (%s): %s", st.get("id"), e)
             last = st.get("id") or last
         if last and last != cursor:
             cursor = last

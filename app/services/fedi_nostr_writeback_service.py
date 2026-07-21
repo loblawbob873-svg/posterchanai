@@ -185,7 +185,22 @@ def _is_reply(ev: dict) -> bool:
 def _target_row(db, ev: dict):
     """The bridged note this event DIRECTLY interacts with (its immediate reply parent), or None.
     Reactions/reposts e-tag exactly the target; replies use the direct parent (never the root)."""
-    pid = _reply_parent_id(ev)
+    # Kind-aware, because the two cases genuinely differ:
+    #  - reaction (7) / repost (6): NIP-25/18 put the target in the LAST e-tag. Clients (Amethyst,
+    #    Damus) copy the target's OWN root/reply tags in first, so keying off the "reply"-marked tag
+    #    picked the GRANDPARENT — the like/boost federated onto the wrong status and the real reaction
+    #    never did.
+    #  - reply (1): the direct parent IS the reply-marked tag (never the root).
+    # _referenced_event_ids also prefers the reply marker, so it can't serve the reaction case either.
+    try:
+        kind = int(ev.get("kind") or 0)
+    except (TypeError, ValueError):
+        kind = 0
+    if kind in (6, 7):
+        etags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
+        pid = etags[-1] if etags else None
+    else:
+        pid = _reply_parent_id(ev)
     if not pid:
         return None
     return db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == pid).first()
@@ -344,7 +359,9 @@ async def _handle_dm_reply(db, ev: dict) -> None:
     if db.query(FediBridgeMap).filter(FediBridgeMap.nostr_event_id == eid,
                                       FediBridgeMap.kind == "dm-out").first():
         return
-    _seen_events.add(eid)
+    # NOT marked seen here: a transient send failure would then be short-circuited on every replay for
+    # the life of the process, silently dropping the DM. The durable kind="dm-out" guard above already
+    # covers restart/replay. Marked after the send succeeds (see below), matching _handle's design.
     row = db.query(FediBridgeMap).filter(
         FediBridgeMap.user_id == user.id, FediBridgeMap.kind == "dm",
         FediBridgeMap.peer_pubkey == recipient).order_by(FediBridgeMap.id.desc()).first()
@@ -362,6 +379,7 @@ async def _handle_dm_reply(db, ev: dict) -> None:
                              instance_url=user.pleroma_instance_url, peer_pubkey=recipient,
                              target_id=(row.target_id if row else None), visibility="direct"))
         db.commit()
+        _seen_events.add(eid)   # only NOW — a failed send must stay un-seen so the next replay retries it
         logger.info("[fedi-writeback] DM reply by %s → fediverse DM to %s", user.username, puppet.acct)
     except Exception as e:
         db.rollback()

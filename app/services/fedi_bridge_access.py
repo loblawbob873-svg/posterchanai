@@ -76,10 +76,23 @@ async def _nostr_profile(pk: str) -> dict:
 
 
 async def _download(url: str, cap: int = 10_000_000) -> bytes | None:
+    # SSRF guard: `url` is the caller's OWN kind-0 `picture`, i.e. fully attacker-controlled, and this
+    # request is issued from inside the trust boundary (the relay, Budget Manager, image servers and the
+    # cloud metadata endpoint all live on loopback/link-local). Reuse the resolve-based check so a public
+    # hostname that resolves to an internal IP is rejected too, and DON'T follow redirects — a 302 to
+    # 127.0.0.1 would otherwise walk straight past the check.
     if not url or not url.startswith(("http://", "https://")):
         return None
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+        from app.services import rss_service
+        from starlette.concurrency import run_in_threadpool
+        if not rss_service.looks_fetchable(url) or not await run_in_threadpool(rss_service.is_safe_host, url):
+            logger.warning("[bridge-access] refused avatar fetch (unsafe host): %s", url[:120])
+            return None
+    except Exception:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as c:
             r = await c.get(url, headers={"User-Agent": "posterchanai-bridge/1.0"})
         if r.status_code == 200 and len(r.content) <= cap:
             return r.content
@@ -108,8 +121,20 @@ async def _ensure_nip05(db, pk: str, nickname: str) -> None:
         logger.debug("[bridge-access] nip05 register failed: %s", e)
 
 
-async def enable(db, user) -> dict:
-    """Provision (if needed) + enable bridge access for `user`. Returns {ok, error?}."""
+async def enable(db, user, by_admin: bool = False) -> dict:
+    """Provision (if needed) + enable bridge access for `user`. Returns {ok, error?}.
+
+    `by_admin` gates SELF-SERVE. This function spends the OPERATOR's admin token: it creates an account
+    on the home instance, force-confirms + approves it (bypassing that instance's manual approval), mints
+    a read/write/follow token and turns on cross-posting. Two endpoints reach it — client.py's is
+    admin-authenticated, auth.py's needed only a session, and /api/auth/nostr-login mints a session for
+    ANY npub that can sign a challenge. So any passer-by could provision themselves an account on the
+    operator's instance and federate through it. Gated here rather than in the router so no future caller
+    can reintroduce the hole; self-serve is opt-in via `fedi_bridge_self_serve` (default OFF)."""
+    if not by_admin:
+        allow = (settings_store.get("fedi_bridge_self_serve", "") or "").strip().lower() in ("1", "true", "yes", "on")
+        if not allow:
+            return {"ok": False, "error": "Bridge access is granted by the admin on this instance."}
     inst, admin = _home_instance(), _admin_token()
     if not inst or not admin:
         return {"ok": False, "error": "Bridge home instance / admin token not configured (Admin → Services)."}

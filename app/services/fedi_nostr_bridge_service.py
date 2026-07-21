@@ -39,7 +39,12 @@ _DRAIN_BUDGET = 70
 _PAGE = 20
 _MAX_PAGES = 8
 _MODERATION_TTL = 600          # seconds to cache the read account's block/mute lists
-_mod_cache: dict = {"at": 0.0, "blocked_accts": set()}
+# `at` starts at -_MODERATION_TTL, NOT 0.0: time.monotonic() is seconds since BOOT on Linux, so a 0.0
+# seed made the freshness test "has the host been up 10 minutes?" — after a reboot the block/mute set
+# stayed EMPTY for the first ~6 polls and blocked/muted authors were mirrored to the public firehose.
+# Worse, each one got a FediBridgeDelivered row, so it never re-evaluated. Seeding negative forces a
+# fetch on the very first poll.
+_mod_cache: dict = {"at": -_MODERATION_TTL, "blocked_accts": set()}
 _DELETION_INTERVAL = 300       # how often the (separate) deletion job runs — deletions are rare
 _DELETION_BATCH = 25           # recent mirrored notes re-checked for deletion per cycle
 _DELETION_CONCURRENCY = 6      # parallel status checks (was a 25-deep serial loop inside the poll)
@@ -376,7 +381,7 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
 
 
 async def _rewrite_mentions(db: Session, port: int, instance_host: str, content: str,
-                            mentions: list) -> tuple:
+                            mentions: list, blocked: set = frozenset()) -> tuple:
     """Make fediverse @handle mentions CLICKABLE on Nostr: for each mentioned account, provision its
     puppet, replace the `@handle` text with a `nostr:<npub>` reference (which clients render as a
     profile link), and p-tag it. A mention of a LINKED bridge user is ALSO p-tagged with their REAL
@@ -389,6 +394,13 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         acct = (m.get("acct") or m.get("username") or "").strip()
         username = (m.get("username") or "").strip()
         if not url or not acct:
+            continue
+        # Same blocklist/mute gate as every other ensure_puppet caller (ancestors, quotes, feed items,
+        # personal plane). Without it a blocked or muted account still got a puppet, a published kind-0,
+        # a NIP-05 registration and a p-tag on a public note purely by being MENTIONED — the blocklist
+        # filtered ITEMS, not identities, so the blocked party's identity reached the relay anyway.
+        _mhost = acct.rsplit("@", 1)[-1].lower() if "@" in acct else (instance_host or "").lower()
+        if _domain_blocked(_mhost, blocked) or _author_muted(acct, _mhost, instance_host):
             continue
         try:
             p = await ident.ensure_puppet(
@@ -535,7 +547,8 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
 
         # Make fediverse @mentions clickable: rewrite them to nostr: refs + p-tag the mentioned puppets.
         content = _build_content(post, quote_bech)
-        content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content, raw.get("mentions") or [])
+        content, mention_ptags = await _rewrite_mentions(db, port, instance_host, content,
+                                                         raw.get("mentions") or [], _blocked_domains())
         # Fediverse replies prefix the body with the full @-recipient list (which fedi clients hide);
         # after the rewrite that's a wall of leading `nostr:npub…` refs burying the actual message. Drop
         # the leading run of mention refs on replies — the p-tags (added above) still thread/notify. Keep
@@ -630,10 +643,28 @@ async def _check_deletions(db: Session, port: int, instance_url: str, token: str
     404/410), publish a NIP-09 deletion from its puppet (which removes it on the relay and federates
     upstream iff broadcasting), then drop the bookkeeping row. Bounded + throttled — deletions are
     rare and per-status checks cost a request each."""
-    rows = (db.query(FediBridgeDelivered)
-            .filter(FediBridgeDelivered.instance_url == instance_url,
-                    FediBridgeDelivered.note_id != "")   # skip write-back TOMBSTONES (no status to check)
-            .order_by(FediBridgeDelivered.id.desc()).limit(_DELETION_BATCH).all())
+    # ROTATE through the table rather than re-checking the newest _DELETION_BATCH rows every cycle. A
+    # busy global feed inserts hundreds of rows per 5-minute interval, so a fixed id.desc() window only
+    # ever covered posts deleted within SECONDS of being mirrored; every later delete was missed and the
+    # mirrored copy stayed on the relay indefinitely. Cursor is node-local and wraps at the end.
+    # NOTE the _cursor suffix: settings_store._RUNTIME_SUFFIXES keeps it NODE-LOCAL. Without it this
+    # sweep position would sync through the relay and nodes would clobber each other's progress.
+    _dck = f"fedi_bridge_del_{(instance_url or '').rstrip('/').rsplit('/', 1)[-1].lower()}_cursor"
+    try:
+        _after = int(settings_store.get(_dck, "0") or 0)
+    except (TypeError, ValueError):
+        _after = 0
+    def _sweep(after_id: int):
+        return (db.query(FediBridgeDelivered)
+                .filter(FediBridgeDelivered.instance_url == instance_url,
+                        FediBridgeDelivered.note_id != "",   # skip write-back TOMBSTONES (no status to check)
+                        FediBridgeDelivered.id > after_id)
+                .order_by(FediBridgeDelivered.id.asc()).limit(_DELETION_BATCH).all())
+    rows = _sweep(_after)
+    if not rows and _after:
+        rows = _sweep(0)                     # wrapped — restart the sweep from the oldest row
+    if rows:
+        settings_store.put(_dck, str(rows[-1].id))
     if not rows:
         return
     # The status checks are read-only + independent, so run them CONCURRENTLY (bounded) instead of 25
@@ -719,7 +750,10 @@ async def _backfill_recent(db: Session, port: int, platform: str, instance_url: 
             except Exception:
                 pass
             logger.debug("[fedi-bridge] backfill mirror failed (skipping): %s", e)
-    if newest and not over_budget:
+    # Only claim the window if something actually landed. _PublishFailed is a plain Exception, so the
+    # handler above catches it too — a relay restart during first connect could fail EVERY post and
+    # still commit the cursor, marking history complete with zero posts mirrored and no retry path.
+    if newest and not over_budget and done:
         settings_store.put(cursor_key, newest)
     logger.info("[fedi-bridge] initial %s backfill mirrored %d recent post(s)%s",
                 ttype, done, " (over budget — resuming next poll)" if over_budget else "")
@@ -768,8 +802,13 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
         raw_posts = await _fetch(cursor, False)
         if not raw_posts:
             break
-        # oldest-first so parents are mirrored before their replies (ISO8601 sorts lexically).
-        raw_posts = sorted(raw_posts, key=lambda r: r.get("created_at") or "")
+        # Sort by ID, not created_at. The cursor IS an id (min_id/sinceId), so the watermark `last` is only
+        # valid if iteration follows id order. created_at is the ORIGIN's publish time while the id is
+        # assigned at LOCAL ingest, so a late-federating post sorts early while holding a high id — and
+        # either break below then committed a cursor past posts that were never mirrored. Those are never
+        # re-fetched (min_id excludes them) and nothing logs a gap. Ids are time-ordered on both platforms
+        # (Pleroma FlakeId, Misskey aid), so this also keeps parents ahead of their replies.
+        raw_posts = sorted(raw_posts, key=lambda r: str(r.get("id") or ""))
         last = None
         transient = False
         for raw in raw_posts:

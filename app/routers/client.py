@@ -1573,7 +1573,7 @@ async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(
         except Exception as e:
             logger.warning("[bridge-access] follow/admit for new user failed: %s", e)
     from app.services import fedi_bridge_access
-    r = await (fedi_bridge_access.enable(db, u) if data.grant else fedi_bridge_access.disable(db, u))
+    r = await (fedi_bridge_access.enable(db, u, by_admin=True) if data.grant else fedi_bridge_access.disable(db, u))
     if not r.get("ok"):
         return JSONResponse({"ok": False, "error": r.get("error") or "failed"}, status_code=400)
     return JSONResponse({"ok": True})
