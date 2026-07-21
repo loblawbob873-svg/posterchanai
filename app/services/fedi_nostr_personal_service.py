@@ -36,7 +36,11 @@ logger = logging.getLogger(__name__)
 _POLL_TIMEOUT = 90
 _MAX = 20             # items per page
 _MAX_PAGES = 5        # bound the forward-drain per user per poll (≈100 items; rest drains next cycle)
-_self_acct_cache: dict = {}   # user_id -> own acct (stable; cached so a transient verify failure
+# Keyed on (user_id, instance_url) — NOT user_id alone. Relinking to a different fediverse
+# account without a process restart left the OLD acct cached, so the self-check never matched and
+# the user's OWN outgoing DMs were bridged back to them as incoming Nostr DMs from a puppet of
+# themselves.
+_self_acct_cache: dict = {}   # (user_id, instance) -> own acct (cached so a transient verify failure
                               # can't disable the own-DM skip and echo your sent DMs back to you)
 
 
@@ -176,15 +180,16 @@ async def _deliver_dms(db: Session, port: int, user: User, instance_host: str) -
 async def _self_acct(user: User) -> str | None:
     """The user's own fediverse handle, cached per process (it's stable). Cached so a later transient
     verify_credentials failure can't return None and disable the own-DM skip (echoing sent DMs back)."""
-    if user.id in _self_acct_cache:
-        return _self_acct_cache[user.id]
+    _sk = (user.id, (getattr(user, "pleroma_instance_url", "") or "").rstrip("/").lower())
+    if _sk in _self_acct_cache:
+        return _self_acct_cache[_sk]
     try:
         me = await pleroma_service.verify_credentials(user.pleroma_instance_url, user.pleroma_access_token)
         acct = (me or {}).get("acct") or (me or {}).get("username")
     except Exception:
         return None
     if acct:
-        _self_acct_cache[user.id] = acct
+        _self_acct_cache[_sk] = acct
     return acct
 
 
@@ -301,6 +306,8 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
 _puppet_follows: dict = {}      # follower puppet pubkey -> set of followed pubkeys we've published
                                 # (so a momentary empty relay read can never SHRINK the list)
 _notif_poison: dict = {}        # user_id -> notification id that failed to publish LAST cycle. A second
+_follow_locks: dict = {}   # puppet pubkey -> asyncio.Lock (kind-3 is REPLACEABLE, so a concurrent
+                           # read-modify-write between the poller and a follower backfill lost follows)
 _dm_poison: dict = {}     # (user|status id) -> seen once; second failure skips it (see _deliver_dms)
                                 # failure on the same id = un-deliverable (e.g. a relay-blocked author);
                                 # skip it so it can't head-of-line-block every later notification forever.
@@ -313,6 +320,19 @@ async def _bridge_follow(db: Session, port: int, follower_puppet: dict, followed
     of (relay read ∪ what we've published this process) guarantees a SUCCESSFUL-but-empty read can't
     wipe an existing list (the replaceable-list-wipe class). Returns False only on read/publish
     failure — the caller treats follows as best-effort and advances regardless."""
+    # kind-3 is REPLACEABLE, so this read-modify-write must not interleave. _run_follower_backfill is a
+    # fire-and-forget task on the SAME loop as the poller, and both can touch the same puppet when two
+    # bridge users share a follower — A and B both read {X}, A publishes {X,a}, B publishes {X,b}, and
+    # the relay keeps only B's: A's follow silently vanished. There are two awaits between the read and
+    # the publish, so the window is wide. _backfill_inflight only serialises backfills against EACH OTHER.
+    _fpk = follower_puppet.get("pubkey_hex") or ""
+    _lock = _follow_locks.setdefault(_fpk, asyncio.Lock())
+    async with _lock:
+        return await _bridge_follow_locked(db, port, follower_puppet, followed_pk, broadcast)
+
+
+async def _bridge_follow_locked(db: Session, port: int, follower_puppet: dict, followed_pk: str,
+                                broadcast: bool) -> bool:
     fpk = follower_puppet["pubkey_hex"]
     ok, cur = await ident.query_one(port, {"authors": [fpk], "kinds": [3], "limit": 1})
     if not ok:

@@ -308,6 +308,26 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
     # with no real profile fields (the caller sets profile_refresh=False). Recomputing the kind-0 from it
     # would downgrade an already-mirrored profile — blank the bio, drop emoji tags, revert the name to the
     # bare username. So for a KNOWN puppet, don't touch the profile: mark it seen and return the identity.
+    # A mention-only sighting carries a SYNTHETIC account (no avatar, no bio, display_name = username).
+    # The guard below only covered a KNOWN puppet, so a FIRST sighting via a mention fell through and
+    # published a degraded kind-0 — blank bio, no picture, no emoji — which then owned that identity's
+    # NIP-05 registration. Register the row but publish nothing; the next sighting with a real account
+    # object fills the profile in (profile_sig stays NULL so it will).
+    if row is None and not profile_refresh:
+        row = FediPuppet(actor_uri=p["actor_uri"], acct=p["acct"], instance_host=p["host"],
+                         pubkey_hex=p["pubkey_hex"], nip05_name=p["nip05_name"],
+                         display_name=p["display_name"], avatar_url=p["avatar_url"],
+                         profile_sig=None, last_seen=datetime.utcnow(), created_at=datetime.utcnow())
+        db.add(row)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+        _PUPPET_CACHE[actor_uri] = {"p": p, "raw_sig": raw_sig}
+        _PUPPET_CACHE.move_to_end(actor_uri)
+        while len(_PUPPET_CACHE) > _PUPPET_CACHE_MAX:
+            _PUPPET_CACHE.popitem(last=False)
+        return p
     if row is not None and not profile_refresh:
         row.last_seen = datetime.utcnow()
         try:

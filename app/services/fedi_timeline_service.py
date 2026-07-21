@@ -692,6 +692,12 @@ async def _backfill_ancestors(db: Session, hs: str, bot_token: str, room_id: str
                 a_root = p.thread_root_event_id or p.event_id
         try:
             await _deliver(db, hs, bot_token, room_id, platform, instance_url, anc, thread_root_event_id=a_root)
+        except matrix_service.MatrixServerError:
+            # Homeserver down/rate-limited: BUBBLE so the drain's transient handler holds the cursor and
+            # retries. Swallowing it delivered the reply as a thread ROOT with its ancestors missing, and
+            # ancestors are only ever backfilled at first-delivery time — so the conversation stayed
+            # permanently fragmented once that reply had a row.
+            raise
         except Exception as e:
             logger.warning(f"[fedi-timeline] ancestor deliver failed: {e}")
 
@@ -842,6 +848,15 @@ async def poll_once(db: Session) -> None:
             # This matters more now that a 429 storm takes the transient path instead of skipping posts.
             # Ids are time-ordered on both platforms, so replies still follow their parents.
             posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: str(p.get("id") or ""))
+            # The no-gap guarantee rests on the server returning a page ABOVE the cursor. Stock Misskey
+            # switches to ORDER BY id ASC when only sinceId is given, and Pleroma's min_id is documented
+            # — but a fork returning newest-first would silently skip everything between the old cursor
+            # and that page. Cheap to assert, and it fails loudly instead of losing posts quietly.
+            if cursor and posts and str(posts[0].get("id") or "") < str(cursor):
+                logger.error("[fedi-timeline] page starts BELOW the cursor (%s < %s) — the instance is not "
+                             "paginating forward; stopping to avoid skipping posts",
+                             posts[0].get("id"), cursor)
+                break
             transient = False
             last_delivered = None           # id of the newest post we got past this page (delivered,
                                             # already-seen, or skipped as a permanent error)

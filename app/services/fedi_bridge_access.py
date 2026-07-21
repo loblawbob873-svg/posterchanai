@@ -11,6 +11,7 @@ instance):
 Disabling just turns the toggles off (the fediverse account is kept). The bridge account's password
 is stored per-user (UserSetting) so re-enabling can re-mint a token without recreating the account.
 """
+import asyncio
 import os
 import json
 import logging
@@ -101,24 +102,31 @@ async def _download(url: str, cap: int = 10_000_000) -> bytes | None:
     return None
 
 
+_nip05_lock = asyncio.Lock()   # the names blob is read-modify-written; two grants racing lost one
+
+
 async def _ensure_nip05(db, pk: str, nickname: str) -> None:
     """Register `nickname` → this user's npub in the relay's NIP-05 names if they have none yet, so
     they're a verified local NIP-05 user (the bridge write-back/cross-post gate requires it)."""
-    from app.services.nostr_relay.thread import _parse_nip05, trigger_nip05_reload
-    raw = settings_store.get("nostr_relay_nip05_names", "") or ""
-    names, _ = _parse_nip05(raw, "")
-    if pk in names.values():
-        return
-    # avoid clobbering a name already taken by someone else
-    name = nickname if nickname not in names else (nickname + pk[:4])
-    npub = nostr_service.npub_of(pk)
-    newraw = (raw.rstrip() + "\n" + f"{name} {npub}") if raw.strip() else f"{name} {npub}"
-    settings_store.put("nostr_relay_nip05_names", newraw)
-    try:
-        await settings_store.write_through(db, {"nostr_relay_nip05_names": newraw})
-        trigger_nip05_reload()
-    except Exception as e:
-        logger.debug("[bridge-access] nip05 register failed: %s", e)
+    # Serialise: this is a read-modify-write of ONE shared settings blob with no re-read. Two grants
+    # interleaving (or a grant racing client.py's claim_nip05) both read the same base and the second
+    # put overwrote the first — one user silently ended up with no NIP-05 despite {"ok": true}.
+    async with _nip05_lock:
+        from app.services.nostr_relay.thread import _parse_nip05, trigger_nip05_reload
+        raw = settings_store.get("nostr_relay_nip05_names", "") or ""
+        names, _ = _parse_nip05(raw, "")
+        if pk in names.values():
+            return
+        # avoid clobbering a name already taken by someone else
+        name = nickname if nickname not in names else (nickname + pk[:4])
+        npub = nostr_service.npub_of(pk)
+        newraw = (raw.rstrip() + "\n" + f"{name} {npub}") if raw.strip() else f"{name} {npub}"
+        settings_store.put("nostr_relay_nip05_names", newraw)
+        try:
+            await settings_store.write_through(db, {"nostr_relay_nip05_names": newraw})
+            trigger_nip05_reload()
+        except Exception as e:
+            logger.debug("[bridge-access] nip05 register failed: %s", e)
 
 
 async def enable(db, user, by_admin: bool = False) -> dict:
