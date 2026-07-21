@@ -10160,6 +10160,7 @@
     renderThread(id, hints);
   }
   async function renderThread(id, hints){
+    renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
     VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
@@ -10187,21 +10188,31 @@
     // Two reply queries in PARALLEL: descendants that root-tag the root, AND direct replies to the CLICKED
     // post (a reply that only tags its immediate parent wouldn't appear in the root query — this keeps its
     // sub-branch). Merge with the ancestor chain + the clicked post itself so the tapped post never vanishes.
-    let [byRoot, byClicked] = await Promise.all([
-      Relay.query([{ kinds:[1], '#e':[root.id], limit:500 }]).catch(()=>[]),
-      id!==root.id ? Relay.query([{ kinds:[1], '#e':[id], limit:200 }]).catch(()=>[]) : Promise.resolve([]),
-    ]);
-    // A query that timed out instead of EOSEing may have returned only PART of the thread. Rendering that
-    // as the whole conversation is what made replies "go missing" until a refresh — so ask once more and
-    // keep the bigger answer. (A genuinely reply-less root EOSEs immediately and never gets here.)
-    if(byRoot && byRoot.complete===false){
-      const retry=await Relay.query([{ kinds:[1], '#e':[root.id], limit:500 }]).catch(()=>[]);
-      if(retry.length>byRoot.length) byRoot=retry;
-    }
+    // DESCEND from every known node, not just the root. A single `#e:[root.id]` query only ever returns the
+    // root's DIRECT children — and plenty of posts (every fediverse-bridged reply, plus many native
+    // clients) carry just one e-tag pointing at their immediate parent, with no root tag at all. So a
+    // deep conversation came back as the ancestor chain plus one node's replies, and the rest only
+    // appeared once you manually clicked your way to the top post. Expand breadth-first until a round
+    // finds nothing new; bounded so a huge thread can't spin.
     const merged=new Map();
     for(const x of chain) merged.set(x.id, x);              // clicked post + its ancestors up to root
-    for(const x of [...byRoot, ...byClicked]) merged.set(x.id, x);
     merged.set(ev.id, ev); merged.set(root.id, root);
+    let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id)])];
+    for(let round=0; round<4 && frontier.length; round++){
+      const batch=frontier.slice(0,60);                     // one REQ per round, not one per node
+      let got=await Relay.query([{ kinds:[1], '#e':batch, limit:500 }]).catch(()=>[]);
+      // A query that timed out instead of EOSEing may have returned only PART of the answer. Rendering
+      // that as the whole conversation is what made replies "go missing" until a refresh.
+      if(got && got.complete===false){
+        const retry=await Relay.query([{ kinds:[1], '#e':batch, limit:500 }]).catch(()=>[]);
+        if(retry.length>got.length) got=retry;
+      }
+      if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away / opened another thread mid-expansion
+      const fresh=[];
+      for(const x of (got||[])){ if(!merged.has(x.id)){ merged.set(x.id, x); fresh.push(x.id); } }
+      if(!fresh.length) break;
+      frontier=fresh;
+    }
     const all=[...merged.values()];
     all.forEach(r=>{ Store.saveEvent(r); needProfile(r.pubkey); });
     if(VIEW!=='thread') return;
@@ -10250,17 +10261,20 @@
     // Relay hints for fetching an ancestor of `u`: the nevent's hints PLUS `u`'s own e-tag hints (which
     // include the parent's relay hint), so an out-of-WoT ancestor is fetched from where it actually lives.
     const H = u => [...new Set([...(hints||[]), ...eTagRelays(u)])];
-    const rootTag=(ev.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
-    if(rootTag){ const r=Store.get(rootTag)||await fetchEvent(rootTag, H(ev)); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rootTag, chain }; }
-    if(!replyParentId(ev)) return { rootId:ev.id, chain };   // no reply parent → already a root post
+    // Climb to the TRUE top. A `root` marker is treated as a shortcut, not as proof — fediverse-bridged
+    // threads routinely mark a mid-chain post as "root", and trusting it stranded us several levels below
+    // the real first post (so the top of the conversation, and everything hanging off it, stayed hidden
+    // until you manually clicked upward). After jumping we re-examine that ancestor and keep going if it
+    // still has a parent of its own.
+    const seen=new Set([ev.id]);
     let cur=ev, depth=0;
-    while(depth++ < 8){
+    while(depth++ < 12){
       const rt=(cur.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
-      if(rt){ const r=Store.get(rt)||await fetchEvent(rt, H(cur)); if(r){ Store.saveEvent(r); chain.push(r); } return { rootId:rt, chain }; }
-      const pid=replyParentId(cur); if(!pid || pid===cur.id) return { rootId:cur.id, chain };
+      const pid = rt || replyParentId(cur);
+      if(!pid || pid===cur.id || seen.has(pid)) return { rootId:cur.id, chain };   // no parent / cycle → this is the top
       const par=Store.get(pid) || await fetchEvent(pid, H(cur));
       if(!par) return { rootId:pid, chain };                // parent unreachable even via hints → best root we can reach
-      Store.saveEvent(par); chain.push(par); cur=par;
+      seen.add(pid); Store.saveEvent(par); chain.push(par); cur=par;
     }
     return { rootId:cur.id, chain };
   }

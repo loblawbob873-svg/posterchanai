@@ -500,7 +500,10 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* Keep height:100vh (NOT 100dvh): 100vh sizes to the TALL viewport, which lets mobile browsers
    (Firefox especially) auto-hide their address bar for a fullscreen feel. 100dvh sizes to the small
    dynamic viewport that RESERVES room for the chrome, so the toolbar stays pinned — a regression. */
-.app{display:grid;grid-template-columns:360px 1fr;height:100vh}
+/* column-gap (not padding on .main): the topbar is sticky and full-bleed, so padding there would inset the
+   header too. A grid gap lets the background show between the panels instead of butting them together.
+   Collapses to nothing on mobile, where the grid is a single column. */
+.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow:hidden;
   /* Clean flat dark panel — near-opaque so the city skyline does NOT bleed into the navbar (it stays
      in the main background only); keeps the nav labels at full contrast. */
