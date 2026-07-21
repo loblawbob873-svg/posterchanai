@@ -5985,7 +5985,19 @@
   // mean two copies of each drifting apart.
   function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
-    let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
+    // Show the post being replied to / quoted, ditto-style — replying used to give you an empty box with
+    // no reminder of what you were answering.
+    const _cmpCtx=(id,label)=>{
+      const o=Store.get(id); if(!o) return '';
+      const p=profOf(o.pubkey); needProfile(o.pubkey);
+      const nm=p.name||p.display_name||'anon';
+      const body=(mediaParts(o.content).text||o.content||'').trim();
+      return `<div class="cmp-ctx"><div class="cmp-ctx-lbl">${label}</div>
+        <div class="quoted"><div class="hd"><img class="qav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`
+        +`<span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,nm)}</span><span class="time">${timeAgo(o.created_at)}</span></div>`
+        +`<div class="txt">${body?linkify(body):'<span class="muted small">(no text)</span>'}</div></div></div>`;
+    };
+    let qhtml = quote ? _cmpCtx(quote,'Quoting') : (reply ? _cmpCtx(reply,'Replying to') : '');
     modal(`<h3>${title}</h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
