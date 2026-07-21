@@ -421,11 +421,14 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                     _toks = _toks[:_ci] + _toks[_ci + 2:]
                     _low = [t.lower() for t in _toks]
             # Trailing modifier cluster: one movement plus the looks (glow/trippy), in any
-            # order, at the very END of the arg. Only TRAILING tokens are consumed (cap 3 =
-            # the most that can validly combine), so a caption word like "trippy" mid-text —
-            # e.g. `meme so trippy bro` — is never mistaken for a modifier.
+            # order, at the very END of the arg. Only TRAILING tokens are consumed, so a
+            # caption word like "trippy" mid-text — e.g. `meme so trippy bro` — is never
+            # mistaken for a modifier. The cap is deliberately LOOSER than the 3 that can
+            # validly combine: check_motion_combo can only refuse a bad combination it can
+            # see, and stopping at 3 let `curb zoom shake glow trippy` drop `zoom` into the
+            # effect's own arg instead of reporting the two-movement conflict.
             _mods = []
-            for _ in range(3):
+            for _ in range(len(self.MOTION_ARGS)):
                 if not _low or _low[-1] not in self.MOTION_ARGS:
                     break
                 _mods.insert(0, _low.pop())
@@ -696,8 +699,9 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             "\n**Effect modifiers** (append to any effect): ONE movement — "
             "`zoom` `shake` `medshake` `beginshake` `pulse` `alive` — plus any of the looks "
             "`glow` `trippy`, which stack on top. E.g. `dildo zoom trippy`, "
-            "`whoabuddy pulse glow`. Two movements, or any movement on an already-animated "
-            "effect (`chimp` `clay` `reze`), is refused rather than half-applied.\n"
+            "`whoabuddy pulse glow`. A second movement is refused rather than half-applied, "
+            "and `alive` (3D parallax needs a still) is refused on the effects that always "
+            "output a video — `chimp` `clay` `reze` — where the other movements work fine.\n"
         )
 
         return {"type": "text", "content": help_text}

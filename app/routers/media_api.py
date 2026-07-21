@@ -124,11 +124,12 @@ async def process_media(
             _i = _low.index("meme")
             meme_text = " ".join(_toks[_i + 1:]).strip()
             _toks, _low = _toks[:_i], _low[:_i]
-        # Trailing modifier cluster (cap 3 = one movement + glow + trippy, the most that can
-        # validly combine), in any order, at the very END — so a caption word like "trippy"
-        # mid-text is never mistaken for a modifier. Rules live in CommandService so this path
-        # (fediverse bots) accepts exactly what the web UI and Telegram do.
-        for _ in range(3):
+        # Trailing modifier cluster (one movement + glow + trippy), in any order, at the very
+        # END — so a caption word like "trippy" mid-text is never mistaken for a modifier. The
+        # cap is looser than the 3 that can validly combine so check_motion_combo can SEE (and
+        # refuse) a bad one. Rules live in CommandService, so this path (fediverse bots)
+        # accepts exactly what the web UI and Telegram do.
+        for _ in range(len(CommandService.MOTION_ARGS)):
             if not _low or _low[-1] not in CommandService.MOTION_ARGS:
                 break
             mods.insert(0, _low.pop())
