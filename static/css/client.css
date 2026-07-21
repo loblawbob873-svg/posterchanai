@@ -1362,7 +1362,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .thread-missing .empty{padding:10px 12px;font-size:13px;opacity:.75;border:1px dashed var(--line);border-radius:10px;margin-bottom:8px}
 
 /* notifications */
-.notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:center;font-size:16.5px}
+/* align-items:flex-start, NOT center: the row grew (header + the reply text + the referenced-post
+   card), so centring left the icon and avatar floating beside the MIDDLE of the block instead of
+   next to the name. Top-aligned is how ditto/Mastodon place them. */
+.notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:flex-start;font-size:16.5px}
+.notif > .ic,.notif > .notif-av{margin-top:1px;flex:0 0 auto}
+.notif > div{flex:1;min-width:0}
 .notif .ic{font-size:20px;width:26px;text-align:center}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
 .upd-notif{cursor:pointer;background:rgba(var(--accent-rgb),.08);border-left:3px solid var(--cyan)}
