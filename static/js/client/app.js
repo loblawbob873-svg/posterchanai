@@ -7917,6 +7917,13 @@
     if(!Store.get(id)) needEvent(id);
     return _notifCtxHtml(id);
   }
+  // The actor's own words belong on their OWN line — inlined after "replied:" they ran together with
+  // the name and verb into one long unreadable string, and the 80-char cut landed mid-sentence.
+  function _notifSaid(e){
+    const t=(_notifPreview(e.content) || '').trim();
+    if(!t) return '';
+    return `<div class="notif-said">${applyEmojis(enc(t.slice(0,220)), e)}${t.length>220?'…':''}</div>`;
+  }
   function notifHtml(e){
     if(e.type==='group'){
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
@@ -7939,10 +7946,10 @@
     else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc(_notifPreview(e.content).slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${reactDisp(e)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
-    else if(e.kind===42){cls='reply';ic='💬';txt='chat: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
-    else if(e.kind===1111){cls='reply';ic='👥';txt='community: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
-    else if(isReply(e)){cls='reply';ic='💬';txt='replied: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
-    else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
+    else if(e.kind===42){cls='reply';ic='💬';txt='in chat'+_notifSaid(e);}
+    else if(e.kind===1111){cls='reply';ic='👥';txt='commented'+_notifSaid(e);}
+    else if(isReply(e)){cls='reply';ic='💬';txt='replied'+_notifSaid(e);}
+    else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
     return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}${_notifCtx(e)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
