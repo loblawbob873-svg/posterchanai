@@ -665,7 +665,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    box-shadow glow drew a ring around the composer the moment you clicked in. */
 .tl-cmp-ta:focus{border:0;box-shadow:none;outline:none}
 /* Always visible — the composer is a real box, not a one-line field that unfolds on focus. */
-.tl-cmp-tools{display:flex;align-items:center;gap:10px;margin-top:10px}
+.tl-cmp-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px}   /* wrap, so a very narrow phone drops Post to its own line instead of overflowing */
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
    toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
 .tl-cmp-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;padding:0;
@@ -712,9 +712,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
   .tl-cmp-av{width:32px;height:32px}
   .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
-  .tl-cmp-tools{gap:8px}
-  .tl-cmp-btn{width:38px;height:38px;font-size:20px}
-  .tl-cmp-post{padding:10px 22px;font-size:15px}
+  .tl-cmp-tools{gap:6px}
+  .tl-cmp-btn{width:34px;height:34px;font-size:18px}   /* five icons + Post must fit a 360px viewport */
+  .tl-cmp-post{padding:9px 18px;font-size:14.5px;margin-left:auto}
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
   .tltab-media{padding:8px 11px;font-size:14px}

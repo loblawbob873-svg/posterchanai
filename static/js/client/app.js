@@ -2084,7 +2084,10 @@
           <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s Good Cuh?"></textarea>
           <div class="tl-cmp-tools">
             <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file">📎</button>
-            <button class="tl-cmp-btn" id="tl-cmp-more" title="Poll, schedule, content warning, AI…">＋</button>
+            <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF">😀</button>
+            <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll">📊</button>
+            <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools">🤖</button>
+            <button class="tl-cmp-btn" id="tl-cmp-more" title="Schedule, content warning, background, drafts…">＋</button>
             <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
             <button class="btn btn-neon tl-cmp-post" id="tl-cmp-post">Post</button>
             <input type="file" id="tl-cmp-file" multiple hidden>
@@ -2123,8 +2126,20 @@
     $('#tl-cmp-attach',box).onclick=()=>$('#tl-cmp-file',box).click();
     $('#tl-cmp-file',box).onchange=async e=>{ await upload([...e.target.files]); e.target.value=''; };
     ta.addEventListener('paste', e=>{ const f=[...((e.clipboardData&&e.clipboardData.files)||[])]; if(f.length){ e.preventDefault(); upload(f); } });
-    // Everything beyond plain text + attachments (poll / schedule / CW / AI / background / drafts) hands off
-    // to the full composer, carrying what's typed so far — no duplicated feature surface to drift out of sync.
+    // 😀 works fully INLINE — openEmojiPopover/_insertAt/gifPicker are module-level, so there's nothing to
+    // duplicate and no reason to send you to a modal just to add an emoji.
+    { const rb=$('#tl-cmp-react',box); if(rb) rb.onclick=e=>{ e.stopPropagation();
+        const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
+        openMenuPopover(rb, items, a=>{
+          if(a==='emoji') openEmojiPopover(rb, em=>{ _insertAt(ta, em); _tlCmpText=ta.value; grow(); });
+          else if(a==='gif') gifPicker(ta); }); }; }
+    // 📊 and 🤖 open the full composer with that tool already expanded, carrying what's typed. Their UI (the
+    // poll builder, the AI handlers) lives inside compose()'s closure — reimplementing it here would mean
+    // two copies to keep in sync, so the button is surfaced without forking the feature.
+    const handoff=(open)=>()=>{ const t=ta.value; reset(); compose({text:t, open}); };
+    { const pb=$('#tl-cmp-poll',box); if(pb) pb.onclick=handoff('poll'); }
+    { const ab=$('#tl-cmp-ai',box);   if(ab) ab.onclick=handoff('ai'); }
+    // Everything else (schedule / CW / background / drafts) still lives behind ＋.
     $('#tl-cmp-more',box).onclick=()=>{ const t=ta.value; reset(); compose({text:t}); };
     post.onclick=async()=>{
       const text=ta.value.trim(); if(!text) return;
@@ -5840,7 +5855,11 @@
     lines.forEach((l,i)=>ctx.fillText(l, W/2, y0+i*lh));
     return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null}={}){
+  // `open` ('poll' | 'ai' | 'react') auto-opens one of the composer's tools after the modal renders. The
+  // timeline's inline composer uses it to surface Poll/AI as first-class buttons without reimplementing
+  // their UI — the poll builder and the AI handlers live in this closure, so duplicating them inline would
+  // mean two copies of each drifting apart.
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     let qhtml=''; if(quote){ const o=Store.get(quote); if(o) qhtml=`<div class="quoted"><b>${enc((profOf(o.pubkey).name)||'anon')}</b><div class="txt">${linkify(o.content)}</div></div>`; }
     modal(`<h3>${title}</h3>${qhtml}
@@ -6142,6 +6161,10 @@
           };
         } }
       ta.focus();
+      // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
+      // Clicking the real control reuses its existing handler, so there's no second implementation to
+      // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
+      if(open){ const b=$({poll:'#cmp-poll', ai:'#cmp-ai', react:'#cmp-react'}[open]||'', root); if(b) b.click(); }
     });
   }
   // Format a Date as a <input type="datetime-local"> value (LOCAL time, no tz): YYYY-MM-DDTHH:MM.
