@@ -629,15 +629,27 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-.topbar h2{margin:0;font-size:24px;letter-spacing:1px;font-weight:800}
+/* No box: .glass gave it a border on all four sides AND a translucent panel, so every view header read as
+   a floating rectangle with the city skyline murkily visible through it. The title is just a heading on the
+   page now, matching the borderless side panels. Safe to be transparent because .main is a flex COLUMN —
+   #feed is a sibling that scrolls inside itself, so nothing ever passes behind this bar. */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 14px 12px;
+  background:transparent;border:0;position:sticky;top:0;z-index:5}
+.topbar h2{margin:0;font-size:23px;letter-spacing:.4px;font-weight:800;line-height:1.2}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
-.searchbox .input{margin:0;padding:9px 14px;font-size:16.5px}
 /* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
    sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */
 @media(min-width:821px){ .searchbox{display:none} }
 .nav-search{flex-shrink:0;margin:0 0 10px}
-.nav-search .input{width:100%;margin:0;padding:9px 13px;font-size:15px}
+/* Ditto-style search: a soft pill, not a boxed form field. Borderless at rest with a panel fill, and the
+   accent only appears on focus — so it reads as a control rather than competing with the nav items.
+   Applies to BOTH inputs (sidebar on desktop, topbar on mobile) so they can't drift apart. */
+.nav-search .input,.searchbox .input{width:100%;margin:0;padding:10px 16px;font-size:16px;   /* >=16px or iOS Safari zooms the page on focus */
+  border:1px solid transparent;border-radius:999px;background:var(--panel2);color:var(--text);transition:.15s}
+.nav-search .input::placeholder,.searchbox .input::placeholder{color:var(--muted)}
+.nav-search .input:hover,.searchbox .input:hover{background:var(--panel)}
+.nav-search .input:focus,.searchbox .input:focus{border-color:var(--neon);background:var(--panel);
+  box-shadow:0 0 0 3px rgba(var(--accent-rgb),.13)}
 
 /* ===== timeline header: inline composer + Home/Nostrverse tabs (ditto.pub-style) =====
    Emitted as DIRECT children of #feed, not wrapped: .tl-tabs is position:sticky, and a sticky element can
@@ -649,6 +661,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .tl-cmp-ta{width:100%;min-height:54px;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);
   resize:none;overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
 .tl-cmp-ta::placeholder{color:var(--muted)}
+/* Kill the global `textarea:focus` treatment here: border-color is a no-op (this one is border:0) but its
+   box-shadow glow drew a ring around the composer the moment you clicked in. */
+.tl-cmp-ta:focus{border:0;box-shadow:none;outline:none}
 /* Always visible — the composer is a real box, not a one-line field that unfolds on focus. */
 .tl-cmp-tools{display:flex;align-items:center;gap:10px;margin-top:10px}
 /* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
