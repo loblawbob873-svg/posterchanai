@@ -9900,6 +9900,11 @@
   async function renderThread(id, hints){
     VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
+    // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
+    // rendered whatever partial set came back: the "only 1 reply, correct after refresh" bug. Waiting for a
+    // live socket first is instant when we're already connected, and also revives a zombie.
+    try{ await Relay.ready(); }catch(_){}
     let ev=Store.get(id);
     if(!ev){ ev=await fetchEvent(id, hints); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
@@ -9920,10 +9925,17 @@
     // Two reply queries in PARALLEL: descendants that root-tag the root, AND direct replies to the CLICKED
     // post (a reply that only tags its immediate parent wouldn't appear in the root query — this keeps its
     // sub-branch). Merge with the ancestor chain + the clicked post itself so the tapped post never vanishes.
-    const [byRoot, byClicked] = await Promise.all([
+    let [byRoot, byClicked] = await Promise.all([
       Relay.query([{ kinds:[1], '#e':[root.id], limit:500 }]).catch(()=>[]),
       id!==root.id ? Relay.query([{ kinds:[1], '#e':[id], limit:200 }]).catch(()=>[]) : Promise.resolve([]),
     ]);
+    // A query that timed out instead of EOSEing may have returned only PART of the thread. Rendering that
+    // as the whole conversation is what made replies "go missing" until a refresh — so ask once more and
+    // keep the bigger answer. (A genuinely reply-less root EOSEs immediately and never gets here.)
+    if(byRoot && byRoot.complete===false){
+      const retry=await Relay.query([{ kinds:[1], '#e':[root.id], limit:500 }]).catch(()=>[]);
+      if(retry.length>byRoot.length) byRoot=retry;
+    }
     const merged=new Map();
     for(const x of chain) merged.set(x.id, x);              // clicked post + its ancestors up to root
     for(const x of [...byRoot, ...byClicked]) merged.set(x.id, x);

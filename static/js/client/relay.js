@@ -280,11 +280,22 @@
     query(filters, timeout=6000){
       return new Promise((res)=>{
         const got = []; let done = false;
-        const finish = (viaTimeout) => { if (done) return; done = true; this.close(id);
+        const settle = (viaTimeout) => {
+          this.close(id);
           // No EOSE from ANY relay within the window → the socket is likely a zombie (frozen by a
           // proxy/resume). Kick a reconnect so the retry + the next query succeed.
           if (viaTimeout && !got.length) { try{ this.reviveStale(); }catch(_){} }
-          res(got); };
+          // `complete` = every relay EOSE'd, so the set is the whole answer. False means we gave up on the
+          // timer instead, and the result may be PARTIAL — a REQ fired at a still-CONNECTING socket is
+          // silently dropped by _send and never draws an EOSE. Non-enumerable so spreads/JSON ignore it.
+          try{ Object.defineProperty(got, 'complete', { value: !viaTimeout, enumerable: false, configurable: true }); }catch(_){}
+          res(got);
+        };
+        const finish = (viaTimeout) => { if (done) return; done = true;
+          // Drain pending signature verifications before resolving, or events already received from an
+          // untrusted relay are thrown away on this path (the EOSE path above already drains them).
+          if (viaTimeout && this._vq.length) this._flush().then(() => settle(true), () => settle(true));
+          else settle(viaTimeout); };
         const id = this.subscribe(filters, {
           live: false,
           onEvent: ev => got.push(ev),    // pool already deduped by id before delivery
