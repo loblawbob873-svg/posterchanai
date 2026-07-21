@@ -2814,11 +2814,15 @@
   function openStream(e){
     VIEW='stream'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Stream';
     const feed=$('#feed'); const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
-    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled stream)';
-    const summary=(e.tags.find(t=>t[0]==='summary')||[])[1]||'';
-    const url=(e.tags.find(t=>t[0]==='streaming')||[])[1]||(e.tags.find(t=>t[0]==='recording')||[])[1]||'';
+    const _tag=(n)=>(e.tags.find(t=>t[0]===n)||[])[1]||'';
+    const title=_tag('title')||'(untitled stream)';
+    const summary=_tag('summary');
     const st=streamStatus(e);
-    const dtag=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
+    // An ENDED stream's `streaming` tag still points at the (now dead) live URL while `recording` holds
+    // the replay — and most clients (zap.stream, OvenMediaEngine) leave BOTH tags on the event. Preferring
+    // `streaming` unconditionally meant every external replay silently played a dead URL.
+    const url = st==='ended' ? (_tag('recording')||_tag('streaming')) : (_tag('streaming')||_tag('recording'));
+    const dtag=_tag('d');
     const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
     const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
@@ -3029,7 +3033,7 @@
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
-      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
@@ -4101,15 +4105,21 @@
     mp.appendChild(v); v.removeAttribute('id');   // MOVE the playing element (hls stays attached → no interruption)
     _miniHls=_streamHls; _streamHls=null;          // hand hls ownership to the mini
     _miniEv=ev; mp.classList.add('on');
-    $('#mini-close').onclick=()=>closeMini();
+    $('#mini-close').onclick=()=>closeMini(true);
     $('#mini-open').onclick=()=>{ const e2=_miniEv; closeMini(); if(e2) openStream(e2); };
     v.play().catch(()=>{});
     toast('stream popped out — keeps playing while you browse');
   }
-  function closeMini(){
+  // `restore` is opt-in (the ✕ button) — popOutStream and ⤢ do their own thing and must NOT re-render.
+  // popOutStream MOVES the live <video> out of the stream view and strips its id, so a bare teardown left
+  // that page with no player and no way back: ⧉ then silently no-op'd on the missing #st-video and only
+  // navigating away and re-opening the stream brought it back. Re-render if the user is still on it.
+  function closeMini(restore){
     const mp=$('#mini-player'); if(!mp) return;
+    const ev=_miniEv;
     if(_miniHls){ try{ _miniHls.destroy(); }catch(_){} _miniHls=null; }
     _miniEv=null; mp.classList.remove('on'); mp.innerHTML='';
+    if(restore && ev && VIEW==='stream' && openStream._view===ev.id) openStream(ev);
   }
   // lazy-load the vendored hls.js only when a stream is actually opened (it's ~400 KB)
   let _hlsP=null;
@@ -4122,6 +4132,15 @@
   // Most Nostr streams are HLS (.m3u8). Chrome/Firefox can't play that natively ("invalid MIME
   // type") — only Safari can — so route HLS through hls.js; play everything else (mp4/webm
   // recordings, native-HLS Safari) straight off the <video> src.
+  function _streamNote(msg){ const n=$('#st-note'); if(n) n.textContent=msg; }
+  // Does this URL need our hlsSession cookie? That cookie is set ONLY by our own HLS proxy and scoped to
+  // `Path=/api/streams/hls/<token>/`, so match the path — NOT the origin. The native app reaches its own
+  // server cross-origin (so same-origin would be wrong), and a deployment using a direct `stream_hls_base`
+  // subdomain bypasses the proxy entirely and never has that cookie to send.
+  function _ourHls(url){
+    try{ return new URL(url, location.href).pathname.startsWith('/api/streams/hls/'); }
+    catch(_){ return false; }
+  }
   function attachStream(url){
     const v=$('#st-video'); if(!v) return;
     cleanupInlineStream();   // drop any previous inline hls before attaching a new one
@@ -4129,14 +4148,23 @@
     if(isHls && !v.canPlayType('application/vnd.apple.mpegurl')){
       loadHls().then(()=>{
         if(window.Hls && window.Hls.isSupported()){
-          // withCredentials: our HLS proxy uses an hlsSession cookie; the native app plays cross-origin,
-          // so hls.js must send credentials or the variant/segment requests 401 (blank video).
-          const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=true; }catch(_){} } }); _streamHls=h;
+          // withCredentials ONLY for our own HLS proxy (it authenticates with an hlsSession cookie, and
+          // the native app reaches it cross-origin). Sending credentials to a third-party CDN is FATAL:
+          // CORS forbids `Access-Control-Allow-Origin: *` on a credentialed request, and that is exactly
+          // what zap.stream's CloudFront returns — so every playlist/segment was blocked and the replay
+          // never played, while our own mp4 VODs were unaffected.
+          const creds=_ourHls(url);
+          const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=creds; }catch(_){} } }); _streamHls=h;
           h.loadSource(url); h.attachMedia(v);
-          h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal){ const n=$('#st-note'); if(n) n.textContent='Could not play this stream here — try the “Open stream URL” link below.'; } });
-        } else { v.src=url; }
-      }).catch(()=>{ v.src=url; });
+          h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the “Open stream URL” link below.'); });
+        } else {
+          // No hls.js AND no native HLS. Assigning the .m3u8 to <video> here guarantees the browser's
+          // "No video with supported format and MIME type found" overlay — say something useful instead.
+          _streamNote('This stream needs HLS playback, which isn’t available here — try the “Open stream URL” link below.');
+        }
+      }).catch(()=>{ _streamNote('Couldn’t load the video player — try the “Open stream URL” link below.'); });
     } else {
+      v.onerror=()=>_streamNote('Could not play this video here — try the “Open stream URL” link below.');
       v.src=url;
     }
   }
