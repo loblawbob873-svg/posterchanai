@@ -4434,8 +4434,51 @@
       if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)){ media.push(_media(E, null, null, BLOBF)); return tail; }
       return url;  // non-media URL: leave for linkify
     });
-    return { text, gallery: media.length?`<div class="media-row">${media.join('')}</div>`:'' };
+    // One attachment keeps the plain row. TWO OR MORE become a swipeable carousel (scroll-snap gives us
+    // native touch/trackpad swipe for free) so a 6-image post doesn't turn into a wall of thumbnails.
+    // `items` = the bare <img>/<video> html, no wrapper — callers that re-grid the media (the profile
+    // Media tab) use it directly instead of regex-stripping the wrapper off `gallery`, which silently
+    // broke the moment that wrapper stopped always being <div class="media-row">.
+    if(!media.length) return { text, gallery:'', items:media };
+    if(media.length===1) return { text, gallery:`<div class="media-row">${media[0]}</div>`, items:media };
+    const n=media.length;
+    return { text, items:media, gallery:`<div class="media-car" data-n="${n}">`
+      +`<div class="mc-track">${media.map(m=>`<div class="mc-item">${m}</div>`).join('')}</div>`
+      +`<button class="mc-nav mc-prev" aria-label="Previous" disabled>‹</button>`
+      +`<button class="mc-nav mc-next" aria-label="Next">›</button>`
+      +`<span class="mc-count">1/${n}</span>`
+      +`<div class="mc-dots">${media.map((_,i)=>`<i${i?'':' class="on"'}></i>`).join('')}</div>`
+      +`</div>` };
   }
+  // ---------- media carousel ----------
+  // Bound ONCE by delegation. Carousels are emitted as HTML strings by mediaParts and land in the
+  // timeline, threads, profiles, bookmarks, search and article views — per-render binding would have to
+  // be duplicated into every one of those paths AND re-run on each live timeline redraw.
+  function _mcSync(track){
+    const car=track.closest('.media-car'); if(!car) return;
+    const n=track.children.length; if(!n) return;
+    const idx=Math.max(0, Math.min(n-1, Math.round(track.scrollLeft/Math.max(1,track.clientWidth))));
+    const cnt=car.querySelector('.mc-count'); if(cnt) cnt.textContent=(idx+1)+'/'+n;
+    car.querySelectorAll('.mc-dots i').forEach((d,k)=> d.classList.toggle('on', k===idx));
+    const p=car.querySelector('.mc-prev'), nx=car.querySelector('.mc-next');
+    if(p) p.disabled = idx<=0;
+    if(nx) nx.disabled = idx>=n-1;
+  }
+  // scroll doesn't bubble → listen in the CAPTURE phase to catch it from any .mc-track on the page
+  document.addEventListener('scroll', e=>{
+    const t=e.target; if(t && t.classList && t.classList.contains('mc-track')) _mcSync(t);
+  }, true);
+  // Capture phase: these clicks must NOT reach the note-open / lightbox handlers underneath.
+  document.addEventListener('click', e=>{
+    if(!e.target.closest) return;
+    const nav=e.target.closest('.mc-nav');
+    const dot=e.target.closest('.mc-dots i');
+    if(!nav && !dot) return;
+    e.preventDefault(); e.stopPropagation();
+    const car=(nav||dot).closest('.media-car'); const track=car&&car.querySelector('.mc-track'); if(!track) return;
+    if(nav) track.scrollBy({ left:(nav.classList.contains('mc-next')?1:-1)*track.clientWidth, behavior:'smooth' });
+    else { const k=[...car.querySelectorAll('.mc-dots i')].indexOf(dot); if(k>=0) track.scrollTo({ left:k*track.clientWidth, behavior:'smooth' }); }
+  }, true);
   // ---- NIP-30 custom emoji ----------------------------------------------------------------------
   // Fediverse-bridged notes (and reactions) carry ["emoji", shortcode, url] tags; render the actual
   // image in place of the bare ":shortcode:" text (otherwise it reads like inline code). Restricted
@@ -4719,7 +4762,7 @@
         else if(/^audio\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'audio'); }
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
         return; }   // docs: fall through to the link (download / new tab)
-      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
+      const im=e.target.closest('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img'); if(im){ e.preventDefault(); openLightbox(im.currentSrc||im.src); return; }
       const xv=e.target.closest('.xt-verify'); if(xv){ e.stopPropagation();   // Monero tip: copy a ready-to-run verify command for the viewer's own wallet
         const tx=xv.dataset.xtxid||'', ad=xv.dataset.xaddr||'', pf=xv.dataset.xproof||'';
         if(!_isTxid(tx) || !isXmrAddr(ad) || !_isProofSig(pf)){ toast('this proof looks malformed — not copying'); return; }   // re-validate: never build a wallet command from untrusted tag data
@@ -4741,7 +4784,7 @@
       // returned above as a lightbox; video & co. must keep their own controls), and skip when the
       // user just drag-SELECTED text (so highlight-to-copy works instead of opening the thread).
       const hasSelection = window.getSelection && String(window.getSelection()).length>0;
-      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.media-row,.media-grid,.link-card')) renderThread(art.dataset.id); return; }
+      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.media-row,.media-grid,.media-car,.link-card')) renderThread(art.dataset.id); return; }
       if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
@@ -8028,8 +8071,8 @@
         return r.length ? r.map(feedNoteHtml).join('') : '<div class="empty">No replies yet.</div>'; }   // feedNoteHtml wraps a reply in the same reply-pair+context markup
       if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
-        // gallery only — pull each post's media tags out of its mediaParts() gallery and grid them
-        const items=m.map(e=>mediaParts(e.content).gallery.replace(/^<div class="media-row">/,'').replace(/<\/div>$/,'')).join('');
+        // gallery only — take each post's bare media tags (not the row/carousel wrapper) and grid them
+        const items=m.map(e=>mediaParts(e.content).items.join('')).join('');
         return `<div class="media-grid">${items}</div>`; }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
