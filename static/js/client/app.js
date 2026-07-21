@@ -8139,7 +8139,7 @@
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
-        <div class="follow-stats"><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
+        <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
@@ -8194,6 +8194,9 @@
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
+    // Posts has no list of its own — the Notes tab IS that list, so send them there rather than leaving a
+    // dead-looking button next to two clickable stats.
+    { const pb=$('#show-posts'); if(pb) pb.onclick=()=>{ const t=$$('.prof-tab',feed).find(x=>x.dataset.tab==='notes'); if(t) t.click(); }; }
     $('#show-following').onclick=()=>peopleModal('Following', _prof.following||[]);
     $('#show-followers').onclick=async()=>{   // lazy-load the follower LIST only when actually opened (count was already fetched via NIP-45)
       if(!_prof.followers || !_prof.followers.length){
@@ -8227,15 +8230,19 @@
       // socket, so a single fire can land followers but 0 following (or 0/0). Patch each stat the moment ITS
       // read arrives, and retry (up to 3x) until BOTH are in — a genuinely-empty field just exhausts the
       // retries and shows 0. This does NOT touch the notes/paint path above.
-      let k3=[], followerCount=0, pinList=[];
+      let k3=[], followerCount=0, postCount=0, pinList=[];
       for(let attempt=0; attempt<3; attempt++){
-        const [ak3, acount, apins] = await Promise.all([
+        const [ak3, acount, apins, aposts] = await Promise.all([
           Relay.query([{authors:[pk],kinds:[3],limit:1}]).catch(()=>[]),
           Relay.count([{kinds:[3],'#p':[pk]}]).catch(()=>0),   // NIP-45 COUNT — don't pull 1000 contact-list blobs just to tally (the profile-open spike). The list is lazy-loaded on "Followers" click.
           Relay.query([{authors:[pk],kinds:[10001],limit:1}]).catch(()=>[]),
+          // Post tally, also via COUNT — the Notes tab only ever holds a page of events, so counting what's
+          // rendered would show "40" for everyone. kind 1 only: reposts/articles/streams have their own tabs.
+          Relay.count([{authors:[pk],kinds:[1]}]).catch(()=>0),
         ]);
         if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
         if(acount>followerCount){ followerCount=acount; const fr=$('#show-followers b'); if(fr) fr.textContent=followerCount; }
+        if(aposts>postCount){ postCount=aposts; const pr=$('#show-posts b'); if(pr) pr.textContent=postCount; }
         if(ak3.length){ k3=ak3; _prof.following=k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]); const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length; }
         if(apins.length) pinList=apins;
         if(followerCount && k3.length) break;
@@ -8244,7 +8251,8 @@
       // Write the FINAL values unconditionally — a genuinely-empty field (0 followers, or no contact list)
       // never triggered the in-loop patch, so without this it would keep the "·" placeholder instead of "0".
       { const fr=$('#show-followers b'); if(fr) fr.textContent=Number(followerCount)||0;
-        const ff=$('#show-following b'); if(ff) ff.textContent=(_prof.following||[]).length; }
+        const ff=$('#show-following b'); if(ff) ff.textContent=(_prof.following||[]).length;
+        const pr=$('#show-posts b'); if(pr) pr.textContent=Number(postCount)||0; }
       const pinIds=pinList.length ? pinList.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]) : [];
       if(pinIds.length){
         const got=await Relay.query([{ids:pinIds}]).catch(()=>[]); got.forEach(e=>Store.saveEvent(e));
