@@ -7952,7 +7952,7 @@
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}${_notifCtx(e)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><div class="notif-hd"><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}</div>${_notifCtx(e)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
