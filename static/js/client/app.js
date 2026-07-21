@@ -4935,6 +4935,10 @@
       const div=document.createElement('div'); div.innerHTML=noteCard(e, `<div class="repost-tag">${RT_ICON} ${enc(el.dataset.reposter||'someone')} reposted</div>`);
       if(div.firstElementChild) el.replaceWith(div.firstElementChild);
     });
+    $$(`[data-nctx="${e.id}"]`).forEach(el=>{   // notification context: fill the preview once the post lands
+      const div=document.createElement('div'); div.innerHTML=_notifCtxHtml(e.id);
+      if(div.firstElementChild) el.replaceWith(div.firstElementChild); else el.remove();
+    });
     $$(`[data-qload="${e.id}"]`).forEach(el=>{
       const div=document.createElement('div'); div.innerHTML=quotedDiv(e);
       if(div.firstElementChild) el.replaceWith(div.firstElementChild);
@@ -7891,12 +7895,35 @@
         return '@'+String(nm || (NT().nip19.npubEncode(pk).slice(0,10)+'…')).replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(); }catch(_){ return '@…'; }
     });
   }
+  // Which of YOUR posts a notification is about. For a reply/mention it's the parent they answered; for a
+  // reaction/repost/zap it's the referenced post. Follows and reports aren't about a post at all.
+  function _notifCtxId(e){
+    if(e.kind===3 || e.kind===1984) return '';
+    if(e.kind===1 || e.kind===42 || e.kind===1111) return replyParentId(e)||'';
+    return (e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
+  }
+  // A one-line preview of that post, so "someone reacted ♥ to your post" says WHICH post. Renders from
+  // cache; anything not cached is requested and patched in by patchLoaded when it lands.
+  function _notifCtxHtml(id){
+    const o=Store.get(id);
+    if(!o) return `<div class="notif-ctx" data-nctx="${enc(id)}"><span class="muted small">…</span></div>`;
+    const mp=mediaParts(o.content);
+    const body=(mp.text||'').replace(/\s+/g,' ').trim().slice(0,140);
+    const thumb=(mp.items&&mp.items[0])?`<span class="notif-ctx-media">${mp.items[0]}</span>`:'';
+    if(!body && !thumb) return '';
+    return `<div class="notif-ctx">${thumb}<span class="notif-ctx-txt">${body?applyEmojis(enc(body),o):'<span class="muted small">(image)</span>'}</span></div>`;
+  }
+  function _notifCtx(e){
+    const id=_notifCtxId(e); if(!id) return '';
+    if(!Store.get(id)) needEvent(id);
+    return _notifCtxHtml(id);
+  }
   function notifHtml(e){
     if(e.type==='group'){
       const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
       const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
       const who = `<span class="name" data-prof="${fp}">${emojiName(fp, p.name||p.display_name||'someone')}</span>`+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
-      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}${_notifCtx(first)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||LOGO;
@@ -7919,7 +7946,7 @@
     else {cls='mention';ic='@';txt='mentioned you: '+applyEmojis(enc(_notifPreview(e.content).slice(0,80)), e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
     const isProf = e.kind===3||e.kind===1984;
-    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+    return `<div class="notif ${cls}" ${isProf?`data-prof="${fromPk}"`:`data-open="${tgt}"`}><span class="ic">${ic}</span><img class="notif-av" data-pk="${fromPk}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${fromPk}">${emojiName(fromPk,p.name||p.display_name||'anon')}</b> ${txt}${_notifCtx(e)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
   }
 
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------

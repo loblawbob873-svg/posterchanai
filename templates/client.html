@@ -151,12 +151,6 @@
             </div>
             <button class="nav-item" data-view="settings"><span class="ic">⚙️</span><span>Settings</span></button>
         </nav>
-        <!-- Compose lives here, in NORMAL FLOW between the nav and your avatar. Both a fixed and an
-             absolute FAB got clipped: body{zoom} on desktop makes the zoomed body a containing block for
-             fixed descendants, so "bottom of the viewport" resolved to a point below the visible area.
-             In-flow can't be clipped by any of that. Mobile never sees it — the sidebar is display:none
-             there and the bottom nav has ✏️. -->
-        <button id="btn-compose" class="btn btn-cyan full nav-compose">✎ New post</button>
         <div class="me" id="me-card"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
         <div class="usercount hidden" id="user-count"></div>
