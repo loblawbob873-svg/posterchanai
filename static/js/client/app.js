@@ -2037,7 +2037,7 @@
     return (canPost?`<div class="tl-cmp" id="tl-cmp">
         <img class="tl-cmp-av" src="${enc(av)}" onerror="this.src='${LOGO}'" alt="">
         <div class="tl-cmp-body">
-          <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s on your mind?"></textarea>
+          <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s Good Cuh?"></textarea>
           <div class="tl-cmp-tools">
             <button class="btn btn-ghost small" id="tl-cmp-attach" title="Attach an image or file">📎</button>
             <button class="btn btn-ghost small" id="tl-cmp-more" title="Poll, schedule, content warning, AI…">⤢ More</button>
@@ -2064,7 +2064,12 @@
     ta.addEventListener('focus', expand);
     ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); });
     // Collapse on blur ONLY when empty — snapping shut on a half-written post would lose the user's place.
-    ta.addEventListener('blur', ()=>{ if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; } });
+    // …but NOT when focus is heading somewhere inside the composer: pressing a tool button blurs the
+    // textarea first, and collapsing hides .tl-cmp-tools mid-gesture, so the element disappears between
+    // mousedown and mouseup and no click is ever produced (that's why ⤢ More did nothing on an empty box).
+    box.addEventListener('mousedown', e=>{ if(e.target.closest('button')) e.preventDefault(); });   // keep focus on the textarea
+    ta.addEventListener('blur', ()=>{ if(box.contains(document.activeElement)) return;
+      if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; } });
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
