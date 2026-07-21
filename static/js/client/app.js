@@ -6844,7 +6844,10 @@
       }
       MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
       MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)]); };
-    if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(go); } else go();
+    // Reconcile against the server before playing, so deleted songs can't be queued (and an emptied
+    // library correctly shows the "add some music" guide instead of failing track by track).
+    const ready = FilesIdx._pulled ? Promise.resolve() : (FilesIdx._pulled=true, FilesIdx.pull());
+    Promise.resolve(ready).then(_refreshBlobHave).then(go, go);
   }
   async function renderBlossom(){
     const feed=$('#feed');
@@ -7064,7 +7067,8 @@
     let list=null;
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
-    if(list!==null){ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); _gcOrphanIndexBlobs(list); }
+    if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
+      if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); _gcOrphanIndexBlobs(list); }
     // Label saved-stream recordings ("Past streams") so they don't show as anonymous video blobs. This is
     // a cosmetic cross-reference of the user's own VOD list — fetch it ONCE (cached), in the BACKGROUND,
     // and re-render the grid when it lands. Never block the drive's first paint on this (a slow/hung
@@ -7347,8 +7351,20 @@
     while(_trackUrlOrder.length>6){ const old=_trackUrlOrder.shift(); if(old!==(MusicPlayer&&MusicPlayer.cur) && _trackUrls[old]){ URL.revokeObjectURL(_trackUrls[old]); delete _trackUrls[old]; } }
     return u;
   }
+  // Blobs the server actually still HAS (from Blossom /list). The index is a local/encrypted record of
+  // what you uploaded and is NOT updated when blobs are deleted elsewhere — so trusting it alone made the
+  // player queue songs that no longer exist. Only _renderMusicList passed a list; openMusic, refreshQueue
+  // and the player's library list all passed null, which is why Files → Music looked right while the
+  // player kept trying deleted tracks. null = never fetched → behave as before rather than hide everything.
+  let _blobHave=null;
+  async function _refreshBlobHave(){
+    if(!ME) return _blobHave;
+    try{ const r=await fetch(mediaServer()+'/list/'+ME.pubkey);
+      if(r.ok){ const l=await r.json(); if(Array.isArray(l)) _blobHave=new Set(l.map(b=>b.sha256)); } }catch(_){}
+    return _blobHave;
+  }
   function musicTracks(list){
-    const have=list?new Set(list.map(b=>b.sha256)):null;
+    const have=list?new Set(list.map(b=>b.sha256)):_blobHave;
     return Object.keys(FilesIdx._norm().files)
       .filter(sha=> FilesIdx.folderOf(sha)==='Music' && FilesIdx.meta(sha).enc && (!have||have.has(sha)))
       .map(sha=>({sha, m:FilesIdx.meta(sha)})).sort((a,b)=>(b.m.ts||0)-(a.m.ts||0));
