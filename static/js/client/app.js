@@ -7926,10 +7926,31 @@
   }
   function notifHtml(e){
     if(e.type==='group'){
-      const first=e.events[0], fp=first.pubkey, p=profOf(fp), av=p.picture||LOGO, others=e.events.length-1;
+      const first=e.events[0];
+      // Group by PERSON, not by event: one user reacting twice (two emojis on the same post) was
+      // counted as two actors and rendered "Alice and 1 other" — where the other one was Alice.
+      const seen=new Set(), actors=[];
+      for(const ev of e.events){ if(!seen.has(ev.pubkey)){ seen.add(ev.pubkey); actors.push(ev.pubkey); } }
+      const rawName=(pk)=>{ const q=profOf(pk); return q.name||q.display_name||'someone'; };
+      const linkName=(pk)=>`<span class="name" data-prof="${pk}">${emojiName(pk, rawName(pk))}</span>`;
       const verb = e.kind===6?'reposted your note':`reacted ${reactDisp(first)} to your post`;
-      const who = `<span class="name" data-prof="${fp}">${emojiName(fp, p.name||p.display_name||'someone')}</span>`+(others>0?` <span class="muted">and ${others} other${others>1?'s':''}</span>`:'');
-      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span><img class="notif-av" data-pk="${fp}" src="${enc(av)}" onerror="this.src='${LOGO}'"><div><b>${who}</b> ${verb}${_notifCtx(first)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
+      // Name everyone up to three; only collapse from the fourth on. Naming just one and saying
+      // "and 1 other" hid a name to save no space — this way "and 1 other" can never appear, and
+      // whoever is collapsed is still named in the tooltip.
+      const named=actors.length<=3?actors:actors.slice(0,2), rest=actors.length-named.length;
+      const parts=named.map(linkName);
+      let who = rest>0 ? parts.join(', ')
+              : parts.length>1 ? parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1]
+              : parts[0];
+      if(rest>0){
+        const restNames=actors.slice(named.length).map(pk=>rawName(pk)).join(', ');
+        who += ` <span class="muted" title="${enc(restNames)}">and ${rest} other${rest>1?'s':''}</span>`;
+      }
+      // Stack up to three avatars so the row shows at a glance that several people acted.
+      const avs = actors.slice(0,3).map(pk=>
+        `<img class="notif-av" data-pk="${pk}" src="${enc(profOf(pk).picture||LOGO)}" title="${enc(rawName(pk))}" onerror="this.src='${LOGO}'">`).join('');
+      const avWrap = actors.length>1 ? `<span class="notif-avs">${avs}</span>` : avs;
+      return `<div class="notif ${e.kind===6?'rt':'like'}" data-open="${enc(e.tgt)}"><span class="ic">${e.kind===6?'↻':'♥'}</span>${avWrap}<div><b>${who}</b> ${verb}${_notifCtx(first)}<div class="muted small">${timeAgo(_notifTs(e))}</div></div></div>`;
     }
     const fromPk = e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey;
     const p=profOf(fromPk); const av=p.picture||LOGO;

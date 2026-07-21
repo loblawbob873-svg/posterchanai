@@ -1367,6 +1367,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    next to the name. Top-aligned is how ditto/Mastodon place them. */
 .notif{display:flex;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);align-items:flex-start;font-size:16.5px}
 .notif > .ic,.notif > .notif-av{margin-top:1px;flex:0 0 auto}
+/* Grouped reaction/repost rows stack the actors' avatars so you can see WHO acted without
+   expanding. Overlapped left-to-right; the ring matches the row background so they read as
+   separate faces. Each carries a title= with the person's name (the collapsed "and N others"
+   does too), because a bare count told you nothing about who it was. */
+.notif > .notif-avs{display:flex;flex:0 0 auto;margin-top:1px}
+.notif > .notif-avs .notif-av{margin-left:-11px;box-shadow:0 0 0 2px var(--bg)}
+.notif > .notif-avs .notif-av:first-child{margin-left:0}
 .notif > div{flex:1;min-width:0}
 .notif .ic{font-size:20px;width:26px;text-align:center}
 /* In-app updater row (pinned atop Notifications when a new build is ready). */
