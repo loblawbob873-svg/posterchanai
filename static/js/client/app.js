@@ -2970,7 +2970,7 @@
     feed.innerHTML=`<div class="stream-view">
       <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button><span style="display:flex;gap:6px"><button class="btn btn-ghost small" id="st-chat-toggle">💬 Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
-      <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}</div>
+      <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
       <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
         <div class="stream-main">
           ${(url||st==='ended')?`<video class="stream-player" id="st-video" controls playsinline></video>
@@ -2999,6 +2999,7 @@
     // mp4/fmp4 straight into <video>. `openStream._tok` guards against a race if you tap another stream
     // before the fetch resolves.
     openStream._view=e.id;   // guard on the (unique) event id, not the d-tag which can be empty
+    if(st==='live') _startStreamViewers(hpk, dtag, e.id);   // only a live stream's headcount moves
     if(st==='ended'){
       const _view=e.id; { const n0=$('#st-note'); if(n0) n0.textContent='Loading recording…'; }
       (async()=>{
@@ -3107,6 +3108,11 @@
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
   function _startLiveHb(){   // if the HLS 404s repeatedly, OBS stopped → mark the stream ended so it doesn't orphan as LIVE
     _stopLiveHb(); let miss=0;
+    // Count viewers on the OBS/desktop path too. _startViewerPoll used to be called ONLY from the phone
+    // broadcast overlay, so an OBS stream never polled MediaMTX and never wrote `current_participants` back
+    // to its kind-30311 — which is why a desktop stream showed no viewer count anywhere, here or in any
+    // other NIP-53 client. Every OBS/adopt path goes through this heartbeat, so it belongs here.
+    _startViewerPoll();
     _liveHb=setInterval(async()=>{
       if(!_liveStream){ _stopLiveHb(); return; }
       let ok=false; try{ const r=await fetch(_liveStream.hls,{cache:'no-store'}); ok=r.ok; }catch(_){ ok=false; }
@@ -4237,7 +4243,24 @@
   // mini-player. Keeping them separate means a feed re-render (cleanupInlineStream) can't tear down
   // a popped-out stream, and closing the mini can't tear down a newer inline stream.
   let _streamHls=null, _miniHls=null, _miniEv=null;
-  function cleanupInlineStream(){ if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; } }
+  function cleanupInlineStream(){ if(_streamHls){ try{ _streamHls.destroy(); }catch(_){} _streamHls=null; } _stopStreamViewers(); }
+  // Headcount for the stream you're WATCHING. The 30311 is replaceable and the host re-signs it as the
+  // number moves, so re-read it on a timer — otherwise the badge freezes at whatever the card happened to
+  // carry when you opened it. Cleared by cleanupInlineStream on leaving the view.
+  const _viewersTag = e => (e && (e.tags.find(t=>t[0]==='current_participants')||[])[1]) || '';
+  let _streamViewerPoll=null;
+  function _stopStreamViewers(){ if(_streamViewerPoll){ clearInterval(_streamViewerPoll); _streamViewerPoll=null; } }
+  function _startStreamViewers(hpk, dtag, viewId){
+    _stopStreamViewers(); if(!dtag) return;
+    _streamViewerPoll=setInterval(async()=>{
+      if(VIEW!=='stream' || openStream._view!==viewId){ _stopStreamViewers(); return; }
+      let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], authors:[hpk], '#d':[dtag], limit:1 }]); }catch(_){ return; }
+      const fresh=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0]; if(!fresh) return;
+      if(VIEW!=='stream' || openStream._view!==viewId) return;   // navigated away during the query
+      const n=_viewersTag(fresh); const el=document.getElementById('st-viewers');
+      if(el) el.textContent = n ? ` · 👁 ${n} watching` : '';
+    }, 30000);
+  }
   function popOutStream(ev){
     const v=$('#st-video'); if(!v) return;
     closeMini();   // only one mini at a time
