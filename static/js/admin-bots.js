@@ -16,7 +16,7 @@ const BOT_KNOWN_KEYS = [
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
     'auto_post_interval_min', 'auto_post_interval_max', 'auto_post_max_per_day',
-    'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics', 'auto_post_rooms',
+    'auto_post_quiet_hours', 'auto_post_seed', 'auto_post_topics',
     'text',  // image bot: caption posted with the image (IMAGE_POSTER_TEXT)
     'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
@@ -185,11 +185,10 @@ function onBotFormChange() {
     show('bot_grp_voice', !isImage);
 
     // Scheduled auto-posting: offered for text bots; detail fields appear once enabled.
-    // Rooms field (fedi bots post to their own account, not rooms).
+    // Fedi bots post to their own account.
     const autopostOn = !isImage && ck('bot_f_auto_post_enabled');
     show('bot_grp_autopost_toggle', !isImage);
     show('bot_grp_autopost', autopostOn);
-    show('bot_grp_autopost_rooms', autopostOn);
 
     // Schedule cadence (interval/quiet/cap) is shared: text bots show it once auto-post is on,
     // image bots always (they're now interval-configurable; blank intervals = fixed hours).
