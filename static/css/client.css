@@ -552,8 +552,8 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    don't run together into one unreadable string. Wraps to 3 lines, then clamps. */
 /* "<name> replied" is its own line; the quoted words and the context card sit clearly below it. */
 .notif-hd{margin:0}
-.notif-said{display:block;margin:12px 0 2px;padding:9px 12px;border-left:3px solid var(--neon);border-radius:0 10px 10px 0;background:rgba(var(--accent-rgb),.07);color:var(--text);font-size:15px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;display:-webkit-box}
-@media(max-width:820px){ .notif-said{margin:10px 0 2px;padding:8px 10px;font-size:14px;-webkit-line-clamp:3} }
+.notif-said{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;margin:12px 0 2px;padding:10px 13px;border-left:3px solid var(--neon);border-radius:0 10px 10px 0;background:rgba(var(--accent-rgb),.07);font-family:inherit;font-size:15.5px;font-weight:400;line-height:1.55;letter-spacing:0;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:820px){ .notif-said{margin:10px 0 2px;padding:9px 11px;font-size:14.5px;line-height:1.5;-webkit-line-clamp:3} }
 .notif-ctx{margin:14px 0 2px}
 .notif-ctx .quoted{margin:0}
 .notif-ctx .quoted .txt{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}

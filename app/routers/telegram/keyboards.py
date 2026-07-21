@@ -443,14 +443,6 @@ def _has_pleroma(user) -> bool:
     )
 
 
-def _has_matrix(user) -> bool:
-    return bool(
-        user
-        and getattr(user, "matrix_enabled", False)
-        and getattr(user, "matrix_homeserver", None)
-        and getattr(user, "matrix_access_token", None)
-    )
-
 
 def _has_nostr(user) -> bool:
     # Nostr needs only a secret key (no instance); relays default if unset.
@@ -513,7 +505,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
     has_doc = any((fn or "").lower().endswith((".pptx", ".docx", ".xlsx", ".ppt", ".doc"))
                   for fn, _, ct in attachments)
 
-    _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_matrix(user) or _has_nostr(user)))
+    _social = bool(user and (_has_misskey(user) or _has_pleroma(user) or _has_nostr(user)))
     rows = []
     if has_video:
         rows.append([

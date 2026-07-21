@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _matrix_post_cache, _matrix_room_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
-from .keyboards import _has_matrix, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_matrix, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _matrix_post_cache, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
+from .keyboards import _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
+from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -320,7 +320,7 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
 
 async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_query_id):
         _gp = (_misskey_post_cache.get(chat_id) or _pleroma_post_cache.get(chat_id)
-               or _matrix_post_cache.get(chat_id) or _nostr_post_cache.get(chat_id))
+               or _nostr_post_cache.get(chat_id))
         if _gp in (None, _CONSUMED):
             _gp = _recover_post_text(callback_query) or None
         if not _gp:
@@ -363,9 +363,7 @@ async def _cb_mk(update, db, chat_id, data, callback_query, callback_query_id):
             # Clear all social post caches so stale posts can't be sent
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
-            _matrix_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
-            _matrix_room_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
             return {"ok": True}
@@ -416,9 +414,7 @@ async def _cb_plr(update, db, chat_id, data, callback_query, callback_query_id):
         if action == "skip":
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
-            _matrix_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
-            _matrix_room_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
             return {"ok": True}
@@ -464,9 +460,7 @@ async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id
         if action == "skip":
             _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
-            _matrix_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
-            _matrix_room_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
             await telegram_service.send_message(chat_id, "Post skipped.")
             return {"ok": True}
@@ -500,123 +494,6 @@ async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id
             await telegram_service.send_message(chat_id, f"❌ Failed to post to Nostr: {nostr_err}")
 
 
-async def _cb_mtx(update, db, chat_id, data, callback_query, callback_query_id):
-        parts = data.split(":", 2)
-        action = parts[1] if len(parts) > 1 else ""
-
-        mtx_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        if action == "post":
-            pending_post = _matrix_post_cache.get(chat_id)
-            # Cache miss (e.g. after service restart) — recover from message text.
-            # "" is a valid caption-less media post, so only recover when truly absent.
-            if pending_post is None:
-                pending_post = _recover_post_text(callback_query) or None
-                if pending_post:
-                    _matrix_post_cache[chat_id] = pending_post
-                    logger.info(f"mtx:post — recovered post text from message ({len(pending_post)} chars)")
-            if pending_post is None:
-                await telegram_service.send_message(chat_id, "No pending Matrix post found. Please generate a new post.")
-                return {"ok": True}
-
-            if not mtx_user or not _has_matrix(mtx_user):
-                await telegram_service.send_message(chat_id, "Matrix is not configured on your account.")
-                return {"ok": True}
-
-            # Fetch rooms
-            try:
-                from app.services.matrix_service import get_joined_rooms as _mtx_rooms
-                rooms = await _mtx_rooms(mtx_user.matrix_homeserver, mtx_user.matrix_access_token)
-            except Exception as mtx_err:
-                logger.error(f"Matrix fetch rooms error: {mtx_err}", exc_info=True)
-                await telegram_service.send_message(chat_id, f"❌ Could not fetch Matrix rooms: {mtx_err}")
-                return {"ok": True}
-
-            if not rooms:
-                await telegram_service.send_message(chat_id, "⚠️ No Matrix rooms found. Join a room first.")
-                return {"ok": True}
-
-            _matrix_room_cache[chat_id] = rooms
-
-            # Build room selector keyboard (up to 20 rooms, 2 per row)
-            buttons = []
-            row: list = []
-            for i, room in enumerate(rooms[:20]):
-                label = room["name"][:30]
-                row.append({"text": label, "callback_data": f"mtx:room:{i}"})
-                if len(row) == 2:
-                    buttons.append(row)
-                    row = []
-            if row:
-                buttons.append(row)
-            buttons.append([{"text": "❌ Cancel", "callback_data": "mtx:cancel"}])
-
-            await telegram_service.send_message(
-                chat_id,
-                "📬 Which Matrix room do you want to post to?",
-                reply_markup={"inline_keyboard": buttons},
-            )
-
-        elif action == "room" and len(parts) >= 3:
-            try:
-                room_idx = int(parts[2])
-            except ValueError:
-                return {"ok": True}
-
-            # Pop only the matrix caches — leave Misskey/Pleroma caches intact
-            # so the user can still post to those platforms after choosing a Matrix room
-            pending_post = _matrix_post_cache.pop(chat_id, None)
-            rooms = _matrix_room_cache.pop(chat_id, [])
-
-            # "" is a valid caption-less media post; only bail when truly absent.
-            if pending_post is None:
-                await telegram_service.send_message(chat_id, "No pending Matrix post found.")
-                return {"ok": True}
-
-            if not rooms or room_idx < 0 or room_idx >= len(rooms):
-                await telegram_service.send_message(chat_id, "Room not found. Please try again.")
-                return {"ok": True}
-
-            if not mtx_user or not _has_matrix(mtx_user):
-                await telegram_service.send_message(chat_id, "Matrix is not configured on your account.")
-                return {"ok": True}
-
-            room = rooms[room_idx]
-            image_bytes = _geni_image_cache.pop(chat_id, None)
-            try:
-                if image_bytes:
-                    from app.services.matrix_service import send_image as _mtx_send_img
-                    await _mtx_send_img(
-                        mtx_user.matrix_homeserver,
-                        mtx_user.matrix_access_token,
-                        room["room_id"],
-                        image_bytes,
-                        caption=pending_post,
-                    )
-                else:
-                    from app.services.matrix_service import send_message as _mtx_send
-                    await _mtx_send(
-                        mtx_user.matrix_homeserver,
-                        mtx_user.matrix_access_token,
-                        room["room_id"],
-                        pending_post,
-                    )
-                await telegram_service.send_message(chat_id, f"✅ Posted to Matrix room: {room['name']}")
-            except Exception as mtx_err:
-                logger.error(f"Matrix send error: {mtx_err}", exc_info=True)
-                await telegram_service.send_message(chat_id, f"❌ Failed to post to Matrix: {mtx_err}")
-
-        elif action == "cancel":
-            _matrix_post_cache.pop(chat_id, None)
-            _matrix_room_cache.pop(chat_id, None)
-            _misskey_post_cache.pop(chat_id, None)
-            _pleroma_post_cache.pop(chat_id, None)
-            _nostr_post_cache.pop(chat_id, None)
-            _geni_image_cache.pop(chat_id, None)
-            await telegram_service.send_message(chat_id, "Post cancelled.")
 
 
 async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_id):
@@ -627,12 +504,11 @@ async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_
 
         # Recover post text from message if caches were lost (e.g. service restart).
         # Shared _recover_post_text() strips the prompt and refuses to post a bare
-        # prompt — same helper used by the individual mk:/plr:/mtx: handlers.
+        # prompt — same helper used by the individual mk:/plr: handlers.
 
         results = []
-        matrix_attempted = False
 
-        _all_image = _geni_image_cache.get(chat_id)  # leave in cache for Matrix room-picker step
+        _all_image = _geni_image_cache.get(chat_id)
 
         # Misskey — post when there's text OR a media attachment (caption-less post).
         mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
@@ -677,39 +553,5 @@ async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_
         if results:
             await telegram_service.send_message(chat_id, "\n".join(results))
 
-        # Matrix — needs room selection; show picker if configured
-        mtx_post = _matrix_post_cache.get(chat_id) or _recover_post_text(callback_query)
-        if (mtx_post or _all_image) and mtx_post != _CONSUMED and all_user and _has_matrix(all_user):
-            matrix_attempted = True
-            try:
-                from app.services.matrix_service import get_joined_rooms as _mtx_rooms
-                rooms = await _mtx_rooms(all_user.matrix_homeserver, all_user.matrix_access_token)
-                if rooms:
-                    _matrix_room_cache[chat_id] = rooms
-                    if mtx_post != _matrix_post_cache.get(chat_id):
-                        _matrix_post_cache[chat_id] = mtx_post
-                    btns = []
-                    row: list = []
-                    for i, room in enumerate(rooms[:20]):
-                        row.append({"text": room["name"][:30], "callback_data": f"mtx:room:{i}"})
-                        if len(row) == 2:
-                            btns.append(row)
-                            row = []
-                    if row:
-                        btns.append(row)
-                    btns.append([{"text": "❌ Skip Matrix", "callback_data": "mtx:cancel"}])
-                    await telegram_service.send_message(
-                        chat_id,
-                        "📬 Which Matrix room?",
-                        reply_markup={"inline_keyboard": btns},
-                    )
-                else:
-                    _matrix_post_cache.pop(chat_id, None)
-                    await telegram_service.send_message(chat_id, "⚠️ No Matrix rooms found — skipped.")
-            except Exception as _e:
-                logger.error(f"all:post Matrix rooms error: {_e}", exc_info=True)
-                _matrix_post_cache.pop(chat_id, None)
-                await telegram_service.send_message(chat_id, f"❌ Matrix room fetch failed: {_e}")
-
-        if not results and not matrix_attempted:
+        if not results:
             await telegram_service.send_message(chat_id, "No social platforms configured.")
