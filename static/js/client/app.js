@@ -1062,7 +1062,18 @@
     // publish the initial profile (name + the assigned NIP-05 so the verified badge shows)
     const prof = {}; if (nm) prof.name = nm; if (nip05) prof.nip05 = nip05;
     startApp();
-    if (Object.keys(prof).length){ try { await publish(0, JSON.stringify(prof), []); } catch(_){}}
+    // This is the ONE publish that races the very first socket: startApp() has only just called
+    // connect(), and Conn._send DROPS a frame on a CONNECTING socket — so the kind-0 was never sent,
+    // timed out 8s later, got rolled back, and the account ended up with NO profile at all (no display
+    // name, and the nip05 we just assigned never advertised). Wait for a live socket, then retry once.
+    if (Object.keys(prof).length){
+      let r = null;
+      for (let i=0; i<2 && !(r && r.ok); i++){
+        try{ await Relay.ready(8000); }catch(_){}
+        try{ r = await publish(0, JSON.stringify(prof), [], {quiet:true}); }catch(_){}
+      }
+      if (!(r && r.ok)) toast('couldn’t save your profile — open Edit Profile and hit Save');
+    }
     if (nip05) toast('your handle: ' + nip05);
   }
 
@@ -9001,6 +9012,14 @@
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
+      // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —
+      // e.g. the signup publish lost the race with the first socket. The name is a public read, so
+      // prefill the empty field with it: the verified handle is then one Save away instead of a
+      // string the user would have to already know.
+      { const n5=$('#pf-nip05',root);
+        if(n5 && !n5.value.trim()) fetch('/client/admin-nip05?pubkey='+encodeURIComponent(ME.pubkey))
+          .then(r=>r.json()).then(r=>{ if(r && r.ok && r.nip05 && !n5.value.trim()) n5.value=r.nip05; })
+          .catch(()=>{}); }
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
