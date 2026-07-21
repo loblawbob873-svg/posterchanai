@@ -801,7 +801,9 @@ async def poll_once(db: Session) -> None:
         # First poll: set the cursor to newest without backfilling the existing timeline.
         raw_posts = await _fetch(None, first=True)
         if raw_posts:
-            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
+            # By ID: the cursor is an id (sinceId/min_id), so seeding it from the newest created_at
+            # could sit BELOW the highest id on the page and immediately re-deliver the gap.
+            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: str(p.get("id") or ""))
             if posts[-1].get("id"):
                 _set_setting(db, "fedi_timeline_since", posts[-1]["id"])
                 db.commit()
@@ -817,9 +819,15 @@ async def poll_once(db: Session) -> None:
             raw_posts = await _fetch(cursor, first=False)
             if not raw_posts:
                 break
-            # oldest-first (ISO8601 sorts lexically) so room order is chronological and replies
-            # are posted after their parents.
-            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: p.get("created_at") or "")
+            # Sort by ID, not created_at. `last_delivered` becomes the cursor on the transient path,
+            # and the cursor IS an id (sinceId/min_id) — so the watermark is only valid if iteration
+            # follows id order. created_at is the ORIGIN's publish time while the id is assigned at LOCAL
+            # ingest, so a late-federating post sorts early holding a high id, and the transient commit
+            # could then jump the cursor past a post that was never delivered (min_id excludes it after
+            # that — a permanent hole, which is exactly what the comment below promises can't happen).
+            # This matters more now that a 429 storm takes the transient path instead of skipping posts.
+            # Ids are time-ordered on both platforms, so replies still follow their parents.
+            posts = sorted((_norm(platform, r) for r in raw_posts), key=lambda p: str(p.get("id") or ""))
             transient = False
             last_delivered = None           # id of the newest post we got past this page (delivered,
                                             # already-seen, or skipped as a permanent error)

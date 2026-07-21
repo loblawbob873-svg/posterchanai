@@ -16,6 +16,13 @@ _TRANSIENT_STATUSES = (500, 502, 503, 504)
 # the timeline cursor). 500 is deliberately excluded: it usually means the server errored on THIS
 # event, so treating it as retry-later would wedge a poller forever on one poison payload.
 _UNAVAILABLE_STATUSES = (502, 503, 504)
+# 429 is RATE LIMITING, not a bad payload — the work will succeed once the limit clears, so it must be
+# classified retry-later too. It wasn't: _with_429_retry exhausted its attempts and RETURNED the 429
+# response, _send_error then mapped it to ValueError ("permanent"), and the timeline drain skipped the
+# post AND advanced its cursor past it. Under a Synapse rate-limit storm that silently DELETED posts —
+# the "429 storms, posts trickle" symptom in CLAUDE.md was actually loss, not delay. Kept separate from
+# _UNAVAILABLE_STATUSES so the media-upload endpoint fallback below still only short-circuits on 5xx.
+_RETRY_LATER_STATUSES = _UNAVAILABLE_STATUSES + (429,)
 
 
 class MatrixServerError(Exception):
@@ -49,7 +56,11 @@ async def _with_429_retry(make_request, attempts: int = 4):
             retry_ms = int(resp.json().get("retry_after_ms", 1000))
         except Exception:
             pass
-        await asyncio.sleep(min(max(retry_ms, 100), 5000) / 1000.0)
+        # Honour the server's OWN backoff. The old 5s ceiling ignored a `retry_after_ms: 12000`, so every
+        # attempt was made too early, burned an attempt, and guaranteed exhaustion. Capped at 15s so a
+        # single call can't eat the poll budget — sustained limiting should defer to the next cycle,
+        # which now happens cleanly because an exhausted 429 raises MatrixServerError (retry-later).
+        await asyncio.sleep(min(max(retry_ms, 100), 15000) / 1000.0)
     return resp
 
 
@@ -58,7 +69,7 @@ def _send_error(label: str, status: int, text: str) -> Exception:
     MatrixServerError so callers retry later; everything else (incl. 500 — likely payload-specific)
     → ValueError, which callers log and skip rather than retrying forever."""
     msg = f"{label}: HTTP {status} — {text}"
-    return MatrixServerError(msg) if status in _UNAVAILABLE_STATUSES else ValueError(msg)
+    return MatrixServerError(msg) if status in _RETRY_LATER_STATUSES else ValueError(msg)
 
 
 async def request(homeserver: str, access_token: str, method: str, endpoint: str,
@@ -401,9 +412,10 @@ async def upload_media_bytes(homeserver: str, access_token: str, data: bytes,
                 if mxc:
                     return mxc
             last_status, last_text = resp.status_code, resp.text[:200]
-            # The v1→v3 fallback is for "endpoint unsupported" (4xx); if the server is unavailable,
-            # the alt endpoint is the same server — don't double the backoff probing it.
-            if resp.status_code in _UNAVAILABLE_STATUSES:
+            # The v1→v3 fallback is for "endpoint unsupported" (4xx); if the server is unavailable OR
+            # rate-limiting us, the alt endpoint is the same server — don't double the backoff probing
+            # it. 429 is included: retrying the other path just spends another token against the limit.
+            if resp.status_code in _RETRY_LATER_STATUSES:
                 break
     raise _send_error("Media upload failed", last_status, last_text)
 
