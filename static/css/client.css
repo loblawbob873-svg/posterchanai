@@ -690,8 +690,12 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    push the textarea off a phone screen. */
 .cmp-ctx{margin:0 0 10px}
 .cmp-ctx-lbl{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px}
-.cmp-ctx .quoted{max-height:180px;overflow-y:auto;margin:0}
-@media(max-width:820px){ .cmp-ctx .quoted{max-height:132px} }
+.cmp-ctx .quoted{max-height:230px;overflow-y:auto;margin:0}
+/* The original's media. .media-row's default 300px would eat the whole preview, so cap it — but it MUST
+   be visible: replying to a photo with no image shown tells you nothing about what you're answering. */
+.cmp-ctx-media{margin-top:8px}
+.cmp-ctx-media img,.cmp-ctx-media video{max-height:120px;max-width:100%;width:auto;border-radius:10px}
+@media(max-width:820px){ .cmp-ctx .quoted{max-height:190px} .cmp-ctx-media img,.cmp-ctx-media video{max-height:96px} }
 /* AI composer: 📎 and 🎤 were .mini (a 28px chrome button) next to a full-size ▶ send, so they read as
    an afterthought. Match them to the send button's height. */
 .ai-compose .mini{width:42px;height:42px;padding:0;font-size:19px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}

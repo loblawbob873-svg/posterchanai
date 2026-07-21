@@ -5991,11 +5991,16 @@
       const o=Store.get(id); if(!o) return '';
       const p=profOf(o.pubkey); needProfile(o.pubkey);
       const nm=p.name||p.display_name||'anon';
-      const body=(mediaParts(o.content).text||o.content||'').trim();
+      // mediaParts() PULLS media URLs out of the text, so rendering only .text silently dropped the
+      // original's images — replying to a photo showed an empty body. Render its media too (bare items,
+      // not the carousel: a paging widget inside a 180px preview is noise).
+      const mp=mediaParts(o.content);
+      const body=(mp.text||'').trim();
+      const media=(mp.items&&mp.items.length)?`<div class="media-row cmp-ctx-media">${mp.items.join('')}</div>`:'';
       return `<div class="cmp-ctx"><div class="cmp-ctx-lbl">${label}</div>
         <div class="quoted"><div class="hd"><img class="qav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`
         +`<span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,nm)}</span><span class="time">${timeAgo(o.created_at)}</span></div>`
-        +`<div class="txt">${body?linkify(body):'<span class="muted small">(no text)</span>'}</div></div></div>`;
+        +`${body?`<div class="txt">${linkify(body)}</div>`:(media?'':'<div class="txt"><span class="muted small">(no text)</span></div>')}${media}</div></div>`;
     };
     let qhtml = quote ? _cmpCtx(quote,'Quoting') : (reply ? _cmpCtx(reply,'Replying to') : '');
     modal(`<h3>${title}</h3>${qhtml}
