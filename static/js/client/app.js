@@ -2924,7 +2924,7 @@
       const streams=_dedupAddr(evs.filter(e=>!_isDeletedStream(e))).sort((a,b)=> rank(a)-rank(b) || b.created_at-a.created_at);
       try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
       const top=`<div class="streams-top">${_liveStream
-        ? `<span class="live-badge">● LIVE</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
+        ? `<span class="live-badge">● LIVE</span><span class="muted small" id="stream-viewers">👁 …</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
         : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive">🔴 Go Live</button>` : '')}</div>`;
       feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No live streams right now.</div>');
       decorateProfiles();
@@ -3425,7 +3425,10 @@
       let n=0;
       try{ const r=await fetch('/api/streams/viewers/'+encodeURIComponent(s.token)); if(!r.ok) return; n=(await r.json()).viewers||0; }
       catch(_){ return; }
-      const el=document.getElementById('pl-viewers'); if(el) el.textContent='👁 '+n;
+      // Two places show YOUR headcount: the phone broadcast overlay, and the Streams bar — which is the
+      // only one a desktop/OBS broadcaster ever sees (there's no overlay on that path).
+      { const el=document.getElementById('pl-viewers'); if(el) el.textContent='👁 '+n; }
+      { const sv=document.getElementById('stream-viewers'); if(sv) sv.textContent=`👁 ${n} watching`; }
       if(n!==_viewersLast){ _viewersLast=n; _publishViewers(n); }
     };
     tick(); _viewerPoll=setInterval(tick, 20000);
@@ -4282,14 +4285,16 @@
   function _stopStreamViewers(){ if(_streamViewerPoll){ clearInterval(_streamViewerPoll); _streamViewerPoll=null; } }
   function _startStreamViewers(hpk, dtag, viewId){
     _stopStreamViewers(); if(!dtag) return;
-    _streamViewerPoll=setInterval(async()=>{
+    const tick=async()=>{
       if(VIEW!=='stream' || openStream._view!==viewId){ _stopStreamViewers(); return; }
       let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], authors:[hpk], '#d':[dtag], limit:1 }]); }catch(_){ return; }
       const fresh=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0]; if(!fresh) return;
       if(VIEW!=='stream' || openStream._view!==viewId) return;   // navigated away during the query
       const n=_viewersTag(fresh); const el=document.getElementById('st-viewers');
       if(el) el.textContent = n ? ` · 👁 ${n} watching` : '';
-    }, 30000);
+    };
+    tick();   // don't make the first refresh wait a whole interval — that's why the count only appeared after a reload
+    _streamViewerPoll=setInterval(tick, 15000);
   }
   function popOutStream(ev){
     const v=$('#st-video'); if(!v) return;
