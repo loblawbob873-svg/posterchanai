@@ -2075,6 +2075,34 @@
   // and in the media-grid branch too, or toggling ▦ would strand the user with no way back.
   // Inline composer text, held OUTSIDE the DOM so it survives a Home⇄Nostrverse switch (which resets #feed).
   let _tlCmpText='';
+  // AI helpers, module-level so BOTH composers use one implementation. They were private to compose()'s
+  // closure, which is why the timeline composer previously had to open the modal just to reach them.
+  let _aiLastTags='';   // the exact hashtag block we last appended — only strip THIS on re-run
+  async function _aiEnhance(ta, setSt){
+    const m=(ta.value||'').match(/https?:\/\/[^\s]+/i);
+    if(!m){ toast('paste a link into the post first'); return; }
+    setSt('summarizing link…');
+    try{
+      const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:m[0]})}).then(r=>r.json());
+      if(r&&r.text){ ta.value=r.text; _aiLastTags=''; setSt(''); ta.dispatchEvent(new Event('input')); }
+      else setSt('couldn’t summarize: '+((r&&r.error)||'no content'));
+    }catch(_){ setSt('summarize failed'); }
+  }
+  async function _aiHashtags(ta, setSt){
+    const body=(ta.value||'').trim();
+    const hasImage=/(?:!\[|https?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b|\/blossom\/|media\.)/i.test(ta.value||'');
+    if(!body && !hasImage){ toast('write something first'); return; }
+    setSt('finding hashtags…');
+    try{
+      const r=await fetch('/client/hashtags',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:body, has_image:hasImage})}).then(r=>r.json());
+      if(r&&r.hashtags){
+        let base=body;   // strip ONLY the block we appended last time, never the user's own trailing tags
+        if(_aiLastTags && base.endsWith(_aiLastTags)) base=base.slice(0, base.length-_aiLastTags.length).replace(/\s+$/,'');
+        ta.value = base + (base?'\n\n':'') + r.hashtags; _aiLastTags=r.hashtags;
+        setSt(''); ta.dispatchEvent(new Event('input'));
+      } else setSt('no hashtags: '+((r&&r.error)||'try again'));
+    }catch(_){ setSt('hashtags failed'); }
+  }
   function _timelineHeaderHtml(){
     const canPost = !!(ME && !GUEST);
     const av=(Store.profile(ME&&ME.pubkey)||{}).picture||LOGO;
@@ -2087,10 +2115,17 @@
             <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF">😀</button>
             <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll">📊</button>
             <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools">🤖</button>
-            <button class="tl-cmp-btn" id="tl-cmp-more" title="Schedule, content warning, background, drafts…">＋</button>
+            <button class="tl-cmp-btn" id="tl-cmp-cw" title="Mark sensitive / NSFW (NIP-36)">🔞</button>
             <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
             <button class="btn btn-neon tl-cmp-post" id="tl-cmp-post">Post</button>
             <input type="file" id="tl-cmp-file" multiple hidden>
+          </div>
+          <div class="tl-cmp-cw hidden" id="tl-cmp-cwrow"><input class="input" id="tl-cmp-cwreason" maxlength="120" placeholder="🔞 sensitive — reason (optional)"></div>
+          <div class="tl-cmp-poll hidden" id="tl-cmp-pollbox">
+            <div class="muted small">Poll options</div>
+            <div id="tl-cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
+            <div class="row"><button class="btn btn-ghost small" id="tl-cmp-poll-add">＋ Add option</button>
+              <label class="muted small" style="margin-left:auto"><input type="checkbox" id="tl-cmp-poll-multi"> Allow multiple</label></div>
           </div>
         </div>
       </div>`:'')
@@ -2112,7 +2147,17 @@
     // Always open, like ditto — a one-line box that only unfolds on focus read as a search field and hid
     // the attach/post controls behind an extra interaction. It just grows with the text from here.
     const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),320)+'px'; };
-    const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; grow(); };
+    // Clear the PANELS too, not just the text — a posted poll leaving its options behind would silently
+    // attach them to the next thing you wrote.
+    const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; _aiLastTags='';
+      const pb=$('#tl-cmp-pollbox',box), cw=$('#tl-cmp-cwrow',box);
+      if(pb){ pb.classList.add('hidden');
+        const w=$('#tl-cmp-poll-opts',box);
+        if(w) w.innerHTML='<input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2">';
+        const mu=$('#tl-cmp-poll-multi',box); if(mu) mu.checked=false; }
+      if(cw){ cw.classList.add('hidden'); const r=$('#tl-cmp-cwreason',box); if(r) r.value=''; }
+      $$('.tl-cmp-btn.on',box).forEach(b=>b.classList.remove('on'));
+      grow(); };
     if(_tlCmpText) ta.value=_tlCmpText;   // restore text carried across a tab switch
     grow();
     ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); });
@@ -2133,22 +2178,41 @@
         openMenuPopover(rb, items, a=>{
           if(a==='emoji') openEmojiPopover(rb, em=>{ _insertAt(ta, em); _tlCmpText=ta.value; grow(); });
           else if(a==='gif') gifPicker(ta); }); }; }
-    // 📊 and 🤖 open the full composer with that tool already expanded, carrying what's typed. Their UI (the
-    // poll builder, the AI handlers) lives inside compose()'s closure — reimplementing it here would mean
-    // two copies to keep in sync, so the button is surfaced without forking the feature.
-    const handoff=(open)=>()=>{ const t=ta.value; reset(); compose({text:t, open}); };
-    { const pb=$('#tl-cmp-poll',box); if(pb) pb.onclick=handoff('poll'); }
-    { const ab=$('#tl-cmp-ai',box);   if(ab) ab.onclick=handoff('ai'); }
-    // Everything else (schedule / CW / background / drafts) still lives behind ＋.
-    $('#tl-cmp-more',box).onclick=()=>{ const t=ta.value; reset(); compose({text:t}); };
+    // 📊 poll builder — inline. Its options are read at publish time, so there's no state to sync.
+    const pollBox=$('#tl-cmp-pollbox',box), cwRow=$('#tl-cmp-cwrow',box);
+    { const pb=$('#tl-cmp-poll',box);
+      if(pb) pb.onclick=()=>{ const on=pollBox.classList.toggle('hidden')===false; pb.classList.toggle('on',on);
+        if(on){ const f=$('.poll-opt-in',pollBox); if(f) f.focus(); } };
+      const add=$('#tl-cmp-poll-add',box);
+      if(add) add.onclick=()=>{ const wrap=$('#tl-cmp-poll-opts',box); const i=document.createElement('input');
+        i.className='input poll-opt-in'; i.placeholder='Option '+(wrap.children.length+1); wrap.appendChild(i); i.focus(); }; }
+    // 🔞 content warning — inline (NIP-36).
+    { const cb=$('#tl-cmp-cw',box);
+      if(cb) cb.onclick=()=>{ const on=cwRow.classList.toggle('hidden')===false; cb.classList.toggle('on',on);
+        if(on){ const r=$('#tl-cmp-cwreason',box); if(r) r.focus(); } }; }
+    // 🤖 AI — inline, using the module-level helpers (they used to be private to compose()).
+    { const ab=$('#tl-cmp-ai',box); if(ab) ab.onclick=e=>{ e.stopPropagation();
+        openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']], a=>{
+          const setSt=m=>{ st.textContent=m; };
+          if(a==='enhance') _aiEnhance(ta, setSt);
+          else if(a==='tags') _aiHashtags(ta, setSt);
+          else if(a==='translate') composeTranslate(ta, ab); }); }; }
     post.onclick=async()=>{
       const text=ta.value.trim(); if(!text) return;
+      const isPoll=!pollBox.classList.contains('hidden');
+      const labels=isPoll ? $$('.poll-opt-in',pollBox).map(i=>i.value.trim()).filter(Boolean) : [];
+      if(isPoll && labels.length<2){ st.textContent='add at least 2 poll options'; return; }
       post.disabled=true; st.textContent='posting…';
-      const tags=[]; mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+      const tags=[];
+      if(isPoll){ tags.push(['polltype', $('#tl-cmp-poll-multi',box).checked?'multiplechoice':'singlechoice']);
+        labels.forEach((l,i)=>tags.push(['option','opt'+(i+1), l])); }
+      mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
       imetaTagsFor(text).forEach(t=>tags.push(t));
+      if(!cwRow.classList.contains('hidden')) tags.push(['content-warning', ($('#tl-cmp-cwreason',box).value||'').trim()]);
       try{
-        const r=await publish(1, text, tags);
-        if(r && r.ok){ reset(); toast('posted'); if(VIEW==='home'||VIEW==='global') renderView(true); return; }
+        // A poll is kind 1068 (NIP-88); its question is the post text and the options are tags.
+        const r=await publish(isPoll?1068:1, text, tags);
+        if(r && r.ok){ reset(); toast(isPoll?'poll posted':'posted'); if(VIEW==='home'||VIEW==='global') renderView(true); return; }
         st.textContent='';   // publish() raises its own failure toast
       }catch(err){ st.textContent='post failed: '+((err&&err.message)||err); }
       post.disabled=false;

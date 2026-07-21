@@ -673,6 +673,13 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   font-family:inherit;font-size:21px;line-height:1;transition:.15s}
 .tl-cmp-btn:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 .tl-cmp-post{margin:0;padding:11px 26px;font-size:15.5px;font-weight:700;border-radius:22px}
+/* Inline panels — the timeline composer never opens the modal, so poll + content-warning live here. */
+.tl-cmp-btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan)}
+.tl-cmp-cw{margin-top:8px}
+.tl-cmp-cw .input{margin:0}
+.tl-cmp-poll{margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.tl-cmp-poll .input{margin:6px 0 0}
+.tl-cmp-poll .row{margin-top:8px;align-items:center}
 /* Go-live cover preview — confirms the thumbnail Discover will show before you announce. */
 .gl-img-prev{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:12px;margin:6px 0 2px;border:1px solid var(--line)}
 .tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
