@@ -1,9 +1,17 @@
 # PosterChanAI — pick ONE service via its profile:
-#   docker compose --profile cpu   up -d --build
-#   docker compose --profile nostr up -d --build   # Nostr-only (relay + client + Blossom, NO AI)
-#   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit)
-#   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver)
-#   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri)
+#   docker compose --profile cpu   up -d --build   # ANY host (Linux/Windows/macOS)
+#   docker compose --profile nostr up -d --build   # ANY host — Nostr-only (relay + client + Blossom, NO AI)
+#   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit; Windows = WSL2 only)
+#   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver) — LINUX ONLY
+#   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri) — LINUX ONLY
+#
+# LINUX ONLY means it: `rocm` and `intel` pass through /dev/kfd and /dev/dri, which only exist on a
+# Linux host with the amdgpu/i915 kernel driver loaded. Docker Desktop (Windows/macOS) runs containers
+# in a VM that has no such devices, so those profiles fail at container-create with
+#   Error response from daemon: error gathering device information while adding
+#   custom device "/dev/kfd": no such file or directory
+# That is a host capability, not a misconfiguration — on Windows/macOS use `cpu` or `nostr`.
+# See docs/DOCKER.md for the full platform matrix.
 #
 # Each profile builds its OWN image tag (posterchanai:<TAG>-<backend>, e.g. ...-nostr / ...-cuda)
 # so the profiles never alias one another — `--profile nostr up` always runs the lean nostr image,

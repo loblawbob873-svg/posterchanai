@@ -20,15 +20,42 @@ GPU override and persists the MIOpen kernel cache. The GPU **userspace** (CUDA l
 backend) is baked into the image. The GPU **kernel driver always comes from the
 host** — Docker just exposes the device.
 
-| Backend | Host requirement | Run flag |
-|---------|------------------|----------|
-| `cpu`   | nothing | — |
-| `cuda`  | NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | `--gpus all` |
-| `rocm`  | host `amdgpu` kernel driver ([AMD docs](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)) | `--device /dev/kfd --device /dev/dri` |
-| `intel` | host `i915` (Alchemist) or `xe` (Battlemage+) driver + render nodes | `--device /dev/dri` |
-| `nostr` | nothing (no AI) | — |
+| Backend | Host requirement | Run flag | Linux | Windows | macOS |
+|---------|------------------|----------|:-----:|:-------:|:-----:|
+| `cpu`   | nothing | — | ✅ | ✅ | ✅ |
+| `nostr` | nothing (no AI) | — | ✅ | ✅ | ✅ |
+| `cuda`  | NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) | `--gpus all` | ✅ | ⚠️ WSL2 only | ❌ |
+| `rocm`  | host `amdgpu` kernel driver ([AMD docs](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)) | `--device /dev/kfd --device /dev/dri` | ✅ | ❌ | ❌ |
+| `intel` | host `i915` (Alchemist) or `xe` (Battlemage+) driver + render nodes | `--device /dev/dri` | ✅ | ❌ | ❌ |
 
 The container runs as root, so it reaches the GPU render node without group flags.
+
+### Windows / macOS: use `cpu` or `nostr`
+
+**GPU passthrough is a Linux-kernel feature.** `rocm` and `intel` pass through `/dev/kfd` and
+`/dev/dri`, which are created by the host's `amdgpu` / `i915` kernel driver — Docker Desktop runs
+containers inside a Linux VM that has no such devices, so those profiles **cannot** work on Windows
+or macOS no matter how the GPU is configured. `cuda` is the one exception, and only on Windows via
+the WSL2 backend with an NVIDIA driver that supports it.
+
+If you pick a GPU profile anyway, Docker fails at container-create with:
+
+```
+Error response from daemon: error gathering device information while adding
+custom device "/dev/kfd": no such file or directory
+```
+
+That message means exactly one thing: **you're on a host without that device** — almost always
+Docker Desktop on Windows/macOS, or a Linux box whose AMD driver isn't loaded. It is not a
+configuration problem you can fix with flags. To test the app on Windows or macOS, run:
+
+```bash
+docker compose --profile cpu   up -d --build   # full app, LLM/image on CPU (slow but works everywhere)
+docker compose --profile nostr up -d --build   # relay + client + Blossom, no AI (~2 GB, fast)
+```
+
+On Linux, `/dev/kfd` missing means the `amdgpu` kernel module isn't loaded (`lsmod | grep amdgpu`)
+or you're on an unsupported GPU — check `ls -l /dev/kfd /dev/dri` before filing a bug.
 
 ## Install — one `docker compose` command
 
