@@ -151,6 +151,10 @@
             </div>
             <button class="nav-item" data-view="settings"><span class="ic">⚙️</span><span>Settings</span></button>
         </nav>
+        <!-- ONE compose entry point (ditto-style). It used to live in the topbar, which meant it turned up
+             in every view header; here it's always in the same place and never clutters a view. Mobile
+             uses the bottom nav's ✏️ instead — this sidebar is display:none there. -->
+        <button id="btn-compose" class="btn btn-cyan full nav-compose">✎ New post</button>
         <div class="me" id="me-card"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
         <div class="usercount hidden" id="user-count"></div>
@@ -165,9 +169,8 @@
                  Home/Nostrverse), which lets the whole topbar hide on those views — see body.tl-view. -->
             <!-- Mobile-only search: the desktop one lives under the sidebar logo (#nav-search-input) -->
             <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 search posts &amp; profiles…"></div>
-            <!-- Calls + Drafts moved to the sidebar. New post is hidden on Home/Nostrverse, which have
-                 their own inline compose bar above the tabs (switchView toggles .hidden on it). -->
-            <button id="btn-compose" class="btn btn-cyan compose-btn">✎ New post</button>
+            <!-- Calls, Drafts and New post all moved to the sidebar; on Home/Nostrverse the topbar itself
+                 is hidden (body.tl-view), since the tabs name the timeline and the composer is inline. -->
         </header>
         <div id="feed" class="feed"></div>
     </main>

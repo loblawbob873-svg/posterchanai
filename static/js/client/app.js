@@ -1807,11 +1807,10 @@
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
-    // Home/Nostrverse have their own inline composer, and Notifications is a read view — a "New post"
-    // button belongs on neither. (The ▦ media toggle moved into the timeline's tab row.)
+    // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
+    // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global');
       document.body.classList.toggle('tl-view', tl);   // desktop hides the now-empty topbar on these views
-      const cb=$('#btn-compose'); if(cb) cb.classList.toggle('hidden', tl || v==='notifications');
       const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', tl); }
     renderView(true);
   }
