@@ -1,0 +1,35 @@
+# Line endings.
+#
+# Git for Windows defaults to core.autocrlf=true, which rewrites LF -> CRLF on checkout. For anything
+# EXECUTED INSIDE THE LINUX CONTAINER that is fatal: the shebang becomes `#!/usr/bin/env bash\r`, the
+# kernel looks for a binary literally named "bash\r", and the container crash-loops with
+#     /usr/bin/env: 'bash\r': No such file or directory
+# Pinning these to LF makes a Windows clone build and run identically to a Linux one.
+* text=auto
+
+*.sh            text eol=lf
+docker-entrypoint.sh text eol=lf
+docker-test.sh  text eol=lf
+install.sh      text eol=lf
+setup.sh        text eol=lf
+start.sh        text eol=lf
+sync.sh         text eol=lf
+Dockerfile*     text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.py            text eol=lf
+*.service       text eol=lf
+
+# Binary assets — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.onnx binary
+*.gguf binary
+*.safetensors binary
+*.mp4 binary
+*.woff binary
+*.woff2 binary

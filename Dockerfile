@@ -223,6 +223,15 @@ RUN if [ "$GPU" = "nostr" ]; then \
 # --- app source ---------------------------------------------------------------
 COPY . /app
 
+# Normalise line endings on anything the container EXECUTES. Git for Windows checks out CRLF by default,
+# which turns the shebang into `#!/usr/bin/env bash\r` — the kernel then looks for a binary literally
+# named "bash\r" and the container crash-loops with:
+#     /usr/bin/env: 'bash\r': No such file or directory
+# .gitattributes pins these to LF for fresh clones; this line additionally makes an ALREADY-CRLF working
+# tree build correctly, so a Windows user doesn't have to re-clone. Cheap and idempotent on Linux.
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh \
+ && find /app -maxdepth 2 -name '*.sh' -exec sed -i 's/\r$//' {} +
+
 # Built-in TURN relay binary (compiled in the turnbuild stage). The app supervises it (turn_service.py)
 # when POSTERCHANAI_TURN=1 + a public IP is set; it's a no-op otherwise.
 COPY --from=turnbuild /build/pion-turn /app/turnserver/pion-turn
