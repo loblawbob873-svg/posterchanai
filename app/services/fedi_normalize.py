@@ -16,7 +16,7 @@ _EMOJI_SHORTCODE_RE = re.compile(r':([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):')
 def _strip_html(raw: str) -> str:
     text = _BREAK_RE.sub("\n", raw or "")
     text = _TAG_RE.sub("", text)
-    return html.unescape(text).strip()
+    return _html.unescape(text).strip()
 
 
 def _norm_misskey(n: dict) -> dict:
