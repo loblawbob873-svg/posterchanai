@@ -629,25 +629,40 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .nav-search{flex-shrink:0;margin:0 0 10px}
 .nav-search .input{width:100%;margin:0;padding:9px 13px;font-size:15px}
 
-/* ===== timeline header: inline compose + Home/Nostrverse tabs (ditto.pub-style) =====
+/* ===== timeline header: inline composer + Home/Nostrverse tabs (ditto.pub-style) =====
    Emitted as DIRECT children of #feed, not wrapped: .tl-tabs is position:sticky, and a sticky element can
    only stick within its own parent — nesting it in a short wrapper would scroll the tabs away instantly. */
-.tl-compose{display:flex;align-items:center;gap:10px;width:100%;margin:10px 0 0;padding:11px 14px;
-  border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--muted);
-  cursor:pointer;font-family:inherit;font-size:15.5px;text-align:left;transition:.15s}
-.tl-compose:hover{border-color:var(--cyan);color:var(--cyan)}
-.tl-compose-av{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
-.tl-compose-ph{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tl-compose-ic{flex-shrink:0;color:var(--neon);font-size:17px}
-.tl-tabs{display:flex;gap:8px;position:sticky;top:0;z-index:3;background:var(--bg);padding:10px 0;margin-bottom:2px;border-bottom:1px solid var(--line)}
+.tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
+  border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+.tl-cmp-av{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
+.tl-cmp-body{flex:1;min-width:0}
+.tl-cmp-ta{width:100%;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);resize:none;
+  overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
+.tl-cmp-ta::placeholder{color:var(--muted)}
+/* Collapsed = one line, no tools. The composer only unfolds once you actually start a post. */
+.tl-cmp-tools{display:none;align-items:center;gap:8px;margin-top:8px}
+.tl-cmp.on .tl-cmp-tools{display:flex}
+.tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-cmp-tools .btn{margin:0}
+
+/* The notes scroll directly under this bar, so it MUST be fully opaque: var(--bg) is a solid colour in
+   every theme, unlike the translucent var(--panel) used by .glass — and mobile drops backdrop-filter
+   entirely, so a blur-based frost would degrade to see-through exactly where it matters.
+   top:-8px + the taller top padding swallow .feed's own 8px padding strip, which otherwise left a sliver
+   of moving notes visible ABOVE the bar as you scrolled. */
+.tl-tabs{display:flex;gap:8px;position:sticky;top:-8px;z-index:4;
+  margin:12px 0 0;padding:18px 14px 12px;
+  background:var(--bg);border-bottom:1px solid var(--line);
+  box-shadow:0 10px 18px -14px rgba(0,0,0,.8)}
 .tltab{flex:1;padding:9px 14px;border:1px solid var(--line);border-radius:13px;background:var(--panel);
   color:var(--muted);cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:600;white-space:nowrap}
 .tltab:hover{border-color:var(--cyan);color:var(--cyan)}
 .tltab.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
 @media(max-width:820px){
-  .tl-compose{margin-top:8px;padding:9px 12px;font-size:15px}
-  .tl-compose-av{width:30px;height:30px}
-  .tl-tabs{padding:8px 0}
+  .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
+  .tl-cmp-av{width:32px;height:32px}
+  .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
+  .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
 }
 .search-section-title{padding:14px 20px 6px;color:var(--muted);font-size:13.5px;text-transform:uppercase;letter-spacing:1.5px}

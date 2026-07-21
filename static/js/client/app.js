@@ -1984,7 +1984,13 @@
     }
     _prependLive(evs, feed);
   }
+  // Notes live in #tl-notes, BELOW the inline composer + sticky tabs. Every live insert / scroll-back
+  // append / trim must target that box — going straight at #feed would prepend new notes ABOVE the
+  // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
+  // Falls back to #feed for the views that render into it without a timeline header.
+  function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
   function _prependLive(evs, feed){
+    const box=_tlNotes(feed);
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
@@ -1994,11 +2000,11 @@
       const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
     if(!frag.childElementCount) return;
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
-    feed.insertBefore(frag, feed.firstChild);
-    if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend
+    box.insertBefore(frag, box.firstChild);
+    if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend (feed is the scroller)
     // cap the feed at 200 — but NOT once the user has paginated older posts, or we'd delete the
     // scroll-back history they just loaded as soon as a new live note arrives at the top.
-    if(_tl.pages===0){ const cards=[...feed.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair')); for(let i=200;i<cards.length;i++) cards[i].remove(); }   // trim whole top-level cards (a reply is a .reply-pair wrapper, not a bare .note)
+    if(_tl.pages===0){ const cards=[...box.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair')); for(let i=200;i<cards.length;i++) cards[i].remove(); }   // trim whole top-level cards (a reply is a .reply-pair wrapper, not a bare .note)
     decorateProfiles(); hydrateLinkCards(feed); hydratePolls(feed);
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
@@ -2023,20 +2029,67 @@
   // ditto.pub-style timeline header: an inline compose bar, then the Home ⇄ Nostrverse tab switch. Home has
   // no sidebar row any more, so these tabs are the ONLY way to reach it — they must render on BOTH views,
   // and in the media-grid branch too, or toggling ▦ would strand the user with no way back.
+  // Inline composer text, held OUTSIDE the DOM so it survives a Home⇄Nostrverse switch (which resets #feed).
+  let _tlCmpText='';
   function _timelineHeaderHtml(){
     const canPost = !!(ME && !GUEST);
     const av=(Store.profile(ME&&ME.pubkey)||{}).picture||LOGO;
-    return (canPost?`<button class="tl-compose" id="tl-compose">
-        <img class="tl-compose-av" src="${enc(av)}" onerror="this.src='${LOGO}'" alt="">
-        <span class="tl-compose-ph">What’s on your mind?</span><span class="tl-compose-ic">✎</span></button>`:'')
+    return (canPost?`<div class="tl-cmp" id="tl-cmp">
+        <img class="tl-cmp-av" src="${enc(av)}" onerror="this.src='${LOGO}'" alt="">
+        <div class="tl-cmp-body">
+          <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s on your mind?"></textarea>
+          <div class="tl-cmp-tools">
+            <button class="btn btn-ghost small" id="tl-cmp-attach" title="Attach an image or file">📎</button>
+            <button class="btn btn-ghost small" id="tl-cmp-more" title="Poll, schedule, content warning, AI…">⤢ More</button>
+            <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
+            <button class="btn btn-neon small" id="tl-cmp-post">Post</button>
+            <input type="file" id="tl-cmp-file" multiple hidden>
+          </div>
+        </div>
+      </div>`:'')
       +`<div class="tl-tabs" role="tablist">
         <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
         <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
       </div>`;
   }
   function _bindTimelineHeader(feed){
-    { const c=$('#tl-compose',feed); if(c) c.onclick=()=>compose(); }
     $$('.tltab',feed).forEach(b=> b.onclick=()=>{ const v=b.dataset.tl; if(v!==VIEW) switchView(v); });
+    const box=$('#tl-cmp',feed); if(!box) return;
+    const ta=$('#tl-cmp-ta',box), st=$('#tl-cmp-status',box), post=$('#tl-cmp-post',box);
+    attachMentionAutocomplete(ta);
+    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,320)+'px'; };
+    const expand=()=>{ box.classList.add('on'); grow(); };
+    const reset=()=>{ _tlCmpText=''; ta.value=''; box.classList.remove('on'); ta.style.height=''; st.textContent=''; };
+    if(_tlCmpText){ ta.value=_tlCmpText; expand(); }   // restore text carried across a tab switch
+    ta.addEventListener('focus', expand);
+    ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); });
+    // Collapse on blur ONLY when empty — snapping shut on a half-written post would lose the user's place.
+    ta.addEventListener('blur', ()=>{ if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; } });
+    ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
+    const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
+      for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
+        try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; _tlCmpText=ta.value; grow(); }
+        catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
+          else st.textContent='upload failed: '+((err&&err.message)||err); return; } }
+      st.textContent=''; };
+    $('#tl-cmp-attach',box).onclick=()=>$('#tl-cmp-file',box).click();
+    $('#tl-cmp-file',box).onchange=async e=>{ await upload([...e.target.files]); e.target.value=''; };
+    ta.addEventListener('paste', e=>{ const f=[...((e.clipboardData&&e.clipboardData.files)||[])]; if(f.length){ e.preventDefault(); upload(f); } });
+    // Everything beyond plain text + attachments (poll / schedule / CW / AI / background / drafts) hands off
+    // to the full composer, carrying what's typed so far — no duplicated feature surface to drift out of sync.
+    $('#tl-cmp-more',box).onclick=()=>{ const t=ta.value; reset(); compose({text:t}); };
+    post.onclick=async()=>{
+      const text=ta.value.trim(); if(!text) return;
+      post.disabled=true; st.textContent='posting…';
+      const tags=[]; mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
+      imetaTagsFor(text).forEach(t=>tags.push(t));
+      try{
+        const r=await publish(1, text, tags);
+        if(r && r.ok){ reset(); toast('posted'); if(VIEW==='home'||VIEW==='global') renderView(true); return; }
+        st.textContent='';   // publish() raises its own failure toast
+      }catch(err){ st.textContent='post failed: '+((err&&err.message)||err); }
+      post.disabled=false;
+    };
   }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
@@ -2047,25 +2100,32 @@
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
     if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
+    // The header (inline composer + tabs) is built ONCE and kept alive; only #tl-notes is re-rendered.
+    // This runs on every EOSE and on a 350ms live-event debounce, so reassigning feed.innerHTML here would
+    // wipe the composer — and whatever the user was midway through typing — several times a minute.
+    let notesEl=$('#tl-notes',feed);
+    if(!notesEl){
+      feed.innerHTML = _timelineHeaderHtml() + '<div id="tl-notes"></div>';
+      _bindTimelineHeader(feed);
+      notesEl=$('#tl-notes',feed);
+    }
     if(_tlMedia){
       // Media grid: the SAME feed (your follows / the nostrverse), image posts only, as a picture
       // grid — reuses Pics' _firstImage + .pics-grid/.pic-card styling. Scroll-back grows it (events
       // accumulate in Store); like the old Pics view it doesn't live-prepend (see flushLive).
       const pics=[]; const seen=new Set();
       for(const e of notes){ const img=_firstImage(e); if(!img||seen.has(e.id)) continue; seen.add(e.id); pics.push({e,img}); }
-      feed.innerHTML = _timelineHeaderHtml() + (pics.length
+      notesEl.innerHTML = pics.length
         ? `<div class="pics-grid">${pics.map(x=>{ const cw=BLUR_NSFW && isSensitive(x.e);
             return `<div class="pic-card${cw?' cw':''}" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}${cw?'<span class="pic-cw">🔞</span>':''}</div>`; }).join('')}</div>`
-        : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`);
-      _bindTimelineHeader(feed);
-      $$('.pic-card',feed).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
+        : `<div class="empty">No media in this feed yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`;
+      $$('.pic-card',notesEl).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
       if(preserveScroll) feed.scrollTop=top;
       return;
     }
     if(_profObs) _profObs.disconnect();   // drop observations on the notes we're about to replace (hydrate re-observes)
-    feed.innerHTML = _timelineHeaderHtml() + (notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`);
-    _bindTimelineHeader(feed);
-    hydrate(feed); if(preserveScroll) feed.scrollTop=top;
+    notesEl.innerHTML = notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`;
+    hydrate(notesEl); if(preserveScroll) feed.scrollTop=top;
   }
   // ---------- infinite scroll-back ----------
   let _lastRevive=0;
@@ -2154,7 +2214,7 @@
   function loadSentinel(feed){
     let s=feed.querySelector('.load-sentinel'); if(s) return s;
     s=document.createElement('div'); s.className='load-sentinel'; s.innerHTML='<div class="spinner"></div>';
-    feed.appendChild(s); return s;
+    _tlNotes(feed).appendChild(s); return s;   // inside the notes box, so it trails the list not the tabs
   }
   function clearSentinel(feed){ const s=feed.querySelector('.load-sentinel'); if(s) s.remove(); }
   async function loadOlderTimeline(){
@@ -2182,7 +2242,7 @@
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
-    else if(frag.childElementCount){ feed.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
+    else if(frag.childElementCount){ _tlNotes(feed).appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
@@ -2205,7 +2265,7 @@
     if (fn && !fn(ev)) return;
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild;
-    if(node){ feed.insertBefore(node, feed.firstChild); hydrate(node.parentElement); }
+    if(node){ const box=_tlNotes(feed); box.insertBefore(node, box.firstChild); hydrate(node.parentElement); }
   }
 
   // ---------- bookmarks timeline ----------
