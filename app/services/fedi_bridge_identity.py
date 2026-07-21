@@ -290,6 +290,20 @@ async def ensure_puppet(db, port: int, account: dict, instance_host: str = "",
 
     p = puppet_for(account, instance_host)
     row = db.query(FediPuppet).filter(FediPuppet.actor_uri == p["actor_uri"]).first()
+    # One person, one puppet. actor_uri is the PK and comes from `uri or url` — but Mastodon exposes an
+    # actor as BOTH https://host/users/alice (uri) and https://host/@alice (url), and the mention path
+    # builds a synthetic account that only has `url`. So the same person arrived under two keys and got
+    # two puppets with two different pubkeys and one shared nip05_name: their follows/mentions/DMs split
+    # across two Nostr identities, and the NIP-05 lookup flip-flopped between them (the relay map is
+    # last-write-wins). If this handle already has a puppet under the other URI form, REUSE it.
+    if row is None and p.get("acct"):
+        alt = (db.query(FediPuppet)
+               .filter(FediPuppet.acct == p["acct"])
+               .order_by(FediPuppet.created_at.asc()).first())
+        if alt is not None:
+            actor_uri = alt.actor_uri            # keep the original key (and its derived pubkey)
+            p = puppet_for({**account, "uri": alt.actor_uri, "url": alt.actor_uri}, instance_host)
+            row = alt
     # A mention-only sighting passes a SYNTHETIC account ({url, acct, username, display_name=username})
     # with no real profile fields (the caller sets profile_refresh=False). Recomputing the kind-0 from it
     # would downgrade an already-mirrored profile — blank the bio, drop emoji tags, revert the name to the
