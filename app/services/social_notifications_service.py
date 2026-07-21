@@ -96,6 +96,11 @@ def _norm_pleroma(n: dict) -> dict:
     }
 
 
+_NOSTR_KIND_TYPE = {1: "mention", 6: "repost", 7: "reaction"}
+
+# pubkey hex → display label (NIP-05 / profile name), resolved once from kind-0 metadata.
+_nostr_name_cache: dict = {}
+
 
 async def _nostr_actor_label(pubkey: str, relays) -> str:
     """Prefer the sender's NIP-05 (or profile name) over the raw npub in notifications.

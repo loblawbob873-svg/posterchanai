@@ -560,7 +560,7 @@ def generate_message(model, messages, tools, params, strip_thinking=None, disabl
                         # DIAG: capture what the model actually emitted so we can tell genuine prose
                         # from a malformed/unparsed tool call (fixable in parse_tool_calls).
                         logger.warning("push-to-act produced no call; keeping original content. "
-                                       "body3[:500]=%r", (body3 or "")[:500])
+                                       "raw3[:500]=%r", (raw3 or "")[:500])
                 except Exception as e:
                     logger.warning("push-to-act failed (%s); keeping original content", e)
             # Last-resort band-aid: NEVER return an empty message. An empty tool response makes the

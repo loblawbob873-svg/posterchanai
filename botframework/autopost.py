@@ -46,6 +46,11 @@ def _generate_post():
     return text.strip()
 
 
+# Markers the manager parses out of --autopost-print output to show the Preview in Admin → Bots.
+PREVIEW_BEGIN = "=== AUTOPOST PREVIEW BEGIN ==="
+PREVIEW_END = "=== AUTOPOST PREVIEW END ==="
+
+
 
 def autopost(print_only=False):
     """Generate one post from the bot's personality PROMPT and post it to its platform.

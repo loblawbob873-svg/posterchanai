@@ -149,12 +149,6 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
 
-    # Set up the ephemeral /tmp media-cache DB and one-time-migrate existing cache rows.
-    try:
-        init_fedi_cache_db()
-    except Exception as e:
-        logger.warning(f"[fedi-cache] init failed (bridge will run without the media cache): {e}")
-    
 
     # Create default settings if not exist
     db = SessionLocal()

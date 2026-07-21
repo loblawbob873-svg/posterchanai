@@ -6,7 +6,6 @@ fedi_nostr_personal_service, fedi_bridge_identity.
 """
 import html as _html
 import re
-from urllib.parse import urlparse
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _BREAK_RE = re.compile(r"<\s*br\s*/?\s*>|</\s*p\s*>", re.IGNORECASE)
@@ -117,10 +116,10 @@ def _canonical_uri(platform: str, instance_url: str, post: dict) -> str | None:
 
 # --- rendering --------------------------------------------------------------
 
-# Mention/profile anchors in post HTML. We strip these to plain text: a Matrix client renders a
-# URL preview for a fediverse profile link (`/users/x` or `/@x`), which shows the user's whole
-# profile card + bio below every post — unwanted bloat. Removing the <a> (keeping the @name text)
-# leaves the mention readable without a previewable link.
+# Mention/profile anchors in post HTML. We strip these to plain text: clients that unfurl a
+# fediverse profile link (`/users/x` or `/@x`) render the user's whole profile card + bio below
+# every post — unwanted bloat. Removing the <a> (keeping the @name text) leaves the mention
+# readable without a previewable link.
 
 
 def emoji_tags_for(text: str, emap: dict, limit: int = 30) -> list:
