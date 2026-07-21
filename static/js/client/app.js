@@ -2827,13 +2827,69 @@
   }
 
   // ---------- torrents (NIP-35, kind 2003) ----------
+  // A magnet's infohash may be hex (40/64) OR RFC4648 base32 (32 chars) — older clients still emit base32,
+  // and _magnet() only accepts hex, so a base32 one would publish an event whose magnet button is dead.
+  // Convert instead of rejecting.
+  function _b32ToHex(s){
+    const A='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits=0, val=0, out='';
+    for(const ch of String(s).toUpperCase()){ const i=A.indexOf(ch); if(i<0) return ''; val=(val<<5)|i; bits+=5;
+      if(bits>=8){ bits-=8; out+=((val>>bits)&0xff).toString(16).padStart(2,'0'); } }
+    return out;
+  }
+  function _parseMagnet(m){
+    const out={ ih:'', name:'', trackers:[] };
+    const xt=/xt=urn:btih:([a-z0-9]+)/i.exec(m||''); if(!xt) return out;
+    let ih=xt[1];
+    if(/^[a-z2-7]{32}$/i.test(ih) && !/^[0-9a-f]{32}$/i.test(ih)) ih=_b32ToHex(ih);   // base32 → hex
+    out.ih=/^([0-9a-f]{40}|[0-9a-f]{64})$/i.test(ih) ? ih.toLowerCase() : '';
+    const dn=/[?&]dn=([^&]+)/i.exec(m||''); if(dn){ try{ out.name=decodeURIComponent(dn[1].replace(/\+/g,' ')); }catch(_){ out.name=dn[1]; } }
+    for(const t of (m||'').matchAll(/[?&]tr=([^&]+)/gi)){ try{ out.trackers.push(decodeURIComponent(t[1])); }catch(_){ out.trackers.push(t[1]); } }
+    return out;
+  }
+  // Publish a NIP-35 torrent (kind 2003) — the same shape torrentCard/_magnet already read, so a published
+  // one renders in this list exactly like the ones already there.
+  function addTorrent(){
+    if(GUEST){ _guestPrompt(); return; }
+    modal(`<h3>🧲 Add a torrent</h3>
+      <p class="muted small">Published to Nostr as a NIP-35 torrent (kind 2003), so it shows up here and in any other NIP-35 client.</p>
+      <label class="fld">Magnet link<textarea id="tor-mag" rows="3" placeholder="magnet:?xt=urn:btih:…"></textarea></label>
+      <label class="fld">Title<input class="input" id="tor-title" maxlength="200" placeholder="Name of the release"></label>
+      <label class="fld">Description<textarea id="tor-desc" rows="3" placeholder="Optional"></textarea></label>
+      <label class="fld">Tags<input class="input" id="tor-tags" placeholder="comma-separated, e.g. linux, iso"></label>
+      <div class="muted small" id="tor-status"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button class="btn btn-ghost" id="tor-cancel">Cancel</button><button class="btn btn-neon" id="tor-go">Publish</button></div>`, root=>{
+      const mag=$('#tor-mag',root), ti=$('#tor-title',root), st=$('#tor-status',root);
+      // Autofill the title from the magnet's display name — one less thing to retype.
+      mag.addEventListener('input', ()=>{ const p=_parseMagnet(mag.value);
+        st.textContent = mag.value.trim() && !p.ih ? 'That magnet has no usable infohash.' : '';
+        if(p.name && !ti.value) ti.value=p.name; });
+      $('#tor-cancel',root).onclick=closeModal;
+      $('#tor-go',root).onclick=async()=>{
+        const p=_parseMagnet(mag.value);
+        if(!p.ih){ st.textContent='Paste a magnet link with a valid btih infohash.'; return; }
+        const title=(ti.value||'').trim()||p.name||'Untitled torrent';
+        const go=$('#tor-go',root); go.disabled=true; st.textContent='publishing…';
+        const tags=[['title',title], ['x',p.ih]];
+        p.trackers.forEach(tr=>tags.push(['tracker',tr]));
+        (($('#tor-tags',root).value||'').split(',').map(s=>s.trim()).filter(Boolean)).forEach(t=>tags.push(['t',t]));
+        try{
+          const r=await publish(2003, ($('#tor-desc',root).value||'').trim(), tags);
+          if(r && r.ok){ closeModal(); toast('🧲 torrent published'); if(VIEW==='torrents') renderView(true); return; }
+          st.textContent='';   // publish() raises its own failure toast
+        }catch(e){ st.textContent='publish failed: '+((e&&e.message)||e); }
+        go.disabled=false;
+      };
+    });
+  }
   async function renderTorrents(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     let evs=[]; try{ evs=await Relay.query([{ kinds:[2003], limit:80 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='torrents') return;
     const tors=evs.sort((a,b)=>b.created_at-a.created_at);
-    feed.innerHTML = tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>';
+    const top=GUEST?'':`<div class="streams-top"><button class="btn btn-neon small" id="tor-add">🧲 Add torrent</button></div>`;
+    feed.innerHTML = top + (tors.length ? tors.map(torrentCard).join('') : '<div class="empty">No torrents found on the relay yet (NIP-35 · kind 2003).</div>');
+    { const ab=$('#tor-add',feed); if(ab) ab.onclick=addTorrent; }
     decorateProfiles();
     $$('.tor-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
     $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet link:', b.dataset.magnet); } });
