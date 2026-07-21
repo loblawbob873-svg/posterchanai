@@ -296,7 +296,7 @@ def process_media(command, arg, media, brand_handle=None, brand_avatar=None):
     (summary_text, output_files) where output_files is a list of
     {"filename", "data" (raw bytes), "content_type"}. On failure returns
     (error_message, []). Shared by the Misskey and Pleroma listeners (and mirrors
-    what the Matrix listener does via /api/matrix/command) so all three reuse the
+    the shared backend command endpoint) so they all reuse the
     backend's single HW-accelerated ffmpeg/Pillow path.
 
     `brand_handle` (the fediverse poster's @handle) and `brand_avatar`
@@ -357,7 +357,7 @@ def parse_ytdl_postaction(text):
       compress            — shrink it (applied after clip)
     Returns (url, clip_str_or_None, compress_bool). `clip_str` is "start end"
     (e.g. "0:10 0:30") suitable for passing straight to the backend. Shared by
-    the Matrix, Pleroma and Misskey listeners so the syntax is identical.
+    the Pleroma and Misskey listeners so the syntax is identical.
     """
     import re as _re
     text = text or ""
@@ -382,7 +382,7 @@ def fetch_ytdl_media(url, video=False, clip=None, compress=False):
     """Download YouTube/X media via posterchanai's /api/media/ytdl endpoint.
 
     Identity-agnostic (authenticated by the bot's API key, not a linked user), so
-    the Misskey and Pleroma listeners share it — mirrors the Matrix listener's
+    the Misskey and Pleroma listeners share it — mirrors the
     ytdl. Audio (MP3) by default; video=True fetches MP4. The optional clip
     ("start end") and compress modifiers post-process the video server-side
     (clip → compress). Returns (bytes, mime, None) on success or
@@ -414,8 +414,7 @@ def capture_screenshot(url):
     """Capture a full-page screenshot of a website on the posterchanai backend.
 
     Returns (png_bytes, None) on success or (None, error_message) on failure.
-    Shared by the Misskey and Pleroma listeners (mirrors what the Matrix listener
-    does via /api/matrix/command) so all three reuse the backend's single headless
+    Shared by the Misskey and Pleroma listeners, which reuse the backend's single headless
     Chrome/Firefox path.
     """
     api = f"{POSTERCHANAI_API_ENDPOINT}/api/media/screenshot"
@@ -442,7 +441,7 @@ def render_post_card(handle, text, display_name="", timestamp="", media_bytes=No
     """Render a tweet-style post card on the backend (a screenshot of HTML built from
     these fields) and return (png_bytes, None) or (None, error_message).
 
-    Used by the Nitter poster so Matrix/Misskey/Pleroma get an image of the post
+    Used by the Nitter poster so Misskey/Pleroma get an image of the post
     instead of a bare link — link previews fail because Nitter's status pages are
     empty. Tweet media and the author's profile picture are pre-fetched here and sent
     as bytes (the server does no outbound fetch). Mirrors capture_screenshot()'s shape.

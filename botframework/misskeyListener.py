@@ -104,7 +104,7 @@ def _gather_note_media(note):
     return media
 
 
-# Per-user ytdl cooldown to prevent download spam (mirrors the Matrix bot's
+# Per-user ytdl cooldown to prevent download spam (mirrors the other listeners'
 # _ytdl_last_request). Keyed by sender username; per-process is fine since the
 # poller is single-process.
 _ytdl_last_request: dict = {}

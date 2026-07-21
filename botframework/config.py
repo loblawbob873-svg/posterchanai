@@ -38,19 +38,8 @@ POSTERCHANAI_PASSWORD = _g("POSTERCHANAI_PASSWORD", "POSTERCHANAI_PASSWORD", "")
 # Server timezone
 TIMEZONE = os.getenv("TIMEZONE", "MST")
 
-# Matrix Configuration
-MATRIX_SERVER = os.getenv("MATRIX_SERVER")
-MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN")
-MATRIX_USER_ID = os.getenv("MATRIX_USER_ID")
-MATRIX_ROOM_ID = os.getenv("MATRIX_ROOM_ID")  # Default room for posting
-# Fediverse-timeline bridge room: every message/reaction here is relayed to posterchanai's
-# /api/matrix/timeline-action (member's own fedi account). Must match posterchanai's
-# fedi_timeline_room_id setting. Empty disables the bridge handling.
 FEDI_TIMELINE_ROOM_ID = os.getenv("FEDI_TIMELINE_ROOM_ID", "!MaaoDPUoNpHtiDMJAQ:chat.poster.place")
 # SSL verification (set "false" for self-signed certs)
-MATRIX_VERIFY_SSL = os.getenv("MATRIX_VERIFY_SSL", "true").lower() not in ("false", "0", "no")
-# Comma-separated admin Matrix IDs allowed to run privileged DM commands
-MATRIX_ADMINS = [u.strip() for u in os.getenv("MATRIX_ADMINS", "").split(",") if u.strip()]
 
 # Misskey Configuration
 MISSKEY_SERVER = os.getenv("MISSKEY_SERVER")
@@ -108,8 +97,6 @@ IMAGE_POSTER_RANDOM_SCENES = os.getenv("IMAGE_POSTER_RANDOM_SCENES", "").lower()
 # (interval/cap/quiet-hours) lives in bot_manager_service; these drive content/targets only.
 AUTO_POST_SEED = os.getenv("AUTO_POST_SEED", "")
 AUTO_POST_TOPICS = os.getenv("AUTO_POST_TOPICS", "")
-# Matrix-only: rooms to auto-post to (one per line / comma-separated). Blank falls back to
-# the bot's default MATRIX_ROOM_ID. Each room gets its own freshly generated post.
 AUTO_POST_ROOMS = os.getenv("AUTO_POST_ROOMS", "")
 
 # SearXNG Configuration
@@ -182,5 +169,5 @@ VIDEO_ENCODER = os.getenv("VIDEO_ENCODER", "auto")
 # Response delay in seconds before responding
 RESPONSE_DELAY = int(os.getenv("RESPONSE_DELAY", "0"))
 
-# Shamebot: roast matrix.org users on join (comma-separated room IDs)
+# Shamebot: roast new joiners (comma-separated room IDs)
 SHAMEBOT_ROOMS = [r.strip() for r in os.getenv("SHAMEBOT_ROOMS", "").split(",") if r.strip()]

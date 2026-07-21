@@ -46,24 +46,6 @@ def _generate_post():
     return text.strip()
 
 
-def _matrix_rooms():
-    """Rooms a Matrix bot auto-posts to: AUTO_POST_ROOMS (one per line / comma-separated),
-    falling back to the bot's default MATRIX_ROOM_ID."""
-    raw = os.getenv("AUTO_POST_ROOMS", "")
-    rooms = [r.strip() for line in raw.splitlines() for r in line.split(",")]
-    rooms = [r for r in rooms if r]
-    if not rooms:
-        default = (os.getenv("MATRIX_ROOM_ID") or "").strip()
-        if default:
-            rooms = [default]
-    return rooms
-
-
-# Markers wrap the preview text so a caller capturing stdout (the Test → Preview button via
-# bot_manager.preview_post) can extract just the generated post out of the debug chatter.
-PREVIEW_BEGIN = "=== AUTOPOST PREVIEW BEGIN ==="
-PREVIEW_END = "=== AUTOPOST PREVIEW END ==="
-
 
 def autopost(print_only=False):
     """Generate one post from the bot's personality PROMPT and post it to its platform.
@@ -71,9 +53,8 @@ def autopost(print_only=False):
     print_only=True is the dry run (--autopost-print): generate one and print between the
     PREVIEW markers, but do NOT publish.
 
-    Platform precedence is Misskey → Pleroma → Nostr → Matrix. Fedi/Nostr win over a
-    *secondary* Matrix connection, so a bot that also sits in a Matrix room auto-posts to its
-    primary network only (never both). Matrix-only bots fall through to the room-by-room path."""
+    Platform precedence is Misskey → Pleroma → Nostr.
+    """
     if not PROMPT or len(PROMPT.strip()) < 10:
         print("[autopost] No personality PROMPT set; skipping.")
         return
@@ -86,7 +67,7 @@ def autopost(print_only=False):
             print(PREVIEW_END)
         return
 
-    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, MATRIX_SERVER, NOSTR_NSEC
+    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, NOSTR_NSEC
 
     if MISSKEY_SERVER or PLEROMA_ENDPOINT:
         # Fediverse: one post. Both modules expose post_to_fediverse(status_text) with
@@ -110,22 +91,8 @@ def autopost(print_only=False):
         from nostr import post_image_to_fediverse as post_to_nostr
         print(f"[autopost] Posting to Nostr ({len(text)} chars): {text[:120]}...")
         post_to_nostr(text)
-    elif MATRIX_SERVER:
-        # Matrix: room-by-room — a freshly generated post per room so multiple rooms don't
-        # get identical text. send_message applies the same BLOCK_PHRASE guard.
-        rooms = _matrix_rooms()
-        if not rooms:
-            print("[autopost] Matrix bot has no rooms (auto_post_rooms / MATRIX_ROOM_ID); skipping.")
-            return
-        from matrix_client import post_to_matrix
-        for room in rooms:
-            text = _generate_post()
-            if not text:
-                continue
-            print(f"[autopost] Posting to Matrix room {room} ({len(text)} chars)...")
-            post_to_matrix(room, text)
     else:
-        print("[autopost] No Misskey/Pleroma/Matrix endpoint configured; skipping.")
+        print("[autopost] No Misskey/Pleroma/Nostr endpoint configured; skipping.")
         return
 
     print("[autopost] Done.")

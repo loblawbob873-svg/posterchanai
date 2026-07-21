@@ -1,13 +1,13 @@
 """
-Nitter RSS → Matrix poster.
+Nitter RSS → fediverse poster.
 
-Polls a list of Nitter RSS feeds and posts new items into a configured Matrix
+Polls a list of Nitter RSS feeds and posts new items to the configured
 room. Feeds are defined in bots_config.py as the `nitter_feeds` array on the
 bot, each entry being {"room": "!id:server", "rss": "https://nitter.../rss"},
 passed to this process as the NITTER_FEEDS env var (JSON).
 
 On the first time a feed is seen, its current items are recorded as "seen"
-WITHOUT posting, so the bot doesn't dump the whole backlog into the room on
+WITHOUT posting, so the bot doesn't dump the whole backlog on
 startup — only genuinely new posts after that are sent.
 """
 import os
@@ -24,7 +24,6 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
 from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, NOSTR_NSEC
-from matrix_client import send_message
 
 # Per-bot feeds, set by botctl/the installer from the bot's `nitter_feeds`.
 NITTER_FEEDS = json.loads(os.getenv("NITTER_FEEDS", "[]"))
@@ -56,8 +55,6 @@ _last_good_instance = None  # remembered across polls; tried first next time
 _session = requests.Session()
 _session.trust_env = os.getenv("NITTER_USE_PROXY", "").lower() in ("1", "true", "yes")
 
-# A feed entry with a "room" posts to that Matrix room; one without posts to the
-# fediverse (Pleroma/Misskey/Nostr, whichever this bot is configured for).
 _fedi_post = None
 _fedi_post_image = None
 _is_nostr = False
@@ -73,7 +70,7 @@ elif NOSTR_NSEC:
     _is_nostr = True
 
 # Nitter→Nostr posts are tagged with a hashtag (default #news) so they collect in that
-# hashtag feed. Overridable per-bot via NITTER_NOSTR_HASHTAG; Matrix/Pleroma/Misskey are
+# hashtag feed. Overridable per-bot via NITTER_NOSTR_HASHTAG; Pleroma/Misskey are
 # unaffected. The literal #tag is kept in the body (readable / client-linkified) AND a real
 # NIP-12 `t` tag is added by the Nostr poster so it also lands in indexed #hashtag feeds.
 NITTER_NOSTR_HASHTAG = (os.getenv("NITTER_NOSTR_HASHTAG", "news") or "news").lstrip("#").strip() or "news"
@@ -357,8 +354,8 @@ def _format_post(handle, item):
     """Build the message text for a single feed item.
 
     The link is left bare (not wrapped in backticks) so it renders as a
-    clickable link on both Matrix (Element auto-linkifies bare URLs) and the
-    fediverse. Backtick-wrapping suppresses Matrix's tweet embed but turns the
+    clickable link on the
+    fediverse.
     link into a non-clickable <code> span, so it is not used here.
     """
     title = item["title"]
@@ -409,29 +406,17 @@ def _render_card(handle, item):
 
 
 def _post_item(feed, handle, item):
-    """Post one item to its destination (Matrix room or the fediverse).
+    """Post one item to the fediverse.
 
     Posts the tweet rendered as an image (a "screenshot" of a card we build from the
     RSS data) with the source link beneath it; Nitter's own status pages are empty so
     link previews never render. Falls back to the original text+link post if the card
     can't be produced (e.g. no browser on the backend).
     """
-    room = (feed.get("room") or "").strip()
     card = _render_card(handle, item)
     caption = _format_caption(handle, item)
 
-    if room:
-        if card:
-            # Caption the image itself (link at the bottom) so the card and its
-            # source link land as a single Matrix post, not two separate messages.
-            ok = send_message(room, "", image_bytes=card, image_caption=caption)
-        else:
-            ok = send_message(room, _format_post(handle, item))
-        if not ok:
-            print(f"[nitter] WARNING: failed to post to {room} — bot may have been kicked. Re-invite the bot to restore posting.", flush=True)
-        return ok
-
-    # No room → post to the fediverse (Pleroma/Misskey).
+    # Post to the fediverse (Pleroma/Misskey).
     if _fedi_post is None:
         print("[nitter] Feed has no 'room' and no fediverse is configured; skipping post", flush=True)
         return False
@@ -500,7 +485,7 @@ def _process_feed(feed, state):
             # Destination temporarily unavailable (e.g. a room send 403 during a
             # membership/federation blip). Leave the item UNSEEN so it retries on
             # the next poll instead of being silently dropped — this was why tweets
-            # went to Telegram but never reached Matrix.
+            # went to Telegram but never reached the fediverse.
             print(f"[nitter] @{handle}: post not confirmed, will retry next poll", flush=True)
 
     # Trim and persist

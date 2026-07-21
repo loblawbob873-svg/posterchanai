@@ -160,7 +160,7 @@ Keep summaries very concise - one sentence only. Focus on key facts. Output form
     return None
 
 
-def format_for_matrix(text: str) -> str:
+def format_for_plain(text: str) -> str:
     """Convert markdown links to simple format: summary - url (one line per article)"""
     import re
     lines = text.split('\n')
@@ -223,18 +223,18 @@ def format_for_matrix(text: str) -> str:
     _in_lines = len([l for l in text.split('\n') if l.strip()])
     _out_lines = len([l for l in result.split('\n') if l.strip()])
     if _out_lines < 2:
-        logger.warning(f"format_for_matrix produced few lines. Input had {_in_lines} lines, output has {_out_lines} lines")
+        logger.warning(f"format_for_plain produced few lines. Input had {_in_lines} lines, output has {_out_lines} lines")
     return result
 
 
-def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix: bool = False):
+def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_plain: bool = False):
     """Fetch news from a source with AI summaries"""
     try:
         source = get_news_source(source_name)
         source_url = source["url"]
         source_display_name = source["name"]
         
-        logger.info(f"Fetching news from {source_display_name} ({source_url}), for_matrix={for_matrix}")
+        logger.info(f"Fetching news from {source_display_name} ({source_url}), for_plain={for_plain}")
         result = fetch_headlines_from_url(source_url, max_headlines)
         links = result["links"]
         
@@ -251,17 +251,17 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix
         if ai_result:
             logger.info(f"AI summarization successful, length: {len(ai_result)}")
             # For markdown platforms (Pleroma/Misskey), use markdown format with bold header
-            # For Matrix, format AI output
-            if not for_matrix:
+            # For plain-text channels, format AI output
+            if not for_plain:
                 # Pleroma/Misskey: markdown format with bold header
                 formatted = f"**{source_display_name}:**\n\n{ai_result}"
                 logger.info(f"Pleroma/Misskey format: {len(formatted)} chars")
             else:
-                # Matrix: format AI output through parser
+                # plain text: format AI output through parser
                 formatted = f"{source_display_name}:\n\n{ai_result}"
-                logger.info(f"Before format_for_matrix: {len(formatted)} chars")
-                formatted = format_for_matrix(formatted)
-                logger.info(f"After format_for_matrix: {len(formatted)} chars, {len([l for l in formatted.split(chr(10)) if l.strip()])} lines")
+                logger.info(f"Before format_for_plain: {len(formatted)} chars")
+                formatted = format_for_plain(formatted)
+                logger.info(f"After format_for_plain: {len(formatted)} chars, {len([l for l in formatted.split(chr(10)) if l.strip()])} lines")
                 # Debug: show first 500 chars
                 logger.info(f"Formatted preview: {formatted[:500]}")
         else:
@@ -275,8 +275,8 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix
                 if match:
                     text = match.group(1)
                     url = match.group(2)
-                    if for_matrix:
-                        # Matrix: simple format (already correct, no formatting needed)
+                    if for_plain:
+                        # simple format (already correct, no formatting needed)
                         formatted_links.append(f"{text} - {url}")
                     else:
                         # Pleroma/Misskey: markdown format
@@ -285,8 +285,8 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix
                 else:
                     logger.warning(f"Could not parse link {i+1}: {link[:100]}")
                     formatted_links.append(link)
-            if for_matrix:
-                # Matrix: already in correct format, just add header
+            if for_plain:
+                # already in correct format, just add header
                 formatted = f"{source_display_name}\n" + "\n".join(formatted_links)
             else:
                 formatted = f"**{source_display_name}:**\n\n" + "\n".join(formatted_links)
@@ -307,12 +307,12 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix
                 if match:
                     text = match.group(1)
                     url = match.group(2)
-                    if for_matrix:
+                    if for_plain:
                         formatted_links.append(f"{text} - {url}")
                     else:
                         formatted_links.append(f"- [{text}]({url})")
             if formatted_links:
-                if for_matrix:
+                if for_plain:
                     formatted = f"{source_display_name}\n" + "\n".join(formatted_links)
                 else:
                     formatted = f"**{source_display_name}:**\n\n" + "\n".join(formatted_links)
@@ -320,13 +320,13 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_matrix
             else:
                 logger.error("Emergency fallback also failed - no links extracted")
         
-        # Final validation for Matrix - ensure we have content
-        if for_matrix:
+        # Final validation - ensure we have content
+        if for_plain:
             lines = [l.strip() for l in formatted.split('\n') if l.strip()]
-            logger.info(f"Matrix final validation: {len(lines)} lines")
+            logger.info(f"final validation: {len(lines)} lines")
             if len(lines) < 2:
                 # Emergency fallback: re-extract links directly
-                logger.warning(f"Matrix formatting produced only {len(lines)} lines, using emergency fallback")
+                logger.warning(f"formatting produced only {len(lines)} lines, using emergency fallback")
                 formatted_links = []
                 for link in links:
                     import re
