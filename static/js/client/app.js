@@ -10746,13 +10746,37 @@
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
-    // Reveal + flash the clicked post (when it isn't the root). Use 'nearest', NOT 'center': centering
-    // scrolled the root + earlier replies off the top of a short mobile viewport, so tapping a reply
-    // notification looked like it opened "just the reply". 'nearest' scrolls the MINIMUM — a thread that
-    // fits (the common case: your post + a few replies) doesn't scroll at all, so the root stays on screen
-    // and the whole conversation is visible; a long thread still scrolls just enough to reveal the reply.
+    // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
-      if(el){ el.scrollIntoView({block:'nearest'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1400); } }
+      if(el) _revealThreadNode(feed, el, id); }
+  }
+  // Reveal the tapped reply — and KEEP it revealed. A single scrollIntoView() ran before the thread's
+  // layout had settled: avatars, images and the link-preview cards hydrate() inserts all land ABOVE the
+  // target afterwards and push it back down, and .feed sets overflow-anchor:none so the browser doesn't
+  // compensate. With block:'nearest' the node was parked flush against the BOTTOM edge, so a few pixels
+  // of that growth were enough to push it off screen — "clicking a notification doesn't bring me to the
+  // reply, I have to scroll down to find the highlighted one". So: scroll only when it isn't comfortably
+  // visible (a short thread that already fits still doesn't move, keeping the root + context on screen),
+  // leave a slice of viewport above it rather than pinning it to an edge, and re-run while the thread
+  // settles — stopping the moment the user scrolls themselves, so this never fights them.
+  function _revealThreadNode(feed, el, tok){
+    let last=-1, stop=false;
+    const reveal=()=>{
+      if(stop || VIEW!=='thread' || renderThread._tok!==tok) return;
+      if(last>=0 && Math.abs(feed.scrollTop-last)>4){ stop=true; return; }   // user took over
+      const fr=feed.getBoundingClientRect(), er=el.getBoundingClientRect();
+      const pad=Math.min(120, fr.height*0.28);
+      // Idempotent: once positioned, (er.top-fr.top)===pad, so the correction is 0 and re-runs are no-ops.
+      if(!(er.top>=fr.top+4 && er.bottom<=fr.bottom-4)) feed.scrollTop += (er.top-fr.top)-pad;
+      last=feed.scrollTop;
+    };
+    reveal();
+    requestAnimationFrame(reveal);
+    const mo=new MutationObserver(reveal);                       // link cards / counts hydrating in above it
+    try{ mo.observe(feed,{childList:true,subtree:true}); }catch(_){}
+    feed.querySelectorAll('img').forEach(im=>{ if(!im.complete) im.addEventListener('load', reveal, {once:true}); });
+    setTimeout(()=>{ try{ mo.disconnect(); }catch(_){} }, 4000);
+    el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1400);
   }
   // Resolve a post's thread root, returning { rootId, chain } where chain is the clicked post + each
   // fetched ancestor up to (and including, if reachable) the root. Prefers the NIP-10 'root' e-tag (O(1));
