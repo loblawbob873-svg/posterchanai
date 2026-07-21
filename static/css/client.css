@@ -756,9 +756,11 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
   .tl-cmp-av{width:32px;height:32px}
   .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
-  .tl-cmp-tools{gap:6px}
-  .tl-cmp-btn{width:38px;height:38px;font-size:20px}   /* five icons + Post must still fit a 360px viewport */
-  .tl-cmp-post{padding:10px 20px;font-size:15px;margin-left:auto}
+  /* Five icons + Post on ONE row at 360px (the common phone width). Enlarging the buttons earlier pushed
+     this to ~294px against 279px available, which silently wrapped Post onto a second row. */
+  .tl-cmp-tools{gap:5px}
+  .tl-cmp-btn{width:36px;height:36px;font-size:19px}
+  .tl-cmp-post{padding:9px 16px;font-size:15px;margin-left:auto}
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
   .tltab-media{padding:8px 11px;font-size:14px}
@@ -1422,7 +1424,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   /* Density on mobile (no global zoom — Firefox's zoom leaves a black border). Scale down the main
      content via font-size so the app reads denser without breaking the viewport. */
   .note .txt{font-size:15px;line-height:1.5} .note .name{font-size:14.5px}
-  .note .handle,.note .time{font-size:13px} .act{font-size:16px;padding:8px 10px} .act.actq{font-size:21px}
+  .note .handle,.note .time{font-size:13px} .act{font-size:16px;padding:8px 8px} .act.actq{font-size:21px}   /* 8px sides: six actions must still fit a 320px phone */
   .bubble{font-size:14.5px;padding:9px 12px}
   .dm-peer b{font-size:15px} .dm-peer .muted.small{font-size:13px}
   .prof .pbody h2{font-size:20px} .rb-item .rb-txt{font-size:13.5px}
