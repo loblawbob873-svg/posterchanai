@@ -98,9 +98,13 @@
     // few tries hand off to __blobFallback, which does the authenticated fetch → blob that recovers a
     // cross-origin /api image the APK <img> couldn't load. (Don't short-circuit on the APK — that skipped
     // the not-ready retry and left a just-generated artifact broken until reload.)
-    if(n >= 5){ if(window.__blobFallback) window.__blobFallback(el); return; }
+    // 5 tries at 700ms*(n+1) gave up after ~10.5s — shorter than a slow effect/video render takes to
+    // become readable on Blossom, so those stayed broken until a manual refresh (intermittent by nature:
+    // it worked whenever the blob happened to land inside the window). ~30s of self-heal instead, with the
+    // per-try delay capped so the tail isn't one long wait.
+    if(n >= 10){ if(window.__blobFallback) window.__blobFallback(el); return; }
     el.dataset.r = n + 1;
-    setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, 700 * (n + 1));
+    setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, Math.min(700 * (n + 1), 4000));
   };
 
   let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
@@ -3456,7 +3460,7 @@
     _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
     let local=null, pc=null; let facing='user';
     try{ local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:facing},audio:true}); }
-    catch(_){ toast('camera/mic permission needed'); _goingLive=false; return; }
+    catch(e){ toast(_mediaErrMsg(e)); _goingLive=false; return; }
     toast('connecting…');
     try{
       let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
@@ -11139,6 +11143,18 @@
     };
     return pc;
   }
+  // getUserMedia failures were all reported as "permission needed", which is wrong in the most common
+  // case: on an insecure origin (http:// on a LAN IP) navigator.mediaDevices is undefined, the browser
+  // never prompts, and there is genuinely nothing for the user to click — hence "no way to do it".
+  function _mediaErrMsg(e){
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !window.isSecureContext)
+      return 'Calls need a secure connection — open this over HTTPS (not a plain http:// IP address).';
+    const n=(e&&e.name)||'';
+    if(n==='NotAllowedError')  return 'Camera/mic blocked — click the camera or 🔒 icon in the address bar, allow access, then try again.';
+    if(n==='NotFoundError'||n==='OverconstrainedError') return 'No camera or microphone found on this device.';
+    if(n==='NotReadableError') return 'Your camera/mic is already in use by another app.';
+    return 'Could not start the camera/mic'+(n?' ('+n+')':'')+'.';
+  }
   function _getMedia(video){
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
@@ -11163,7 +11179,7 @@
       _call.camOff=false; _callUI(); await _renegotiate(); return;
     }
     let vs; try{ vs=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}}}); }
-    catch(_){ toast('camera permission needed'); return; }
+    catch(e){ toast(_mediaErrMsg(e)); return; }
     if(!_call){ vs.getTracks().forEach(t=>t.stop()); return; }
     const vt=vs.getVideoTracks()[0]; if(!vt){ vs.getTracks().forEach(t=>t.stop()); return; }
     _call.local.addTrack(vt); _call.pc.addTrack(vt, _call.local); _call.camOff=false; _callUI();
@@ -11177,7 +11193,7 @@
     _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, state:'calling', caller:true, pendingIce:[] };
     _callUI();
     let local;
-    try{ local = await _getMedia(video); }catch(_){ toast('microphone/camera permission needed'); _callTeardown(); return; }
+    try{ local = await _getMedia(video); }catch(e){ toast(_mediaErrMsg(e)); _callTeardown(); return; }
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
     _call.local = local;
     const ice = await _fetchIceServers();
