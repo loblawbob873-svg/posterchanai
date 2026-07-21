@@ -5767,27 +5767,111 @@
   let _fxCatalog=null;
   async function showEffectGuide(){
     if(!_fxCatalog){ try{ _fxCatalog=await fetch('/client/effects').then(r=>r.json()); }catch(_){ _fxCatalog={enhance:[],effects:[],motions:[]}; } }
-    aiAddMessage('assistant', effectGuideHtml(_fxCatalog));
+    openEffectsStudio(_fxCatalog);
   }
-  function effectGuideHtml(cat){
+  // The studio is a MODAL, not a chat message. As a message it was 69 effects wrapped into a grid with
+  // its own 32dvh scrollbar INSIDE the scrolling chat — two nested scroll areas on a phone, no way to
+  // search, the picked state visible only as text in the input, and the whole thing scrolled away as
+  // soon as anything else was said. A sheet gives it a sticky search + a sticky Apply bar and ONE
+  // scroll region, and keeps the selection on screen while you build the command.
+  function openEffectsStudio(cat){
     cat=cat||{};
-    const chip=o=>`<button class="fx-cmd" data-cmd="${enc(o.name)}" title="${enc(o.desc||o.name)}">${enc(o.name)}</button>`;
-    const mot=c=>`<button class="fx-mot" data-add="${enc(c)}">${enc(c)}</button>`;
-    const enh=(cat.enhance||[]).map(chip).join('');
-    const eff=(cat.effects||[]).map(chip).join('');
-    const mots=(cat.motions||['zoom','shake','pulse','trippy']).map(mot).join('');
-    const stk=(cat.chars||[]).map(n=>`<button class="fx-char" data-char="${enc(n)}">🧷 ${enc(n)}</button>`).join('');
-    // Pick ONE base: the full Effects catalog is the point of the studio, so it's shown INLINE as the
-    // primary section (never collapsed — hiding it behind a <details> buried the main feature). Both grids
-    // are height-capped + internally scrollable (see .fx-grid), so even the big catalog stays bounded on
-    // mobile where the keyboard halves the viewport, instead of becoming a wall that buries the add-ons.
-    const nEff=(cat.effects||[]).length;
-    return '<div class="fx-guide"><b>🎬 Effects studio</b> — image attached. Pick <b>one base</b>, optionally <b>add</b> motion / sticker / caption (they stack), then ▶ Send.'+
-      (eff?'<div class="fx-sec">🎭 Effects <span class="fx-hint">pick one'+(nEff>8?' · scroll for all '+nEff:'')+'</span></div><div class="fx-grid fx-grid-eff">'+eff+'</div>':'')+
-      (enh?'<div class="fx-sec">✨ Enhance <span class="fx-hint">or pick one of these</span></div><div class="fx-grid">'+enh+'</div>':'')+
-      '<div class="fx-sec">🌀 Motion <span class="fx-hint">add-on · trippy/glow/alive stack</span></div><div class="fx-row">'+mots+'</div>'+
-      (stk?'<div class="fx-sec">🧷 Sticker <span class="fx-hint">add-on</span></div><div class="fx-row">'+stk+'</div>':'')+
-      '<div class="fx-sec">💬 Caption <span class="fx-hint">add-on</span></div><div class="fx-row"><button class="fx-mot" data-add="meme ">＋ meme text</button></div></div>';
+    const effects=cat.effects||[], enhance=cat.enhance||[], chars=cat.chars||[];
+    const motions=cat.motions||['zoom','shake','pulse','trippy'];
+    const ta=$('#ai-input');
+    // Seed from whatever is already in the input, so re-opening the studio RESUMES the command
+    // instead of silently discarding it.
+    const S=_fxParse((ta&&ta.value)||'');
+    const capOf=()=> (S.meme&&S.meme.length>1) ? S.meme.slice(1).join(' ') : '';
+    const chip=(o,cls)=>{ const n=(o&&o.name)||o; const d=(o&&o.desc)||'';
+      return `<button type="button" class="fxs-chip ${cls}" data-pick="${enc(n)}"${d?` title="${enc(d)}"`:''}>${enc(n)}</button>`; };
+    const src=(_ai.fxImage||(_ai.attach&&_ai.attach[0]));
+    let thumb='';
+    try{ if(src && src.type && src.type.startsWith('image/')) thumb=`<img class="fxs-thumb" src="${URL.createObjectURL(src)}" alt="">`; }catch(_){}
+    modal(`<div class="fxs">
+      <div class="fxs-hd">
+        <div class="fxs-title">${thumb}<div><h3>🎬 Effects studio</h3>
+          <div class="muted small">Pick one base effect · motion, sticker and caption stack on top.</div></div>
+          <button type="button" class="fxs-x" id="fxs-close" aria-label="Close">✕</button></div>
+        <input class="input fxs-search" id="fxs-q" placeholder="Search ${effects.length} effects…" autocomplete="off">
+      </div>
+      <div class="fxs-body">
+        <div class="fxs-sec">🎭 Effects <span class="fxs-hint">pick one</span></div>
+        <div class="fxs-grid" id="fxs-eff">${effects.map(o=>chip(o,'fxs-eff')).join('')}</div>
+        <div class="fxs-empty hidden" id="fxs-none">No effect matches that.</div>
+        ${enhance.length?`<div class="fxs-sec">✨ Enhance <span class="fxs-hint">or pick one of these instead</span></div>
+        <div class="fxs-grid">${enhance.map(o=>chip(o,'fxs-eff')).join('')}</div>`:''}
+        <div class="fxs-sec">🌀 Motion <span class="fxs-hint">one movement · glow / alive / trippy stack</span></div>
+        <div class="fxs-grid">${motions.map(m=>chip(m,'fxs-mot')).join('')}</div>
+        ${chars.length?`<div class="fxs-sec">🧷 Sticker <span class="fxs-hint">optional overlay</span></div>
+        <div class="fxs-grid">${chars.map(c=>chip(c,'fxs-char')).join('')}</div>`:''}
+        <div class="fxs-sec">💬 Caption <span class="fxs-hint">optional text on the image</span></div>
+        <input class="input" id="fxs-cap" maxlength="120" placeholder="meme text…" value="${enc(capOf())}">
+      </div>
+      <div class="fxs-ft">
+        <code class="fxs-cmd" id="fxs-cmd"></code>
+        <div class="fxs-acts">
+          <button class="btn btn-ghost small" id="fxs-clear">Clear</button>
+          <button class="btn btn-neon" id="fxs-go">▶ Apply</button>
+        </div>
+      </div>
+    </div>`, root=>{
+      // modal() has no class hook, so tag the sheet (and its backdrop) here — the studio needs a
+      // flex column with its own sticky header/footer, not the default single scrolling box.
+      root.classList.add('fxs-modal');
+      if(root.parentElement) root.parentElement.classList.add('fxs-bg');
+      const cmdEl=$('#fxs-cmd',root), cap=$('#fxs-cap',root), go=$('#fxs-go',root);
+      const build=()=>{ const t=(cap.value||'').trim();
+        S.meme = t ? ['meme', t] : [];
+        return _fxJoin(S); };
+      // Repaint selection + the live command. The command line is the whole point of the footer: it
+      // shows exactly what will be sent, which the old studio only revealed by looking at the input.
+      const sync=()=>{
+        $$('.fxs-chip',root).forEach(b=>{ const v=b.dataset.pick;
+          const on = b.classList.contains('fxs-eff') ? S.effect===v
+                   : b.classList.contains('fxs-mot') ? S.mods.includes(v)
+                   : S.char===v;
+          b.classList.toggle('on', !!on); });
+        const c=build();
+        cmdEl.textContent = c || 'nothing picked yet';
+        cmdEl.classList.toggle('muted', !c);
+        go.disabled = !S.effect;
+        go.title = S.effect ? '' : 'pick a base effect first';
+      };
+      root.addEventListener('click', e=>{
+        const b=e.target.closest('.fxs-chip'); if(!b) return;
+        e.preventDefault(); const v=b.dataset.pick;
+        if(b.classList.contains('fxs-eff')) S.effect = (S.effect===v) ? '' : v;          // tap again to unset
+        else if(b.classList.contains('fxs-mot')){
+          if(_FX_GEO.includes(v)){                                                       // ONE movement…
+            const had=S.mods.includes(v);
+            S.mods=S.mods.filter(m=>!_FX_GEO.includes(m));
+            if(!had) S.mods.push(v);                                                     // …and tapping it again clears it
+          } else S.mods = S.mods.includes(v) ? S.mods.filter(m=>m!==v) : S.mods.concat(v);   // glow/alive/trippy compose
+        }
+        else S.char = (S.char===v) ? '' : v;
+        sync();
+      });
+      cap.addEventListener('input', sync);
+      // Search only filters the big Effects grid — the other sections are short enough to scan.
+      { const q=$('#fxs-q',root), none=$('#fxs-none',root), grid=$('#fxs-eff',root);
+        q.addEventListener('input', ()=>{ const t=q.value.trim().toLowerCase(); let n=0;
+          $$('.fxs-chip',grid).forEach(b=>{ const hit=!t || b.dataset.pick.toLowerCase().includes(t);
+            b.classList.toggle('hidden', !hit); if(hit) n++; });
+          none.classList.toggle('hidden', n>0); }); }
+      $('#fxs-clear',root).onclick=()=>{ S.effect=''; S.mods=[]; S.char=''; cap.value=''; sync(); };
+      $('#fxs-close',root).onclick=()=>closeModal();
+      go.onclick=()=>{
+        const c=build(); if(!c) return;
+        // Re-attach the source image if the user cleared the attachment while the studio was open.
+        if(_ai.fxImage && !(_ai.attach||[]).length) aiAddFiles([_ai.fxImage]);
+        const t=$('#ai-input'); if(t){ t.value=c; t.dispatchEvent(new Event('input')); }
+        closeModal(); if(t) t.focus();
+      };
+      sync();
+      // Desktop only: autofocusing search on a phone springs the keyboard over the grid you came for.
+      if(matchMedia('(min-width:821px)').matches){ const q=$('#fxs-q',root); if(q) q.focus(); }
+    });
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
@@ -9097,7 +9181,7 @@
       const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
         const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxSetEffect(ta, fxc.dataset.cmd); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → set base effect (keeps motion/caption)
-      const fxm=e.target.closest('.fx-mot'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
+      const fxm=e.target.closest('.fx-mot[data-add]'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
       const fxh=e.target.closest('.fx-char'); if(fxh){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyChar(ta, fxh.dataset.char); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // sticker (char overlay) → single, toggle
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
