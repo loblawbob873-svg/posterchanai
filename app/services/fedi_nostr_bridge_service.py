@@ -402,6 +402,14 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
     Nostr pubkey, so the mirrored note surfaces as a notification for them. Returns (content, [p-tags])."""
     ptags = []
     linked = await _linked_actor_pubkeys(db)   # fedi actor url -> real Nostr pubkey (cached)
+    # How many mentions share each bare username. A bare "@bob" is only AMBIGUOUS when two mentioned
+    # accounts are both called "bob"; with a single "bob" the post's own mention list settles who it
+    # is, whatever instance they're on.
+    _uname_n: dict = {}
+    for _m in (mentions or []):
+        _u = (_m.get("username") or "").strip().lower()
+        if _u:
+            _uname_n[_u] = _uname_n.get(_u, 0) + 1
     # Longest acct first so '@user@host' is replaced before a bare '@user' substring.
     for m in sorted(mentions or [], key=lambda x: len(x.get("acct", "")), reverse=True):
         url = (m.get("url") or "").strip()
@@ -445,11 +453,18 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         # nostr: reference no client can resolve.
         if acct:
             content = re.sub(r"@" + re.escape(acct) + r"(?![A-Za-z0-9_.\-@])", ref, content)
-        # The BARE "@username" form means the LOCAL user on the fediverse, so only a local mention may
-        # claim it. Letting a remote account do so rewrote the local @bob to the REMOTE bob's npub when
-        # a note mentioned both. The negative lookahead stops "@ann" from eating "@anna_x".
+        # The BARE "@username" form. Restricting it to LOCAL mentions (as this did) silently stopped
+        # linkifying the COMMON case: a post federated in from another instance keeps its author's
+        # rendering, so a mention of Appelmoesje@poa.st appears in the text as plain "@Appelmoesje"
+        # — never the qualified form line 447 looks for. Those mentions kept their p-tag but stayed
+        # unclickable text.
+        # The real hazard is only ambiguity: two mentioned accounts sharing a username, where a bare
+        # "@bob" could bind to the wrong one. So claim the bare form when this username is unique in
+        # the post's mention list (the list is authoritative about who "@bob" is), and fall back to
+        # the local-only rule when it isn't. The negative lookahead still stops "@ann" eating "@anna_x".
         _mhost2 = acct.rsplit("@", 1)[-1].lower() if "@" in acct else ""
-        if username and (not _mhost2 or _mhost2 == (instance_host or "").lower()):
+        _unique = _uname_n.get(username.lower(), 0) <= 1
+        if username and (_unique or not _mhost2 or _mhost2 == (instance_host or "").lower()):
             content = re.sub(r"@" + re.escape(username) + r"(?![A-Za-z0-9_.\-@])", ref, content)
     return content, ptags
 
