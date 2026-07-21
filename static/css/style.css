@@ -41,6 +41,18 @@ body {
         radial-gradient(ellipse at 100% 100%, rgba(255, 0, 255, 0.03) 0%, transparent 50%);
 }
 
+/* Native <select> popups are drawn by the OS, not by our CSS. We set `color` on selects but the
+   open popup keeps the system's LIGHT background, so our light --text-primary lands on white and
+   the options are unreadable (reported on Admin -> Bots -> Platform: the closed select is dark,
+   opening it goes unreadable-light). `color-scheme` makes the browser draw the popup — and
+   scrollbars, date/time pickers — dark. The explicit option rule is for Linux/Firefox, which
+   ignores color-scheme for the popup and reuses the select's own background: that background must
+   be OPAQUE, because a translucent one (our selects use rgba) composites against system white.
+   Forcing dark is safe HERE only: style.css's pages (main app + admin) are single-dark-theme. The
+   Nostr client is deliberately NOT covered — client.css is standalone and has light themes. */
+body { color-scheme: dark; }
+select option, select optgroup { background: #14141f; color: var(--text-primary); }
+
 /* Buttons */
 .btn-primary {
     background: linear-gradient(135deg, var(--accent) 0%, #00cccc 100%);
