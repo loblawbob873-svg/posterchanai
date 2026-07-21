@@ -4340,28 +4340,33 @@
     const v=$('#st-video'); if(!v) return;
     cleanupInlineStream();   // drop any previous inline hls before attaching a new one
     const isHls=/\.m3u8(\?|#|$)/i.test(url);
-    if(isHls && !v.canPlayType('application/vnd.apple.mpegurl')){
-      loadHls().then(()=>{
-        if(window.Hls && window.Hls.isSupported()){
-          // withCredentials ONLY for our own HLS proxy (it authenticates with an hlsSession cookie, and
-          // the native app reaches it cross-origin). Sending credentials to a third-party CDN is FATAL:
-          // CORS forbids `Access-Control-Allow-Origin: *` on a credentialed request, and that is exactly
-          // what zap.stream's CloudFront returns — so every playlist/segment was blocked and the replay
-          // never played, while our own mp4 VODs were unaffected.
-          const creds=_ourHls(url);
-          const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=creds; }catch(_){} } }); _streamHls=h;
-          h.loadSource(url); h.attachMedia(v);
-          h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the “Open stream URL” link below.'); });
-        } else {
-          // No hls.js AND no native HLS. Assigning the .m3u8 to <video> here guarantees the browser's
-          // "No video with supported format and MIME type found" overlay — say something useful instead.
-          _streamNote('This stream needs HLS playback, which isn’t available here — try the “Open stream URL” link below.');
-        }
-      }).catch(()=>{ _streamNote('Couldn’t load the video player — try the “Open stream URL” link below.'); });
-    } else {
-      v.onerror=()=>_streamNote('Could not play this video here — try the “Open stream URL” link below.');
-      v.src=url;
-    }
+    const native=()=>{ v.onerror=()=>_streamNote('Could not play this video here — try the \u201cOpen stream URL\u201d link below.'); v.src=url; };
+    if(!isHls){ native(); return; }   // mp4/webm VOD — <video> plays it directly
+    // HLS: try hls.js FIRST, and fall back to native ONLY when it isn't usable. The reverse order (the old
+    // `!canPlayType(...)` gate) is what produced "No video with supported format and MIME type found" on
+    // Firefox for Android: it answers "maybe" to application/vnd.apple.mpegurl WITHOUT being able to play
+    // HLS, so the gate skipped hls.js and handed the raw .m3u8 straight to <video>. canPlayType is
+    // advisory; MediaSource support is the fact worth branching on — and this is the order hls.js documents.
+    loadHls().then(()=>{
+      if(window.Hls && window.Hls.isSupported()){
+        // withCredentials ONLY for our own HLS proxy (it authenticates with an hlsSession cookie, and the
+        // native app reaches it cross-origin). Sending credentials to a third-party CDN is FATAL: CORS
+        // forbids `Access-Control-Allow-Origin: *` on a credentialed request, which is exactly what
+        // zap.stream's CloudFront returns.
+        const creds=_ourHls(url);
+        const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=creds; }catch(_){} } }); _streamHls=h;
+        h.loadSource(url); h.attachMedia(v);
+        h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.'); });
+        return;
+      }
+      // No MediaSource (iPhone Safari) — native HLS is the right path there.
+      if(v.canPlayType('application/vnd.apple.mpegurl')){ native(); return; }
+      _streamNote('This stream needs HLS playback, which isn\u2019t available in this browser — try the \u201cOpen stream URL\u201d link below.');
+    }).catch(()=>{
+      // hls.js itself failed to load; native is the only option left, so try it before giving up.
+      if(v.canPlayType('application/vnd.apple.mpegurl')) native();
+      else _streamNote('Couldn\u2019t load the video player — try the \u201cOpen stream URL\u201d link below.');
+    });
   }
 
   // ---------- note rendering ----------
