@@ -1608,8 +1608,13 @@
     if(_myFollowersLoaded || !ME) return;
     _myFollowersLoaded = true;   // set first so concurrent callers don't double-query
     try{
+      // Wait for a live socket first: a REQ fired while still CONNECTING is silently dropped, and since the
+      // latch above is never re-armed on an EMPTY result, one cold call pinned FOLLOWERS at 0 for the whole
+      // session (the "0 followers on first open, fine after reload" symptom).
+      const live = await Relay.ready();
       const evs = await Relay.query([{ kinds:[3], '#p':[ME.pubkey], limit:1000 }]);
       evs.forEach(e=> FOLLOWERS.add(e.pubkey));
+      if(!live && !evs.length) _myFollowersLoaded = false;   // never reached a relay → allow a genuine retry
     }catch(_){ _myFollowersLoaded = false; }   // allow a retry if the query failed
   }
   async function toggleMute(pk){
@@ -1681,16 +1686,25 @@
   }
   async function flushProfiles(){
     _profT=null; const pks=[..._profQ]; _profQ.clear(); if(!pks.length) return;
+    // A REQ fired at a still-CONNECTING socket is silently dropped (relay.js `_send`). This flush runs on a
+    // 120ms debounce, so on a cold start it reliably fired into a dead socket — and every pubkey in the
+    // batch was then cached as a MISS for 5 minutes, leaving those authors stuck as "anon"/"@profile".
+    const live = await Relay.ready().catch(()=>false);
     const evs = await Relay.query([{ authors:pks, kinds:[0], limit:pks.length }]);
     const got=new Set(); let changed=false;
     for(const e of evs){ Store.saveProfile(e); got.add(e.pubkey); changed=true; }
     const now=Date.now();
-    for(const pk of pks){ if(!got.has(pk)) _profMiss.set(pk, now); }   // relay has no profile yet → back off
+    // Only back off when the read actually reached a live relay. Caching a miss we never really asked for
+    // is what made a cold-start profile stay blank for minutes instead of resolving on the next feed pass.
+    if(live) for(const pk of pks){ if(!got.has(pk)) _profMiss.set(pk, now); }   // relay has no profile yet → back off
     if(_profMiss.size>5000){ for(const k of _profMiss.keys()){ _profMiss.delete(k); if(_profMiss.size<=4000) break; } }
     if(changed){ renderMe(); decorateProfiles(); }
   }
   async function fetchMyProfile(){
     if(Store.haveProfile(ME.pubkey)) renderMe();   // instant from the profile cache
+    // This runs at startup, i.e. exactly when the socket is still CONNECTING and a REQ would be dropped —
+    // which sent a returning user straight to the DISCOVERY_RELAYS fallback below, or left them as "anon".
+    try{ await Relay.ready(); }catch(_){}
     try{ const e=await Relay.query([{authors:[ME.pubkey],kinds:[0],limit:1}]); if(e.length){ Store.saveProfile(e.sort((a,b)=>b.created_at-a.created_at)[0]); renderMe(); return; } }catch(_){}
     // The LOCAL relay had no kind-0 for us — on a FRESH node (empty relay) a returning user would otherwise be
     // stuck as "anon" with no avatar. Pull our profile from the wider discovery relays, VERIFY the signature
@@ -7183,6 +7197,10 @@
       // the follower kind-3s, leaving _followSeen unpopulated → every old follower re-saving their contact
       // list post-EOSE re-pings as a brand-new "followed you". Retry with backoff until it returns (same
       // fix as restoreMediaServer). Empty after all tries → genuinely no followers (or offline) → no harm.
+      // Wait for a live socket before the first attempt — the retry loop below was the band-aid for a REQ
+      // being silently dropped onto a still-CONNECTING socket (relay.js `_send`); this fixes the cause, so
+      // the retries now only cover genuine relay lag.
+      try{ await Relay.ready(); }catch(_){}
       let followers=[];
       for(let attempt=0; attempt<4 && !followers.length; attempt++){
         if(attempt>0) await new Promise(r=>setTimeout(r, 600*attempt));
@@ -7875,6 +7893,11 @@
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
     const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
+    // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
+    // rendered as "anon" and the notes retry loop below burned all 3 attempts against a dead socket.
+    try{ await Relay.ready(); }catch(_){}
+    if(myGen!==_profGen) return;   // a newer profile opened while we waited for the socket
     { const e=await Relay.query([{authors:[pk],kinds:[0],limit:1}]); for(const x of e)Store.saveProfile(x); }   // always refetch newest kind-0 so a renamed / re-avatar'd profile updates live (not just first view)
     if(myGen!==_profGen) return;   // a newer profile opened during the kind-0 fetch
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
