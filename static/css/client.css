@@ -2462,7 +2462,12 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .grp-contact .grp-pick{flex:none;width:18px;height:18px}
 
 /* Go Live (OBS streaming) controls */
-.streams-top{display:flex;align-items:center;gap:10px;margin:0 0 12px;min-height:34px}
+/* .live-badge is position:absolute (top:9px/left:9px) for the stream CARD, whose .stream-thumb is
+   position:relative. In this row there was no positioned ancestor, so it escaped all the way up to
+   .main{position:relative} and rendered at the top-left of the whole column — i.e. floating above the
+   "Streams" heading whenever you were live. .av-title already had this override; this row never did. */
+.streams-top{display:flex;align-items:center;gap:10px;margin:0 0 12px;min-height:34px;position:relative}
+.streams-top .live-badge{position:static;font-size:12px;display:inline-flex;align-items:center;-webkit-text-fill-color:#fff}
 .copyrow{display:flex;gap:6px;align-items:center}
 .copyrow .input{flex:1;min-width:0;font-family:ui-monospace,monospace;font-size:.86em}
 
