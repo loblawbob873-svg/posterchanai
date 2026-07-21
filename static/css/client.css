@@ -670,6 +670,16 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   width:min(72px,64%);height:3px;border-radius:3px 3px 0 0;
   background:linear-gradient(90deg,var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .tl-cmp-tools .btn{white-space:nowrap}   /* never let "⤢ More" wrap to two lines on a narrow phone */
+/* ▦ media-grid toggle, right-aligned in the tab row (it moved out of the topbar). */
+.tltab-media{flex:0 0 auto;margin-left:auto;padding:9px 12px;border:1px solid var(--line);border-radius:11px;
+  background:var(--panel);color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;line-height:1;transition:.15s}
+.tltab-media:hover{border-color:var(--cyan);color:var(--cyan)}
+.tltab-media.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
+/* On Home/Nostrverse the topbar had nothing left in it on desktop — title hidden (the tabs name the
+   timeline), search lives in the sidebar, compose is the inline box, ▦ moved into the tabs. An empty
+   sticky bar above the composer is just a floating rectangle, so drop it. Mobile KEEPS the topbar: its
+   search field is the only one at that width. */
+@media(min-width:821px){ body.tl-view .topbar{display:none} }
 @media(max-width:820px){
   .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
   .tl-cmp-av{width:32px;height:32px}

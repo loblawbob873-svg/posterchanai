@@ -1144,8 +1144,6 @@
     bindSearch();
     bindFeedActions();
     // Media-grid toggle: flip Home/Global between the normal post list and an images-only picture grid.
-    { const mt=$('#tl-media'); if(mt) mt.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);
-        mt.classList.toggle('active', _tlMedia); if(VIEW==='home'||VIEW==='global') _drawTimeline(false); }; }
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
@@ -1808,14 +1806,13 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    // Home/Nostrverse carry their own inline compose bar above the tabs, so the topbar "New post" would be
-    // a second button for the same action. Every OTHER view still needs it. Same for the title: the tabs
-    // already name the timeline, so showing "Home"/"Nostrverse" above them just says it twice.
-    { const cb=$('#btn-compose'); if(cb) cb.classList.toggle('hidden', v==='home'||v==='global'); }
-    { const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', v==='home'||v==='global'); }
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
-    // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
-    { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
+    // Home/Nostrverse have their own inline composer, and Notifications is a read view — a "New post"
+    // button belongs on neither. (The ▦ media toggle moved into the timeline's tab row.)
+    { const tl = (v==='home'||v==='global');
+      document.body.classList.toggle('tl-view', tl);   // desktop hides the now-empty topbar on these views
+      const cb=$('#btn-compose'); if(cb) cb.classList.toggle('hidden', tl || v==='notifications');
+      const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', tl); }
     renderView(true);
   }
   function renderView(reset){
@@ -2095,10 +2092,15 @@
       +`<div class="tl-tabs" role="tablist">
         <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
         <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
+        <button class="tltab-media${_tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid">▦</button>
       </div>`;
   }
   function _bindTimelineHeader(feed){
     $$('.tltab',feed).forEach(b=> b.onclick=()=>{ const v=b.dataset.tl; if(v!==VIEW) switchView(v); });
+    // ▦ media grid — lives here rather than the topbar because it only ever applied to these two views.
+    // Toggling redraws just #tl-notes, so flip our own state class directly (the header isn't re-rendered).
+    { const mb=$('#tl-media-tab',feed); if(mb) mb.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);
+        mb.classList.toggle('on', _tlMedia); _drawTimeline(false); }; }
     const box=$('#tl-cmp',feed); if(!box) return;
     const ta=$('#tl-cmp-ta',box), st=$('#tl-cmp-status',box), post=$('#tl-cmp-post',box);
     attachMentionAutocomplete(ta);

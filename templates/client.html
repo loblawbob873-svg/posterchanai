@@ -161,7 +161,8 @@
     <main class="main">
         <header class="topbar glass">
             <h2 id="view-title">Nostrverse</h2>
-            <button id="tl-media" class="mini hidden" title="Toggle media grid (this feed, images only)">▦</button>
+            <!-- The ▦ media-grid toggle moved into the timeline's own tab row (it only ever applied to
+                 Home/Nostrverse), which lets the whole topbar hide on those views — see body.tl-view. -->
             <!-- Mobile-only search: the desktop one lives under the sidebar logo (#nav-search-input) -->
             <div class="searchbox"><input id="search-input" class="input" type="search" placeholder="🔍 search posts &amp; profiles…"></div>
             <!-- Calls + Drafts moved to the sidebar. New post is hidden on Home/Nostrverse, which have
