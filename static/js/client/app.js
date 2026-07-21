@@ -10753,29 +10753,38 @@
   // Reveal the tapped reply — and KEEP it revealed. A single scrollIntoView() ran before the thread's
   // layout had settled: avatars, images and the link-preview cards hydrate() inserts all land ABOVE the
   // target afterwards and push it back down, and .feed sets overflow-anchor:none so the browser doesn't
-  // compensate. With block:'nearest' the node was parked flush against the BOTTOM edge, so a few pixels
-  // of that growth were enough to push it off screen — "clicking a notification doesn't bring me to the
-  // reply, I have to scroll down to find the highlighted one". So: scroll only when it isn't comfortably
-  // visible (a short thread that already fits still doesn't move, keeping the root + context on screen),
-  // leave a slice of viewport above it rather than pinning it to an edge, and re-run while the thread
-  // settles — stopping the moment the user scrolls themselves, so this never fights them.
+  // compensate. Two attempts at "scroll the minimum needed" both failed the same way — measured against
+  // a layout that hadn't happened yet, they either parked the node on the bottom edge (where a few px of
+  // growth hid it) or decided it was already visible and never scrolled at all. So this is deliberately
+  // NOT clever: the target always goes to the TOP of the feed (with scroll-margin-top for a little
+  // context above it), and it's re-applied until the thread stops moving. Predictable beats minimal —
+  // the whole point of tapping a notification is to land on that reply.
   function _revealThreadNode(feed, el, tok){
-    let last=-1, stop=false;
+    let mine=-1, stop=false;
     const reveal=()=>{
-      if(stop || VIEW!=='thread' || renderThread._tok!==tok) return;
-      if(last>=0 && Math.abs(feed.scrollTop-last)>4){ stop=true; return; }   // user took over
-      const fr=feed.getBoundingClientRect(), er=el.getBoundingClientRect();
-      const pad=Math.min(120, fr.height*0.28);
-      // Idempotent: once positioned, (er.top-fr.top)===pad, so the correction is 0 and re-runs are no-ops.
-      if(!(er.top>=fr.top+4 && er.bottom<=fr.bottom-4)) feed.scrollTop += (er.top-fr.top)-pad;
-      last=feed.scrollTop;
+      // A re-render of the same thread (deep link + onReady both routing, back/forward) detaches this
+      // node while the loop is still live. A detached element measures 0,0, so acting on it scrolled
+      // somewhere arbitrary — bail instead.
+      if(stop || VIEW!=='thread' || renderThread._tok!==tok || !el.isConnected){ stop=true; return; }
+      // Only OUR own scrolls may move it. A real user scroll ends the correction for good so we never
+      // fight the reader; the threshold is loose enough that the browser's own settling doesn't count.
+      if(mine>=0 && Math.abs(feed.scrollTop-mine)>48){ stop=true; return; }
+      el.scrollIntoView({block:'start'});   // .thread-hl carries scroll-margin-top → context above it
+      mine=feed.scrollTop;
     };
     reveal();
     requestAnimationFrame(reveal);
-    const mo=new MutationObserver(reveal);                       // link cards / counts hydrating in above it
+    // Keep correcting while the thread settles. Media and hydrate()'s link cards land ABOVE the target
+    // and push it down, and .feed sets overflow-anchor:none so the browser does NOT compensate — one
+    // shot at innerHTML time is measured against a layout that doesn't exist yet. Mutations cover
+    // inserted nodes, img load covers media, and the timers cover anything neither sees (a late
+    // stylesheet, a font, an <img> that appears after this pass).
+    const mo=new MutationObserver(reveal);
     try{ mo.observe(feed,{childList:true,subtree:true}); }catch(_){}
-    feed.querySelectorAll('img').forEach(im=>{ if(!im.complete) im.addEventListener('load', reveal, {once:true}); });
-    setTimeout(()=>{ try{ mo.disconnect(); }catch(_){} }, 4000);
+    const imgs=()=>feed.querySelectorAll('img');
+    imgs().forEach(im=>{ if(!im.complete) im.addEventListener('load', reveal, {once:true}); });
+    [80,250,600,1200,2500,5000].forEach(ms=>setTimeout(()=>{ imgs().forEach(im=>{ if(!im.complete) im.addEventListener('load', reveal, {once:true}); }); reveal(); }, ms));
+    setTimeout(()=>{ try{ mo.disconnect(); }catch(_){} stop=true; }, 6000);
     el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1400);
   }
   // Resolve a post's thread root, returning { rootId, chain } where chain is the clicked post + each

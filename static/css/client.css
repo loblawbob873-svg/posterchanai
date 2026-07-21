@@ -1358,6 +1358,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .thread-node{position:relative}
 .thread-node[style]{border-left:2px solid var(--line)}
 .thread-hl>.note{background:rgba(var(--accent-rgb),.07);box-shadow:0 0 0 2px var(--neon) inset;border-radius:12px}
+/* Opening a thread from a notification scrolls THIS node to the top of the feed; the margin leaves a
+   sliver of the post above it visible, so you land on the reply with a hint of what it answers rather
+   than flush against the edge. (_revealThreadNode) */
+.thread-node.thread-hl{scroll-margin-top:76px}
 /* compact "parent not loadable" banner above an orphaned reply (overrides .empty's big padding) */
 .thread-missing .empty{padding:10px 12px;font-size:13px;opacity:.75;border:1px dashed var(--line);border-radius:10px;margin-bottom:8px}
 
