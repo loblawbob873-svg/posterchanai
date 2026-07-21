@@ -112,7 +112,7 @@ def dildo_attachments(
     """Scatter dildos over the first image attachment.
 
     Returns (output_files, summary_text). Mirrors meme_attachments so the web UI,
-    Telegram, Matrix and the fedi bots share one delivery path.
+    Telegram and the fedi bots share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
@@ -241,7 +241,7 @@ def poo_attachments(
     """Scatter poop over the first image attachment.
 
     Returns (output_files, summary_text). Mirrors dildo_attachments so the web UI,
-    Telegram, Matrix and the fedi bots share one delivery path.
+    Telegram and the fedi bots share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
@@ -385,7 +385,7 @@ def cum_attachments(
     """Scatter a full glossy splatter over the first image attachment.
 
     Always a still JPEG (the full, fully-grown splatter) — NOT the animated MP4, even when effect
-    animation is enabled. Mirrors poo_attachments so the web UI, Telegram, Matrix and the fedi bots
+    animation is enabled. Mirrors poo_attachments so the web UI, Telegram and the fedi bots
     share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
@@ -577,7 +577,7 @@ def blood_attachments(
     """Scatter blood over the first image attachment.
 
     Returns (output_files, summary_text). Mirrors cum_attachments so the web UI,
-    Telegram, Matrix and the fedi bots share one delivery path.
+    Telegram and the fedi bots share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:

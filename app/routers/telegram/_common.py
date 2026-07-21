@@ -219,7 +219,7 @@ _HELP_SECTIONS = {
         "• `post` — rewrite it into a viral, engaging post\n"
         "• `post raw` — share it *exactly as written*, no rewrite \\(also `verbatim`\\)\n"
         "• `post <instructions>` — rewrite it your way\n\n"
-        "I then show share buttons for your connected platforms \\(Misskey / Pleroma / Matrix\\)\\.\n\n"
+        "I then show share buttons for your connected platforms \\(Misskey / Pleroma\\)\\.\n\n"
         "*Examples:*\n"
         "\\(reply to a good answer\\) `post raw`\n"
         "\\(reply to an article\\) `post professional`\n"

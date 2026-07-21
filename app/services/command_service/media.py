@@ -8,7 +8,7 @@ class _MediaMixin:
 
         Returns the shared `generated_image` shape so every channel renders it the
         same way: inline in the web UI (with a save button), a photo/document on
-        Telegram, and an uploaded image in Matrix.
+        and Telegram.
         """
         import asyncio
         import base64
@@ -50,7 +50,7 @@ class _MediaMixin:
             "image": base64.b64encode(png).decode("ascii"),
             "prompt": url,
             # Telegram compresses photos (tiny/unreadable for tall pages) — deliver as a
-            # full-resolution document instead. Ignored by the web UI / Matrix renderers.
+            # full-resolution document instead. Ignored by the web UI renderer.
             "prefer_document": True,
         }
 
@@ -365,7 +365,7 @@ Files are saved to your Storage.""",
     async def _translate_attachments(self, arg: str, attachments: list) -> dict:
         """OCR uploaded image(s)/PDF(s) and translate the FULL extracted text.
 
-        Shared by the web UI, Telegram and Matrix (`translate <lang>` + an upload).
+        Shared by the web UI and Telegram (`translate <lang>` + an upload).
         Returns an `error: 'no_text'` field when nothing could be extracted (e.g. a
         Telegram-compressed photo) so callers can show a tailored hint.
         """
@@ -425,7 +425,7 @@ Files are saved to your Storage.""",
         """Trim an attached video to a [start, end] span: `clip <start> <end>`.
 
         Times accept seconds or M:SS / H:MM:SS. Telegram drives an interactive
-        flow; the web UI and Matrix pass both times in the command argument.
+        flow; the web UI passes both times in the command argument.
         """
         from app.services.media_service import clip_attachment, parse_timecode, is_video
 

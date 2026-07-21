@@ -869,7 +869,7 @@ class _CommsMixin:
 
     async def _post_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Share text (and an optional attached image) to the user's connected fediverse accounts —
-        the web/Matrix equivalent of the Telegram 📣 Post flow. Posts to every connected platform
+        the web equivalent of the Telegram 📣 Post flow. Posts to every connected platform
         (Misskey + Pleroma); no-op with a clear message when none are connected."""
         import base64 as _b64
         from app.services.media_service import is_image

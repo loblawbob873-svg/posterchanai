@@ -3,7 +3,12 @@ Inference Factory - the local LLM is always the native llama-cpp-python backend
 (SYCL on Intel Arc, CUDA on NVIDIA, HIP on AMD, CPU otherwise). Ollama and IPEX-LLM
 have been removed. Integrates with the VRAM manager for model swapping on a shared GPU.
 """
+from typing import TYPE_CHECKING
+
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:   # annotation-only; importing at runtime would be a cycle
+    from app.services.llama_service import LlamaService
 
 
 def prepare_vram_for_llm(db: Session):

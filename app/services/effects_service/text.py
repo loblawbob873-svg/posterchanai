@@ -99,7 +99,7 @@ def meme_attachments(
     """Add outlined white meme text to the first image attachment.
 
     Returns (output_files, summary_text). Mirrors compress_attachments so the
-    web UI, Telegram and Matrix share one delivery path.
+    web UI and Telegram share one delivery path.
     """
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:

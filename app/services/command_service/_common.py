@@ -90,7 +90,7 @@ def _screenshot_settle() -> float:
         return 5.0
 def _url_is_safe_to_fetch(url: str, allowed_hosts: Optional[list] = None) -> bool:
     """SSRF guard for the screenshot command (reachable by untrusted Misskey/Pleroma
-    users, not just trusted Matrix/web users).
+    users, not just trusted web users).
 
     Resolves the URL's host and refuses any that maps to a private, loopback,
     link-local, reserved, multicast or unspecified address — including the cloud

@@ -1,7 +1,7 @@
 """Fediverse object normalisers — Pleroma/Mastodon and Misskey → one flat dict.
 
-Extracted VERBATIM from fedi_timeline_service so the Nostr bridge doesn't depend on a Matrix module.
-Nothing here touches Matrix; it was only ever co-located. Consumers: fedi_nostr_bridge_service,
+Extracted VERBATIM from the old fedi_timeline_service, which has since been deleted; this is the
+proven normalisation logic it was built on. Consumers: fedi_nostr_bridge_service,
 fedi_nostr_personal_service, fedi_bridge_identity.
 """
 import html as _html

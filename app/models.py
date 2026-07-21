@@ -67,10 +67,6 @@ class User(Base):
     # Mirrored to Nostr via users_store.CONFIG_FIELDS; gated by the global stream_record_enabled.
     stream_record = Column(Boolean, default=False)
 
-    # Matrix integration settings
-
-    # Matrix bot notification settings (posterchan bot DMs)
-
     # Finance (Budget Manager) integration — per-user API key for that user's finance account
     finance_api_key = Column(String(200), nullable=True)
 
@@ -80,12 +76,10 @@ class User(Base):
     pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
     nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
 
-    # Fediverse notifications → Matrix DM (independent per-user toggle, separate from Telegram above)
-
     # Nostr ↔ Fediverse bridge: per-user opt-in for the PERSONAL plane (your fedi DMs arrive as
     # NIP-17 Nostr DMs, your fedi notifications as the matching Nostr events). The public global-
     # timeline mirror is server-wide (admin setting) and independent of this. Needs a linked Pleroma
-    # account + a linked Nostr identity. Cursors are kept separate from the Telegram/Matrix relays'.
+    # account + a linked Nostr identity. Cursors are kept separate from the Telegram relay's.
     fedi_bridge_enabled = Column(Boolean, default=False)
     fedi_bridge_dm_since = Column(Text, nullable=True)      # last-seen fedi direct-conversation id
     fedi_bridge_notif_since = Column(Text, nullable=True)   # last-seen fedi notification id
@@ -354,7 +348,7 @@ class FediBridgeMap(Base):
     """Personal-plane reply routing: maps a Nostr event the bridge delivered to a user (a NIP-17 DM
     or a notification mirror) → the fediverse target to act on when the user replies on Nostr.
 
-    The Nostr analogue of MatrixNotifyMap. `kind` distinguishes a DM (reply stays visibility=direct
+    Maps a delivered notification back to its fedi target. `kind` distinguishes a DM (reply stays visibility=direct
     in the same conversation) from a notification (reply to the referenced status)."""
     __tablename__ = "fedi_bridge_map"
     __table_args__ = (Index('ix_fedi_map_event', 'nostr_event_id'),)

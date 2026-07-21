@@ -1,4 +1,6 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
+from typing import TYPE_CHECKING
+
 from ._common import Callable, ChatService, Optional, SearchService, Session, Tuple, extract_youtube_urls, is_youtube_url, logger, re, summarize_youtube
 from .finance import _FinanceMixin
 from .search import _SearchMixin
@@ -7,6 +9,9 @@ from .media import _MediaMixin
 from .torrents import _TorrentsMixin
 from .system import _SystemMixin
 from .comms import _CommsMixin
+
+if TYPE_CHECKING:   # annotation-only; app.models imports would cycle at runtime
+    from app.models import User
 from .productivity import _ProductivityMixin
 from .effects1 import _Effects1Mixin
 from .effects2 import _Effects2Mixin
@@ -120,7 +125,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "pay": "Pay a bill by name: pay <bill name>",
         "addbill": "Add a bill: addbill <name> <amount> [income]",
         "screenshot": "Full-page screenshot of a website: screenshot <url>",
-        "poll": "Create a poll (Matrix): poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
+        "poll": "Create a poll: poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
     }
     COMMAND_ALIASES = {
         "torrent": "torrents",
@@ -166,9 +171,9 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
     def __init__(self, db: Session, user: Optional["User"] = None, is_bot: bool = False):
         self.db = db
         self.user = user
-        # Bot-driven contexts (Matrix/Pleroma/Misskey listeners) are configured in Admin → Bots,
+        # Bot-driven contexts (Pleroma/Misskey listeners) are configured in Admin → Bots,
         # so they're exempt from per-user feature gating. Pleroma/Misskey hit /api/generate-image
-        # directly (never this service); Matrix routes through here, so it sets is_bot=True.
+        # directly (never this service).
         self.is_bot = is_bot
         self.search_service = SearchService(db)
         self.chat_service = ChatService(db, user=user)
@@ -182,7 +187,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         lower = cleaned_message.lower().strip()
 
         # Bare magnet link or .torrent URL (just pasted, no command word) → add to the torrent
-        # client. Shared by the web UI + Matrix (both route through parse_command).
+        # client. Used by the web UI (routes through parse_command).
         _stripped = message.strip()
         if _stripped.startswith("magnet:?") or (
             re.match(r'^https?://\S+$', _stripped, re.IGNORECASE)

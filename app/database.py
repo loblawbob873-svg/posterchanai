@@ -14,7 +14,7 @@ DATABASE_URL = os.getenv("DATABASE_URL",
                          "postgresql+psycopg2://posterchan@127.0.0.1:5432/posterchan_relay")
 
 
-# Connection pool: the app's background schedulers/pollers (social/nitter/fedi/matrix/logs/relay)
+# Connection pool: the app's background schedulers/pollers (social/nitter/fedi/logs/relay)
 # each hold a session, and long GPU tasks hold one for minutes; 5+10 was far too small and
 # exhausted under normal load (slots stuck "idle in transaction" -> requests block -> instance
 # hangs). pool_timeout fails fast; idle_in_transaction_session_timeout lets PG reclaim a leaked txn.
@@ -37,7 +37,7 @@ def commit_in_fresh_session(mutate) -> bool:
     """Apply a small write in a FRESH, short-lived session and commit it.
 
     The notification/DM pollers hold ONE transaction across all users and many slow deliveries (relay
-    publishes, puppet creation, media, Telegram/Matrix sends). A single slow item can idle that
+    publishes, puppet creation, media, Telegram sends). A single slow item can idle that
     transaction past Postgres `idle_in_transaction_session_timeout` (60s), which kills the connection
     mid-poll so the cursor `commit()` silently rolls back — the drain then re-processes the same batch
     every poll forever (a wedge) or re-sends duplicates. Persisting the cursor through a dedicated tiny

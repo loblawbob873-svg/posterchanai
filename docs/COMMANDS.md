@@ -1,6 +1,6 @@
 # Commands & bot usage
 
-The same command set is shared across every interface (web UI, Telegram, Matrix, Pleroma,
+The same command set is shared across every interface (web UI, Telegram, Pleroma,
 Misskey) via `app/services/command_service.py`. This page is the user-facing reference: **how
 to drive each bot**, then **every command** grouped by what it does.
 
@@ -14,7 +14,6 @@ to drive each bot**, then **every command** grouped by what it does.
 |---|---|---|
 | **Web UI** (chat) | Type the command in the message box, e.g. `search cats`. Plain talk (no command) goes to the LLM. | Upload a file with the message; media commands (`compress`/`clip`/`convert`/effects) act on it. |
 | **Telegram** | Type a command, **or** use the inline keyboards. Upload an image and tap **Effects** → an effect → the motion menu. Some flows (`clip`, captions) use reply prompts. | Send the photo/file in the same message; the bot caches it for the buttons. |
-| **Matrix bot** | DM or `@mention`; commands run through `/command`. | Reply to (or send) a file with the command; it forwards the upload for media commands. |
 | **Pleroma / Mastodon** | `@mention` the bot with a command, e.g. `@bot dildo zoom trippy`. `help` lists everything. | Attach the image/file to the post. |
 | **Misskey** | Same as Pleroma — `@mention` + command, attach media. | Attach to the note. |
 
@@ -115,7 +114,7 @@ Append a modifier to **any** effect to animate or recolour its output. Syntax:
 
 `glow` and `alive` also work as standalone effects AND compose: `alive glow` = 3D parallax with
 the glow look layered on. In Telegram these are the two-column motion menu (left = motion, right =
-the same motion **+ trippy**); typed combos like `dildo zoom trippy` work in the web UI, Matrix,
+the same motion **+ trippy**); typed combos like `dildo zoom trippy` work in the web UI,
 and the fedi bots.
 
 **Multiple images → one movie:** attach several images to an audio/clip effect (whoabuddy, prayer,

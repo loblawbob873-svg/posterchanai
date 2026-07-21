@@ -329,7 +329,7 @@ class SearchService:
     async def fetch_url_content(self, url: str, max_length: int = 15000) -> Optional[dict]:
         """Fetch and extract text content from a URL"""
         # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and
-        # makes the LLM hallucinate). Centralised here so EVERY caller - telegram/web/matrix/
+        # makes the LLM hallucinate). Centralised here so EVERY caller - telegram/web/
         # pleroma/misskey and the summarize & post commands - gets it via fetch_urls()
         # automatically. Only intercept actual video URLs (watch/shorts/embed/youtu.be); channel,
         # search and playlist pages have no video id and fall through to normal HTML fetch.

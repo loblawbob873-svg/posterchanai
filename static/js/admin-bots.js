@@ -11,7 +11,7 @@ const BOT_KNOWN_KEYS = [
     'nostr_random_reply_quiet', 'nostr_random_reply_per_hour',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
-    'nitter_poll_seconds', 'shamebot_rooms', 'trusted_media_hosts',
+    'nitter_poll_seconds', 'trusted_media_hosts',
     'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
@@ -21,7 +21,7 @@ const BOT_KNOWN_KEYS = [
     'image_negative',  // image bot: negative prompt (IMAGE_POSTER_NEGATIVE)
 ];
 // Config keys backed by a checkbox.
-const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'stickers_enabled', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply'];
+const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply'];
 // nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {

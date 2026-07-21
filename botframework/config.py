@@ -169,5 +169,3 @@ VIDEO_ENCODER = os.getenv("VIDEO_ENCODER", "auto")
 # Response delay in seconds before responding
 RESPONSE_DELAY = int(os.getenv("RESPONSE_DELAY", "0"))
 
-# Shamebot: roast new joiners (comma-separated room IDs)
-SHAMEBOT_ROOMS = [r.strip() for r in os.getenv("SHAMEBOT_ROOMS", "").split(",") if r.strip()]

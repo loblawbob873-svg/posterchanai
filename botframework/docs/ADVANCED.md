@@ -15,16 +15,16 @@ Users can trigger special commands by mentioning the bot:
 | `@bot regen <changes>` | Regenerate image in thread with modifications (img2img) |
 | `@bot news <source>` | Fetch headlines from a source, then `share <number>` to post one |
 | `@bot yt <url>` | Summarize a YouTube video |
-| `@bot ytdl <url>` | Download audio (`ytdl video <url>` for video) and post the file back — YouTube/X, on Matrix, Misskey & Pleroma — see note |
+| `@bot ytdl <url>` | Download audio (`ytdl video <url>` for video) and post the file back — YouTube/X, on Misskey & Pleroma — see note |
 | `@bot ytdl video <url> clip 0:10 0:30 compress` | Trim and/or shrink a video download in one command — `clip <start> <end>` and/or `compress`, applied in that order — see note |
 | upload + `@bot compress` | Shrink the uploaded image(s)/video(s); the bot posts the smaller file back |
 | upload + `@bot clip <start> <end>` | Trim the uploaded video to a span, e.g. `clip 0:10 0:30` (seconds or M:SS / H:MM:SS) |
 | upload + `@bot convert` | Image(s) → one PDF, or a PDF → one image per page |
-| `@bot torrents <query>` | Search/manage torrents (Matrix↔posterchanai) |
+| `@bot torrents <query>` | Search/manage torrents |
 | `@bot nyaa <query>` | Search nyaa.si (anime) torrents |
 | `@bot post <url or text>` | Generate a social-media post; `share` posts it to platforms |
 | `@bot help` | List available commands |
-| `@bot poll <question> \| <opt1> \| <opt2>` | Post a native Matrix poll (see below) |
+| `@bot poll <question> \| <opt1> \| <opt2>` | Post a poll |
 | reply + `@bot translate [language]` | Translate the replied-to message (see below) |
 
 **Auto-detected (no command word needed):** a bare **YouTube URL** prompts for
@@ -32,8 +32,8 @@ summary / mp3 / video / post; a bare **link** prompts for summary / post; a bare
 **`magnet:?` link** is added to torrents; a bare **number** selects a pending news
 article or room.
 
-Most of these are routed to the posterchanai backend over the
-`/api/matrix/command` API; `search`, `images`, `news`, `poll`, `translate`, and
+Most of these are routed to the posterchanai backend over its command API;
+`search`, `images`, `news`, `poll`, `translate`, and
 image generation are handled in the bot itself.
 
 **`ytdl` for everyone:** `ytdl` is identity-agnostic — it requires only the bot's
@@ -54,107 +54,6 @@ download or the auto-detected 🎬 Movie prompt (Send as-is / Compress / Clip / 
 - **Misskey & Pleroma** listeners call the generic `/api/media/ytdl` endpoint
   (authenticated by `X-API-Key`, like the bots' `compress`/`screenshot` calls) and
   attach the result with `audio_bytes`/`video_bytes`.
-- **Matrix** uses the equivalent `/api/matrix/ytdl` endpoint (Bearer-token auth);
-  without an API key it falls back to the legacy linked-user path, which only works
-  for users whose Matrix account is linked to posterchanai and posts as that user.
-
-### Translate (Matrix)
-
-**Reply** to the message you want translated, mention the bot, and say `translate`:
-
-```
-(reply to a message) @bot translate
-(reply to a message) @bot translate Japanese
-```
-
-- Translates the **message you replied to** — not text typed inline.
-- Defaults to **English**; add a language to translate into something else.
-- Uses the bot's AI model; the translation is posted as a reply.
-
-### Polls (Matrix)
-
-Post a native Matrix poll that Element renders as a live voting widget — the bot
-does no vote counting, clients tally results themselves.
-
-```
-@bot poll Pizza tonight? | Yes | No | Maybe
-```
-
-- The question comes first, then **2 to 20** options, all separated by `|`.
-- Remember the `|` **after the question** too — `poll Q | a | b`, not `poll Q a | b`.
-- The poll is posted to the room (or DM) the command was sent in.
-- Sent as the unstable `org.matrix.msc3381.poll.start` event for broad Element
-  compatibility, with a plain-text fallback for clients that don't support polls.
-
-### Stickers
-
-Sticker macros let **anyone** in a room post a media file by typing `!<name>` — **no
-@mention required** (they're handled before the usual mention gate). `!stickers` lists
-what's available.
-
-Enable it on the Matrix bot with one flag — the set of stickers is **auto-discovered** by
-scanning the `stickers/` folder, so you never list them:
-
-```python
-"posterchan-matrix": {
-    "modes": ['--matrix'],
-    "matrix_server": "https://chat.poster.place",
-    # ...
-    "stickers_enabled": True,
-},
-```
-
-Then just **drop files in `stickers/`** — the command is the filename stem, available
-instantly with no config edit and no restart:
-
-```
-stickers/mario.png   →  !mario
-stickers/coom.png    →  !coom
-stickers/wave.gif    →  !wave
-```
-
-- The file type is picked automatically from the extension: video (`.mp4`, `.mov`,
-  `.mkv`, `.webm`, `.avi`, `.m4v`), audio (`.mp3`, `.ogg`, `.wav`, `.m4a`, `.opus`,
-  `.flac`), otherwise it's sent as an image (`.png`, `.jpg`, `.gif`, `.webp`, …).
-- The command is the filename stem, matched **case-insensitively** against the message's
-  first word (a leading `!` is required, and it must start the message). Names are
-  restricted to letters/digits/`_`/`-`, so a sticker command can't path-traverse.
-- To rename a command, rename the file (`!mario` ← `mario.png`); to remove one, delete
-  the file. The folder is the single source of truth.
-- Files live in the **git-ignored** `stickers/` folder, so they're per-host — copy them
-  to each machine that runs the Matrix bot. `botctl` passes only the on/off flag
-  (`STICKERS_ENABLED`) to the listener; a missing/unreadable file is reported in the room
-  instead of crashing.
-
-## Matrix Admin DM Commands
-
-These privileged commands only work in a **direct message** with the bot, and only
-for users listed in `matrix_admins` (see [Configuration](#matrix-admin-allowlist)).
-Non-admins, or anyone using them outside a DM, are refused.
-
-| Command | Description |
-|---------|-------------|
-| `join <!roomid:server>` | Make the bot join a room by ID |
-| `join <#alias:server>` | Join by room alias |
-| `join <!roomid:server> via <server>` | Join a hard-to-reach federated room, hinting which homeserver(s) to route through |
-| `leave <!roomid:server>` | Make the bot leave a room (also accepts a `#alias`) |
-| `block <@user:server>` | Ignore all messages from a user (or a whole server with `:server.org`) |
-| `unblock [<@user:server>]` | Remove a block; with no argument, lists who is blocked |
-
-Notes:
-
-- **Auto-accept invites:** the bot automatically accepts *any* room invite on its
-  next sync (no command needed). This is the easiest way to get it into a room —
-  and the only way into a **restricted room** (one gated behind a space), since a
-  direct `join` is refused with `M_FORBIDDEN: You do not belong to any of the
-  required rooms/spaces`. Just invite the bot's Matrix user and it joins itself.
-- `leave` refuses to leave the current DM room or the configured main posting room
-  (`matrix_room_id`).
-- `block` adds the target to a runtime blocklist (persisted in `.matrix_blocklist`);
-  blocked users are ignored bot-wide, in every room, until `unblock`-ed. The bot
-  won't block an admin. A bare `:server.org` blocks an entire homeserver.
-- A failed `join` reports the homeserver's actual reason (e.g. restricted room,
-  unknown room) instead of a generic error.
 
 ## TTS/Video Configuration
 
@@ -170,7 +69,7 @@ The `/narrate` command creates an MP4 video with the bot's avatar and TTS audio.
 ```
 
 Auto-narrate generates video with TTS audio for all bot messages including:
-- Chat bot replies (Misskey/Pleroma/Matrix)
+- Chat bot replies (Misskey/Pleroma)
 - Blockbot notifications
 - Welcome messages
 - Unfollow notifications
@@ -266,30 +165,6 @@ TEXT_BOTS = {
 
 Only bots matching the current hostname will start.
 
-### Matrix Admin Allowlist
-
-Privileged Matrix DM commands (`join`, `leave` — see [Matrix Admin DM Commands](#matrix-admin-dm-commands))
-are restricted to an allowlist of Matrix user IDs. Set `matrix_admins` on the
-Matrix bot config as a comma-separated string:
-
-```python
-"posterchan-matrix": {
-    "platform": "matrix",
-    "matrix_server": "https://chat.example.org",
-    "matrix_user_id": "@bot:chat.example.org",
-    "matrix_room_id": "!mainroom:chat.example.org",
-    "matrix_admins": "@me:chat.example.org,@cohost:chat.example.org",
-    ...
-}
-```
-
-If empty or unset, no one can run admin commands. Internally this is passed to the
-bot as the `MATRIX_ADMINS` environment variable (also settable directly in the
-service unit). Regular commands (search, news, poll, etc.) are unaffected.
-
-You can also disable TLS verification per Matrix bot (for self-signed certs) with
-`"matrix_verify_ssl": False`.
-
 ### Per-Bot Prompt & Image Overrides
 
 The daemon bots (blockbot, welcome, report, unfollow) ship with sensible default
@@ -320,18 +195,11 @@ These are passed to the bot as the corresponding uppercase environment variables
 ### Nitter RSS Reposting
 
 The `--nitter` mode reposts new items from [Nitter](https://github.com/zedeus/nitter)
-RSS feeds (a Twitter/X front-end) to either a **Matrix room** or the bot's
+RSS feeds (a Twitter/X front-end) to the bot's
 **fediverse timeline** (Pleroma/Misskey). Feeds are listed in the bot's
 `nitter_feeds` array:
 
 ```python
-# On a Matrix bot — each feed posts into a room:
-"nitter_feeds": [
-    {"room": "!id:server", "rss": "https://nitter.net/PoweroftheTruth/rss"},
-    {"room": "!id:server", "rss": "https://nitter.net/Andywarski/rss"},
-],
-
-# On a Pleroma/Misskey bot — omit "room" to post to the bot's own timeline:
 "nitter_feeds": [
     {"rss": "https://nitter.net/PoweroftheTruth/rss"},
     {"rss": "https://nitter.net/Andywarski/rss"},
@@ -345,8 +213,7 @@ reposter in the same process.
 
 Behavior:
 
-- **Destination is per-feed:** an entry with a `room` posts to that Matrix room;
-  an entry without one posts to the fediverse account this bot is configured for.
+- **Destination:** each feed posts to the fediverse account this bot is configured for.
 - **No backlog flood:** the first time a feed is seen, its current items are
   recorded as "seen" without posting. Only genuinely new items posted afterward
   are sent. Seen state lives in `.nitter_seen.json`.
@@ -355,22 +222,6 @@ Behavior:
 
 > **Note:** public Nitter instances are frequently rate-limited or down. If posts
 > stop, it's usually the instance — point the feed at a working one.
-
-### Shamebot (matrix.org Roast)
-
-The shamebot automatically roasts users whose Matrix ID ends in `:matrix.org`
-when they join a room. It is opt-in per room via the `shamebot_rooms` config key:
-
-```python
-"posterchan-matrix": {
-    ...
-    "shamebot_rooms": ["!roomid:server", "!otherroom:server"],
-}
-```
-
-The roast is generated by the AI with a mean, insulting prompt. If AI is not
-configured or the generation fails, it falls back to a hardcoded insult telling
-the user to get a real server account. The sender is `@mentioned` in the roast.
 
 ### Running Without AI
 

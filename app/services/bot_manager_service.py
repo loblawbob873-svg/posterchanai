@@ -384,17 +384,10 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # defaulted process as presence-only. (Explicit `--nostr` in modes ⇒ user wants replies.)
             if not bot_dict.get("modes"):
                 env["NOSTR_PRESENCE_ONLY"] = "1"
-        if bot_dict.get("shamebot_rooms"):
-            sr = bot_dict["shamebot_rooms"]
-            env["SHAMEBOT_ROOMS"] = ",".join(sr) if isinstance(sr, (list, tuple)) else str(sr)
-
         # Nitter RSS feeds
         if bot_dict.get("nitter_feeds"):
             env["NITTER_FEEDS"] = json.dumps(bot_dict["nitter_feeds"])
         setif("nitter_poll_seconds", "NITTER_POLL_SECONDS")
-
-        if bot_dict.get("stickers_enabled"):
-            env["STICKERS_ENABLED"] = "true"
 
         tmh = bot_dict.get("trusted_media_hosts")
         if tmh:

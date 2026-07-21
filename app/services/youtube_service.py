@@ -925,7 +925,7 @@ def download_ytdl_bytes(
     and/or compressed first.
 
     Shared by the bot-facing ytdl endpoints (/api/media/ytdl and
-    /api/matrix/ytdl) so they don't each reimplement the download + size-check.
+    the bot ytdl endpoint) so they don't each reimplement the download + size-check.
     The optional post-processing reuses the SAME ffmpeg path as the standalone
     `clip`/`compress` commands (`media_service.clip_attachment` /
     `compress_attachments`), so results are identical. `clip`/`compress` apply

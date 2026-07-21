@@ -1,7 +1,7 @@
 """
 Media Service - Generic image/video compression and image<->PDF conversion.
 
-Provides backend-agnostic helpers used by the Telegram, Matrix and web chat
+Provides backend-agnostic helpers used by the Telegram and web chat
 interfaces for the `compress` and `convert` commands:
 
   - compress_image / compress_video : shrink a single file's size
@@ -469,7 +469,7 @@ def clip_attachment(
     """Clip the first video attachment to [start, end].
 
     Returns (output_files, summary_text). Mirrors compress_attachments so the
-    web UI, Telegram and Matrix all share one delivery path.
+    web UI and Telegram share one delivery path.
     """
     videos = [(fn, data, ct) for fn, data, ct in (attachments or []) if is_video(fn, ct)]
     if not videos:

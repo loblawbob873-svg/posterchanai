@@ -1,6 +1,6 @@
 """Write-back: a bridge-whitelisted user's Nostr interactions → the fediverse.
 
-The Nostr counterpart of the Matrix bridge's /api/matrix/timeline-action — but the trigger isn't an
+The Nostr counterpart of the old bridge's timeline-action endpoint — but the trigger isn't an
 HTTP call, it's the app's OWN relay. This service keeps a live subscription to the local relay and,
 when a WHITELISTED user replies to / likes / reposts a bridged "puppet" note, performs the matching
 action on the fediverse through THAT user's own linked Pleroma account:

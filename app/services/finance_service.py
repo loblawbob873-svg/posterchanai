@@ -5,9 +5,9 @@ account by pasting that account's API key (User.finance_api_key). The base URL i
 single global admin setting (finance_api_base, default http://localhost:5001) since all
 finance accounts live on the same instance.
 
-Shared by the web UI, Telegram, and Matrix bots via command_service. Routers/bots call
+Shared by the web UI and Telegram via command_service. Routers/bots call
 the high-level helpers (summary/bills/add/pay) which return a common dict shape; the
-text/HTML formatting helpers render that for plain-text channels (web + Matrix), while
+text/HTML formatting helpers render that for plain-text channels (web), while
 Telegram builds its own inline-button UI from the raw dicts.
 """
 import logging
@@ -92,7 +92,7 @@ async def pay_bill(base_url: str, api_key: str, name: str) -> dict:
     return await _request("POST", base_url, api_key, "/api/v1/bill/pay", json={"name": name})
 
 
-# --- formatting (plain text for web UI + Matrix) ----------------------------
+# --- formatting (plain text for web UI) -------------------------------------
 
 def format_summary(s: dict, unpaid_count: int | None = None) -> str:
     # `bills_count` from the API counts ALL bills, not just unpaid ones — so the "(N)" beside Unpaid

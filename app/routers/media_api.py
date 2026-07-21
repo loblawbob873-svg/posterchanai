@@ -2,7 +2,7 @@
 
 Identity-agnostic: these are pure byte transforms, so this endpoint only
 authenticates the caller (API key or JWT, reusing the image API's auth) — it does
-not run as a specific user. Shared by the Matrix, Misskey and Pleroma listener
+not run as a specific user. Shared by the Misskey and Pleroma listener
 bots so they all reuse one HW-accelerated ffmpeg/Pillow path instead of each
 reimplementing it: the byte transforms live in `app/services/media_service.py`,
 the creative effects (meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked) in `app/services/effects_service.py`.
@@ -384,7 +384,7 @@ async def capture_screenshot(
     """Capture a full-page screenshot of a website and return it as a PNG.
 
     Identity-agnostic like /process — screenshotting is a pure URL→image transform,
-    so this only authenticates the caller (bot API key). Shared by the Matrix,
+    so this only authenticates the caller (bot API key). Shared by the
     Misskey and Pleroma listeners so they all reuse the backend's single headless
     Chrome/Firefox path (`app/services/command_service.py`).
 
@@ -474,7 +474,7 @@ async def fetch_ytdl(
     """Download a YouTube/X URL and return the media as base64.
 
     Identity-agnostic like /process and /screenshot — a pure URL→media transform
-    authenticated by the bot API key (not a linked user), so the Matrix, Misskey
+    authenticated by the bot API key (not a linked user), so the Misskey
     and Pleroma listeners share one yt-dlp path. Audio (MP3) by default; video=true
     fetches MP4 (capped at 1080p). The optional `clip` ("start end") and `compress`
     modifiers post-process the video server-side (clip → compress) so the bot gets

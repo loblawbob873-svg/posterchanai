@@ -1,10 +1,10 @@
 """Background worker process — runs the polling schedulers off the web/API event loop.
 
-The fediverse-timeline → Matrix bridge plus the social-notification / Nitter-feed /
-matrix-notification / logs pollers all used to run on the app's single asyncio loop and
+The fediverse bridge plus the social-notification / Nitter-feed / logs pollers all used to
+run on the app's single asyncio loop and
 contended with request serving (the bridge in particular could stall the reactor for ~90s
 on a busy global feed). They're **DB-mediated** — the bridge/relays persist their state and
-maps (TimelinePost / SocialReplyMap / MatrixNotifyMap), and the app's reply/action endpoints
+maps (SocialReplyMap / FediBridgeDelivered), and the app's reply/action endpoints
 read those tables — so they run perfectly well in a separate process while the app keeps
 serving requests.
 

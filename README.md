@@ -6,7 +6,7 @@
 
 ### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Matrix, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
+**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -31,7 +31,7 @@
 - 🟣 **Nostr-native datastore** — the built-in **web-of-trust relay** (backed by PostgreSQL) is the source of truth. Settings, accounts, API keys, and AI chats live as **NIP-44-encrypted `kind-30078` events** signed by your node — not rows in some app DB. Log in with your **Nostr key** (NIP-07/NIP-46), and the web UI is a full Nostr client. No SQLite, no proprietary schema you don't control.
 - 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
-- 🤖 **It's also a bot platform** — drive everything from **Telegram & Matrix**, and run autonomous **Pleroma / Misskey / Matrix / Nostr** bots from a single admin tab.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Misskey / Nostr** bots from a single admin tab.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
@@ -64,8 +64,8 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 - **Image generation**: native diffusers (SDXL); multiple image servers supported
 - **Music generation** (`musicgeni`): text-to-song via a self-hosted [ACE-Step](https://github.com/ace-step/ACE-Step-1.5) server (fits a 12 GB GPU); load-balanced + VRAM-swapped like image gen, with a spoken watermark. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
-- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI, Telegram, and Matrix. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Matrix, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
+- **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI and Telegram. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
+- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
 ### PIM & productivity
 
@@ -75,34 +75,28 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 - **To-do**: quick personal task list from chat (`todo`)
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
 - **File storage** per user and per conversation; file manager in the UI
-- **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI, Telegram, and Matrix
+- **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI and Telegram
 - **Flashcards (study tool)**: upload a **PDF, image, slide deck (PPTX) or Word doc (DOCX)** and send `flashcards` (or `cards`/`study`/`quiz`) to generate an **interactive multiple-choice quiz** — the LLM writes the questions, options and explanations (math problems include worked steps). The web UI shows animated cards with instant ✓/✗ feedback and KaTeX-rendered math; Telegram shows image cards with answer buttons (tap **🎴 Flashcards** after uploading) and a running score. Text PDFs/slides work best; image OCR is weaker (on Telegram, send screenshots as a *file*, not a compressed photo)
 - **Reminders** (`remind`): set a reminder in plain language — `remind open the oven in 10m`, `remind me next tuesday to call mom` — and the LLM parses the time (exact relative phrases like `in 10s` are parsed directly). A background scheduler alerts you in the **web UI** (a full-screen pop-up + beep if you're online, plus a dedicated "⏰ Reminders" conversation) and on **Telegram** if linked. `reminders` lists your pending ones, each with a clickable **Cancel**. Your timezone is **auto-detected from the browser** (IANA zone, DST-aware) — no setup — so times follow you when you travel.
 
 ### Bots & social
 
 - **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma/Misskey reply bots,
-  the Matrix bot, nitter relays, plus blockbot/welcome/report/hashtag/unfollow daemons — from a
+  nitter relays, plus blockbot/welcome/report/hashtag/unfollow daemons — from a
   single admin tab (add/edit, On/Off, live status), backed by the database. The bot framework is
   **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
   hand-edited config file. See [Bot manager](docs/BOTS.md).
-- **Telegram and Matrix bots** drive chat, commands, and media from your phone
-- **Social posting** to **Misskey**, **Pleroma/Mastodon**, **Matrix**, and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
-- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Matrix/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Telegram bot** drives chat, commands, and media from your phone
+- **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
+- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
 - **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects** and **Nitter→Nostr** feeds; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
-- **Fediverse timeline → Matrix room**: mirror one Misskey/Pleroma timeline (home/global/local) into a single Matrix room, with avatar + name, custom emoji, inline images (as captions), quote-posts, and **conversations grouped into Matrix threads** (replies thread under their parent; missing ancestors are backfilled). Members act straight from Element, each under their **own** linked fediverse account (resolved cross-instance by canonical AP URI):
-  - **react** ❤/any emoji → favourite (Misskey keeps the exact emoji) · **🔁** → boost
-  - **post** a top-level message → new status (with image) · **reply in a thread** → reply (auto-mentions the author)
-  - **reply shortcuts**: `boost` / `fav` / `quote <comment>`
-  - **share→boost/quote**: paste a post's matrix.to link (add a comment to quote) to boost/quote the original with the author preserved
+- **Fediverse ↔ Nostr bridge**: mirror a Misskey/Pleroma timeline (home/global/local) onto Nostr. Each fediverse author is published under a stable **puppet** key (derived deterministically, so an author keeps one npub across restarts and instances), with avatar + display name, custom emoji as NIP-30 tags, media, quote-posts, and replies threaded via NIP-10 markers. Federated copies are deduped on the canonical AP URI, so the same post arriving from two instances mirrors once.
+  - **Write-back**: a reply, reaction or repost made on Nostr is performed **back** on the fediverse under the acting user's own linked account — not the bridge's.
+  - **Personal plane** (opt-in per user): your own fediverse notifications arrive as the matching Nostr events, and your fedi DMs as **NIP-17** gift-wrapped Nostr DMs, keeping their direct visibility on reply.
 
-  Configure under Admin → Services; the matching Matrix-bot handler is bundled in `botframework/`
-  (`matrixListener.py`) and run by the **Bot manager** (Admin → Bots) — see [docs/BOTS.md](docs/BOTS.md).
-  On a high-volume *global* feed, raise the bot's Synapse message rate limit (admin API
-  `override_ratelimit`) so it keeps up.
-- **Fediverse notifications → Matrix DM**: opt-in per user — the bot DMs you your Pleroma/Misskey notifications (mentions, replies, favourites, boosts, follows) in a private room, each with a 🔗 link and the **conversation mirrored into the message's thread** so you read context in Element. **Reply to a notification** to respond on the platform (text or image), or reply `boost`/`fav` to act on it. **Direct messages** stay private — a received DM shows up here (not the shared room) and replying keeps it direct; send a new one with `dm @user@host <message>` (Pleroma/Mastodon).
+  Configure under Admin → Services. Self-serve enrolment is off by default (`fedi_bridge_self_serve`).
 - **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
-- **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI, Telegram, and Matrix.
+- **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI and Telegram.
 
 ### Extensibility & admin
 
@@ -227,8 +221,8 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 
 ### Social posting from the bots
 
-Connect a social account in **User Settings → Misskey / Pleroma / Matrix**, then use
-the `post` command from the **Telegram** or **Matrix** bot to publish.
+Connect a social account in **User Settings → Misskey / Pleroma**, then use
+the `post` command from the **Telegram** bot to publish.
 
 **Telegram** — reply to any message (a bot answer, a link, a photo) and send:
 
@@ -238,26 +232,14 @@ the `post` command from the **Telegram** or **Matrix** bot to publish.
 | `post raw` | Shares the reply **exactly as written** — no rewrite (aliases: `verbatim`, `as-is`, `exact`) |
 | `post <instructions>` | Rewrites following your instructions, e.g. `post professional`, `post funny and short`, `post don't include links` |
 
-The bot then shows share buttons (**📣 Misskey / Pleroma / Matrix**, **🚀 Post to All**,
+The bot then shows share buttons (**📣 Misskey / Pleroma**, **🚀 Post to All**,
 **❌ Skip**) for whichever platforms you've connected. Replying to a photo shares the
 image itself. The source URL is appended by default; `post don't include links` (or
 "no links", "without url", …) omits it.
 
-**Matrix** — reply to a message (mention the bot) **or** type the content inline:
-
-| Command | What it does |
-| --- | --- |
-| reply + `post` | Rewrites the replied-to message into a post |
-| reply + `post raw` | Shares the replied-to message verbatim |
-| reply + `post <instructions>` | Rewrites the replied-to message following your instructions |
-| `post <url>` | Fetches the link and writes a post (URL appended) |
-| `post <topic>` | Writes a post about the topic |
-| `post raw <text>` | Saves `<text>` verbatim, no rewrite |
-| `share` | Publishes the last `post` to your connected platforms (`share matrix <n>` picks a room) |
-
 ### Social notifications to Telegram
 
-Forward new notifications from your connected **Misskey / Pleroma / Matrix** accounts to your
+Forward new notifications from your connected **Misskey / Pleroma / Nostr** accounts to your
 linked Telegram chat, and reply to them without leaving Telegram. Enable it per-user in
 **User Settings → Telegram → "Relay social notifications to Telegram"** (the admin must also
 turn on the global switch in **Admin → Services → Social Notification Relay**, where the poll
@@ -265,19 +247,11 @@ interval is set).
 
 - New mentions, replies, DMs, follows, and reactions/boosts are forwarded as they arrive.
 - **Reply** to a forwarded message in Telegram to respond on the originating platform — your
-  reply is posted as a reply to the original post (inheriting its visibility) or sent into the
-  Matrix room.
+  reply is posted as a reply to the original post (inheriting its visibility).
 - **Pleroma / Misskey:** DMs are direct-visibility mentions, so they arrive as normal
   notifications and forward with full content; your reply stays `direct`.
-- **Matrix** forwarding rules: **DM rooms** forward every incoming message; **group rooms**
-  forward only messages that mention you; your own messages are never forwarded, and the first
-  poll sets a cursor without backfilling history.
-- **Encrypted (E2EE) Matrix DMs** can't be decrypted (the relay has no E2EE support), so instead
-  of the content you get a **"🔒 You received an encrypted message — open Element"** notice (one
-  per room per poll). Since DMs are encrypted by default in most clients, this is the common
-  case; unencrypted DMs forward in full.
 - **Misskey** must be **re-connected once** (User Settings → Misskey) so the new token includes
-  the `read:notifications` permission. Pleroma and Matrix need no changes.
+  the `read:notifications` permission. Pleroma needs no changes.
 
 ### Remote node management
 
@@ -314,7 +288,7 @@ group so nothing is left orphaned.
 
 The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, so
 `compress`/`clip`/`convert`/`translate` only work on small uploads there (the web UI
-and Matrix have no such limit). To lift this to **~2 GB**, run a local Bot API server:
+has no such limit). To lift this to **~2 GB**, run a local Bot API server:
 
 1. In **Admin → Services → Telegram Bot**, enter your **API ID** and **API Hash**
    (from https://my.telegram.org) and save.
@@ -348,7 +322,7 @@ the Arc environment.
 | Path | Description |
 |------|-------------|
 | `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, mail, torrent, bots, etc.), services |
-| `botframework/` | Merged autonomous bot framework (Pleroma/Misskey/Matrix/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
+| `botframework/` | Merged autonomous bot framework (Pleroma/Misskey/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |

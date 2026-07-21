@@ -1,4 +1,35 @@
 #!/bin/bash
+
+# ---------------------------------------------------------------------------------------------
+# Pre-push lint gate: UNDEFINED NAMES ONLY.
+#
+# py_compile does NOT catch a NameError, and the services swallow their own exceptions, so a
+# missing name ships looking healthy and silently drops work. That is exactly how the fediverse
+# bridge lost every post (fedi_normalize called html.unescape with only `import html as _html`)
+# and how the social relay lost Nostr notifications -- both invisible to compile checks AND to a
+# log grep for Traceback/ImportError.
+#
+# Deliberately narrow: only "undefined name", so it stays at zero false positives and nobody
+# learns to ignore it. Star-import notices are excluded (pyflakes cannot see through them --
+# app/services/effects_service/ is NOT covered by this gate). Unused imports are NOT gated;
+# they are pre-existing and noisy.
+#
+# Skip in an emergency with:  SKIP_LINT=1 ./sync.sh
+# ---------------------------------------------------------------------------------------------
+if [ -z "$SKIP_LINT" ] && [ -x venv-unified/bin/python ] && venv-unified/bin/python -c "import pyflakes" 2>/dev/null; then
+    _undef=$(venv-unified/bin/python -m pyflakes app/ botframework/ 2>&1 \
+             | grep "undefined name" | grep -v "unable to detect")
+    if [ -n "$_undef" ]; then
+        echo "[sync] ABORT: undefined name(s) -- this WILL fail at runtime:"
+        echo "$_undef" | sed 's/^/    /'
+        echo "[sync] fix them, or bypass with: SKIP_LINT=1 ./sync.sh"
+        exit 1
+    fi
+    echo "[sync] lint OK (no undefined names)"
+else
+    echo "[sync] WARN: pyflakes unavailable -- skipping the undefined-name gate"
+fi
+
 git commit -a -m fix || true
 # Deploy to PRODUCTION (origin = git.poster.place).
 git push origin master

@@ -1,7 +1,7 @@
 # Music Generation (`musicgeni`)
 
 Text-to-song generation via a self-hosted [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)
-server. Available in the **web UI** and **Telegram** (intentionally *not* the Misskey/Pleroma/Matrix
+server. Available in the **web UI** and **Telegram** (intentionally *not* the Misskey/Pleroma
 bots — abuse surface).
 
 ```

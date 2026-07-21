@@ -5,7 +5,7 @@ scatter gags, the BLACKED wordmark and the KOSHER seal.
 Split out of media_service so the byte-level transforms (compress/clip/convert/PDF)
 stay separate from these Pillow-drawn novelty overlays. All three expose the same
 ``(output_files, summary)`` shape as the media_service ``*_attachments`` processors,
-so the web UI, Telegram, Matrix and the fedi bots deliver them through one path. The
+so the web UI, Telegram and the fedi bots deliver them through one path. The
 dildo/poo tiles are drawn entirely in Pillow (no shipped image assets), reusing the
 ``_shade`` / ``_gradient_*`` shading primitives below.
 """
