@@ -506,7 +506,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* Inset the whole app from the screen edges (ditto-style) so the panels float in space instead of running
    edge-to-edge, plus a gap between the columns. Safe because *{box-sizing:border-box} — the padding comes
    out of the 1fr middle column, not out of the viewport. Dropped to 0 on mobile, where every px counts. */
-.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px;padding:0 56px}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh;column-gap:20px;padding:0 32px}
 /* No border: .glass adds one on all four sides and this added a fifth on the right. With the app inset
    from the screen edges the panel already reads as separate, so the outline just boxed it in. */
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border:0;min-height:0;overflow:hidden;
@@ -596,12 +596,12 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
 .rightbar,.rb-toggle{display:none}   /* hidden by default; shown at >=1180px where the right column exists */
 @media(min-width:1180px){
-  .app{grid-template-columns:390px 1fr 420px}
+  .app{grid-template-columns:300px minmax(0,1fr) 340px}   /* narrower rails → the feed gets the width */
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border:0;overflow-y:auto;min-height:0}   /* borderless, to match the sidebar */
   /* Collapse toggle — a neon arrow tab on the panel's left edge (vertically centered). Persisted in
      localStorage. Only present where the right column exists (>=1180px). */
   .rb-toggle{display:flex;align-items:center;justify-content:center;position:fixed;z-index:25;
-    top:50%;right:calc(420px + 56px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* +56px = .app's outer padding, so the tab hugs the panel edge */
+    top:50%;right:calc(340px + 32px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* right rail (340px) + .app's outer padding (32px) — keeps the tab on the panel edge */
     font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
     background:linear-gradient(135deg,rgba(var(--accent-rgb),.16),rgba(var(--accent2-rgb),.12)),rgba(8,5,18,.82);
     border:1px solid var(--line);border-right:none;border-radius:9px 0 0 9px;
@@ -609,9 +609,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
     transition:right .2s ease, background .15s, color .15s, box-shadow .15s}
   .rb-toggle:hover{color:#fff;background:linear-gradient(135deg,rgba(var(--accent-rgb),.32),rgba(var(--accent2-rgb),.22)),rgba(8,5,18,.92);
     box-shadow:-3px 0 22px rgba(var(--accent-rgb),.5),inset 1px 0 0 rgba(var(--accent-rgb),.6)}
-  body.rb-collapsed .app{grid-template-columns:390px 1fr}   /* drop the 3rd column → main widens */
+  body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
-  body.rb-collapsed .rb-toggle{right:56px}                   /* tab slides to the app's edge (= its outer padding) */
+  body.rb-collapsed .rb-toggle{right:32px}                   /* tab slides to the app's edge (= its outer padding) */
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
@@ -650,7 +650,16 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   resize:none;overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
 .tl-cmp-ta::placeholder{color:var(--muted)}
 /* Always visible — the composer is a real box, not a one-line field that unfolds on focus. */
-.tl-cmp-tools{display:flex;align-items:center;gap:8px;margin-top:8px}
+.tl-cmp-tools{display:flex;align-items:center;gap:10px;margin-top:10px}
+/* Borderless icon buttons (📎 / ＋): the .btn outline boxed each one in and made the row look like a
+   toolbar. Bigger hit area too — these were .btn.small, which is a text-button size, not an icon one. */
+.tl-cmp-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;padding:0;
+  border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;
+  font-family:inherit;font-size:21px;line-height:1;transition:.15s}
+.tl-cmp-btn:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
+.tl-cmp-post{margin:0;padding:11px 26px;font-size:15.5px;font-weight:700;border-radius:22px}
+/* Go-live cover preview — confirms the thumbnail Discover will show before you announce. */
+.gl-img-prev{display:block;width:100%;max-height:150px;object-fit:cover;border-radius:12px;margin:6px 0 2px;border:1px solid var(--line)}
 .tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl-cmp-tools .btn{margin:0}
 
@@ -673,7 +682,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .tltab.on::after{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:-1px;
   width:min(72px,64%);height:3px;border-radius:3px 3px 0 0;
   background:linear-gradient(90deg,var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
-.tl-cmp-tools .btn{white-space:nowrap}   /* never let "⤢ More" wrap to two lines on a narrow phone */
+.tl-cmp-tools .btn{white-space:nowrap}
 /* ▦ media-grid toggle, right-aligned in the tab row (it moved out of the topbar). */
 .tltab-media{flex:0 0 auto;margin-left:auto;padding:9px 12px;border:1px solid var(--line);border-radius:11px;
   background:var(--panel);color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;line-height:1;transition:.15s}
@@ -688,8 +697,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
   .tl-cmp-av{width:32px;height:32px}
   .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
-  .tl-cmp-tools{gap:6px}
-  .tl-cmp-tools .btn{padding:7px 10px;font-size:13px}
+  .tl-cmp-tools{gap:8px}
+  .tl-cmp-btn{width:38px;height:38px;font-size:20px}
+  .tl-cmp-post{padding:10px 22px;font-size:15px}
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
   .tltab-media{padding:8px 11px;font-size:14px}

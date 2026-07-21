@@ -2083,10 +2083,10 @@
         <div class="tl-cmp-body">
           <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s Good Cuh?"></textarea>
           <div class="tl-cmp-tools">
-            <button class="btn btn-ghost small" id="tl-cmp-attach" title="Attach an image or file">📎</button>
-            <button class="btn btn-ghost small" id="tl-cmp-more" title="Poll, schedule, content warning, AI…">⤢ More</button>
+            <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file">📎</button>
+            <button class="tl-cmp-btn" id="tl-cmp-more" title="Poll, schedule, content warning, AI…">＋</button>
             <span class="muted small tl-cmp-status" id="tl-cmp-status"></span>
-            <button class="btn btn-neon small" id="tl-cmp-post">Post</button>
+            <button class="btn btn-neon tl-cmp-post" id="tl-cmp-post">Post</button>
             <input type="file" id="tl-cmp-file" multiple hidden>
           </div>
         </div>
@@ -2949,7 +2949,10 @@
   function streamCard(e){
     const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled stream)';
-    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||(e.tags.find(t=>t[0]==='thumbnail')||[])[1]||'';
+    // Fall back to the host's banner, then their avatar, so a stream announced without a cover still shows
+    // SOMETHING — an entire grid of bare ▶ tiles is what made Discover → Streams read as empty. Only the
+    // real `image`/`thumbnail` tag is ever published; this is presentation only.
+    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||(e.tags.find(t=>t[0]==='thumbnail')||[])[1]||p.banner||p.picture||'';
     const st=streamStatus(e);
     const badge = st==='live'?'<span class="live-badge">● LIVE</span>' : st==='ended'?'<span class="ended-badge">ended</span>' : st==='planned'?'<span class="planned-badge">soon</span>' : '';
     const viewers=(e.tags.find(t=>t[0]==='current_participants')||[])[1];
@@ -3139,12 +3142,15 @@
     // (the viewer count, the ended event) would invent a new start time — the stream would look like it began
     // seconds ago and its duration would reset for every client.
     const starts=(mine.tags.find(t=>t[0]==='starts')||[])[1]||String(mine.created_at);
+    // Carry `image` over for the same reason as `starts` — re-adopting after a reload and then re-signing
+    // (viewer count / end) would otherwise drop the cover we announced with.
     _liveStream={ token:tok, title:(mine.tags.find(t=>t[0]==='title')||[])[1]||'Live stream',
-                  hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'', starts };
+                  hls:(mine.tags.find(t=>t[0]==='streaming')||[])[1]||'', starts,
+                  image:(mine.tags.find(t=>t[0]==='image')||[])[1]||'' };
     if(_liveStream.hls) _startLiveHb();
     // Re-park the end-of-stream fallback: this stream may predate it, or the original park may have failed.
     // Harmless if one is already stored — the server keeps the "went live" state across a re-park.
-    _parkEndSentinel(tok, _liveStream.title, _liveStream.hls, starts);
+    _parkEndSentinel(_liveStream);
   }
   // The #1 "I streamed but nothing shows anywhere" confusion: starting OBS makes the SERVER ingest, but the
   // kind-30311 that actually puts a stream on Discover / your profile / zap.stream can only be SIGNED here in
@@ -3186,21 +3192,37 @@
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
+      <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span>
+        <span class="copyrow"><input class="input" id="gl-img" placeholder="https://… or upload one" autocomplete="off" spellcheck="false"><button class="btn btn-ghost small" id="gl-img-pick">📎 Upload</button></span></label>
+      <img id="gl-img-prev" class="gl-img-prev hidden" alt=""><input type="file" id="gl-img-file" accept="image/*" hidden>
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
       <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
+      const cover=()=>($('#gl-img',root).value||'').trim();
+      // Cover image: paste a URL or upload one to Blossom. Without it a stream renders as a bare ▶ tile,
+      // which is why Discover → Streams looked empty.
+      { const ip=$('#gl-img',root), pv=$('#gl-img-prev',root), fb=$('#gl-img-file',root), pk=$('#gl-img-pick',root);
+        const showPrev=()=>{ const u=cover(); if(u){ pv.src=u; pv.classList.remove('hidden'); } else pv.classList.add('hidden'); };
+        ip.addEventListener('input', showPrev);
+        pv.onerror=()=>pv.classList.add('hidden');
+        pk.onclick=()=>fb.click();
+        fb.onchange=async e=>{ const f=(e.target.files||[])[0]; if(!f) return;
+          pk.disabled=true; pk.textContent='uploading…';
+          try{ ip.value=await uploadBlob(f); showPrev(); }
+          catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed'); }
+          finally{ pk.disabled=false; pk.textContent='📎 Upload'; e.target.value=''; } }; }
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
             .then(()=>toast(rc.checked?'recording on':'recording off')).catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
             .finally(()=>{ rc.disabled=false; }); }; }
       $('#gl-cancel',root).onclick=closeModal;
-      { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _phoneGoLive(info, t, a); }; }
-      { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(); closeModal(); _screenGoLive(info, t, a); }; }
+      { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _phoneGoLive(info, t, a, c); }; }
+      { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _screenGoLive(info, t, a, c); }; }
       $('#gl-go',root).onclick=async()=>{
-        const t=title(), a=announce();
-        try{ await _publishLive(info, t); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
+        const t=title(), a=announce(), c=cover();
+        try{ await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
           if(a) await _announceStreamPost(info, t);
           closeModal(); toast('🔴 you’re live — announced on Nostr'); switchView('streams');
         }catch(_){ toast('couldn’t announce the stream'); }
@@ -3209,21 +3231,27 @@
   }
   // Publish the NIP-53 kind-30311 "live" event + track it locally. Sets _liveStream FIRST so a relay
   // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
-  async function _publishLive(info, title){
+  // ONE builder for the 30311's invariant tags. FOUR places re-sign this event (announce, viewer-count
+  // update, end, and the parked end-sentinel) and it is REPLACEABLE — so a tag any one of them omits is
+  // erased for every client. That's why `starts` is threaded through, and it's why `image` must be too:
+  // set the cover once at go-live and the first viewer-count update would otherwise wipe it.
+  function _liveBase(s){
+    return [
+      ['d', s.token], ['title', s.title], ['streaming', s.hls],
+      ...(s.image ? [['image', s.image]] : []),
+      ...(s.starts ? [['starts', s.starts]] : []),
+      ['p', ME.pubkey, '', 'host'],
+    ];
+  }
+  async function _publishLive(info, title, image){
     _endedStreams.delete(info.token);   // going live again with this token — allow adoption once more
     const starts=String(Math.floor(Date.now()/1000));
-    // `starts` is kept because the 30311 is REPLACEABLE: the viewer-count update re-signs this same event, and
-    // an update that omitted `starts` would silently erase the stream's start time for every client.
-    _liveStream={ token:info.token, title, hls:info.hls_url, starts };
-    const r = await publish(30311, '', [
-      ['d', info.token], ['title', title], ['streaming', info.hls_url],
-      ['status', 'live'], ['starts', starts],
-      ['p', ME.pubkey, '', 'host'],
-    ]);
+    _liveStream={ token:info.token, title, hls:info.hls_url, starts, image:(image||'').trim() };
+    const r = await publish(30311, '', _liveBase(_liveStream).concat([['status','live']]));
     // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
     // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
     if(!(r && r.ok)) throw new Error('stream announce not stored');
-    _parkEndSentinel(info.token, title, info.hls_url, starts);
+    _parkEndSentinel(_liveStream);
   }
   // Ghost-LIVE guard. Our 30311 can only be signed HERE (the key never leaves the browser), so if this tab
   // dies mid-stream — closed, crashed, phone asleep — nothing would ever mark the stream ended and it would
@@ -3231,12 +3259,12 @@
   // server, which publishes it once MediaMTX reports the feed is gone (app/services/stream_end_service.py).
   // No `ends` tag: this signature is fixed at go-live, so any end time it named would be a lie. _endLive()
   // still stamps an accurate one on the normal path, and being newer it wins the replaceable-event race.
-  async function _parkEndSentinel(token, title, hls, starts){
+  async function _parkEndSentinel(s){
+    if(!s || !s.token) return;
     try{
       const ev=await signer.signEvent({ kind:30311, content:'', pubkey:ME.pubkey,
         created_at: Math.floor(Date.now()/1000)+5,   // must outrank the "live" event we just published
-        tags:[ ['d', token], ['title', title], ['streaming', hls], ['status','ended'],
-               ['starts', starts], ['p', ME.pubkey, '', 'host'], ['client','PosterChan AI'] ] });
+        tags: _liveBase(s).concat([['status','ended'], ['client','PosterChan AI']]) });
       const res=await _streamFetch('/api/streams/sentinel', { method:'POST', headers:{'Content-Type':'application/json'},
                                                               body: JSON.stringify({ event: ev }) });
       // fetch only rejects on a network error, so a 401/403/400 would sail through unnoticed and leave the
@@ -3281,7 +3309,7 @@
     });
   }
   // Go live straight from the phone/browser camera via WHIP (WebRTC ingest to the built-in MediaMTX).
-  async function _phoneGoLive(info, title, doAnnounce){
+  async function _phoneGoLive(info, title, doAnnounce, cover){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
     _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
     let local=null, pc=null; let facing='user';
@@ -3325,7 +3353,7 @@
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
     _goingLive=false;
-    try{ await _publishLive(info, title); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    try{ await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
     if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
     _phoneLiveOverlay(); toast('🔴 you’re live from your phone');
   }
@@ -3400,12 +3428,7 @@
   // see it too — not just this app. Best-effort: a failure here must never disturb the broadcast.
   async function _publishViewers(n){
     const s=_liveStream; if(!s||!s.token||!ME) return;
-    try{ await publish(30311, '', [
-      ['d', s.token], ['title', s.title], ['streaming', s.hls],
-      ['status','live'], ['starts', s.starts||String(Math.floor(Date.now()/1000))],
-      ['current_participants', String(n)],
-      ['p', ME.pubkey, '', 'host'],
-    ]); }catch(_){ return; }
+    try{ await publish(30311, '', _liveBase(s).concat([['status','live'], ['current_participants', String(n)]])); }catch(_){ return; }
     // The stream can END while that publish is in flight. Re-parking afterwards would POST a fresh sentinel
     // (created_at = now+5, carrying NO `ends`) for a stream that's already over — outranking the accurate
     // ended event _endLive just published and erasing its end time. Only re-park if this is STILL the live
@@ -3415,7 +3438,7 @@
     // republish is NEWER — so on a replaceable address it now outranks the sentinel, and the server's
     // ghost-LIVE fallback would be dropped by relays as stale. The stream would sit "● LIVE" forever over a
     // dead url if this tab died. Re-park a sentinel that outranks what we just published.
-    await _parkEndSentinel(s.token, s.title, s.hls, s.starts||'');
+    await _parkEndSentinel(s);
   }
   // NB: the class is `pl-mini`, NOT `mini` — `.mini` is the global small-button class (and the winxp theme
   // overrides it with !important), which would hijack the thumbnail's styling.
@@ -3667,7 +3690,7 @@
   }
   // Go live straight from the screen (app only). No WebRTC involved — the plugin owns the whole feed — so the
   // stream's liveness is reported by the plugin's status events rather than a PeerConnection.
-  async function _screenGoLive(info, title, doAnnounce){
+  async function _screenGoLive(info, title, doAnnounce, cover){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
     const SS=_screenPlugin(); if(!SS){ toast('screen sharing needs the PosterChan app'); return; }
     if(!info.rtmp_native_url){ toast('this server is too old for in-app screen sharing'); return; }
@@ -3692,7 +3715,7 @@
     catch(e){ _goingLive=false; if(_phoneStream===ps){ toast((e&&e.message)||'the screen stream didn’t connect'); _endLive(); } return; }
     if(_phoneStream!==ps){ _goingLive=false; return; }   // they hit Stop while it was connecting
     _goingLive=false;
-    try{ await _publishLive(info, title); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
+    try{ await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
     if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
     toast('🔴 you’re live — sharing your screen');
   }
@@ -3783,14 +3806,8 @@
     _teardownPhoneStream();
     const s=_liveStream; _liveStream=null;
     if(s){ _endedStreams.add(s.token);   // never auto-re-adopt this one — the End was intentional
-      try{ await publish(30311, '', [
-      ['d', s.token], ['title', s.title], ['streaming', s.hls],
-      ['status', 'ended'], ['ends', String(Math.floor(Date.now()/1000))],
-      // Keep `starts`: this replaces the live event on a replaceable address, so dropping it would erase the
-      // stream's start time for every client — no start, no duration, for a stream that just ran.
-      ...(s.starts ? [['starts', s.starts]] : []),
-      ['p', ME.pubkey, '', 'host'],
-    ]); _clearEndSentinel(); }catch(_){} }
+      try{ await publish(30311, '', _liveBase(s).concat([['status','ended'], ['ends', String(Math.floor(Date.now()/1000))]]));
+        _clearEndSentinel(); }catch(_){} }
     toast('stream ended'); if(VIEW==='streams') renderStreams();
   }
   // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
