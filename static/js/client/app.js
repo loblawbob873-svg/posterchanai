@@ -7907,16 +7907,10 @@
   function _notifCtxHtml(id){
     const o=Store.get(id);
     if(!o) return `<div class="notif-ctx" data-nctx="${enc(id)}"><span class="muted small">…</span></div>`;
-    const mp=mediaParts(o.content);
-    const body=(mp.text||'').trim().slice(0,240);
-    const thumb=(mp.items&&mp.items[0])?`<div class="notif-ctx-media">${mp.items[0]}</div>`:'';
-    if(!body && !thumb) return '';
-    const extra=(mp.items&&mp.items.length>1)?`<span class="notif-ctx-more">+${mp.items.length-1}</span>`:'';
-    return `<div class="notif-ctx">`
-      +`<div class="notif-ctx-body">${body?`<div class="notif-ctx-txt">${applyEmojis(enc(body),o)}</div>`
-                                          :`<div class="notif-ctx-txt muted">${thumb?'Photo':''}</div>`}</div>`
-      +(thumb?`<div class="notif-ctx-thumb">${thumb}${extra}</div>`:'')
-      +`</div>`;
+    // Reuse quotedDiv: the SAME embedded-post card used for quotes and the reply preview — author header,
+    // full text and the real media gallery. Hand-rolling a trimmed version here is what made notifications
+    // unreadable, and it drifts from the card everywhere else in the app.
+    return `<div class="notif-ctx">${quotedDiv(o)}</div>`;
   }
   function _notifCtx(e){
     const id=_notifCtxId(e); if(!id) return '';
