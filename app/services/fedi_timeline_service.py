@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta
 
 import httpx
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models import TimelinePost, MatrixAvatarCache
@@ -482,12 +482,22 @@ async def _avatar_mxc(db: Session, hs: str, bot_token: str, avatar_url: str | No
 
 # --- dedup / delivery -------------------------------------------------------
 
-def _seen(db: Session, room_id: str, note_id: str | None, note_uri: str | None) -> bool:
+def _seen(db: Session, room_id: str, note_id: str | None, note_uri: str | None,
+          instance_url: str | None = None) -> bool:
     """True if this note was already posted to the room. Matched on the canonical URI
-    (cross-instance) with a note_id fallback for same-instance lookups."""
+    (cross-instance) with a note_id fallback for same-instance lookups.
+
+    note_id is scoped to its instance_url — it is only meaningful WITHIN an instance, and this table
+    also holds rows written by the member-action path with OTHER instances' ids. Unscoped, a Misskey
+    aid collision (base36 ms + 2 random chars) between two instances made a genuinely new post look
+    already-delivered, and it was then silently never sent."""
     conds = []
     if note_id:
-        conds.append(TimelinePost.note_id == note_id)
+        if instance_url:
+            conds.append(and_(TimelinePost.note_id == note_id,
+                              TimelinePost.instance_url == instance_url))
+        else:
+            conds.append(TimelinePost.note_id == note_id)
     if note_uri:
         conds.append(TimelinePost.note_uri == note_uri)
     if not conds:
@@ -599,8 +609,12 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
         thread_root_event_id=thread_root_event_id, reply_to_event_id=parent_event,
         as_thread=not inline,
     )
-    await asyncio.sleep(_SEND_PACING)            # pace Synapse writes
+    # Record BEFORE the pacing sleep. asyncio only delivers cancellation at an await point, and _record
+    # is synchronous — so with no await between the send returning and the row being written, a poll
+    # timeout (asyncio.wait_for in _job) can no longer land in the gap. It previously could: the event
+    # was in the room with no TimelinePost row, so the next poll re-sent it as a DUPLICATE.
     _record(event_id, is_root_event=True)
+    await asyncio.sleep(_SEND_PACING)            # pace Synapse writes
     # Videos can't be inlined into Matrix HTML, so they follow as their own m.video events
     # (recorded so interacting resolves to the post). Carry the author header as the media caption
     # and thread/reply each video under the post's event so it isn't an orphan with no author.
@@ -611,9 +625,9 @@ async def _deliver(db: Session, hs: str, bot_token: str, room_id: str, platform:
                                                         caption=hdr_text, caption_html=hdr_html,
                                                         thread_root_event_id=thread_root_event_id or event_id,
                                                         reply_to_event_id=event_id, as_thread=not inline)
-            await asyncio.sleep(_SEND_PACING)    # pace Synapse writes
             if mid:
-                _record(mid, is_root_event=False)
+                _record(mid, is_root_event=False)   # before the sleep — same cancellation window
+            await asyncio.sleep(_SEND_PACING)    # pace Synapse writes
         except Exception as e:
             logger.warning(f"[fedi-timeline] video send failed: {e}")
     return event_id
@@ -637,7 +651,7 @@ async def _deliver_descendants(db: Session, hs: str, bot_token: str, room_id: st
         return
     for child in sorted((_norm(platform, c) for c in children), key=lambda p: p.get("created_at") or ""):
         uri = _canonical_uri(platform, instance_url, child)
-        if not child["id"] or _seen(db, room_id, child["id"], uri):
+        if not child["id"] or _seen(db, room_id, child["id"], uri, instance_url):
             continue
         try:
             await _deliver(db, hs, bot_token, room_id, platform, instance_url, child,
@@ -669,7 +683,7 @@ async def _backfill_ancestors(db: Session, hs: str, bot_token: str, room_id: str
     for raw in ancestors[-_MAX_ANCESTORS:]:        # closest N (always includes the immediate parent)
         anc = _norm(platform, raw)
         uri = _canonical_uri(platform, instance_url, anc)
-        if not anc.get("id") or _seen(db, room_id, anc["id"], uri):
+        if not anc.get("id") or _seen(db, room_id, anc["id"], uri, instance_url):
             continue
         a_root = None
         if anc.get("in_reply_to_id"):
@@ -778,7 +792,7 @@ async def poll_once(db: Session) -> None:
 
     async def _deliver_post(post) -> None:
         uri = _canonical_uri(platform, instance_url, post)
-        if not post["id"] or _seen(db, room_id, post["id"], uri):
+        if not post["id"] or _seen(db, room_id, post["id"], uri, instance_url):
             return
         # The timeline delivers replies as flat items. If this post replies to one already in the
         # room, thread it under that conversation; otherwise backfill its ancestors so the whole
@@ -840,11 +854,24 @@ async def poll_once(db: Session) -> None:
                     # got past (below) so we don't reprocess them — the failed post + remainder
                     # retry next cycle. This makes forward progress (no permanent hole, no wedge).
                     logger.warning(f"[fedi-timeline] transient deliver failure, will retry next cycle: {e}")
+                    try:
+                        db.rollback()   # the cursor commit below needs a usable session
+                    except Exception:
+                        pass
                     transient = True
                     break
                 except Exception as e:
                     # A permanent (non-5xx) error on one post: skip it and keep going so a single
                     # poison post can't stall the whole drain.
+                    # ROLL BACK FIRST. A failed _record commit (connection reset, oversize note_id)
+                    # leaves the session in "must rollback" state, and then EVERY remaining post on the
+                    # page raises PendingRollbackError at _seen()'s query — before any send is attempted
+                    # — each one logged as a deliver failure and each advancing last_delivered. One DB
+                    # blip silently skipped the rest of the page, and the pages after it.
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
                     logger.warning(f"[fedi-timeline] post deliver failed: {e}")
                     last_delivered = post.get("id") or last_delivered
             if transient:
