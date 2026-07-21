@@ -925,7 +925,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 }
 .act.actq{color:var(--cyan)}
 .act.actq:hover{color:var(--neon)}
-.act.actq .q-ico{width:20px;height:20px}
+.act.actq .q-ico{width:22px;height:22px}
 .act .rp-ico{width:20px;height:20px}
 .feed::-webkit-scrollbar{width:14px}
 .feed::-webkit-scrollbar-thumb{background:var(--neon2);border-radius:8px;border:3px solid var(--bg);min-height:40px}
@@ -1014,7 +1014,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* repost/boost glyph (SVG, themed via currentColor) — replaces the off-theme orange 🔁 emoji */
 .rt-ico{vertical-align:-3px;flex:none}
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
-.act.rt .rt-ico{transition:filter .12s;width:20px;height:20px}
+.act.rt .rt-ico{transition:filter .12s;width:22px;height:22px}
 .act.rt:hover .rt-ico,.act.rt.on .rt-ico{filter:drop-shadow(0 0 6px rgba(57,255,139,.6))}
 .quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4)}
 .link-card{display:block;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:8px;background:rgba(8,5,18,.45);cursor:pointer;max-width:520px;transition:.15s}
@@ -1048,11 +1048,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
-.act.actm{font-size:18px;background:rgba(var(--accent-rgb),.07);border-color:var(--line)}
+.act.actm{font-size:20px;background:rgba(var(--accent-rgb),.07);border-color:var(--line)}
 .act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);border-color:var(--amber);box-shadow:0 0 14px rgba(255,207,43,.35)}
 .act.rt{color:var(--green)} .act.rt:hover{color:var(--green);border-color:var(--green);background:rgba(57,255,139,.14);box-shadow:0 0 14px rgba(57,255,139,.3)}
 .act{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;
-  font-size:17px;padding:8px 14px;border-radius:12px;transition:.13s;line-height:1}
+  font-size:19px;padding:10px 16px;border-radius:13px;transition:.13s;line-height:1}
 .act:hover{color:var(--cyan);background:rgba(33,230,255,.14);border-color:var(--cyan);box-shadow:0 0 14px rgba(33,230,255,.3);transform:translateY(-1px)}
 .act:active{transform:translateY(0)}
 .act.on{color:var(--neon);border-color:var(--neon);background:rgba(var(--accent-rgb),.12);box-shadow:0 0 14px rgba(var(--accent-rgb),.35)}
@@ -1401,7 +1401,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   /* Density on mobile (no global zoom — Firefox's zoom leaves a black border). Scale down the main
      content via font-size so the app reads denser without breaking the viewport. */
   .note .txt{font-size:15px;line-height:1.5} .note .name{font-size:14.5px}
-  .note .handle,.note .time{font-size:13px} .act{font-size:13.5px} .act.actq{font-size:19px}
+  .note .handle,.note .time{font-size:13px} .act{font-size:16px;padding:8px 10px} .act.actq{font-size:21px}
   .bubble{font-size:14.5px;padding:9px 12px}
   .dm-peer b{font-size:15px} .dm-peer .muted.small{font-size:13px}
   .prof .pbody h2{font-size:20px} .rb-item .rb-txt{font-size:13.5px}
