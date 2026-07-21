@@ -3204,6 +3204,10 @@
       // which is why Discover → Streams looked empty.
       { const ip=$('#gl-img',root), pv=$('#gl-img-prev',root), fb=$('#gl-img-file',root), pk=$('#gl-img-pick',root);
         const showPrev=()=>{ const u=cover(); if(u){ pv.src=u; pv.classList.remove('hidden'); } else pv.classList.add('hidden'); };
+        // Prefill with your avatar — the same value _publishLive would fall back to, but visible and
+        // editable, so the thumbnail isn't a surprise after you're already live.
+        { const mine=(Store.profile(ME.pubkey)||{}).picture; if(mine && !ip.value) ip.value=mine; }
+        showPrev();
         ip.addEventListener('input', showPrev);
         pv.onerror=()=>pv.classList.add('hidden');
         pk.onclick=()=>fb.click();
@@ -3246,7 +3250,10 @@
   async function _publishLive(info, title, image){
     _endedStreams.delete(info.token);   // going live again with this token — allow adoption once more
     const starts=String(Math.floor(Date.now()/1000));
-    _liveStream={ token:info.token, title, hls:info.hls_url, starts, image:(image||'').trim() };
+    // Default the cover to your own avatar when none was given, so the announced event carries a real
+    // `image` tag rather than relying on every client's fallback — zap.stream/Amethyst won't guess one.
+    const cover=(image||'').trim() || (Store.profile(ME.pubkey)||{}).picture || '';
+    _liveStream={ token:info.token, title, hls:info.hls_url, starts, image:cover };
     const r = await publish(30311, '', _liveBase(_liveStream).concat([['status','live']]));
     // If the relay didn't store the "live" event, the stream is ingesting but INVISIBLE on Nostr. Throw so the
     // go-live callers' existing catch surfaces "live — but couldn't announce yet" instead of a silent no-show.
