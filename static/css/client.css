@@ -636,12 +636,11 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   border:1px solid var(--line);border-radius:16px;background:var(--panel)}
 .tl-cmp-av{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 .tl-cmp-body{flex:1;min-width:0}
-.tl-cmp-ta{width:100%;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);resize:none;
-  overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
+.tl-cmp-ta{width:100%;min-height:54px;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);
+  resize:none;overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
 .tl-cmp-ta::placeholder{color:var(--muted)}
-/* Collapsed = one line, no tools. The composer only unfolds once you actually start a post. */
-.tl-cmp-tools{display:none;align-items:center;gap:8px;margin-top:8px}
-.tl-cmp.on .tl-cmp-tools{display:flex}
+/* Always visible — the composer is a real box, not a one-line field that unfolds on focus. */
+.tl-cmp-tools{display:flex;align-items:center;gap:8px;margin-top:8px}
 .tl-cmp-status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl-cmp-tools .btn{margin:0}
 

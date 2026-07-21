@@ -103,7 +103,7 @@
     setTimeout(()=>{ el.src = base + (base.includes('?')?'&':'?') + '_r=' + Date.now(); if(el.tagName==='VIDEO') el.load(); }, 700 * (n + 1));
   };
 
-  let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
+  let CFG = {}, ME = null, FOLLOWS = new Set(), FOLLOWERS = new Set(), MUTED = new Set(), MUTED_WORDS = new Set(), MUTED_THREADS = new Set(), PINNED = new Set(), BOOKMARKS = new Set(), VIEW = 'home', IS_ADMIN = false, GUEST = false;
   let _myFollowersLoaded = false;
   let signer = null;
   const subs = {};                 // view -> subId
@@ -1470,7 +1470,7 @@
   // Reads still ADOPT the relay's list whenever it returns an event (a present-but-empty event is a real
   // clear-all, which we honour) — so cross-device removals propagate normally.
   function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
-    ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedUsersCount', u.length); }
+    ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length); }
   function _persistFollows(){ const f=[...FOLLOWS].filter(p=>p!==ME.pubkey);
     ClientSettings.set('followsCache', f); ClientSettings.set('followsCount', f.length); }
   async function fetchFollows(){
@@ -1491,12 +1491,14 @@
     // Seed from cache so a throttled/timed-out read leaves mutes intact (never an empty base → the wipe).
     (ClientSettings.get('mutedUsers',[])||[]).forEach(p=>MUTED.add(p));
     (ClientSettings.get('mutedWords',[])||[]).forEach(w=>MUTED_WORDS.add(String(w).toLowerCase()));
+    (ClientSettings.get('mutedThreads',[])||[]).forEach(e=>MUTED_THREADS.add(e));
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
     // Adopt the relay's list when it returned an event — a present-but-empty event is a real clear-all,
     // which we honour. A []-result is a timeout / not-yet-synced relay → keep the seeded cache.
     if(ev){
       MUTED = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
       MUTED_WORDS = new Set(ev.tags.filter(t=>t[0]==='word'&&t[1]).map(t=>t[1].toLowerCase()));
+      MUTED_THREADS = new Set(ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));   // NIP-51 thread mutes
       _persistMutes();
     }
     if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
@@ -1511,7 +1513,9 @@
     // in-memory MUTED only when the read timed out, so we never publish an empty base. Keep t/e mutes.
     const users = cur ? new Set(cur.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))
                       : new Set([...MUTED].filter(p=>p!==ME.pubkey));
-    const other = cur ? cur.tags.filter(t=>t[0]!=='p'&&t[0]!=='word') : [];
+    // Rebuild thread mutes from memory when the relay returned nothing — an empty `other` would publish a
+    // list with every muted conversation stripped out.
+    const other = cur ? cur.tags.filter(t=>t[0]!=='p'&&t[0]!=='word') : [...MUTED_THREADS].map(e=>['e',e]);
     const tags = [...users].map(p=>['p',p]).concat(other, clean.map(w=>['word',w]));
     const r = await publish(10000, cur?cur.content:'', tags);
     if(!(r && r.ok)) return false;   // relay didn't store it → don't apply locally (publish() toasts the failure)
@@ -1529,17 +1533,56 @@
   // Should this timeline event be hidden by mutes? Covers REPOSTS (kind 6): a repost of a muted
   // author — or of a note containing a muted word — is hidden too, by resolving the original
   // (embedded JSON, else the store; author from the p-tag as a fallback before it loads).
+  // The conversation an event belongs to: its NIP-10 `root`-marked e-tag, else (unmarked/positional) the
+  // FIRST e-tag, else the event is itself a root. Used both to decide what "mute this conversation" mutes
+  // and to match posts against the muted set.
+  function _rootIdOf(ev){
+    if(!ev) return null;
+    const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]);
+    const marked=es.find(t=>t[3]==='root');
+    if(marked) return marked[1];
+    return es.length ? es[0][1] : ev.id;
+  }
+  // Muted conversation? Match the note itself, and ANY e-tag it carries — a reply that only tags its
+  // immediate parent still belongs to the thread, and matching only the resolved root would leak those
+  // back into the feed. (Consequence: a quote of the muted root is hidden too, which is the intent.)
+  function _mutedThread(ev){
+    if(!MUTED_THREADS.size || !ev) return false;
+    if(MUTED_THREADS.has(ev.id)) return true;
+    for(const t of (ev.tags||[])){ if(t[0]==='e' && t[1] && MUTED_THREADS.has(t[1])) return true; }
+    return false;
+  }
   function isMutedView(ev){
     if(!ev) return false;
-    if(MUTED.has(ev.pubkey) || mutedByWord(ev)) return true;
+    if(MUTED.has(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev)) return true;
     if(ev.kind===6){
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       const orig = inner || Store.get((ev.tags.find(t=>t[0]==='e')||[])[1]);
       const origPk = (orig && orig.pubkey) || (ev.tags.find(t=>t[0]==='p')||[])[1];
       if(origPk && MUTED.has(origPk)) return true;
-      if(orig && mutedByWord(orig)) return true;
+      if(orig && (mutedByWord(orig) || _mutedThread(orig))) return true;
     }
     return false;
+  }
+  // Mute/unmute a CONVERSATION — NIP-51 kind-10000 `e` tags, so it follows you to any client. Same
+  // read-modify-write shape as saveMutedWords: re-read the relay's current list (so an unmute done
+  // elsewhere isn't clobbered) and preserve every tag type we don't own, or this would wipe person- and
+  // word-mutes.
+  async function toggleMuteThread(rootId){
+    if(!rootId || !ME) return;
+    const have = MUTED_THREADS.has(rootId);
+    const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]);
+    const cur = evs.length ? evs.sort((a,b)=>b.created_at-a.created_at)[0] : null;
+    const ids = cur ? new Set(cur.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1])) : new Set(MUTED_THREADS);
+    have ? ids.delete(rootId) : ids.add(rootId);
+    const other = cur ? cur.tags.filter(t=>t[0]!=='e')
+                      : [...MUTED].filter(p=>p!==ME.pubkey).map(p=>['p',p]).concat([...MUTED_WORDS].map(w=>['word',w]));
+    const tags = other.concat([...ids].map(e=>['e',e]));
+    const r = await publish(10000, cur?cur.content:'', tags);
+    if(!(r && r.ok)) return;   // relay didn't store it → don't fake it locally (publish() toasts the failure)
+    MUTED_THREADS = ids; _persistMutes();
+    toast(have?'conversation unmuted':'🔕 conversation muted');
+    if(['home','global','notifications','bookmarks'].includes(VIEW)) renderView(true);
   }
   // replaceable-list edit helper: fetch newest (kind), add/remove a p-tag, republish preserving content+tags
   async function _editPList(kind, pk, add){
@@ -1556,7 +1599,7 @@
     const pset = new Set([...inmem, ...fromRelay]);
     if (add) pset.add(pk); else pset.delete(pk);
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p')
-                     : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]) : []);
+                     : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]).concat([...MUTED_THREADS].map(e=>['e',e])) : []);
     // Don't publish a self-follow p-tag (ME is kept in FOLLOWS only for the home-feed filter).
     const tags = nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p]));
     const r = await publish(kind, cur?cur.content:'', tags);
@@ -2057,26 +2100,13 @@
     const box=$('#tl-cmp',feed); if(!box) return;
     const ta=$('#tl-cmp-ta',box), st=$('#tl-cmp-status',box), post=$('#tl-cmp-post',box);
     attachMentionAutocomplete(ta);
-    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,320)+'px'; };
-    const expand=()=>{ box.classList.add('on'); grow(); };
-    const reset=()=>{ _tlCmpText=''; ta.value=''; box.classList.remove('on'); ta.style.height=''; st.textContent=''; };
-    if(_tlCmpText){ ta.value=_tlCmpText; expand(); }   // restore text carried across a tab switch
-    ta.addEventListener('focus', expand);
+    // Always open, like ditto — a one-line box that only unfolds on focus read as a search field and hid
+    // the attach/post controls behind an extra interaction. It just grows with the text from here.
+    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),320)+'px'; };
+    const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; grow(); };
+    if(_tlCmpText) ta.value=_tlCmpText;   // restore text carried across a tab switch
+    grow();
     ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); });
-    // Collapse on blur ONLY when empty — snapping shut on a half-written post would lose the user's place.
-    // …but NOT when focus is heading somewhere inside the composer: pressing a tool button blurs the
-    // textarea first, and collapsing hides .tl-cmp-tools mid-gesture, so the element disappears between
-    // mousedown and mouseup and no click is ever produced (that's why ⤢ More did nothing on an empty box).
-    box.addEventListener('mousedown', e=>{ if(e.target.closest('button')) e.preventDefault(); });   // keep focus on the textarea
-    // Belt and braces for touch, where blur can beat the synthesized mousedown: defer the collapse and
-    // cancel it on any pointerdown inside the composer, so a tap on a tool button can never hide the
-    // button out from under itself mid-gesture.
-    let _collapseT=null;
-    box.addEventListener('pointerdown', ()=>clearTimeout(_collapseT));
-    ta.addEventListener('blur', ()=>{ clearTimeout(_collapseT); _collapseT=setTimeout(()=>{
-      if(box.contains(document.activeElement)) return;
-      if(!ta.value.trim()){ box.classList.remove('on'); ta.style.height=''; }
-    }, 180); });
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
@@ -5187,6 +5217,10 @@
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
       if(!tagged) items.push(['nsfw','🔞 Re-post with NSFW warning']); }
     if(mine) items.push(['rebroadcast','📡 Rebroadcast to relays']);   // re-propagate your own post (moved down)
+    // Mute the whole CONVERSATION (NIP-51 `e` tag) — offered on your own posts too, since a thread of
+    // yours going noisy is exactly when you want it.
+    { const _r=_rootIdOf(Store.get(id))||id;
+      items.push(['mutethread', MUTED_THREADS.has(_r)?'🔔 Unmute conversation':'🔕 Mute conversation']); }
     if(!mine) items.push(['mute', MUTED.has(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
@@ -5201,6 +5235,7 @@
       if(a==='pin') return togglePin(id);
       if(a==='nsfw') return repostWithWarning(id);
       if(a==='delete') return doDelete(id, art);
+      if(a==='mutethread') return toggleMuteThread(_rootIdOf(Store.get(id))||id);
       if(a==='mute') return toggleMute(pk);
       if(a==='block') return doBlock(pk);
     });
