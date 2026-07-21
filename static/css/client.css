@@ -503,7 +503,10 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* column-gap (not padding on .main): the topbar is sticky and full-bleed, so padding there would inset the
    header too. A grid gap lets the background show between the panels instead of butting them together.
    Collapses to nothing on mobile, where the grid is a single column. */
-.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px}
+/* Inset the whole app from the screen edges (ditto-style) so the panels float in space instead of running
+   edge-to-edge, plus a gap between the columns. Safe because *{box-sizing:border-box} — the padding comes
+   out of the 1fr middle column, not out of the viewport. Dropped to 0 on mobile, where every px counts. */
+.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px;padding:0 24px}
 .sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow:hidden;
   /* Clean flat dark panel — near-opaque so the city skyline does NOT bleed into the navbar (it stays
      in the main background only); keeps the nav labels at full contrast. */
@@ -594,7 +597,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   /* Collapse toggle — a neon arrow tab on the panel's left edge (vertically centered). Persisted in
      localStorage. Only present where the right column exists (>=1180px). */
   .rb-toggle{display:flex;align-items:center;justify-content:center;position:fixed;z-index:25;
-    top:50%;right:420px;transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;
+    top:50%;right:calc(420px + 24px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* +24px = .app's outer padding, so the tab hugs the panel edge */
     font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
     background:linear-gradient(135deg,rgba(0,255,255,.16),rgba(255,0,255,.12)),rgba(8,5,18,.82);
     border:1px solid var(--line);border-right:none;border-radius:9px 0 0 9px;
@@ -604,7 +607,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
     box-shadow:-3px 0 22px rgba(0,255,255,.5),inset 1px 0 0 rgba(0,255,255,.6)}
   body.rb-collapsed .app{grid-template-columns:390px 1fr}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
-  body.rb-collapsed .rb-toggle{right:0}                      /* tab slides to the screen edge */
+  body.rb-collapsed .rb-toggle{right:24px}                   /* tab slides to the app's edge (= its outer padding) */
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
@@ -1328,7 +1331,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mobilenav{display:none}
 /* ===== responsive ===== */
 @media(max-width:820px){
-  .app{grid-template-columns:1fr}
+  .app{grid-template-columns:1fr;padding:0}   /* no outer inset on phones — the feed needs the full width */
   .sidebar{display:none}
   /* Density on mobile (no global zoom — Firefox's zoom leaves a black border). Scale down the main
      content via font-size so the app reads denser without breaking the viewport. */

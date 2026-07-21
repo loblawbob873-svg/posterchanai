@@ -1809,8 +1809,10 @@
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     // Home/Nostrverse carry their own inline compose bar above the tabs, so the topbar "New post" would be
-    // a second button for the same action. Every OTHER view still needs it.
+    // a second button for the same action. Every OTHER view still needs it. Same for the title: the tabs
+    // already name the timeline, so showing "Home"/"Nostrverse" above them just says it twice.
     { const cb=$('#btn-compose'); if(cb) cb.classList.toggle('hidden', v==='home'||v==='global'); }
+    { const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', v==='home'||v==='global'); }
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // Media-grid toggle button lives in the topbar but only applies to the Home/Global timelines.
     { const mt=$('#tl-media'); if(mt){ const show=(v==='home'||v==='global'); mt.classList.toggle('hidden', !show); mt.classList.toggle('active', show && _tlMedia); } }
