@@ -151,10 +151,6 @@
             </div>
             <button class="nav-item" data-view="settings"><span class="ic">⚙️</span><span>Settings</span></button>
         </nav>
-        <!-- ONE compose entry point (ditto-style). It used to live in the topbar, which meant it turned up
-             in every view header; here it's always in the same place and never clutters a view. Mobile
-             uses the bottom nav's ✏️ instead — this sidebar is display:none there. -->
-        <button id="btn-compose" class="btn btn-cyan nav-compose" title="New post" aria-label="New post">＋</button>
         <div class="me" id="me-card"></div>
         <div class="conn" id="conn-status"><i class="dot"></i><span>connecting…</span></div>
         <div class="usercount hidden" id="user-count"></div>
@@ -173,6 +169,11 @@
                  is hidden (body.tl-view), since the tabs name the timeline and the composer is inline. -->
         </header>
         <div id="feed" class="feed"></div>
+        <!-- ONE compose entry point. Absolutely positioned inside .main (which is position:relative), so it
+             sits at the bottom-right of the CONTENT column and tracks the grid automatically — no fixed
+             offsets to re-tune every time the rail widths or outer padding change (the .rb-toggle trap).
+             Desktop only: mobile's bottom nav already has ✏️. -->
+        <button id="btn-compose" class="btn btn-cyan nav-compose" title="New post" aria-label="New post">＋</button>
     </main>
 
     <aside class="rightbar glass">
