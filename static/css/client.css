@@ -506,8 +506,10 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* Inset the whole app from the screen edges (ditto-style) so the panels float in space instead of running
    edge-to-edge, plus a gap between the columns. Safe because *{box-sizing:border-box} — the padding comes
    out of the 1fr middle column, not out of the viewport. Dropped to 0 on mobile, where every px counts. */
-.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px;padding:0 24px}
-.sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border-right:1px solid var(--line);min-height:0;overflow:hidden;
+.app{display:grid;grid-template-columns:360px 1fr;height:100vh;column-gap:16px;padding:0 56px}
+/* No border: .glass adds one on all four sides and this added a fifth on the right. With the app inset
+   from the screen edges the panel already reads as separate, so the outline just boxed it in. */
+.sidebar{display:flex;flex-direction:column;gap:8px;padding:18px 14px;border:0;min-height:0;overflow:hidden;
   /* Clean flat dark panel — near-opaque so the city skyline does NOT bleed into the navbar (it stays
      in the main background only); keeps the nav labels at full contrast. */
   background:rgba(11,11,18,.95)}
@@ -595,11 +597,11 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .rightbar,.rb-toggle{display:none}   /* hidden by default; shown at >=1180px where the right column exists */
 @media(min-width:1180px){
   .app{grid-template-columns:390px 1fr 420px}
-  .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border-left:1px solid var(--line);overflow-y:auto;min-height:0}
+  .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;border:0;overflow-y:auto;min-height:0}   /* borderless, to match the sidebar */
   /* Collapse toggle — a neon arrow tab on the panel's left edge (vertically centered). Persisted in
      localStorage. Only present where the right column exists (>=1180px). */
   .rb-toggle{display:flex;align-items:center;justify-content:center;position:fixed;z-index:25;
-    top:50%;right:calc(420px + 24px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* +24px = .app's outer padding, so the tab hugs the panel edge */
+    top:50%;right:calc(420px + 56px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* +56px = .app's outer padding, so the tab hugs the panel edge */
     font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
     background:linear-gradient(135deg,rgba(0,255,255,.16),rgba(255,0,255,.12)),rgba(8,5,18,.82);
     border:1px solid var(--line);border-right:none;border-radius:9px 0 0 9px;
@@ -609,7 +611,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
     box-shadow:-3px 0 22px rgba(0,255,255,.5),inset 1px 0 0 rgba(0,255,255,.6)}
   body.rb-collapsed .app{grid-template-columns:390px 1fr}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
-  body.rb-collapsed .rb-toggle{right:24px}                   /* tab slides to the app's edge (= its outer padding) */
+  body.rb-collapsed .rb-toggle{right:56px}                   /* tab slides to the app's edge (= its outer padding) */
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
