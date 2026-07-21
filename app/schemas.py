@@ -227,7 +227,7 @@ class SettingsResponse(BaseModel):
     tool_guidance_enabled: str = "true"
     tool_guidance_text: str = ""
     # Append the TikTok-style "made with PosterChanAI" end-card to effect videos (per-user
-    # avatar/@username in the web UI / Telegram / Matrix; static card for bot-posted effects).
+    # avatar/@username in the web UI / Telegram; static card for bot-posted effects).
     effect_outro_enabled: str = "true"
     ollama_stop: str = ""
     ollama_seed: str = ""
@@ -283,36 +283,9 @@ class SettingsResponse(BaseModel):
     logs_nodes: str = ""  # comma-separated node names to include (empty = all configured nodes + local)
     # Nostr Stats Bot is now a per-bot FEATURE (Bot.config.stats_enabled), not a global setting —
     # see app/services/stats_bot_service.py + the Bots tab. (No global stats_bot_* keys.)
-    # Social notification relay (Misskey/Pleroma/Matrix → Telegram)
+    # Social notification relay (Misskey/Pleroma → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds
-    # Fediverse timeline → Matrix room bridge (see app/services/fedi_timeline_service.py).
-    # Shared feed: one source instance mirrored into one Matrix room; members act under their
-    # own linked accounts. Cursor is kept in a separate Setting row (fedi_timeline_since).
-    fedi_timeline_enabled: str = "false"
-    fedi_timeline_platform: str = "misskey"          # misskey | pleroma
-    fedi_timeline_instance_url: str = ""
-    fedi_timeline_token: str = ""                     # service token used to READ the source feed
-    fedi_timeline_type: str = "home"                  # home | global | local
-    fedi_timeline_matrix_homeserver: str = ""
-    fedi_timeline_matrix_bot_token: str = ""          # token used to POST into the room
-    fedi_timeline_room_id: str = ""
-    fedi_timeline_poll_seconds: str = "90"
-    fedi_timeline_include_replies: str = "true"
-    # When true, replies are mirrored as inline rich-replies (shown in the main timeline like the
-    # fediverse) instead of Matrix threads (hidden behind a "N replies" click). Backend dedup/reply
-    # bookkeeping is unchanged; only the wire relation (m.in_reply_to vs m.thread) differs.
-    fedi_timeline_inline_replies: str = "false"
-    # Personal fedi notifications → private Matrix DM (uses the fedi-timeline bot account).
-    # Admin kill-switch (default off); per-user opt-in is the User.matrix_notif_enabled column.
-    matrix_notif_enabled: str = "false"
-    matrix_notif_poll_seconds: str = "60"
-    # Nostr ↔ Fediverse bridge (see app/services/fedi_nostr_bridge_service.py + fedi_bridge_identity.py).
-    # PUBLIC plane: one shared "read" account mirrors the fediverse GLOBAL timeline into the Nostr
-    # global timeline (each fedi author → a deterministic puppet npub + NIP-05). The read account
-    # never posts on anyone's behalf — interaction + personal DMs/notifications go through each
-    # user's OWN linked Pleroma account (per-user User.fedi_bridge_enabled opt-in, gated on being a
-    # local NIP-05 user). Cursor lives in the local-only fedi_bridge_global_since key.
     fedi_bridge_enabled: str = "false"          # master switch for the whole bridge (default off)
     fedi_bridge_instance_url: str = ""          # the shared read account's instance
     fedi_bridge_access_token: str = ""          # the shared read account's token (READ-only use)
@@ -670,16 +643,10 @@ class UserSettingsUpdate(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Matrix settings
-    matrix_enabled: Optional[bool] = None
-    matrix_homeserver: Optional[str] = None
-    matrix_dm_bot_user_id: Optional[str] = None
     # Finance (Budget Manager) — per-user API key
     finance_api_key: Optional[str] = None
-    # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
+    # Relay social notifications (Misskey/Pleroma) to Telegram
     social_notif_enabled: Optional[bool] = None
-    # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
-    matrix_notif_enabled: Optional[bool] = None
     # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
     fedi_bridge_enabled: Optional[bool] = None
     # Cross-post my top-level Nostr notes to my linked Pleroma account
@@ -722,18 +689,10 @@ class UserSettingsResponse(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Matrix settings
-    matrix_enabled: bool = False
-    matrix_homeserver: Optional[str] = None
-    matrix_user_id: Optional[str] = None
-    matrix_has_access_token: bool = False
-    matrix_dm_bot_user_id: Optional[str] = None
     # Finance (Budget Manager) — per-user API key (key itself never exposed)
     finance_has_api_key: bool = False
-    # Relay social notifications (Misskey/Pleroma/Matrix) to Telegram
+    # Relay social notifications (Misskey/Pleroma) to Telegram
     social_notif_enabled: bool = False
-    # Relay fediverse notifications to Matrix DM (independent of the Telegram toggle above)
-    matrix_notif_enabled: bool = False
     # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side
     fedi_bridge_enabled: bool = False
     # Cross-post my top-level Nostr notes to my linked Pleroma account

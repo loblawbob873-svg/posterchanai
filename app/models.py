@@ -68,13 +68,8 @@ class User(Base):
     stream_record = Column(Boolean, default=False)
 
     # Matrix integration settings
-    matrix_enabled = Column(Boolean, default=False)
-    matrix_homeserver = Column(String(500), nullable=True)
-    matrix_user_id = Column(String(500), nullable=True)
-    matrix_access_token = Column(String(2000), nullable=True)
 
     # Matrix bot notification settings (posterchan bot DMs)
-    matrix_dm_bot_user_id = Column(String(500), nullable=True)  # Bot to DM via, e.g. @posterchan:server
 
     # Finance (Budget Manager) integration — per-user API key for that user's finance account
     finance_api_key = Column(String(200), nullable=True)
@@ -84,10 +79,8 @@ class User(Base):
     misskey_notif_since = Column(Text, nullable=True)   # last-seen Misskey notification id
     pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
     nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
-    matrix_notif_since = Column(Text, nullable=True)    # Matrix /sync next_batch cursor
 
     # Fediverse notifications → Matrix DM (independent per-user toggle, separate from Telegram above)
-    matrix_notif_enabled = Column(Boolean, default=False)
 
     # Nostr ↔ Fediverse bridge: per-user opt-in for the PERSONAL plane (your fedi DMs arrive as
     # NIP-17 Nostr DMs, your fedi notifications as the matching Nostr events). The public global-
@@ -238,10 +231,8 @@ class SocialReplyMap(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     telegram_chat_id = Column(String(50), nullable=False)
     telegram_message_id = Column(Integer, nullable=False)
-    platform = Column(String(20), nullable=False)   # "misskey" | "pleroma" | "matrix"
-    target_id = Column(String(255), nullable=True)   # note/status id to reply to (null for matrix)
-    room_id = Column(String(255), nullable=True)     # matrix room id
-    event_id = Column(String(255), nullable=True)    # matrix event id being replied to
+    platform = Column(String(20), nullable=False)   # "misskey" | "pleroma"
+    target_id = Column(String(255), nullable=True)   # note/status id to reply to
     visibility = Column(String(20), nullable=True)   # inherit parent visibility on reply
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -397,9 +388,9 @@ class Bot(Base):
     name = Column(String(100), unique=True, nullable=False, index=True)
     enabled = Column(Boolean, default=True)              # should the manager keep it running / scheduled
     bot_type = Column(String(20), default="text")        # "text" (long-running) | "image" (scheduled)
-    platform = Column(String(20), default="misskey")     # "misskey" | "pleroma" | "matrix"
+    platform = Column(String(20), default="misskey")     # "misskey" | "pleroma"
     host = Column(String(100), nullable=True)            # node hostname that runs it; empty = any node
-    modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--pleroma,--matrix"
+    modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--pleroma"
     config = Column(Text, default="{}")                  # JSON: all other per-bot fields (creds, prompt, feature opts)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

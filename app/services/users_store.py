@@ -49,9 +49,7 @@ CONFIG_FIELDS = (
     "misskey_enabled", "misskey_instance_url", "misskey_api_token",
     "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token",
     "nostr_enabled", "nostr_relays", "nostr_media_service", "nostr_media_endpoint",
-    "matrix_enabled", "matrix_homeserver", "matrix_user_id", "matrix_access_token",
-    "matrix_dm_bot_user_id",
-    "finance_api_key", "social_notif_enabled", "matrix_notif_enabled",
+    "finance_api_key", "social_notif_enabled",
     "fedi_bridge_enabled", "fedi_crosspost_enabled",   # Nostr↔Fediverse opt-ins (cursors *_since stay local)
     "stream_record",   # per-user opt-in: save ended live streams to the user's Blossom drive
 )
@@ -189,7 +187,7 @@ async def hydrate(db) -> int:
 # lives in the keyfile), per-node sync cursors (*_since/_seen), and transient scratch.
 def _kv_exempt(key: str) -> bool:
     return (key in ("storage_nsec", "ai_requested")
-            or key.endswith(("_since", "_seen")) or key.startswith("matrix_pending"))
+            or key.endswith(("_since", "_seen")))
 
 
 async def sync_user_kv(db, user, *, force: bool = False) -> bool:

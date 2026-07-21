@@ -1,4 +1,4 @@
-"""Relay Pleroma / Misskey / Matrix notifications to a user's Telegram chat, and post
+"""Relay Pleroma / Misskey notifications to a user's Telegram chat, and post
 replies back to the originating platform when the user replies to a forwarded message.
 
 A background poller (started from app.main on port 3051, mirroring logs_scheduler) calls
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 import json
 from app.models import User, SocialReplyMap, UserSetting
-from app.services import misskey_service, pleroma_service, matrix_service
+from app.services import misskey_service, pleroma_service
 from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -96,40 +96,6 @@ def _norm_pleroma(n: dict) -> dict:
     }
 
 
-def _norm_matrix(ev: dict) -> dict:
-    if ev.get("encrypted"):
-        # Undecryptable DM: notify only, no reply target (we can't post encrypted).
-        return {
-            "platform": "matrix",
-            "type": "encrypted DM",
-            "actor": "a contact",
-            "text": "🔒 You received an encrypted message. Open Element to read and reply.",
-            "reply_target": None,
-            "room_id": None,
-            "event_id": None,
-            "visibility": None,
-            "url": None,
-            "encrypted": True,
-        }
-    return {
-        "platform": "matrix",
-        "type": "message",
-        "actor": ev.get("sender", "?"),
-        "text": ev.get("body", ""),
-        "reply_target": None,
-        "room_id": ev.get("room_id"),
-        "event_id": ev.get("event_id"),
-        "visibility": None,
-        "url": None,
-    }
-
-
-_NOSTR_KIND_TYPE = {1: "mention", 6: "repost", 7: "reaction"}
-
-
-# pubkey hex → display label (NIP-05 / profile name), resolved once from kind-0 metadata.
-_nostr_name_cache: dict = {}
-
 
 async def _nostr_actor_label(pubkey: str, relays) -> str:
     """Prefer the sender's NIP-05 (or profile name) over the raw npub in notifications.
@@ -188,7 +154,7 @@ def _norm_nostr(ev: dict, actor_label: Optional[str] = None) -> dict:
     }
 
 
-_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "matrix": "🟩", "nostr": "🟣"}
+_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "nostr": "🟣"}
 
 
 def _format(norm: dict) -> str:
@@ -227,7 +193,7 @@ _SEEN_FOLLOWS_CAP = 3000
 
 def is_dupe_follow(db: Session, user: User, norm: dict, store_key: str = "social_notif_seen_follows") -> bool:
     """True (→ caller should skip) if this follow notification's actor was already announced to `user`.
-    No-op for non-follow types. `store_key` lets each relay (Telegram vs Matrix DM) keep its own seen-set
+    No-op for non-follow types. `store_key` lets each relay keep its own seen-set
     so both still notify the follow once. Records the actor on first sight."""
     if (norm.get("type") or "") not in _FOLLOW_TYPES:
         return False
@@ -391,19 +357,6 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
     db.commit()
 
 
-async def _relay_matrix(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
-    events, next_batch = await matrix_service.fetch_notifications(
-        user.matrix_homeserver, user.matrix_access_token, user.matrix_user_id, since=user.matrix_notif_since
-    )
-    for ev in events:
-        await _deliver(db, tg, user, chat_id, _norm_matrix(ev))
-    cursor_changed = bool(next_batch) and next_batch != user.matrix_notif_since
-    if events or cursor_changed:
-        if next_batch:
-            user.matrix_notif_since = next_batch
-        _prune(db)
-        db.commit()
-
 
 async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
     chat_id = str(user.telegram_chat_id)
@@ -417,11 +370,6 @@ async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
             await _relay_misskey(db, tg, user, chat_id)
         except Exception as e:
             logger.warning(f"[social] misskey relay failed for user {user.id}: {e}")
-    if user.matrix_enabled and user.matrix_homeserver and user.matrix_access_token and user.matrix_user_id:
-        try:
-            await _relay_matrix(db, tg, user, chat_id)
-        except Exception as e:
-            logger.warning(f"[social] matrix relay failed for user {user.id}: {e}")
     if getattr(user, "nostr_enabled", False) and user.nostr_nsec:
         try:
             await _relay_nostr(db, tg, user, chat_id)
@@ -498,13 +446,6 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
                 parent = {"id": row.target_id, "pubkey": "", "tags": []}
             await nostr_service.post_note(seckey, relays, text, reply_to=parent, media_cfg=media_cfg)
             return "✅ Reply posted to Nostr."
-        if row.platform == "matrix":
-            if not row.room_id:
-                return "⚠️ That notification has no room to reply to."
-            await matrix_service.send_message(
-                user.matrix_homeserver, user.matrix_access_token, row.room_id, text,
-            )
-            return "✅ Reply sent to the Matrix room."
     except Exception as e:
         logger.warning(f"[social] reply failed (platform={row.platform}, user={user.id}): {e}")
         return f"❌ Failed to send reply: {e}"

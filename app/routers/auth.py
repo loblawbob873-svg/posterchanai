@@ -583,15 +583,8 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         nostr_relays=current_user.nostr_relays if hasattr(current_user, 'nostr_relays') else None,
         nostr_media_service=current_user.nostr_media_service if hasattr(current_user, 'nostr_media_service') else None,
         nostr_media_endpoint=current_user.nostr_media_endpoint if hasattr(current_user, 'nostr_media_endpoint') else None,
-        # Matrix settings
-        matrix_enabled=current_user.matrix_enabled if hasattr(current_user, 'matrix_enabled') else False,
-        matrix_homeserver=current_user.matrix_homeserver if hasattr(current_user, 'matrix_homeserver') else None,
-        matrix_user_id=current_user.matrix_user_id if hasattr(current_user, 'matrix_user_id') else None,
-        matrix_has_access_token=bool(current_user.matrix_access_token) if hasattr(current_user, 'matrix_access_token') else False,
-        matrix_dm_bot_user_id=current_user.matrix_dm_bot_user_id if hasattr(current_user, 'matrix_dm_bot_user_id') else None,
         finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
-        matrix_notif_enabled=current_user.matrix_notif_enabled if hasattr(current_user, 'matrix_notif_enabled') else False,
         fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
         fedi_crosspost_enabled=current_user.fedi_crosspost_enabled if hasattr(current_user, 'fedi_crosspost_enabled') else False,
         nitter_feeds=nitter_feeds,
@@ -703,13 +696,6 @@ def update_user_settings(
     if settings.nostr_media_endpoint is not None:
         current_user.nostr_media_endpoint = settings.nostr_media_endpoint.strip() or None
 
-    # Matrix settings (homeserver URL only — token is managed via /api/matrix/connect)
-    if settings.matrix_enabled is not None:
-        current_user.matrix_enabled = settings.matrix_enabled
-    if settings.matrix_homeserver is not None:
-        current_user.matrix_homeserver = settings.matrix_homeserver.strip() if settings.matrix_homeserver else None
-    if settings.matrix_dm_bot_user_id is not None:
-        current_user.matrix_dm_bot_user_id = settings.matrix_dm_bot_user_id.strip() if settings.matrix_dm_bot_user_id else None
 
     # Finance (Budget Manager) API key — allow clearing with empty string
     if settings.finance_api_key is not None:
@@ -719,9 +705,6 @@ def update_user_settings(
     if settings.social_notif_enabled is not None:
         current_user.social_notif_enabled = settings.social_notif_enabled
 
-    # Relay fediverse notifications to Matrix DM (independent per-user toggle)
-    if settings.matrix_notif_enabled is not None:
-        current_user.matrix_notif_enabled = settings.matrix_notif_enabled
 
     # Nostr ↔ Fediverse bridge: opt in to personal DMs + notifications on the Nostr side
     if settings.fedi_bridge_enabled is not None:

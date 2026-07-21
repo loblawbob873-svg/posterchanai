@@ -384,26 +384,11 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # defaulted process as presence-only. (Explicit `--nostr` in modes ⇒ user wants replies.)
             if not bot_dict.get("modes"):
                 env["NOSTR_PRESENCE_ONLY"] = "1"
-        elif platform == "matrix":
-            setif("matrix_server", "MATRIX_SERVER")
-            setif("matrix_user_id", "MATRIX_USER_ID")
-            setif("matrix_access_token", "MATRIX_ACCESS_TOKEN")
-            setif("matrix_room_id", "MATRIX_ROOM_ID")
-            setif("matrix_admins", "MATRIX_ADMINS")
-
-        # Matrix settings can accompany any platform
-        setif("matrix_server", "MATRIX_SERVER")
-        setif("matrix_user_id", "MATRIX_USER_ID")
-        setif("matrix_access_token", "MATRIX_ACCESS_TOKEN")
-        setif("matrix_room_id", "MATRIX_ROOM_ID")
-        setif("matrix_admins", "MATRIX_ADMINS")
-        if bot_dict.get("matrix_verify_ssl") is not None:
-            env["MATRIX_VERIFY_SSL"] = str(bot_dict["matrix_verify_ssl"]).lower()
         if bot_dict.get("shamebot_rooms"):
             sr = bot_dict["shamebot_rooms"]
             env["SHAMEBOT_ROOMS"] = ",".join(sr) if isinstance(sr, (list, tuple)) else str(sr)
 
-        # Nitter RSS → Matrix feeds
+        # Nitter RSS feeds
         if bot_dict.get("nitter_feeds"):
             env["NITTER_FEEDS"] = json.dumps(bot_dict["nitter_feeds"])
         setif("nitter_poll_seconds", "NITTER_POLL_SECONDS")
@@ -422,7 +407,6 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         # content knobs. auto_post_topics is a free-form string (one per line / comma-sep).
         setif("auto_post_seed", "AUTO_POST_SEED")
         setif("auto_post_topics", "AUTO_POST_TOPICS")
-        setif("auto_post_rooms", "AUTO_POST_ROOMS")  # Matrix-only: rooms to auto-post to
 
         # Phase-4 dedup A/B switch: route this bot's Pleroma/Misskey network ops through the
         # app's shared services (via botframework/*_shim). Set "use_app_service": true in the
@@ -430,7 +414,6 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         if bot_dict.get("use_app_service"):
             env["PLEROMA_USE_APP_SERVICE"] = "true"
             env["MISSKEY_USE_APP_SERVICE"] = "true"
-            env["MATRIX_USE_APP_SERVICE"] = "true"
 
         # Image-backend API key: per-bot override beats the global already in base_env.
         setif("posterchanai_api_key", "POSTERCHANAI_API_KEY")

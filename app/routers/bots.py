@@ -32,7 +32,7 @@ class BotPayload(BaseModel):
     name: str
     enabled: bool = True
     bot_type: str = "text"          # "text" | "image"
-    platform: str = "misskey"       # "misskey" | "pleroma" | "matrix"
+    platform: str = "misskey"       # "misskey" | "pleroma"
     host: Optional[str] = ""        # node hostname; empty = any node
     modes: Optional[str] = ""       # comma-separated main.py flags
     config: Dict[str, Any] = {}     # all other per-bot fields (creds, prompt, feature opts)
