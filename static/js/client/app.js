@@ -2236,8 +2236,14 @@
     // wipe the composer — and whatever the user was midway through typing — several times a minute.
     let notesEl=$('#tl-notes',feed);
     if(!notesEl){
-      feed.innerHTML = _timelineHeaderHtml() + '<div id="tl-notes"></div>';
+      // The ＋ is the LAST child of #feed and position:sticky. #feed is the real scroll container, so its
+      // bottom edge is genuinely the visible bottom — unlike .main/.app, whose height is derived from the
+      // body{zoom:.85} / calc(100dvh/.85) pair and ends up taller than the viewport in Firefox, which is
+      // what pushed every fixed/absolute FAB off-screen.
+      feed.innerHTML = _timelineHeaderHtml() + '<div id="tl-notes"></div>'
+        + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post">＋</button>' : '');
       _bindTimelineHeader(feed);
+      { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
       notesEl=$('#tl-notes',feed);
     }
     if(_tlMedia){
