@@ -2075,7 +2075,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .ai-eg span{margin-left:0;flex-basis:100%}   /* description drops to its own line */
   .ai-bubble{max-width:90%;font-size:16px}
   .ai-bar{padding:8px 12px;flex-wrap:wrap}
-  .ai-bar .input{max-width:none}
+  /* The conversation <select> shares one flex row with four labelled buttons (Home/New/🔊/🗑). With
+     flex:1 (basis 0) it collapsed into whatever sliver the buttons left — a tiny unusable button on a
+     phone. Give it its OWN full-width row (basis 100% wraps it) and put the buttons on the row above,
+     so the selector is a proper full-width dropdown you can actually tap. */
+  .ai-bar .input{flex:1 1 100%;max-width:none;min-width:0;order:2;min-height:42px}
+  .ai-bar .btn{order:1}
   .ai-msgs{padding:12px 12px 8px}
   /* lift the compose bar above the fixed bottom nav (≈62px) + the notch */
   .ai-compose{padding:10px 12px;padding-bottom:calc(10px + 62px + env(safe-area-inset-bottom))}
