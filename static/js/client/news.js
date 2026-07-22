@@ -287,10 +287,8 @@
     }
     function _chips(){
       const chip = (v,l)=>`<button class="news-chip${_active===v?' on':''}" data-feed="${enc(v)}">${enc(l)}</button>`;
-      // The action buttons live OUTSIDE the scrolling strip. They used to be the last two chips after
-      // every feed, in a row with a hidden scrollbar — so with 70 feeds they sat far off the right
-      // edge and there was no way to reach them on a desktop (no visible bar to drag, and the wheel
-      // scrolls the page vertically). Pinned, they're reachable at any feed count.
+      // Actions are pinned outside the chip row so they keep a fixed spot as the chips wrap; the
+      // chips themselves wrap rather than scroll, so every feed is reachable at any width.
       return `<div class="news-bar">
         <div class="news-chips">${chip('all','All')}${_feeds.map(f=>chip(f.url, f.name)).join('')}</div>
         <div class="news-baracts">
@@ -336,15 +334,6 @@
       if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
-      // A hidden horizontal scrollbar is unusable with a mouse: translate vertical wheel to
-      // horizontal so every feed chip can be reached without a touchscreen.
-      { const strip=$('.news-chips', feed);
-        if(strip && !strip._wheelWired){ strip._wheelWired=true;
-          strip.addEventListener('wheel', e=>{
-            if(Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;      // real horizontal input → leave it
-            if(strip.scrollWidth <= strip.clientWidth) return;        // nothing to scroll → let the page move
-            e.preventDefault(); strip.scrollLeft += e.deltaY;
-          }, { passive:false }); } }
       $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } if(b.classList.contains('news-readall')){ markAllRead(); return; } _active=b.dataset.feed; renderNews(); });
       // INSTANT paint: show the last saved snapshot immediately (no blank spinner) on the default 'all' view while
       // the live fetch runs; the fresh result swaps in below. Only when we have nothing yet this session.

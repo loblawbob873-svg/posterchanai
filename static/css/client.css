@@ -854,12 +854,14 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 #news-head{position:sticky;top:-8px;padding-top:8px;z-index:3;background:var(--bg)}
 /* Feed strip scrolls; the action buttons sit OUTSIDE it so they never get pushed off the edge by a
    long feed list (70 feeds made ✓✓ and ＋ unreachable on desktop). */
-.news-bar{display:flex;align-items:center;gap:8px}
-.news-chips{flex:1 1 auto;min-width:0;display:flex;gap:8px;overflow-x:auto;padding:10px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+/* Chips WRAP, they don't scroll. A hidden-scrollbar strip meant that on a phone the last feeds sat
+   past the right edge with nothing to grab and no visible affordance — the pinned actions just made
+   the visible slice narrower. Wrapping makes every feed reachable at any width, by construction. */
+.news-bar{display:flex;align-items:flex-start;gap:8px}
+.news-chips{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 2px}
 /* NOT .news-acts — that class already belongs to each article card's Share/Summarize row, and
    restyling it as a pinned flex item wrecked every card. */
 .news-baracts{flex:0 0 auto;display:flex;gap:6px;padding:10px 0}
-.news-chips::-webkit-scrollbar{display:none}
 .news-chip{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:14px;cursor:pointer;white-space:nowrap;transition:.15s}
 .news-chip:hover{color:var(--text)}
 .news-chip.on{background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent2-rgb),.14));color:#fff;border-color:var(--neon)}
