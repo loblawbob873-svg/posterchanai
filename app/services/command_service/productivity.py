@@ -199,6 +199,9 @@ class _ProductivityMixin:
 
         try:
             added = await recall_service.index_user(self.db, self.user)
+        except recall_service.RecallUnavailable as e:
+            # Optional dependency, not a failure — tell the operator how to turn it on.
+            return {"type": "text", "content": f"🧠 {e}"}
         except Exception as e:
             logger.warning("[recall] index failed: %s", e)
             return {"type": "text", "content": f"Couldn't build the recall index: {e}"}

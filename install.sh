@@ -65,6 +65,14 @@ if [ "$1" = "--video" ]; then
     exit $?
 fi
 
+# Add-on: install the `recall` semantic-search deps (sentence-transformers + the MiniLM model).
+# Optional on purpose: it pulls torch, which is NOT a base dependency here, so a lean/Nostr-only
+# install shouldn't carry ~2GB for a feature it may never use.
+if [ "$1" = "--recall" ]; then
+    setup_recall_deps
+    exit $?
+fi
+
 # Add-on: build the built-in Pion TURN relay for voice/video calls (needs the Go toolchain).
 if [ "$1" = "--turn" ]; then
     setup_turn_server
@@ -76,6 +84,34 @@ if [ "$1" = "--stream" ]; then
     setup_stream_server
     exit $?
 fi
+
+# =============================================================================
+# `recall` — semantic search over your own chat history and Nostr notes.
+# CPU-only by design: the embedding model (all-MiniLM-L6-v2, 22M params, ~90MB) runs on the CPU so
+# indexing and search never take VRAM from image/music/video generation. Prefetching the model here
+# means the first `recall` doesn't stall on a download, and the node works offline afterwards.
+# =============================================================================
+setup_recall_deps() {
+    print_header "Semantic recall (CPU embeddings)"
+    local VENV="venv"
+    [ -d "venv-unified" ] && VENV="venv-unified"
+    if [ ! -x "$VENV/bin/pip" ]; then
+        print_error "No virtualenv found ($VENV) - run ./install.sh first"
+        return 1
+    fi
+    print_info "Installing sentence-transformers into $VENV (pulls torch if absent - this can be large)"
+    "$VENV/bin/pip" install --upgrade "sentence-transformers>=3,<6" || {
+        print_error "Could not install sentence-transformers"
+        return 1
+    }
+    print_info "Prefetching all-MiniLM-L6-v2 (~90MB) so the first recall is instant"
+    "$VENV/bin/python" - <<'PYEOF' || print_warning "Model prefetch failed - it will download on first use instead"
+from sentence_transformers import SentenceTransformer
+SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+print("model cached")
+PYEOF
+    print_success "Recall ready - try: recall what did I say about ..."
+}
 
 # =============================================================================
 # Install mode: Full (AI + Nostr) vs Nostr-only (relay + Nostr web client, NO AI)

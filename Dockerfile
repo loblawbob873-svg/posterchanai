@@ -200,6 +200,9 @@ RUN set -eux; \
 # faster-whisper, insightface/onnxruntime …). botframework adds the bot deps.
 # diffusers stack = native image generation (transformers pinned <5 for SDXL) AND text-to-video
 # (videogeni — Wan2.1/LTX/CogVideoX); sentencepiece is REQUIRED for the T5 video text-encoder.
+# sentence-transformers powers `recall` (CPU embeddings). Installed only in the FULL image — it
+# needs torch, which the lean nostr image deliberately doesn't have; recall degrades with a clear
+# 'install it with ./install.sh --recall' message when it's absent.
 COPY requirements.txt /tmp/requirements.txt
 COPY requirements-nostr.txt /tmp/requirements-nostr.txt
 COPY botframework/requirements.txt /tmp/requirements-bot.txt
@@ -217,7 +220,8 @@ RUN if [ "$GPU" = "nostr" ]; then \
         pip install -r /tmp/requirements-nostr.txt ; \
     else \
         pip install -r /tmp/requirements.txt -r /tmp/requirements-bot.txt \
-          && pip install "numpy>=2,<2.5" "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \
+          && pip install "numpy>=2,<2.5" "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy \
+          && pip install "sentence-transformers>=3,<6" ; \
     fi
 
 # --- app source ---------------------------------------------------------------

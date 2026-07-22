@@ -33,12 +33,24 @@ MIN_CHARS = 12         # "ok", "thanks" etc. carry no meaning worth indexing
 _model = None
 
 
+class RecallUnavailable(RuntimeError):
+    """sentence-transformers isn't installed. Deliberately OPTIONAL: it pulls torch, which is NOT a
+    base dependency here (each GPU stack installs its own), so making it required would add ~2GB to
+    every lean/Nostr-only install for a feature they may never use."""
+
+
 def _get_model():
     """Load the sentence-transformer once, on CPU. Imported lazily: pulling in torch at module import
     would add seconds to every app start for a feature most requests never touch."""
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise RecallUnavailable(
+                "recall needs the sentence-transformers package, which isn't installed on this "
+                "server. Enable it with `./install.sh --recall` (adds ~90MB model, CPU-only)."
+            ) from e
         _model = SentenceTransformer(MODEL_NAME, device="cpu")
     return _model
 

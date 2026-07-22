@@ -183,6 +183,20 @@ open a fresh `SessionLocal` and capture any needed config up front.
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
+- **Semantic recall** (`recall` command; `app/services/recall_service.py`): searches a user's OWN chat
+  history + their Nostr notes by MEANING, then answers from the hits. Retrieval is **CPU-only** —
+  `all-MiniLM-L6-v2` pinned to `device="cpu"` — so it never takes VRAM from image/music/video (see the
+  shared-GPU rule below); only the final grounded answer uses the LLM, via `ChatService` so it goes
+  through peer-offload/LB and falls back to local. `recall_vectors` is a derived CACHE (rebuildable
+  from the messages table + relay), 384 float32s per row, searched with a numpy dot product — no
+  vector DB. **`sentence-transformers` is an OPTIONAL dep** (it pulls torch, which is not a base
+  dependency): install with `./install.sh --recall`, present in the full Docker image only, and the
+  command reports how to enable itself when missing.
+- **Rolling chat memory** (`app/services/chat_memory_service.py`): the chat sends only the last 20
+  messages, so older turns are folded ONCE into a ~200-token digest stored on `Conversation.summary`
+  (+ `summary_upto_id`) and prepended to the system prompt. Keeps requests SMALL on a 16k-context node
+  instead of sending more history. Runs AFTER the reply (never before — one GPU task at a time) and
+  through `ChatService`, so it load-balances like any other turn.
 - **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
   commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
   (summary/bills/add/pay), reached at the global `finance_api_base` setting (default
