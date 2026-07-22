@@ -129,15 +129,18 @@
       }
       const w = (_data.windows||{})[_range] || {series:{}, n:0};
       const S = w.series || {};
-      const W = w.totals || {events:0, people:0, games:0};   // per-window figures (see stats_service)
+      const W = w.totals || {events:0, people:0, games:0, by_game:{}};   // per-window figures (see stats_service)
       const notes = S.notes || [];
       const T = _data.totals || {}, G = _data.games || {by_game:{}};
       const CT = _data.counters || {metrics:{}}, isNew = !!CT.since_deploy;
       const blank = {series:[], total:0, today:0};
       const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank}, CT.metrics||{});
       const chat = (_data.chat||{}).series || [];
-      const gm = G.by_game || {};
+      // Per-game bars follow the selected range too (the last section that didn't). Fall back to the
+      // all-time breakdown only if an older server hasn't got per-window figures.
+      const gm = (W.by_game && Object.keys(W.by_game).length) ? W.by_game : (G.by_game || {});
       const gmax = Math.max(1, ...Object.values(gm));
+      const gAny = Object.values(gm).some(v=>v>0);
       const GAME_LBL = {chess:'♟️ Chess', tictactoe:'⭕ Tic-Tac-Toe', hangman:'🎯 Hangman',
                         connect4:'🔴 Connect Four', blackjack:'🃏 Blackjack', holdem:'🂡 Hold’em'};
 
@@ -195,10 +198,11 @@
           ${tile('streams all time', nf(T.streams))}
         </div>
 
-        <div class="st-games">${Object.keys(gm).map(k=>`
+        <div class="st-games">${gAny ? Object.keys(gm).map(k=>`
           <div class="st-grow"><span class="st-glbl">${enc(GAME_LBL[k]||k)}</span>
             <span class="st-gbar"><i style="width:${Math.round((gm[k]/gmax)*100)}%"></i></span>
-            <span class="st-gnum">${nf(gm[k])}</span></div>`).join('')}</div>
+            <span class="st-gnum">${nf(gm[k])}</span></div>`).join('')
+          : `<div class="muted small">No games in the ${enc(rangeWord())} — try a longer range.</div>`}</div>
 
         ${isNew ? `<div class="st-note muted small">Items marked <span class="st-new">new</span> are counted
           from when this feature shipped: generated media isn't stored server-side, and call signaling is

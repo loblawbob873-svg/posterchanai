@@ -150,16 +150,27 @@ def _series(db, now: int):
         row = db.execute(text("SELECT count(*), count(DISTINCT pubkey) FROM events "
                               "WHERE created_at >= :s AND created_at <= :n"),
                          {"s": start, "n": now}).first()
-        games_like = " OR ".join(["t.value LIKE :p%d" % i for i in range(len(GAME_PREFIXES))])
+        # Per-GAME breakdown for this window, one grouped query (~0.01-0.04s) rather than six LIKE
+        # counts, so the games bars follow the range selector like everything else does.
         gparams = {"s": start}
-        for i, pre in enumerate(GAME_PREFIXES.values()):
+        cases, wheres = [], []
+        for i, (gname, pre) in enumerate(GAME_PREFIXES.items()):
             gparams["p%d" % i] = pre + "%"
-        gcount = db.execute(text(
-            "SELECT count(DISTINCT t.value) FROM event_tags t JOIN events e ON e.id = t.event_id "
-            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s" % games_like), gparams).scalar() or 0
+            gparams["n%d" % i] = gname
+            cases.append("WHEN t.value LIKE :p%d THEN :n%d" % (i, i))
+            wheres.append("t.value LIKE :p%d" % i)
+        grows = db.execute(text(
+            "SELECT CASE %s END AS g, count(DISTINCT t.value) "
+            "FROM event_tags t JOIN events e ON e.id = t.event_id "
+            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s GROUP BY 1"
+            % (" ".join(cases), " OR ".join(wheres))), gparams).fetchall()
+        by_game = {g: 0 for g in GAME_PREFIXES}
+        for gname, cnt in grows:
+            if gname in by_game:
+                by_game[gname] = int(cnt or 0)
         out[key] = {"t0": start, "step": step, "n": n, "series": series,
                     "totals": {"events": int(row[0] or 0), "people": int(row[1] or 0),
-                               "games": int(gcount)}}
+                               "games": int(sum(by_game.values())), "by_game": by_game}}
     return out
 
 
