@@ -1553,13 +1553,20 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   html,body,.app,.main,.feed{max-width:100vw;overflow-x:hidden}
   .note{padding:12px 12px}
   .note .txt img,.note .txt video,.note .txt audio,.link-card,.quoted,.note-preview{max-width:100%}
-  /* Action row must FIT the card: posts with reaction/boost COUNTS widen the buttons and used to push
-     the last button (☰) off the right edge — taps then hit Zap. Tighten padding/gaps so a full row of
-     counts fits, and flex-wrap as a hard guarantee it can NEVER overflow off-screen (wraps instead). */
-  .acts{gap:4px;flex-wrap:wrap;row-gap:6px}
-  .act{font-size:15px;padding:6px 7px;gap:4px}
-  .act .n{max-width:48px;overflow:hidden;text-overflow:ellipsis}
+  /* Action row must FIT the card on ONE line: posts with reaction/boost COUNTS widen the buttons, which
+     used to either push ☰ off the right edge (taps then hit Zap) or — with flex-wrap — drop actions onto
+     a second row. Instead the six actions share the width evenly (flex:1 1 0 + min-width:0, the same
+     trick as .mobilenav) and the count truncates inside its own button, so the row can neither wrap nor
+     overflow no matter how big the numbers get. */
+  .acts{gap:2px;flex-wrap:nowrap}
+  .act{font-size:15px;padding:7px 3px;gap:2px}
+  /* each button keeps its natural width and shrinks only when the row would overflow (min-width:0 lets
+     it), so the six actions stay evenly spread and only the biggest count gives way on a tiny screen */
+  .acts .act{flex:0 1 auto;min-width:0;overflow:hidden}
+  .act > svg,.act .tipbolt{flex:0 0 auto}   /* icons keep their size; only the count gives way */
+  .act .n{min-width:0;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .act.actq{font-size:22px;padding-top:6px;padding-bottom:4px}
+  .note.poll .acts .act{flex:0 1 auto}   /* a poll has just reply + ☰ — leave those at natural size */
   /* shrink the messages view so the compose bar + list clear the fixed bottom nav */
   /* lift the DM composer above the fixed bottom nav (reliable, no :has/height-calc) */
   .dm-compose{padding-bottom:calc(14px + 70px + env(safe-area-inset-bottom))}
@@ -1595,6 +1602,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .cmp-left{flex:1 1 100%}
   .cmp-left > .btn{flex:1 1 calc(50% - 4px)}   /* every tool button (incl. 🤖 AI ▾, now a plain button) equal-width, 2 per row */
   .cmp-right{width:100%;justify-content:flex-end}
+}
+/* Tiny phones (≤359px: SE, Fold cover screen): buy the action row ~16px by tightening the card so a
+   post with four big counts still shows them in full instead of eliding to "2…". */
+@media(max-width:359px){
+  .note{padding:12px 10px;gap:8px}
+  .note .av{width:34px;height:34px}
 }
 
 /* ===== More sheet (mobile overflow) — glassy neon tiles ===== */
