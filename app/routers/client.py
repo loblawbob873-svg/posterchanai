@@ -1903,11 +1903,31 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
             out.append({"url": f"/client/file/{np}/{conv}/enc_{ref['sha256']}.{ext}",
                         "name": name, "mime": ref.get("mime") or "", "sha": ref["sha256"], "kind": "upload"})
     for d, rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).items():
-        m = isinstance(rec, dict) and re.search(r'(enc_([0-9a-f]{64})\.\w+)$', rec.get("image_path") or "")
-        if m:
-            conv = d[len(store.NS_MSG):].split(":")[0]
+        if not isinstance(rec, dict):
+            continue
+        conv = d[len(store.NS_MSG):].split(":")[0]
+        # An artifact is referenced in ONE of two places, and listing only the first was a bug: a
+        # generated IMAGE lands in `image_path`, but generated/derived MEDIA (an extracted MP3, a
+        # rendered song or video, a converted file) is appended into the message CONTENT as a
+        # markdown link. So an "extract the audio" result existed in Blossom but never appeared in
+        # AI chat's Files list. Scan both, de-duplicated by sha.
+        _refs = [rec.get("image_path") or ""]
+        _refs += re.findall(r'enc_[0-9a-f]{64}\.\w+', rec.get("content") or "")
+        for _r in _refs:
+            m = re.search(r'(enc_([0-9a-f]{64})\.(\w+))$', _r or "")
+            if not m or any(f["sha"] == m.group(2) for f in out):
+                continue
+            ext = (m.group(3) or "").lower()
+            mime = ("audio/mpeg" if ext in ("mp3", "m4a", "aac") else
+                    "audio/wav" if ext == "wav" else
+                    "audio/flac" if ext == "flac" else
+                    "video/mp4" if ext in ("mp4", "webm", "mov") else
+                    "application/pdf" if ext == "pdf" else "image/png")
+            label = ("generated audio" if mime.startswith("audio/") else
+                     "generated video" if mime.startswith("video/") else
+                     "generated file" if mime == "application/pdf" else "generated image")
             out.append({"url": f"/client/file/{np}/{conv}/{m.group(1)}",
-                        "name": "generated image", "mime": "image/png", "sha": m.group(2), "kind": "generated"})
+                        "name": label, "mime": mime, "sha": m.group(2), "kind": "generated"})
     return JSONResponse({"ok": True, "files": out})
 
 
