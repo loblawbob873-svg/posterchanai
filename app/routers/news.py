@@ -285,13 +285,16 @@ def parse_news_sources(raw: str) -> list:
 
 
 def get_user_news_sources(user: User, db: Session) -> list:
-    """Get news sources - user's custom sources, or admin setting, or defaults"""
-    # First check user's custom sources
-    if user.news_sources and user.news_sources.strip():
+    """This user's OWN news sources — empty when they haven't added any.
+
+    Deliberately does NOT fall back to the admin's global `news_sources`. That fallback meant every
+    account without a list of its own (104 of 105 here) read the ADMIN'S personal feed and couldn't
+    tell it apart from an instance default. A new user now starts empty and adds their own RSS/site
+    URLs (News ＋, or Settings → News sources); the global setting stays as the default seed shown in
+    Admin → Site Settings and for non-user contexts like the bots."""
+    if user and user.news_sources and user.news_sources.strip():
         return parse_news_sources(user.news_sources)
-    # Fall back to admin setting
-    admin_sources = get_news_sources(db)
-    return parse_news_sources(admin_sources)
+    return []
 
 
 @router.get("/sources")

@@ -3554,8 +3554,9 @@
     if(info && info.error==='no_permission'){
       // Not "streaming is off" — streaming works, this account just isn't allowed yet. Offer the ask.
       modal(`<h3>🔴 Go Live</h3><p>${enc(info.message||'Live streaming isn’t enabled for your account yet.')}</p>
-        <div class="row" style="margin-top:14px"><button class="btn btn-neon" id="sreq">🔴 Request streaming access</button>
-        <button class="btn btn-ghost" id="sreqx">Close</button></div>`, root=>{
+        <div class="row" style="margin-top:16px;justify-content:center;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-neon" id="sreq">🔴 Request streaming access</button>
+          <button class="btn btn-ghost" id="sreqx">Close</button></div>`, root=>{
         $('#sreq',root).onclick=e=>requestStreamAccess(e.target);
         $('#sreqx',root).onclick=()=>closeModal();
       });
@@ -9184,10 +9185,11 @@
   // sign + call the ones that actually changed (fewer signer prompts).
   async function openPermissions(pk){
     if(!IS_ADMIN) return;
-    let caps={}, aiOn=false, blossomOn=false, bridgeOn=false;
+    let caps={}, aiOn=false, blossomOn=false, bridgeOn=false, streamOn=false;
     try{ const r=await fetch('/client/ai-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); aiOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); blossomOn=!!(r&&r.whitelisted); }catch(_){}
     try{ const r=await fetch('/client/bridge-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); bridgeOn=!!(r&&r.enabled); }catch(_){}
+    try{ const r=await fetch('/client/stream-access?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); streamOn=!!(r&&r.enabled); }catch(_){}
     try{ const r=await fetch('/client/user-caps?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.exists) caps=r.caps||{}; }catch(_){}
     let nipName='', nipDomain=location.host;
     try{ const r=await fetch('/client/admin-nip05?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok){ nipName=r.name||''; if(r.nip05) nipDomain=r.nip05.split('@')[1]||nipDomain; } }catch(_){}
@@ -9198,6 +9200,7 @@
     modal(`<h3>🔑 Additional permissions</h3>
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
+      ${row('id="perm-stream"', streamOn, '🔴 Live streaming <span class="muted small">(Go Live)</span>')}
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
       ${row('id="perm-bridge"', bridgeOn, '🌉 Bridge Access <span class="muted small">(create fedi account + enable bridge)</span>')}
       <hr style="border:none;border-top:1px solid var(--line,#333);margin:10px 0">
@@ -9206,10 +9209,17 @@
       <button class="btn btn-neon full" id="caps-save">Save</button>`, root=>{
       $('#caps-save',root).onclick=async()=>{
         const wantAi=$('#perm-ai',root).checked, wantBl=$('#perm-blossom',root).checked;
+        const wantStream=$('#perm-stream',root).checked;
         const out={}; let capsChanged=false;
         $$('[data-cap]',root).forEach(c=>{ out[c.dataset.cap]=c.checked; if(c.checked!==!!caps[c.dataset.cap]) capsChanged=true; });
         let ok=true;
         try{
+          if(wantStream!==streamOn){
+            const auth=await sign(27235,'stream-access',[['action',wantStream?'grant':'revoke'],['p',pk]]);
+            const r=await fetch('/client/stream-access',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({target:pk,grant:wantStream,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+            if(!(r&&r.ok)) ok=false;
+          }
           if(wantAi!==aiOn){
             const auth=await sign(27235,'ai-access',[['action',wantAi?'grant':'revoke'],['p',pk]]);
             const r=await fetch('/client/ai-access',{method:'POST',headers:{'Content-Type':'application/json'},

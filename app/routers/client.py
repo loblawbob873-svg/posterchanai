@@ -1768,6 +1768,47 @@ async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "caps": {c: bool(getattr(u, c, False)) for c in _USER_CAPS}})
 
 
+class StreamAccessReq(BaseModel):
+    target: str
+    grant: bool = True
+    auth: str
+
+
+@router.get("/stream-access")
+async def stream_access_status(pubkey: str, db: Session = Depends(get_db)):
+    """Is live streaming enabled for this account? Drives the toggle in Additional permissions."""
+    h = nostr_service.to_pubkey_hex(pubkey)
+    if not h:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(h)).first()
+    return JSONResponse({"ok": True, "exists": bool(u),
+                         "enabled": bool(u and (u.is_admin or getattr(u, "can_stream", False)))})
+
+
+@router.post("/stream-access")
+async def stream_access(data: StreamAccessReq, db: Session = Depends(get_db)):
+    """Admin-only: grant/revoke live-streaming access (can_stream), mirroring /ai-access."""
+    target = nostr_service.to_pubkey_hex(data.target)
+    if not target:
+        return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
+    if not _verify_admin_auth(db, data.auth, target):
+        return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    u = await _find_or_create_user(db, target)
+    _was = bool(getattr(u, "can_stream", False))
+    u.can_stream = bool(data.grant)
+    db.commit()
+    logger.info("[client] streaming access %s for %s", "granted" if data.grant else "revoked", u.username)
+    if bool(data.grant) and not _was:
+        from app.services.access_notify_service import notify_access_granted
+        await notify_access_granted(db, u, "stream")
+    try:
+        from app.services import users_store
+        await users_store.sync_user(db, u)
+    except Exception as e:
+        logger.warning("[client] account sync after stream-access failed: %s", e)
+    return JSONResponse({"ok": True, "enabled": bool(data.grant)})
+
+
 @router.get("/ai-access")
 async def ai_access_status(pubkey: str, db: Session = Depends(get_db)):
     """Is AI enabled for this account? Drives Grant vs Revoke in the client profile menu."""

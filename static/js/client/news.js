@@ -33,7 +33,20 @@
 
     // ---- read state: a capped, insertion-ordered set of item ids (bounded so the event can't grow) ----
     let _readIds = [], _readSet = new Set(), _readSaveT = null;
-    function _loadReadLocal(){ try{ _readIds = JSON.parse(localStorage.getItem('pc_news_read')||'[]')||[]; }catch(_){ _readIds=[]; } _readSet = new Set(_readIds); }
+    // Cache keys are namespaced BY PUBKEY. They weren't, and localStorage is per-BROWSER, not per
+    // account: sign in as someone else on the same device and _feedsLocal() handed you the previous
+    // user's feed list before the relay was ever consulted — then, because the new account has no
+    // feed doc to override it, saveFeeds() would publish that list as THEIRS. Same for read state and
+    // the snapshot. No pubkey (logged out) = no cache at all, which is also why defaults are never
+    // written: they'd become the next user's "saved" feeds.
+    function _nsKey(name){
+      let pk=''; try{ pk=(window.__PC && window.__PC.ME && window.__PC.ME.pubkey) || ''; }catch(_){}
+      return pk ? ('pc_news_'+name+':'+pk.slice(0,16)) : '';
+    }
+    function _lsGet(name){ const k=_nsKey(name); if(!k) return null; try{ return localStorage.getItem(k); }catch(_){ return null; } }
+    function _lsSet(name, val){ const k=_nsKey(name); if(!k) return; try{ localStorage.setItem(k, val); }catch(_){} }
+
+    function _loadReadLocal(){ try{ _readIds = JSON.parse(_lsGet('read')||'[]')||[]; }catch(_){ _readIds=[]; } _readSet = new Set(_readIds); }
     function isRead(id){ return _readSet.has(id); }
     // Unread badge = articles NEWER than the last time you VIEWED News ('all') — the standard RSS "new since
     // last visit" model. A light background refresh (below) keeps it current even while News is closed, so it
@@ -41,14 +54,14 @@
     // "seen" baseline are SEPARATE: the background refresh only counts (never advances), so it can show new
     // items; viewing News advances the baseline (marks seen) so the badge clears. Per-article scroll greying
     // is independent and no longer drives this number.
-    function _seenTs(){ try{ return +(localStorage.getItem('pc_news_seen_ts') || 0) || 0; }catch(_){ return 0; } }
+    function _seenTs(){ try{ return +(_lsGet('seen_ts') || 0) || 0; }catch(_){ return 0; } }
     function _newestTs(items){ let m = 0; for(const it of (items||[])){ if((it.ts||0) > m) m = it.ts||0; } return m; }
-    function _persistedBadge(){ try{ return +(localStorage.getItem('pc_news_unread') || 0) || 0; }catch(_){ return 0; } }
+    function _persistedBadge(){ try{ return +(_lsGet('unread') || 0) || 0; }catch(_){ return 0; } }
     function _paintBadge(n){
       const txt = n > 99 ? '99+' : String(n);
       document.querySelectorAll('.news-badge').forEach(b=>{ b.textContent = n ? txt : ''; b.style.display = n ? '' : 'none'; });
     }
-    const _usesNews = () => { try{ return !!(localStorage.getItem('pc_news_seen_ts') || localStorage.getItem('pc_news_feeds')); }catch(_){ return false; } };
+    const _usesNews = () => { try{ return !!(_lsGet('seen_ts') || _lsGet('feeds')); }catch(_){ return false; } };
     function updateBadge(){                                       // paint last-known count (e.g. onto the mobile sheet)
       _paintBadge(_persistedBadge());
       if(_usesNews() && Date.now() - _bgLast > 120000) _bgTick(); // …and refresh in the background if it's gone stale
@@ -60,12 +73,12 @@
       const seen = _seenTs();
       const urls = new Set((_feeds||[]).map(f=>f.url));
       if(!seen){
-        if(_lastAll.length){ try{ localStorage.setItem('pc_news_seen_ts', String(_newestTs(_lastAll))); }catch(_){} }
-        try{ localStorage.setItem('pc_news_unread', '0'); }catch(_){}
+        if(_lastAll.length){ try{ _lsSet('seen_ts', String(_newestTs(_lastAll))); }catch(_){} }
+        try{ _lsSet('unread', '0'); }catch(_){}
         _paintBadge(0); return;
       }
       let cnt = 0; for(const it of _lastAll){ if((it.ts||0) > seen && (!it.feed || urls.has(it.feed))) cnt++; }
-      try{ localStorage.setItem('pc_news_unread', String(cnt)); }catch(_){}
+      try{ _lsSet('unread', String(cnt)); }catch(_){}
       _paintBadge(cnt);
     }
     // The user VIEWED `items` → move the baseline FORWARD only (never back — a single feed's newest may be
@@ -73,7 +86,7 @@
     // the baseline and mark truly-unread items as seen.
     function _advanceSeen(items){
       const nt = _newestTs(items);
-      if(nt > _seenTs()){ try{ localStorage.setItem('pc_news_seen_ts', String(nt)); }catch(_){} }
+      if(nt > _seenTs()){ try{ _lsSet('seen_ts', String(nt)); }catch(_){} }
       _recomputeBadge();
     }
     function markAllRead(){
@@ -81,7 +94,7 @@
       // Advance the watermark to the newest item we know of, or NOW if we have no snapshot yet (empty session)
       // — so ✓✓ still sticks and a later background tick can't re-inflate the badge against a stale watermark.
       const nt = Math.max(_newestTs(_lastAll), _newestTs(_items)) || Math.floor(Date.now()/1000);
-      try{ localStorage.setItem('pc_news_seen_ts', String(nt)); localStorage.setItem('pc_news_unread', '0'); }catch(_){}
+      try{ _lsSet('seen_ts', String(nt)); _lsSet('unread', '0'); }catch(_){}
       _paintBadge(0);
       renderList();
       try{ toast('marked all read'); }catch(_){}
@@ -110,13 +123,13 @@
       if(!id || _readSet.has(id)) return;
       _readSet.add(id); _readIds.push(id);
       while(_readIds.length > READ_CAP){ _readSet.delete(_readIds.shift()); }
-      try{ localStorage.setItem('pc_news_read', JSON.stringify(_readIds)); }catch(_){}
+      try{ _lsSet('read', JSON.stringify(_readIds)); }catch(_){}
       clearTimeout(_readSaveT);
       _readSaveT = setTimeout(()=>{ try{ publish(30078, JSON.stringify(_readIds), [['d', READ_D]]); }catch(_){} }, 5000);
     }
 
     // ---- feed list: local cache first, then hydrate from the relay ----
-    function _feedsLocal(){ try{ const c=JSON.parse(localStorage.getItem('pc_news_feeds')||'null'); if(Array.isArray(c)&&c.length) return c; }catch(_){} return null; }
+    function _feedsLocal(){ try{ const c=JSON.parse(_lsGet('feeds')||'null'); if(Array.isArray(c)&&c.length) return c; }catch(_){} return null; }
     async function loadState(){
       _loadReadLocal();
       _feeds = _feedsLocal() || DEFAULTS.slice();
@@ -131,9 +144,9 @@
           else if(d===READ_D){ try{ const c=JSON.parse(e.content||'[]'); if(Array.isArray(c)){ for(const id of c){ if(!_readSet.has(id)){ _readSet.add(id); _readIds.push(id);} } while(_readIds.length>READ_CAP){ _readSet.delete(_readIds.shift()); } } }catch(_){} }
         }
       }catch(_){}
-      try{ localStorage.setItem('pc_news_feeds', JSON.stringify(_feeds)); }catch(_){}
+      try{ _lsSet('feeds', JSON.stringify(_feeds)); }catch(_){}
     }
-    async function saveFeeds(){ try{ localStorage.setItem('pc_news_feeds', JSON.stringify(_feeds)); }catch(_){} try{ await publish(30078, JSON.stringify(_feeds), [['d', FEEDS_D]]); }catch(_){} }
+    async function saveFeeds(){ try{ _lsSet('feeds', JSON.stringify(_feeds)); }catch(_){} try{ await publish(30078, JSON.stringify(_feeds), [['d', FEEDS_D]]); }catch(_){} }
 
     // ---- OPML import/export (Miniflux + any reader export/import via the universal OPML format) ----
     function parseOpml(text){
@@ -175,10 +188,10 @@
       try{
         if(!(window.__PC.ME && window.__PC.ME.pubkey)) return;
         const slim = (items||[]).slice(0, SNAP_CAP).map(it=>({ id:it.id, title:it.title, link:it.link, ts:it.ts, snippet:it.snippet, image:it.image, feed:it.feed, feedName:it.feedName }));
-        localStorage.setItem('pc_news_snap', JSON.stringify(slim));
+        _lsSet('snap', JSON.stringify(slim));
       }catch(_){}
     }
-    function _loadSnap(){ try{ const c=JSON.parse(localStorage.getItem('pc_news_snap')||'null'); return (Array.isArray(c)&&c.length)?c:null; }catch(_){ return null; } }
+    function _loadSnap(){ try{ const c=JSON.parse(_lsGet('snap')||'null'); return (Array.isArray(c)&&c.length)?c:null; }catch(_){ return null; } }
 
     // ---- fetch ---- (each returns {items, stale}; staleness is RETURNED, never a shared global, so a
     // background tick can't flip the flag for a concurrent view fetch)
@@ -386,7 +399,7 @@
     // One-time migration: the old badge counted scroll-unread (stuck at 99+). If there's no "seen" baseline
     // yet, clear that stale count so the new "new since last visit" model starts clean.
     try{
-      if(!localStorage.getItem('pc_news_seen_ts')) localStorage.setItem('pc_news_unread', '0');
+      if(!_lsGet('seen_ts')) _lsSet('unread', '0');
       const n = _persistedBadge(); if(n > 0) _paintBadge(n);   // paint last known count before News is opened
     }catch(_){}
     // Background "steady refresh" of the badge/feed: shortly after boot, every 10 min while foregrounded, and

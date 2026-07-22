@@ -220,7 +220,12 @@ class _SearchMixin:
             all_sources = get_user_news_sources(self.user, self.db)
 
             if not all_sources:
-                return {"type": "text", "content": "No news sources configured. Add sources in User Settings."}
+                # Now that sources are per-user with no global fallback, this is the NORMAL state for a
+                # new account — so it has to read as a next step, not an error.
+                return {"type": "text", "content":
+                        "📰 You haven't added any news sources yet.\n\n"
+                        "Add RSS or site URLs in Settings → News sources (one per line, `url|name`), "
+                        "or tap ＋ in the News tab."}
 
             # If arg provided, filter to matching source
             if arg.strip():
