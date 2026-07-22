@@ -17,6 +17,9 @@ _MSG = {
     "ai": ("🤖 You've been granted AI access on {site}.\n\n"
            "You can now chat with the assistant, generate images, and use the media commands. "
            "Open the AI tab to start."),
+    "stream": ("🔴 You've been granted live-streaming access on {site}.\n\n"
+               "Tap Go Live in the sidebar (or ☰ More on a phone) to stream from your camera, "
+               "screen, or OBS."),
     "blossom": ("🌸 You've been granted upload access on {site}.\n\n"
                 "Images and files you attach now upload to this server's own Blossom storage "
                 "instead of a third-party host."),

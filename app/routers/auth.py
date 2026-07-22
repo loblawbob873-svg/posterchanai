@@ -183,6 +183,9 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
         "access_token": token, "token_type": "bearer",
         "user": {"id": user.id, "username": user.username, "npub": npub,
                  "is_admin": bool(user.is_admin), "can_ai": bool(user.is_admin or user.can_ai),
+                 # Lets the client hide Go Live for accounts that can't use it, rather than showing a
+                 # button whose only outcome is a permission error.
+                 "can_stream": bool(user.is_admin or getattr(user, "can_stream", False)),
                  "new": created},
     }
 

@@ -33,6 +33,10 @@ class User(Base):
     # Blossom upload privilege. Default False (opt-in): granting it lets this user's linked
     # Nostr key (nostr_npub) upload blobs to the built-in Blossom server. See blossom_service.
     can_blossom = Column(Boolean, default=False)
+    # Going live is gated like Blossom and AI: it consumes real upstream bandwidth and puts this
+    # instance's name on whatever is broadcast, so it's opt-in per account rather than open to
+    # anyone who signs up. Watching stays open to everyone.
+    can_stream = Column(Boolean, default=False)
     # AI access privilege (opt-in). With the Nostr client as the face of the app, anyone can sign
     # up with a Nostr key, but the AI features stay gated until an admin approves (see can_ai flow).
     can_ai = Column(Boolean, default=False)

@@ -83,6 +83,11 @@ def _obs_key(db, user: User) -> str:
     return key
 
 
+def _may_stream(user) -> bool:
+    """Admins always may; everyone else needs the granted capability. Watching is NOT gated — only
+    publishing, which is what costs bandwidth and carries the instance's name."""
+    return bool(getattr(user, "is_admin", False) or getattr(user, "can_stream", False))
+
 @router.post("/auth")
 async def stream_auth(request: Request, db=Depends(get_db)):
     """MediaMTX external-auth hook. Allow playback (reads); gate publishing on a valid API key.
@@ -139,6 +144,12 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     if not own or not own.value or path != own.value:
         logger.info("[stream] publish denied (path %r is not the key owner's token)", path)
         return JSONResponse({"error": "not your stream"}, status_code=403)
+    # The OBS path is the one that survives a revoke: a stream key already pasted into someone's
+    # encoder keeps working unless permission is checked HERE, at the moment MediaMTX asks.
+    _owner = db.query(User).filter(User.id == row.user_id).first()
+    if not _may_stream(_owner):
+        logger.info("[stream] publish denied (user %s has no stream permission)", row.user_id)
+        return JSONResponse({"error": "no permission"}, status_code=403)
     # The feed is really flowing now — let the reaper end this stream if it later disappears.
     try:
         stream_end_service.mark_publishing(db, row.user_id)
@@ -224,6 +235,9 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     The client shows the RTMP server + stream key (copy-paste into OBS) and, on "Go Live", publishes a
     kind-30311 whose `streaming` tag is the returned hls_url.
     """
+    if not _may_stream(current_user):
+        return {"enabled": False, "error": "no_permission",
+                "message": "Live streaming isn't enabled for your account yet — ask an admin for access."}
     cfg = settings_store.all_settings()
     enabled = (cfg.get("stream_enabled", "false") or "").strip().lower() == "true"
     rtmp_port = (cfg.get("stream_rtmp_port", "") or "1935").strip()
@@ -320,6 +334,10 @@ async def stream_whip(token: str, request: Request, current_user: User = Depends
     """
     if not _stream_enabled():
         return Response(status_code=404)
+    # Gate the PUBLISH itself, not just the credentials screen: /ingest hands out the RTMP key, but a
+    # client that already had one (or a stale build) must not be able to go live without permission.
+    if not _may_stream(current_user):
+        return Response(status_code=403)
     own = db.query(UserSetting).filter(UserSetting.user_id == current_user.id,
                                        UserSetting.key == _TOKEN_SETTING).first()
     if not own or own.value != token:

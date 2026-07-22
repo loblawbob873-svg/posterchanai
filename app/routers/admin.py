@@ -728,6 +728,7 @@ def create_user(
         can_video=False,
         can_torrent=False,
         can_blossom=False,
+        can_stream=False,
     )
     db.add(user)
     db.commit()
@@ -864,6 +865,7 @@ def update_user_capabilities(
     can_video: bool = Query(...),
     can_torrent: bool = Query(...),
     can_blossom: bool = Query(False),
+    can_stream: bool = Query(False),
     can_ai: bool = Query(True),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
@@ -877,11 +879,12 @@ def update_user_capabilities(
     user.can_music = can_music
     user.can_video = can_video
     user.can_torrent = can_torrent
-    _was_blossom, _was_ai = bool(user.can_blossom), bool(user.can_ai)
+    _was_blossom, _was_ai, _was_stream = bool(user.can_blossom), bool(user.can_ai), bool(user.can_stream)
     user.can_blossom = can_blossom
     user.can_ai = can_ai
-    _newly = [k for k, was, now in (("ai", _was_ai, can_ai), ("blossom", _was_blossom, can_blossom))
-              if now and not was]
+    user.can_stream = can_stream
+    _newly = [k for k, was, now in (("ai", _was_ai, can_ai), ("blossom", _was_blossom, can_blossom),
+                                    ("stream", _was_stream, can_stream)) if now and not was]
     db.commit()
     db.refresh(user)
     from app.services import users_store
@@ -892,7 +895,7 @@ def update_user_capabilities(
         notify_access_granted_blocking(db, user, _newly)   # one message, however many caps changed
     logger.info(f"[ADMIN] Updated capabilities for user {user_id} ({user.username}): "
                 f"image={can_image} music={can_music} video={can_video} torrent={can_torrent} "
-                f"blossom={can_blossom} ai={can_ai}")
+                f"blossom={can_blossom} ai={can_ai} stream={can_stream}")
     return user
 
 

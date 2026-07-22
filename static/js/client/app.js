@@ -1150,7 +1150,11 @@
     // Go Live: a top-level sidebar action, because inside Discover → Streams nobody ever found it. Shown
     // only where the node actually runs the media server — but an OLDER backend doesn't send the flag at
     // all, so treat "missing" as enabled rather than hiding the button on every node until they restart.
-    { const gl=$('#nav-golive'); if(gl && CFG.stream_enabled!==false){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
+    // Shown only when the NODE streams and THIS account may. _aiAuth carries can_stream from the
+    // session; it's absent on an older backend, so treat missing as allowed and let the server refuse.
+    { const gl=$('#nav-golive');
+      const _mayStream = !(_aiAuth && _aiAuth.can_stream === false);
+      if(gl && CFG.stream_enabled!==false && _mayStream){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
     // Collapsible "Files" group (Blossom + Music), like Games/Discover.
     { const ft=$('#files-toggle'); if(ft){ const sub=$('#files-sub'), chev=$('#files-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
@@ -6254,7 +6258,8 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['__golive','🔴','Go Live'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
-                   && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
+                   && !(v==='__golive' && (CFG.stream_enabled===false
+                                           || (_aiAuth && _aiAuth.can_stream === false))));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
