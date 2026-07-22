@@ -1271,12 +1271,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 user_image_path = None
                         else:
                             user_image_path = storage_service.save_image(user.username, conversation_id, image_data, "upload")
-                    if file_content:
-                        # Save file content for persistence (non-blocking - chat will work even if this fails)
-                        try:
-                            storage_service.save_file(user.username, conversation_id, file_content)
-                        except Exception as e:
-                            logger.warning(f"[CHAT] Failed to save file content to disk (chat will continue): {e}")
+                    # NOTE: the extracted text of an uploaded document used to be written to local
+                    # disk here (storage_service.save_file) — unconditionally, unlike every other
+                    # write in this file, which goes to encrypted Blossom when chat_store is on. It
+                    # was also WRITE-ONLY: the return value was discarded and nothing ever read those
+                    # files back, so it produced nothing but a plaintext copy of the document on the
+                    # server. The upload itself is already stored encrypted (upload_store), so the
+                    # write is gone rather than ported.
 
                     # The attachment upload above can take seconds — long enough for the user to
                     # delete this conversation meanwhile. Inserting the message now would violate the
