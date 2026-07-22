@@ -1267,9 +1267,14 @@
         let el;
         if(h.dataset.kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.playsInline=true; el.preload='metadata'; }
         else {
-          el=document.createElement('img'); el.src=src; el.loading='eager';
-          if(h.dataset.onerr) el.setAttribute('onerror', h.dataset.onerr);   // carried site onerror (blob→fallback)
-          else el.onerror=function(){ this.onerror=null; this.remove(); };   // else drop a broken image cleanly
+          el=document.createElement('img'); el.loading='eager';
+          // Attach the handler BEFORE the src so a failure can't land before its recovery is wired up,
+          // and when there is no carried handler add NOTHING — that's exactly what the non-data-saver
+          // render produces. The old default here REMOVED the image on any error, so a tap on an image
+          // that needed one retry just made it vanish ("flashes, then nothing"), while the same image
+          // with data saver off recovered or at worst showed as broken.
+          if(h.dataset.onerr) el.setAttribute('onerror', h.dataset.onerr);
+          el.src=src;
         }
         if(h.dataset.cls) el.className=h.dataset.cls;
         h.replaceWith(el);
@@ -5085,7 +5090,13 @@
   }
   // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
   // placeholder in data saver, else the original html untouched. `cls` = layout class to restore on tap.
-  function _hold(html, url, kind, cls){ return NO_IMAGES ? _phold(enc(url), kind, cls) : html; }
+  // Carry the ORIGINAL element's onerror into the placeholder. Dropping it meant a tapped image lost
+  // the recovery/cleanup its non-data-saver twin gets — __blobFallback's authenticated fetch→blob (the
+  // APK's cross-origin /api images), __aiMediaRetry's blossom-not-ready retry, and the plain
+  // hide-the-broken-thumb handlers. The whole point of the placeholder is to defer the download, not
+  // to render a DIFFERENT element once you ask for it.
+  function _holdOnerr(html){ const m=/\sonerror="([^"]*)"/i.exec(html||''); return m ? m[1] : ''; }
+  function _hold(html, url, kind, cls){ return NO_IMAGES ? _phold(enc(url), kind, cls, _holdOnerr(html)) : html; }
   function mediaParts(raw){
     const media=[];
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
@@ -12337,11 +12348,13 @@
     }
     const top=Object.entries(tally).filter(([,c])=>c>=2).sort((a,b)=>b[1]-a[1]).slice(0,TOPIC_TRENDING);
     const live=new Set(top.map(([g])=>g));
-    const chips=top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}">#${enc(g)} <span class="tag-n">${c}</span></button>`);
+    // The label is its OWN span so it can ellipsize inside the fixed grid cell (see #rb-topics CSS) —
+    // a bare text node can't, and one long tag was enough to leave half a row empty.
+    const chips=top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}" title="#${enc(g)}"><span class="tg">#${enc(g)}</span><span class="tag-n">${c}</span></button>`);
     for(const [t,ic] of DISCOVER_TAGS){
       if(chips.length>=TOPIC_MAX) break;
       const g=t.toLowerCase(); if(live.has(g)) continue;   // never show a tag twice, once ranked and once curated
-      chips.push(`<button class="tag-chip disc" data-tag="${enc(g)}"><span class="disc-ic">${ic}</span> #${enc(t)}</button>`);
+      chips.push(`<button class="tag-chip disc" data-tag="${enc(g)}" title="#${enc(t)}"><span class="disc-ic">${ic}</span><span class="tg">#${enc(t)}</span></button>`);
     }
     el.innerHTML=`<div class="tag-cloud">${chips.join('')}</div>`;
     el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
@@ -12391,7 +12404,7 @@
   // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
   // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
   // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=6, HOT_MAX=18;   // a sidebar digest, not a second feed
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=21;   // a sidebar digest, not a second feed
   let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
   // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
   async function rankHot(windowSec){
@@ -12435,7 +12448,7 @@
     const tally={}, icon={};
     for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
-    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>x[0]);
+    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,9).map(x=>x[0]);
     // Re-acquire the pane after every await below: the user can hit "Hot" while these queries are in
     // flight, and the captured `el` would happily paint follow rows into the Hot list.
     if(!top.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }

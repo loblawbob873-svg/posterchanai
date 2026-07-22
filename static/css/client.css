@@ -1911,6 +1911,17 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 
 /* ===== trending hashtag chips + inline #hashtags — cyberpunk, spaced out ===== */
 .tag-cloud{display:flex;flex-wrap:wrap;gap:10px 11px;padding:4px 0 2px}
+/* Topics: a 2-column GRID rather than a wrap. Variable-width pills wrapped raggedly — one long tag
+   claimed a whole row while two short ones shared the next, so a third of the block was dead space.
+   Equal cells fill every row; the label ellipsizes and `title` carries the full tag. */
+#rb-topics .tag-cloud{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:2px 0}
+#rb-topics .tag-chip{min-width:0;gap:5px;justify-content:space-between;padding:7px 10px;
+  font-size:12.5px;letter-spacing:.4px;
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)}
+#rb-topics .tag-chip:hover{transform:none}   /* a lift reads as jitter in a dense grid */
+#rb-topics .tag-chip .tg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#rb-topics .tag-chip .tag-n{flex:0 0 auto}
+#rb-topics .tag-chip .disc-ic{flex:0 0 auto}
 .tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
   background:linear-gradient(135deg,rgba(var(--accent-rgb),.12),rgba(var(--accent2-rgb),.07));
   border:1px solid rgba(var(--accent-rgb),.4);color:var(--cyan);
