@@ -7300,11 +7300,16 @@
   function blossomPicker(ta){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
-    bg.innerHTML=`<div class="modal glass neon-border"><h3>🌸 Attach from your Blossom files</h3><div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
+    bg.innerHTML=`<div class="modal glass neon-border"><h3>🌸 Attach from your Blossom files</h3>
+      <div id="bp-folders" class="bp-folders"></div>
+      <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
     $('#modal-root').appendChild(bg);
     FilesIdx.loadLocal();
     (async()=>{
+      // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
+      // so without this pull the picker showed a flat drive to anyone who hadn't been there yet.
+      if(!FilesIdx._pulled){ FilesIdx._pulled=true; try{ await FilesIdx.pull(); }catch(_){ } }
       let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
       // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
       // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
@@ -7313,13 +7318,30 @@
         const m=FilesIdx.meta(b.sha256);
         if(m && m.enc) return false;                               // encrypted ciphertext — not publicly viewable
         if(!m && /octet-stream/.test(b.type||'')) return false;    // stale index blobs / unnamed binaries
+        if(FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256))) return false;   // ditto for a whole encrypted folder
         return true;
       });
-      const grid=bg.querySelector('#bp-grid');
-      grid.innerHTML = list.length ? list.map(b=>{
-        return `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`;
-      }).join('') : '<div class="empty">No files yet — upload some in the Files tab.</div>';
-      bg.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{ const ext=_MIME_EXT[el.dataset.type]||''; ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):''); ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('attached'); });
+      const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders');
+      // Only folders that actually hold something visible here, so you can't tap into an empty one.
+      const used=new Set(list.map(b=>FilesIdx.folderOf(b.sha256)||''));
+      const folders=[['','🗂 All']].concat(
+        FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
+      let cur='';
+      const draw=()=>{
+        const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
+        grid.innerHTML = shown.length ? shown.map(b=>
+          `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`).join('')
+          : `<div class="empty">${cur?'Nothing in this folder.':'No files yet — upload some in the Files tab.'}</div>`;
+        grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
+          const ext=_MIME_EXT[el.dataset.type]||'';
+          ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):'');
+          ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('attached'); });
+        fbar.querySelectorAll('.bp-folder').forEach(b=> b.classList.toggle('on',(b.dataset.f||'')===cur));
+      };
+      fbar.innerHTML = folders.length>1 ? folders.map(([v,l])=>
+        `<button type="button" class="news-chip bp-folder" data-f="${enc(v)}">${enc(l)}</button>`).join('') : '';
+      fbar.querySelectorAll('.bp-folder').forEach(b=> b.onclick=()=>{ cur=b.dataset.f||''; draw(); });
+      draw();
     })();
   }
 

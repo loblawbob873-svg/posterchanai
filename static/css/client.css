@@ -2823,7 +2823,11 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 }
 /* cover picker: folder bar. Reuses .news-chip (incl. its .on state) so it matches the News tab's
    folder/feed switcher rather than inventing a third chip style. Wraps — never scrolls off-screen. */
-.bp-folders{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+/* Sticky: .modal is the scroll container (max-height:92vh), so a plain bar scrolled away and left
+   you with no way back to another folder without scrolling to the top of a long grid. */
+.bp-folders{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px;position:sticky;top:0;z-index:2;
+  background:var(--panel);padding:6px 0;backdrop-filter:blur(6px)}
+.bp-folders:empty{display:none}
 /* .news-chip is sized for a dense feed bar; inside a picker it's a primary tap target, so give it a
    real thumb height (the base chip measured 21-30px, well under the 44px guideline). */
 .bp-folder{flex:0 0 auto;min-height:40px;padding:8px 15px}
