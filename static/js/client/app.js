@@ -8555,6 +8555,14 @@
     }
   }
   let _notifScrollTop = false;   // next notifications render lands at the top (fresh tab entry only)
+  // Mark everything up to now as seen and drop the unread badge on all three surfaces (sidebar bell,
+  // mobile bar, rail Alerts tab). Shared by the full Notifications view and the rail's Alerts tab so
+  // the two can't disagree about what "read" means.
+  function markNotifsRead(){
+    seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
+    _updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
+    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
+  }
   function renderNotifications(){
     const feed=$('#feed');
     const all=notifGrouped(notifList().filter(_notifMatch));
@@ -8570,9 +8578,7 @@
     { const un=$('#upd-notif',feed); if(un && !_updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
-    seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
-    _updBadge=false;   // viewing Notifications clears the one-shot update badge (no phantom permanent +1)
-    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
+    markNotifsRead();
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
     feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
@@ -12272,6 +12278,10 @@
     _rbTab=tab; try{ localStorage.setItem('rbTab',tab); }catch(_){}
     syncRbTabs();
     const el=document.getElementById('rb-list'); if(el) el.innerHTML='<div class="muted small">loading…</div>';
+    // Clicking INTO Alerts marks read — same as opening the full Notifications view. Only on the click
+    // (setRbTab), not in loadNotifs: loadNotifs also runs on a passive page load when Alerts is the
+    // remembered tab, and that shouldn't silently clear the badge before you've actually looked.
+    if(tab==='notifs') markNotifsRead();
     _loadRbTab();
   }
   async function loadRightbar(){
