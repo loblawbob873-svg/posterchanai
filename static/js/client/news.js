@@ -285,16 +285,48 @@
           </div>
         </div></div>`;
     }
+    // ONE row, always. A chip per feed can't work in a sticky header: on a phone six chips don't fit a
+    // row, so they either scroll (off-screen, nothing to grab) or wrap (a wall of buttons the article
+    // list can't be scrolled past). The active feed is a single control that opens a picker instead —
+    // the same sheet pattern as the Effects studio and the command sheet.
+    function _feedLabel(){
+      if(_active==='all') return 'All feeds';
+      const f=_feeds.find(f=>f.url===_active);
+      return f ? f.name : 'All feeds';
+    }
     function _chips(){
-      const chip = (v,l)=>`<button class="news-chip${_active===v?' on':''}" data-feed="${enc(v)}">${enc(l)}</button>`;
-      // Actions are pinned outside the chip row so they keep a fixed spot as the chips wrap; the
-      // chips themselves wrap rather than scroll, so every feed is reachable at any width.
       return `<div class="news-bar">
-        <div class="news-chips">${chip('all','All')}${_feeds.map(f=>chip(f.url, f.name)).join('')}</div>
+        <button class="news-pick" id="news-pick" title="Choose a feed">
+          <span class="news-picklbl">${enc(_feedLabel())}</span><span class="news-pickcar">▾</span></button>
         <div class="news-baracts">
           <button class="news-chip news-readall" title="Mark all read">✓✓</button>
           <button class="news-chip news-add" title="Manage feeds">＋</button>
         </div></div>`;
+    }
+    function _host(u){ try{ return new URL(/^https?:/i.test(u)?u:'https://'+u).hostname.replace(/^www\./,''); }catch(_){ return u; } }
+    // Feed picker sheet. Searchable once the list outgrows a glance; always offers Manage feeds so ＋
+    // isn't the only way in.
+    function openFeedPicker(){
+      const row=(v,l,sub)=>`<button type="button" class="news-frow${_active===v?' on':''}" data-feed="${enc(v)}">
+          <span class="news-fname">${enc(l)}</span><span class="news-fsub muted small">${enc(sub||'')}</span></button>`;
+      const list = row('all','All feeds', `${_feeds.length} feed${_feeds.length===1?'':'s'}`)
+                 + _feeds.map(f=>row(f.url, f.name, _host(f.url))).join('');
+      const search = _feeds.length>7 ? `<input class="input news-fq" id="news-fq" placeholder="Search feeds…" autocomplete="off">` : '';
+      modalNews(`<h3>📰 Choose a feed</h3>${search}
+        <div class="news-flist">${list}</div>
+        <div class="news-fempty hidden muted small" id="news-fnone">Nothing matches that.</div>
+        <div class="row" style="margin-top:12px"><button class="btn btn-ghost small" id="news-fmanage">⚙ Manage feeds</button></div>`, root=>{
+        root.addEventListener('click', e=>{
+          const b=e.target.closest('.news-frow'); if(!b) return;
+          e.preventDefault(); _active=b.dataset.feed; closeNews(); renderNews();
+        });
+        const q=$('#news-fq',root), none=$('#news-fnone',root);
+        if(q){ q.addEventListener('input', ()=>{ const t=q.value.trim().toLowerCase(); let hits=0;
+          $$('.news-frow',root).forEach(b=>{ const hit=!t || b.textContent.toLowerCase().includes(t);
+            b.classList.toggle('hidden', !hit); if(hit) hits++; });
+          if(none) none.classList.toggle('hidden', hits>0); }); }
+        const m=$('#news-fmanage',root); if(m) m.onclick=()=>{ closeNews(); manageFeeds(); };
+      });
     }
     function renderList(){
       const list = $('#news-list'); if(!list) return;
@@ -334,7 +366,9 @@
       if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
-      $$('.news-chip', feed).forEach(b=> b.onclick=()=>{ if(b.classList.contains('news-add')){ manageFeeds(); return; } if(b.classList.contains('news-readall')){ markAllRead(); return; } _active=b.dataset.feed; renderNews(); });
+      { const p=$('#news-pick', feed); if(p) p.onclick=()=>openFeedPicker(); }
+      $$('.news-baracts .news-chip', feed).forEach(b=> b.onclick=()=>{
+        if(b.classList.contains('news-add')) manageFeeds(); else markAllRead(); });
       // INSTANT paint: show the last saved snapshot immediately (no blank spinner) on the default 'all' view while
       // the live fetch runs; the fresh result swaps in below. Only when we have nothing yet this session.
       if(_active==='all' && !_items.length){ const snap=_loadSnap(); if(snap){ _items=snap; if(!_lastAll.length) _lastAll=snap; renderList(); } }

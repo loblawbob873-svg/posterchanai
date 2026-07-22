@@ -854,14 +854,29 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 #news-head{position:sticky;top:-8px;padding-top:8px;z-index:3;background:var(--bg)}
 /* Feed strip scrolls; the action buttons sit OUTSIDE it so they never get pushed off the edge by a
    long feed list (70 feeds made ✓✓ and ＋ unreachable on desktop). */
-/* Chips WRAP, they don't scroll. A hidden-scrollbar strip meant that on a phone the last feeds sat
-   past the right edge with nothing to grab and no visible affordance — the pinned actions just made
-   the visible slice narrower. Wrapping makes every feed reachable at any width, by construction. */
-.news-bar{display:flex;align-items:flex-start;gap:8px}
-.news-chips{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 2px}
+/* One row, fixed height — the header is sticky, so it must never grow with the feed count (a wrapped
+   chip wall left no room to scroll the articles). The active feed is a single control that opens the
+   picker sheet; only ✓✓ and ＋ sit beside it. */
+.news-bar{display:flex;align-items:center;gap:8px;padding:10px 2px}
+.news-pick{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;background:var(--panel2);
+  border:1px solid var(--line);color:var(--text);border-radius:999px;padding:8px 14px;font-size:15px;
+  font-weight:600;cursor:pointer;text-align:left;transition:.15s}
+.news-pick:hover{border-color:var(--cyan)}
+.news-picklbl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.news-pickcar{flex:0 0 auto;color:var(--muted);font-size:12px}
+/* picker sheet rows */
+.news-flist{display:flex;flex-direction:column;gap:6px;max-height:min(52vh,420px);overflow-y:auto;margin-top:10px}
+.news-frow{display:flex;align-items:baseline;gap:10px;width:100%;background:var(--panel2);
+  border:1px solid var(--line);color:var(--text);border-radius:12px;padding:12px 14px;font-size:15px;
+  cursor:pointer;text-align:left;transition:.15s}
+.news-frow:hover{border-color:var(--cyan)}
+.news-frow.on{border-color:var(--cyan);color:var(--cyan)}
+.news-fname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.news-fsub{flex:0 0 auto;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.news-fq{margin-top:10px}
 /* NOT .news-acts — that class already belongs to each article card's Share/Summarize row, and
    restyling it as a pinned flex item wrecked every card. */
-.news-baracts{flex:0 0 auto;display:flex;gap:6px;padding:10px 0}
+.news-baracts{flex:0 0 auto;display:flex;gap:6px}
 .news-chip{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:14px;cursor:pointer;white-space:nowrap;transition:.15s}
 .news-chip:hover{color:var(--text)}
 .news-chip.on{background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent2-rgb),.14));color:#fff;border-color:var(--neon)}
