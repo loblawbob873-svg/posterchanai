@@ -1232,6 +1232,18 @@
         const tab=e.target.closest('.rb-tab'); if(tab){ setRbTab(tab.dataset.rbtab); return; }   // Hot / From-follows toggle
         const fb=e.target.closest('.wtf-follow'); if(fb){ _wtfFollow(fb); return; }              // Follow, before the row handler
         const wr=e.target.closest('.wtf-row'); if(wr){ renderProfileView(wr.dataset.pk); return; }
+        // Alerts tab: react/reply inline, then the row itself. The feed's .act delegate is bound to
+        // #feed, so these buttons need their own handling here — they can't ride on it.
+        const q=e.target.closest('.rbq');
+        if(q){ const id=q.dataset.id, pk=q.dataset.pk;
+          if(q.dataset.q==='reply') compose({reply:id, replyPk:pk}); else pickEmoji(id, pk, q);
+          return; }
+        const nrow=e.target.closest('.notif');
+        if(nrow){ const pf=e.target.closest('[data-prof]');                       // name/avatar → profile
+          if(pf) renderProfileView(pf.dataset.prof);
+          else if(nrow.dataset.prof) renderProfileView(nrow.dataset.prof);        // follows/reports have no thread
+          else if(nrow.dataset.open) openThread(nrow.dataset.open);
+          return; }
         const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open);  // a row opens its thread
       });
     }
@@ -12248,15 +12260,17 @@
   // rbListEl() hands the pane out ONLY to the tab that currently owns it — that's what stops a
   // background refresh (or an in-flight query from before a tab switch) writing its rows into the
   // list the user is actually looking at.
-  let _rbTab='hot'; try{ if(localStorage.getItem('rbTab')==='follows') _rbTab='follows'; }catch(_){}
+  const RB_TABS=new Set(['hot','follows','notifs']);
+  let _rbTab='hot'; try{ const t=localStorage.getItem('rbTab'); if(RB_TABS.has(t)) _rbTab=t; }catch(_){}
   function rbListEl(tab){ return _rbTab===tab ? document.getElementById('rb-list') : null; }
   function syncRbTabs(){ $$('.rb-tab').forEach(b=> b.classList.toggle('active', b.dataset.rbtab===_rbTab)); }
+  function _loadRbTab(){ if(_rbTab==='hot') loadHot(true); else if(_rbTab==='follows') loadFollows(); else loadNotifs(); }
   function setRbTab(tab){
-    if((tab!=='hot' && tab!=='follows') || tab===_rbTab) return;
+    if(!RB_TABS.has(tab) || tab===_rbTab) return;
     _rbTab=tab; try{ localStorage.setItem('rbTab',tab); }catch(_){}
     syncRbTabs();
     const el=document.getElementById('rb-list'); if(el) el.innerHTML='<div class="muted small">loading…</div>';
-    if(tab==='hot') loadHot(true); else loadFollows();
+    _loadRbTab();
   }
   async function loadRightbar(){
     if(!_rightbarShown()) return;   // display:none on mobile OR body.rb-off → skip; but build in a backgrounded desktop tab (no document.hidden gate)
@@ -12264,7 +12278,7 @@
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
     loadWhoToFollow();              // friend-of-friend suggestions (once per session — see below)
     syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
-    if(_rbTab==='hot') loadHot(true); else loadFollows();
+    _loadRbTab();
   }
   // Routine update (timer): refresh the chip cloud and prepend any freshly-hot posts to the top
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
@@ -12275,7 +12289,8 @@
     // Files view was needless CPU + relay load for content that isn't even being looked at.
     if(VIEW!=='home' && VIEW!=='global') return;
     loadTopics();
-    if(_rbTab==='hot') refreshHotTop(); else loadFollows();   // only the visible list costs a query now
+    // only the visible list costs anything; Alerts reads the in-memory notification store, no query
+    if(_rbTab==='hot') refreshHotTop(); else if(_rbTab==='follows') loadFollows(); else loadNotifs();
   }
   // Curated hashtag shortcuts — friendly entry points into popular communities. They now PAD the one
   // Topics cloud rather than owning a section of their own: on a quiet relay the live tally can come
@@ -12457,6 +12472,30 @@
   }
   // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
   // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
+  // ---- Alerts: your notifications, in the rail, actionable ---------------------------------
+  // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
+  // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
+  // the in-memory notification store, so unlike Hot/Follows it costs no relay query.
+  const RB_NOTIF_ROWS=8;
+  function loadNotifs(){
+    const el=rbListEl('notifs'); if(!el) return;
+    const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
+    if(!all.length){ el.innerHTML='<div class="muted small">No notifications yet.</div>'; return; }
+    el.innerHTML=all.map(notifHtml).join('');
+    // Quick actions are APPENDED to the rendered row rather than spliced into notifHtml's string:
+    // the row already carries the resolved target in data-open (which differs by kind — a reply opens
+    // itself, a reaction opens the post it reacted to), so we just read it back off the DOM.
+    el.querySelectorAll('.notif[data-open]').forEach(n=>{
+      const id=n.dataset.open, ev=Store.get(id); if(!ev) return;   // target not on this relay → no actions
+      const body=n.lastElementChild; if(!body) return;
+      const bar=document.createElement('div'); bar.className='rbq-bar';
+      bar.innerHTML=`<button class="rbq" data-q="react" data-id="${id}" data-pk="${ev.pubkey}" title="React">♥</button>`
+                   +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply">↩</button>`;
+      body.appendChild(bar);
+    });
+    all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
+    decorateProfiles();
+  }
   const FOLLOWS_ROWS=9;
   async function loadFollows(){
     let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane

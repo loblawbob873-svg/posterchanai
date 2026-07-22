@@ -686,6 +686,19 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rb-tab:hover{color:var(--text)}
 .rb-tab.active{background:rgba(var(--accent-rgb),.16);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.38)}
+/* Alerts tab: the SAME .notif rows the Notifications view renders, compacted for a 340px rail and
+   given a card surface so they read as list items here rather than full-width feed rows. */
+.rightbar .notif{padding:9px 10px;margin-bottom:7px;border:1px solid var(--line);border-radius:11px;
+  background:var(--panel);font-size:13.5px;cursor:pointer;transition:.15s}
+.rightbar .notif:hover{border-color:var(--neon);background:var(--panel2)}
+.rightbar .notif *{max-width:100%}          /* quoted context / previews can't widen the column */
+.rightbar .notif .notif-av{width:24px;height:24px}
+.rightbar .notif > .ic{font-size:15px;width:18px}
+.rightbar .notif .muted.small{font-size:11.5px}
+.rbq-bar{display:flex;gap:6px;margin-top:8px}
+.rbq{padding:4px 11px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);
+  font-family:inherit;font-size:13px;line-height:1.25;cursor:pointer;transition:.15s}
+.rbq:hover{border-color:var(--neon);color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
   transition:.15s;background:var(--panel);overflow:hidden}
 /* Flat cards. Every colour here is a theme var — the snippet used to be a hardcoded #7dfcff with a
