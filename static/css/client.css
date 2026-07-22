@@ -701,6 +701,12 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   font-family:inherit;font-size:24px;line-height:1;transition:.15s}
 .tl-cmp-btn:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 .tl-cmp-post{margin:0;padding:12px 30px;font-size:16px;font-weight:700;border-radius:24px}
+/* Post always sits at the RIGHT end of the tools row. It needs the extra class in the selector to beat
+   `.tl-cmp-tools .btn{margin:0}` below (0,2,0) — a bare `.tl-cmp-post{margin-left:auto}` (0,1,0) lost
+   the cascade, so Post was only ever pushed right by .tl-cmp-status's flex:1 sitting in front of it.
+   Hide the status (≤380px) or leave it empty and Post collapsed back against the ⋯ icon, left-justified
+   in the middle of the row. It also right-aligns Post when the row WRAPS it onto a line of its own. */
+.tl-cmp-tools .tl-cmp-post{margin-left:auto}
 /* Inline panels — the timeline composer never opens the modal, so poll + content-warning live here. */
 .tl-cmp-btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan)}
 .tl-cmp-cw{margin-top:8px}
@@ -766,7 +772,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
      this to ~294px against 279px available, which silently wrapped Post onto a second row. */
   .tl-cmp-tools{gap:5px}
   .tl-cmp-btn{width:36px;height:36px;font-size:19px}
-  .tl-cmp-post{padding:9px 16px;font-size:15px;margin-left:auto}
+  .tl-cmp-post{padding:9px 16px;font-size:15px}   /* right-alignment is in the base rule above */
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
   .tltab{padding:8px 12px;font-size:14px}
   .tltab-media{padding:8px 11px;font-size:14px}
