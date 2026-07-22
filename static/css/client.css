@@ -257,6 +257,10 @@
 :root[data-theme="winxp"] .usercount .live-ico,
 :root[data-theme="winxp"] .conn .uc-dot{ color:#fff !important; }
 :root[data-theme="winxp"] .sidebar .nav-item:hover{ background:rgba(255,255,255,.18) !important; }
+/* XP's --neon is a DARK blue (#0a5bc4) and its active row is a blue gradient, so the accent-coloured
+   active icon the other themes get would be blue-on-blue here — keep it white with the label. */
+:root[data-theme="winxp"] .sidebar .nav-item.active svg.ic,
+:root[data-theme="winxp"] .mobilenav .nav-item.active svg.ic{ color:inherit !important; }
 
 /* Professional + Windows 98: the cluster between the avatar and the Logout button (name, connection
    status, user/online counts). The var(--text) route was reported still unreadable on these two light
@@ -544,13 +548,25 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .nav-grouphd .chev{margin-left:auto;font-size:12px;opacity:.65}
 .nav-sub{display:flex;flex-direction:column;gap:4px;overflow:hidden}
 .nav-sub.collapsed{display:none}
-.nav-item.sub{padding-left:34px;font-size:18px}
-.nav-item{display:flex;align-items:center;gap:15px;background:transparent;border:none;color:var(--muted);
-  padding:14px 18px;border-radius:11px;cursor:pointer;font-size:20.5px;font-weight:600;text-align:left;transition:.15s;position:relative}
+.nav-item.sub{padding-left:30px;font-size:16px;font-weight:500}
+.nav-item{display:flex;align-items:center;gap:13px;background:transparent;border:none;color:var(--muted);
+  padding:11px 15px;border-radius:11px;cursor:pointer;font-size:17px;font-weight:550;text-align:left;transition:.15s;position:relative}
 .nav-item .ic{font-size:24px;width:30px;text-align:center;line-height:1;display:inline-flex;align-items:center;justify-content:center;
   filter:drop-shadow(0 0 5px rgba(var(--accent-rgb),.45))}
 .nav-item.sub .ic{font-size:17px}
 .nav-item:hover .ic,.nav-item.active .ic{filter:drop-shadow(0 0 7px rgba(var(--accent-rgb),.75))}
+/* ===== Flat line icons (see the sprite in client.html) ==============================================
+   `stroke:currentColor` + `fill:none` is the whole trick: an icon is drawn in whatever colour its row
+   already resolves to, so the muted→text→accent transitions below carry the glyph with them and every
+   theme (incl. the light ones) gets a legible icon for free. Shapes that need to be solid (the LIVE
+   dot, the gamepad buttons) carry fill="currentColor" as a presentation attribute on the child, which
+   out-ranks this inherited fill. No drop-shadow: flat is the point — only the ACTIVE row keeps a faint
+   halo, and the theme layer already strips even that off the non-cyberpunk palettes. */
+svg.ic{flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.nav-item svg.ic{width:21px;height:21px;filter:none;opacity:.92}
+.nav-item.sub svg.ic{width:18px;height:18px}
+.nav-item:hover svg.ic{opacity:1;filter:none}
+.nav-item.active svg.ic{opacity:1;color:var(--neon);filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.45))}
 .nav-item:hover{color:var(--text);background:rgba(var(--accent-rgb),.12);text-shadow:0 0 6px rgba(var(--accent-rgb),.35)}
 .nav-item.active{color:#fff;background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent2-rgb),.14));box-shadow:inset 0 0 0 1px var(--line);text-shadow:0 0 8px rgba(var(--accent-rgb),.6)}
 .nav-item.active::before{content:"";position:absolute;left:0;top:18%;height:64%;width:3px;border-radius:3px;background:var(--neon);box-shadow:var(--glow)}
@@ -1561,15 +1577,28 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .dm-list.has-active + .dm-thread .dm-msgs{flex:1;min-height:0;overflow-y:auto}
   .dm-list.has-active + .dm-thread .dm-compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .mobilenav{display:flex;flex-wrap:nowrap;position:fixed;bottom:0;left:0;right:0;justify-content:space-around;
-    align-items:center;padding:8px env(safe-area-inset-right) calc(8px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
+    align-items:center;padding:6px env(safe-area-inset-right) calc(6px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
     border-top:1px solid var(--line);z-index:40;background:rgba(10,10,16,.92)}   /* neutral dark, matches the desktop sidebar */
   /* flex:1 1 0 + min-width:0 → all items shrink to equal widths and stay on ONE line, so the ☰ never
-     wraps to a second row on narrow phones. */
-  .mobilenav .nav-item{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;height:46px;
-    font-size:22px;line-height:1;color:var(--muted);background:transparent;border:none;padding:0;position:relative}
+     wraps to a second row on narrow phones. Icon over a 10px label: the label is what turns a row of
+     ambiguous glyphs into a bar people can actually navigate, and it fits because the icons are line
+     art at a fixed 23px instead of emoji at whatever size the phone's font decides. */
+  .mobilenav .nav-item{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:3px;height:48px;font-size:22px;line-height:1;color:var(--muted);background:transparent;border:none;padding:0;position:relative}
+  .mobilenav .nav-item b{font-size:10px;font-weight:600;letter-spacing:.2px;line-height:1;
+    max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mobilenav svg.ic{width:23px;height:23px;stroke-width:1.75}
   .mobilenav .nav-item.active{color:var(--neon)}
+  .mobilenav .nav-item.active svg.ic{stroke-width:2.1}
+  /* Compose is the one ACTION in a row of destinations, so it gets a tinted accent pill instead of a
+     plain glyph. Tint + accent stroke (not a filled accent with a dark glyph) because half the themes
+     are light and would need the inverse foreground — this reads on all of them. */
   .mobilenav .compose{color:var(--neon)}
-  .mobilenav .badge{position:absolute;top:5px;left:55%;margin:0}
+  .mobilenav .compose svg.ic{width:21px;height:21px;position:relative;z-index:1}
+  .mobilenav .compose::before{content:"";position:absolute;top:5px;width:46px;height:33px;border-radius:11px;
+    background:rgba(var(--accent-rgb),.16);border:1px solid rgba(var(--accent-rgb),.45)}
+  .mobilenav .compose:active::before{background:rgba(var(--accent-rgb),.3)}
+  .mobilenav .badge{position:absolute;top:2px;left:56%;margin:0}
   /* width / horizontal-overflow guards on mobile */
   html,body,.app,.main,.feed{max-width:100vw;overflow-x:hidden}
   .note{padding:12px 12px}
@@ -1631,20 +1660,30 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .note .av{width:34px;height:34px}
 }
 
-/* ===== More sheet (mobile overflow) — glassy neon tiles ===== */
-.more-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}
-.more-item{display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 6px;
-  background:linear-gradient(160deg,rgba(var(--accent2-rgb),.10),rgba(8,5,18,.5));border:1px solid var(--line);
-  border-radius:14px;color:var(--text);cursor:pointer;font-size:11.5px;letter-spacing:.5px;
-  text-transform:uppercase;transition:.16s;position:relative;overflow:hidden}
+/* ===== More sheet (mobile overflow) — flat icon tiles =====
+   The tile surface is var(--panel) + var(--line), NOT the old hardcoded rgba(8,5,18,.5): that dark
+   fill sat under var(--text) labels, so on the light themes the sheet was near-black tiles with
+   dark-grey text. Panel vars follow the theme, so one rule reads on all seven. */
+.more-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:6px}
+.more-item{display:flex;flex-direction:column;align-items:center;gap:9px;padding:15px 6px 13px;
+  background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;color:var(--text);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.2px;
+  transition:.16s;position:relative;overflow:hidden}
 .more-item::after{content:"";position:absolute;inset:0;opacity:0;transition:.16s;
   background:radial-gradient(circle at 50% 0%,rgba(var(--accent-rgb),.2),transparent 70%)}
-.more-item:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 24px rgba(var(--accent-rgb),.22) inset;transform:translateY(-2px);color:#fff}
+.more-item:hover,.more-item:active{border-color:var(--neon);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.25);transform:translateY(-1px)}
 .more-item:hover::after{opacity:1}
-.more-ic{font-size:25px;line-height:1;filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.45))}
-.more-logout{color:#ff6b8b;border-color:rgba(255,60,90,.5);text-shadow:0 0 8px rgba(255,40,80,.5);box-shadow:0 0 12px rgba(255,40,80,.2)}
-.more-logout .more-ic{filter:drop-shadow(0 0 6px rgba(255,40,80,.6))}
-.more-logout:hover{border-color:#ff3b5c;color:#fff;box-shadow:0 0 22px rgba(255,40,80,.4)}
+/* The glyph sits in its own tinted disc — that's what gives the grid a rhythm when every icon is the
+   same flat line weight (emoji used to do it with colour). */
+.more-ic{display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:12px;
+  background:rgba(var(--accent-rgb),.13);color:var(--neon);font-size:22px;line-height:1;position:relative;z-index:1}
+.more-ic svg.ic{width:22px;height:22px;stroke-width:1.75}
+.more-item > span{position:relative;z-index:1}
+/* sheet headings ("🧭 Discover" → icon + word) */
+h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color:var(--neon)}
+.more-logout{color:var(--danger);border-color:rgba(255,60,90,.4)}
+.more-logout .more-ic{background:rgba(255,60,90,.14);color:var(--danger)}
+.more-logout:hover{border-color:var(--danger);box-shadow:0 0 0 1px rgba(255,60,90,.35)}
 
 /* ===== Articles (NIP-23) ===== */
 .art-top{padding:14px 18px;border-bottom:1px solid var(--line)}

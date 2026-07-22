@@ -6378,34 +6378,36 @@
     // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
     // '__golive' opens the go-live sheet directly — the phone camera path is the one most people want,
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
-    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['__golive','🔴','Go Live'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+    // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
+    // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
+    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['drafts','draft','Drafts'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
     const _stat=`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span></div>`;
-    modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
+    modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
   function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
-    const items=[['blossom','🌸','Blossom'],['__music','🎵','Music']];
-    modal(`<h3>📁 Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+    const items=[['blossom','flower','Blossom'],['__music','music','Music']];
+    modal(`<h3>${ICO('folder','h-ic')} Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; closeModal(); if(v==='__music') openMusic(); else switchView(v); });
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['news','🗞️','News'],['markets','📈','Markets'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Shopping'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan'],['stats','📊','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git Repos'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend
-    modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
+    modal(`<h3>${ICO('compass','h-ic')} Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
     });
   }
   function gamesMenu(){
-    const items=[['chess','♟️','Chess'],['ttt','⭕','Tic-Tac-Toe'],['hangman','🎯','Hangman'],['connect4','🔴','Connect Four'],['blackjack','🃏','Blackjack'],['holdem','🂡',"Texas Hold'em"]];
-    modal(`<h3>🎮 Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+    const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"]];
+    modal(`<h3>${ICO('gamepad','h-ic')} Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
   }
