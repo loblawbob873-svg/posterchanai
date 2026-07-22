@@ -293,7 +293,7 @@
       // scrolls the page vertically). Pinned, they're reachable at any feed count.
       return `<div class="news-bar">
         <div class="news-chips">${chip('all','All')}${_feeds.map(f=>chip(f.url, f.name)).join('')}</div>
-        <div class="news-acts">
+        <div class="news-baracts">
           <button class="news-chip news-readall" title="Mark all read">✓✓</button>
           <button class="news-chip news-add" title="Manage feeds">＋</button>
         </div></div>`;
