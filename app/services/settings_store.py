@@ -17,6 +17,7 @@ cursors) can't live in the relay, so they persist in a small `local_settings.jso
 
 import logging
 import os
+import fcntl
 import json
 import threading
 
@@ -55,6 +56,8 @@ def _is_local_only(key: str) -> bool:
 # get*/put/delete accessors below — there is no `Setting` ORM table anymore.
 # ============================================================================================
 _CACHE: dict = {}
+# local-only keys THIS process has written; only these are flushed to the shared JSON file.
+_LOCAL_DIRTY: set = set()
 _lock = threading.RLock()
 _loaded = False
 _HYDRATED_KEYS: set = set()   # keys for which the relay holds an authoritative value (vs a default)
@@ -79,14 +82,40 @@ def _load_local_file() -> dict:
 
 
 def _save_local_file() -> None:
-    """Persist ONLY the local-only keys (plumbing + runtime cursors) to the JSON file. Atomic."""
-    local = {k: v for k, v in _CACHE.items() if _is_local_only(k)}
+    """Persist local-only keys to the JSON file — merging with what's on disk, under a lock.
+
+    This file is shared by SEVERAL processes: the app (bot manager -> autopost_last_runs /
+    autopost_daily_counts) and the worker (fedi bridge + nitter -> *_since / *_cursor). Dumping this
+    process's whole cache used to clobber the other's keys: the worker writes a bridge cursor every
+    poll, rewriting autopost_last_runs from the value IT read at startup, which silently reverted the
+    manager's post times. A stale anchor makes `last_run + gap` permanently overdue, so every restart
+    fired an immediate auto-post and the configured schedule never held.
+
+    Only keys THIS process actually wrote (_LOCAL_DIRTY) are overlaid onto the on-disk state, so
+    concurrent writers no longer overwrite each other's state. flock serialises the read-modify-write
+    so two writers can't interleave."""
     tmp = _LOCAL_PATH + ".tmp"
     try:
         os.makedirs(os.path.dirname(_LOCAL_PATH), exist_ok=True)
-        with open(tmp, "w") as f:
-            json.dump(local, f)
-        os.replace(tmp, _LOCAL_PATH)
+        lock_path = _LOCAL_PATH + ".lock"
+        with open(lock_path, "w") as lock_f:
+            try:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass                                   # no flock (exotic fs) — still better than a clobber
+            merged = _load_local_file()                # whatever other processes have written
+            with _lock:
+                for k in list(_LOCAL_DIRTY):
+                    v = _CACHE.get(k)
+                    if v is not None and _is_local_only(k):
+                        merged[k] = v
+            with open(tmp, "w") as f:
+                json.dump(merged, f)
+            os.replace(tmp, _LOCAL_PATH)
+            try:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
     except Exception as e:
         logger.warning("[settings-store] could not write %s: %s", _LOCAL_PATH, e)
 
@@ -146,6 +175,8 @@ def _set_local(key: str, value) -> bool:
             return False
         _CACHE[key] = sval
         local = _is_local_only(key)
+        if local:
+            _LOCAL_DIRTY.add(key)   # only keys we wrote get flushed — see _save_local_file
     if local:
         _save_local_file()
     return True

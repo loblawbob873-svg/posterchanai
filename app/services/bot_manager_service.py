@@ -644,16 +644,6 @@ def _scheduled_jobs(image_bots, text_bots):
 #    only affects intervals.
 #  - daily post counts {"day": yday, "count": n}: a per-day cap survives restarts (the in-memory
 #    counter alone resets to 0 each process, letting a frequently-restarted node blow past the cap).
-# A restart must not produce a post. Whatever the anchor maths says, a freshly started manager stays
-# quiet for this long before it will spawn an interval poster — in development this service restarts
-# many times an hour, and each restart was putting a fresh autopost on the timeline. Fixed-hour image
-# bots are unaffected (they schedule off the absolute clock). Set 0 to disable the grace.
-try:
-    AUTOPOST_START_GRACE = max(0.0, float(os.environ.get("AUTOPOST_START_GRACE_SECS", "600")))
-except ValueError:
-    AUTOPOST_START_GRACE = 600.0
-_MANAGER_START = time.time()
-
 _LAST_RUN_KEY = "autopost_last_runs"
 _DAILY_COUNT_KEY = "autopost_daily_counts"
 
@@ -793,10 +783,6 @@ def _reconcile_scheduled(jobs, base_env):
         if sched["day"] != today:
             sched["day"], sched["count"] = today, 0
         if sched["process"] is not None or now < sched["next_run"]:
-            continue
-        # Startup grace: never let a restart itself trigger a post (see AUTOPOST_START_GRACE).
-        if _job_uses_interval(job) and (now - _MANAGER_START) < AUTOPOST_START_GRACE:
-            sched["next_run"] = max(sched["next_run"], _MANAGER_START + AUTOPOST_START_GRACE)
             continue
         # don't post during quiet hours; re-check shortly
         if _in_quiet_hours(d.get("auto_post_quiet_hours")):
