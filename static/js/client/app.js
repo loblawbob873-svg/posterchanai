@@ -8861,6 +8861,29 @@
     });
     return sync;
   }
+  // Messenger-style timestamps: a time for today, a weekday within the week, else a date. Keeps the
+  // list scannable — "14:32" next to a name is the single biggest thing that made it read as a
+  // conversation list rather than a flat directory.
+  function _dmClock(ts){ try{ return new Date(ts*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }catch(_){ return ''; } }
+  function _dmWhen(ts){
+    if(!ts) return '';
+    const d=new Date(ts*1000), now=new Date();
+    const sameDay=(a,b)=>a.toDateString()===b.toDateString();
+    if(sameDay(d,now)) return _dmClock(ts);
+    const y=new Date(now); y.setDate(y.getDate()-1);
+    if(sameDay(d,y)) return 'Yesterday';
+    if((now-d)/86400000 < 7) return d.toLocaleDateString([], {weekday:'short'});
+    return d.toLocaleDateString([], {day:'numeric', month:'short'});
+  }
+  function _dmDayLabel(ts){
+    const d=new Date(ts*1000), now=new Date();
+    const sameDay=(a,b)=>a.toDateString()===b.toDateString();
+    if(sameDay(d,now)) return 'Today';
+    const y=new Date(now); y.setDate(y.getDate()-1);
+    if(sameDay(d,y)) return 'Yesterday';
+    return d.toLocaleDateString([], {day:'numeric', month:'long', year: d.getFullYear()===now.getFullYear()?undefined:'numeric'});
+  }
+
   function renderMessages(){
     _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
     if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
@@ -8875,12 +8898,35 @@
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);
     const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
-    list.innerHTML = `<div class="dm-peer" id="dm-new"><span class="ic">+</span><b>New message</b></div>` + peers.map(pk=>{
+    // A messenger list, not a directory: avatar, name, the last line, WHEN it happened, and unread
+    // weight. Previously every row was an identical name+preview pill with no time and no way to see
+    // what was new — "a long boring list".
+    const _seen = Number(ClientSettings.get('dmSeen', 0)) || 0;
+    const rows = peers.map(pk=>{
       const p=profOf(pk); needProfile(pk); const last=dmPeers.get(pk).slice(-1)[0]||{};
-      const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,28)) : '🔒 …');
+      const prev = hidePrev ? '••• tap to view' : (last.text!=null ? enc(last.text.slice(0,80)) : '🔒 …');
       const nm = p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
-      return `<div class="dm-peer" data-peer="${pk}"><img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b><div class="muted small">${prev}</div></div></div>`;
+      // Unread = their newest message is newer than the last time this tab was opened. Cheap, and it
+      // can't mark your OWN message unread.
+      const unread = !!(last.t && last.t > _seen && !last.mine);
+      return `<div class="dm-peer${unread?' unread':''}" data-peer="${pk}" data-name="${enc((nm||'').toLowerCase())}">
+        <img class="dmav" data-prof="${pk}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+        <div class="dm-peer-main">
+          <div class="dm-peer-top"><b class="name" data-prof="${pk}">${emojiName(pk,nm)}</b>
+            <span class="dm-when">${enc(_dmWhen(last.t))}</span></div>
+          <div class="dm-peer-bot"><span class="dm-prev">${last.mine?'<span class="dm-you">You: </span>':''}${prev}</span>
+            ${unread?'<i class="dm-dot" aria-label="unread"></i>':''}</div>
+        </div></div>`;
     }).join('');
+    list.innerHTML = `<div class="dm-listhd">
+        <input class="input dm-search" id="dm-search" type="search" placeholder="🔍 Search conversations" autocomplete="off">
+        <button class="btn btn-neon small dm-newbtn" id="dm-new">✉ New</button>
+      </div>
+      <div class="dm-rows" id="dm-rows">${rows || '<div class="empty">No conversations yet.</div>'}</div>`;
+    { const q=$('#dm-search',list);
+      if(q) q.addEventListener('input', ()=>{ const t=q.value.trim().toLowerCase();
+        $$('.dm-peer',list).forEach(r=>{ const hay=(r.dataset.name||'')+' '+(r.querySelector('.dm-prev')||{}).textContent;
+          r.classList.toggle('hidden', !!t && !hay.toLowerCase().includes(t)); }); }); }
     $('#dm-new').onclick=newDmModal;
     _dmProgress();   // re-attach the "decrypting…" line — the innerHTML above just wiped it
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
@@ -8976,19 +9022,32 @@
     // crypto worker, which on a throttled/high-latency link is often busy verifying the incoming feed —
     // awaiting it first left the whole pane blank ("clicked and no messages show"). Undecrypted bubbles
     // render a "decrypting…" placeholder and get patched in place below (no re-render, no scroll jump).
-    const bubble=m=>`<div class="bubble ${m.mine?'me':'them'}" data-mid="${m.id}">${m.text!=null?linkify(m.text):'<span class="muted small">decrypting…</span>'}</div>`;
+    // Grouped, dated, timestamped — the three things that make a thread read as a conversation:
+    //  * consecutive messages from the SAME sender within 5 minutes stack tightly (one tail, not a
+    //    column of identical pills);
+    //  * a day separator whenever the date changes;
+    //  * a small time on every bubble, so you can tell when something was said.
+    const GROUP_GAP = 5 * 60;
+    const bubble=(m, prev)=>{
+      const startsGroup = !prev || prev.mine!==m.mine || (m.t||0)-(prev.t||0) > GROUP_GAP;
+      const newDay = !prev || new Date((prev.t||0)*1000).toDateString() !== new Date((m.t||0)*1000).toDateString();
+      const sep = newDay && m.t ? `<div class="dm-day"><span>${enc(_dmDayLabel(m.t))}</span></div>` : '';
+      const body = m.text!=null ? linkify(m.text) : '<span class="muted small">decrypting…</span>';
+      return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
+        + `<span class="b-txt">${body}</span>`
+        + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
+    };
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
-      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map(bubble).join('')}</div>
+      <div class="dm-msgs" id="dm-msgs">${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}</div>
       <div class="dm-compose">
         <div class="dm-atts" id="dm-atts" hidden></div>
-        <textarea class="input" id="dm-in" rows="2" placeholder="encrypted message… (paste an image to attach)"></textarea>
-        <div class="dm-tools">
+        <div class="dm-row">
           <button class="mini" id="dm-attach" title="attach">📎</button>
           <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
           ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF">🎬</button>`:''}
           <input type="file" id="dm-file" multiple hidden>
-          <span class="spacer"></span>
-          <button class="btn btn-neon" id="dm-send">Send ▶</button>
+          <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…"></textarea>
+          <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send">➤</button>
         </div></div>`;
     $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
     { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>renderProfileView(pk); }
@@ -9011,6 +9070,19 @@
       catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
       finally{ _dmSending=false; } };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
+    // One row that GROWS to a cap (messenger behaviour), and a send button that only lights up when
+    // there's something to send. The old box was a fixed 2 rows with a resize handle, which ate the
+    // thread on a phone and never fit a long message.
+    { const ta=$('#dm-in'), sb=$('#dm-send');
+      const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight, 132)+'px';
+        // Read the attachment strip from the DOM — there is no module-level attachment array here
+        // (wireImgAttach owns it), and referencing a name that doesn't exist would throw.
+        const hasAtt = !!(document.querySelector('#dm-atts') || {}).children?.length;
+        if(sb) sb.classList.toggle('on', !!ta.value.trim() || hasAtt); };
+      ta.addEventListener('input', grow);
+      // after send() clears it, and on open
+      ta.addEventListener('dm-reset', grow);
+      grow(); }
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
     const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
