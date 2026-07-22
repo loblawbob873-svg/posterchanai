@@ -77,13 +77,6 @@ onnxruntime>=1.16.0
 # numpy 2 — so an unpinned resolve grabs 2.5.x and numba's import hard-fails ("Numba needs NumPy
 # 2.4 or less"), breaking background removal + the parallax/alpha-matting effects. 2.4.x satisfies both.
 numpy>=2,<2.5
-
-# --- OPTIONAL: `recall` semantic search (./install.sh --recall) -----------------------------------
-# sentence-transformers + all-MiniLM-L6-v2 (22M params, ~90MB) power `recall`, and run on the CPU so
-# retrieval never takes VRAM from image/music/video. NOT listed as a hard dep because it pulls torch,
-# which isn't a base dependency here (each GPU stack installs its own) — requiring it would add ~2GB
-# to every lean/Nostr-only install. The feature reports how to enable itself when it's missing.
-#   sentence-transformers>=3,<6
 # Background removal for the `removebackground` command (u2net ONNX via onnxruntime, above).
 rembg>=2.0.50
 # Native LLM inference (requires compilation with GPU flags - see README)
