@@ -2687,3 +2687,73 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 @media (max-width:820px){
   .stream-chat{height:50vh}   /* base is already stacked + full width */
 }
+
+/* ---- 📊 Server Stats -------------------------------------------------------------------------
+   Every chart is a static SVG the module rebuilds on refresh (once a minute at most) — no canvas,
+   no rAF, no chart library. The only motion here is a hover transition, so an open Stats page is
+   ~0% CPU when idle. Per-card colour arrives as --acc, set inline by stats.js. */
+.st-wrap{max-width:820px;margin:0 auto;padding:0 10px 40px}
+.st-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:4px 0 12px}
+.st-h1{margin:0 0 2px;font-size:22px}
+.st-sec{margin:26px 0 10px;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+
+.st-ranges{display:flex;gap:8px;margin-bottom:14px}
+.st-range{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+  border-radius:999px;padding:7px 16px;font-size:14px;cursor:pointer;transition:.15s}
+.st-range:hover{border-color:var(--cyan);color:var(--text)}
+.st-range.on{color:#04121a;background:var(--cyan);border-color:var(--cyan);font-weight:700;box-shadow:var(--glow-cy)}
+
+/* hero — the headline series, drawn as bars because individual buckets are worth reading */
+.st-hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 16px 0;
+  position:relative;overflow:hidden}
+.st-hero::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 100%, rgba(var(--accent-rgb),.10), transparent 70%)}
+.st-herohd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;position:relative}
+.st-hnum{font-size:34px;font-weight:800;line-height:1.05;color:var(--acc,var(--cyan));
+  text-shadow:0 0 18px color-mix(in srgb, var(--acc,var(--cyan)) 45%, transparent)}
+.st-herochart{margin-top:10px;height:150px}
+.st-peak{white-space:nowrap;padding-top:4px}
+.st-lbl{font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+
+/* per-metric cards */
+.st-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-top:12px}
+.st-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 12px 0;
+  position:relative;overflow:hidden;transition:border-color .15s, transform .15s}
+.st-card:hover{border-color:var(--acc);transform:translateY(-1px)}
+.st-cardhd{display:flex;align-items:center;gap:7px}
+.st-ic{font-size:15px}
+.st-num{font-size:26px;font-weight:800;line-height:1.15;margin-top:2px;color:var(--acc)}
+.st-sub{margin-bottom:6px}
+.st-spark{height:46px;margin:0 -12px}
+.st-svg{display:block;width:100%;height:100%}
+
+/* plain number tiles */
+.st-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.st-tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.st-tval{font-size:20px;font-weight:700;color:var(--text)}
+.st-tlbl{margin-top:2px}
+
+/* games — a labelled bar per game */
+.st-games{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.st-grow{display:flex;align-items:center;gap:10px;font-size:14px}
+.st-glbl{flex:0 0 40%;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-gbar{flex:1 1 auto;height:9px;border-radius:999px;background:var(--panel2);overflow:hidden}
+.st-gbar>i{display:block;height:100%;border-radius:999px;
+  background:linear-gradient(90deg, var(--neon), var(--neon2));box-shadow:var(--glow-cy)}
+.st-gnum{flex:0 0 auto;min-width:38px;text-align:right;font-weight:700;color:var(--cyan)}
+
+.st-note{margin-top:16px;border-left:2px solid var(--line);padding-left:10px}
+.st-foot{margin-top:18px;text-align:center}
+
+@media (max-width:820px){
+  .st-wrap{padding:0 8px 90px}
+  .st-h1{font-size:20px}
+  .st-hnum{font-size:28px}
+  .st-herochart{height:120px}
+  .st-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .st-tiles{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+  .st-glbl{flex-basis:34%}
+}
+.st-new{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc);
+  border:1px solid currentColor;border-radius:999px;padding:1px 6px;opacity:.9}
+.st-hint{margin-top:8px}

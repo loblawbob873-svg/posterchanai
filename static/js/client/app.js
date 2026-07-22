@@ -1922,7 +1922,7 @@
     VIEW = v;
     if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global');
@@ -1968,6 +1968,7 @@
     if (VIEW==='4chan') return render4chan();
     if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -6052,7 +6053,7 @@
         ${chars.length?`<div class="fxs-sec">🧷 Sticker <span class="fxs-hint">optional overlay</span></div>
         <div class="fxs-grid">${chars.map(c=>chip(c,'fxs-char')).join('')}</div>`:''}
         <div class="fxs-sec">💬 Caption <span class="fxs-hint">optional text on the image</span></div>
-        <input class="input" id="fxs-cap" maxlength="120" placeholder="meme text…" value="${enc(capOf())}">
+        <input class="input" id="fxs-cap" maxlength="120" placeholder="your caption…" value="${enc(capOf())}">
       </div>
       <div class="fxs-ft">
         <code class="fxs-cmd" id="fxs-cmd"></code>
@@ -6067,7 +6068,12 @@
       root.classList.add('fxs-modal');
       if(root.parentElement) root.parentElement.classList.add('fxs-bg');
       const cmdEl=$('#fxs-cmd',root), cap=$('#fxs-cap',root), go=$('#fxs-go',root);
-      const build=()=>{ const t=(cap.value||'').trim();
+      const build=()=>{
+        // The caption is TEXT, not a command — the studio supplies the `meme` keyword itself. People
+        // type "meme hello" here (the old placeholder said "meme text…", which invited exactly that),
+        // which built `blacked meme meme hello`. Strip a leading meme keyword so it can't double up.
+        // A caption of the bare word "meme" is left alone: `meme meme` really is caption "meme".
+        const t=(cap.value||'').trim().replace(/^(?:meme\s+)+/i, '');
         S.meme = t ? ['meme', t] : [];
         return _fxJoin(S); };
       // Repaint selection + the live command. The command line is the whole point of the footer: it
@@ -6289,7 +6295,7 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['news','🗞️','News'],['markets','📈','Markets'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Shopping'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan']]
+    const items=[['news','🗞️','News'],['markets','📈','Markets'],['calls','📞','Calls'],['articles','📰','Articles'],['market','🛍️','Shopping'],['streams','📺','Streams'],['communities','👥','Communities'],['chat','💬','Chat'],['torrents','🧲','Torrents'],['repos','🌱','Git Repos'],['4chan','🍀','4chan'],['stats','📊','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend
     modal(`<h3>🧭 Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
@@ -10175,8 +10181,20 @@
           +`<button class="ai-cmd ai-cmd-danger" data-cmd="pin delete ${enc(String(p.id))}">🗑 Delete</button></div></div>`;
       }).join('')+'</div>';
     }
-    if((d.type==='files'||d.type==='reminders') && Array.isArray(d.files||d.reminders)){
-      const arr=d.files||d.reminders;
+    if(d.type==='reminders' && Array.isArray(d.reminders)){
+      // Reminders used to share the `files` branch below, which renders any item WITHOUT a url as a
+      // plain <span> — a reminder has no url, so every one came out as flat text. That's why the
+      // "buttons" weren't buttons. Each reminder now shows its due time and a real Cancel button,
+      // mirroring the pins layout (.ai-cmd carries the command to run on click).
+      return `<p>⏰ <b>Your reminders</b> (${d.reminders.length})</p>`
+        +'<div class="ai-pins">'+d.reminders.map(r=>
+          `<div class="ai-pin"><div class="ai-pin-q">⏰ ${enc(r.text||'')}`
+          +`<div class="muted small">${enc(r.human||'')}</div></div>`
+          +`<div class="ai-pin-btns"><button class="ai-cmd ai-cmd-danger" `
+          +`data-cmd="remind cancel ${enc(String(r.id))}">🗑 Cancel</button></div></div>`).join('')+'</div>';
+    }
+    if(d.type==='files' && Array.isArray(d.files)){
+      const arr=d.files;
       return head+'<div class="ai-files">'+arr.map(f=>{ const u=f.url||f.path||''; const n=f.filename||f.name||f.query||f.text||u||'item'; return u?`<a class="ai-file" href="${enc(u)}" target="_blank" rel="noopener">📄 ${enc(n)}</a>`:`<span class="ai-file">${enc(n)}</span>`; }).join('')+'</div>';
     }
     return head || aiFormat(d.text||d.message||'');   // graceful fallback: never drop a payload

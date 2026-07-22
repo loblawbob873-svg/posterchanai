@@ -35,7 +35,6 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "logs": "View system logs",
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
-        "4chan": "4chan browser: 4chan [g|pol|h] - view catalog",
         "compress": "Compress attached image(s), video(s) or PDF(s)",
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
@@ -505,6 +504,9 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._todo_command(arg)
         elif command == "translate":
             return await self._translate_command(arg, attachments=attachments)
+        # NOTE: `4chan` is no longer offered — it was dropped from COMMANDS (so it's out of the help
+        # sheet and no longer parsed as a command). The branch is kept because the client's Discover →
+        # 4chan VIEW is a separate feature and still renders this response type.
         elif command == "4chan":
             return await self._4chan_command(arg)
         elif command == "compress":

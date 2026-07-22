@@ -119,7 +119,11 @@ _FAHH_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "fahh.mp3"),
     "/var/lib/posterchanai/assets/fahh.mp3",
 ]
-_FAHH_DURATION = 5.0
+# Measured from assets/fahh.mp3: dead air until ~0.45s, the "fahh" peaks 1.0-1.5s (-17.5 dB), then a
+# decaying tail to 3.24s. Padding that to 5.0s meant well over half the clip was silence. Skip the
+# lead-in and cut shortly after the sound is spent.
+_FAHH_DURATION = 2.2
+_FAHH_AUDIO_START = 0.45
 _HELPME_AUDIO_CANDIDATES = [
     os.environ.get("HELPME_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "helpme.mp3"),
@@ -722,16 +726,19 @@ def _draw_tracked(draw, x: float, y: float, text: str, font, tracking: float, **
     return x
 
 
-def _pad_audio_to_duration(audio_path: str, seconds: float) -> str:
-    """Return a temp mp3 of `audio_path` padded with trailing silence to `seconds`, so a video
-    muxed with ffmpeg's -shortest lasts the full duration instead of ending with the short clip.
-    Caller deletes the temp file; falls back to the original path on any failure."""
+def _pad_audio_to_duration(audio_path: str, seconds: float, start: float = 0.0) -> str:
+    """Return a temp mp3 of `audio_path` cut to `seconds`, padded with trailing silence if it's
+    shorter, so a video muxed with ffmpeg's -shortest lasts the full duration instead of ending with
+    the short clip. `start` drops that many seconds off the FRONT first — for clips that open with
+    dead air before the sound actually hits. Caller deletes the temp file; falls back to the original
+    path on any failure."""
     from app.services.media_service import resolve_ffmpeg, ffmpeg_available
     if not ffmpeg_available():
         return audio_path
     fd, out_path = tempfile.mkstemp(prefix="fahh_pad_", suffix=".mp3")
     os.close(fd)
-    cmd = [resolve_ffmpeg(), "-i", audio_path, "-af", "apad", "-t", f"{seconds:.3f}",
+    af = "apad" if start <= 0 else f"atrim=start={start:.3f},asetpts=PTS-STARTPTS,apad"
+    cmd = [resolve_ffmpeg(), "-i", audio_path, "-af", af, "-t", f"{seconds:.3f}",
            "-c:a", "libmp3lame", "-y", out_path]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=120, text=True)
