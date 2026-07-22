@@ -257,7 +257,7 @@
     return { ev, ...r };
   }
   // A guest tried to do something that needs an account → drop the guest chrome and show login.
-  function _guestPrompt(){ toast('Log in to interact'); const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); }
+  function _guestPrompt(){ toast('Log in to interact'); _leaveGuest(); }
 
   // ---------- NIP-46 remote signer (Amber / nsecbunker) ----------
   // The user's secret key lives in the remote signer. We hold an EPHEMERAL "app key" (in the
@@ -899,7 +899,24 @@
   }
 
   // ---------- auth UI ----------
-  function showAuth(){ $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden'); try{ _instancePicker(); }catch(_){} }
+  function showAuth(which){
+    $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden');
+    // Open the pane the user actually asked for. "Sign up" that lands on a login form is the step
+    // where someone without a key gives up.
+    try{
+      const lg=$('#auth-login'), su=$('#auth-signup');
+      if(lg && su){ const signup = which==='signup';
+        lg.classList.toggle('hidden', signup); su.classList.toggle('hidden', !signup); }
+    }catch(_){}
+    try{ _instancePicker(); }catch(_){}
+  }
+  // Drop the guest chrome and open the auth gate. Shared by the guest card, the bottom bar and every
+  // _guestPrompt() path so they can't drift.
+  function _leaveGuest(which){
+    const b=document.getElementById('guest-bar'); if(b) b.remove();
+    document.body.classList.remove('guest');
+    showAuth(which);
+  }
   // Native app only: let a fresh install choose which PosterChan instance to connect to (defaults to
   // poster.place). Injected into the login screen so it can be set BEFORE logging in (login talks to the
   // instance). Saving stores it (localStorage pc_instance, read by the bundle shim) and reloads so every
@@ -1126,7 +1143,7 @@
       if(!gb){ gb=document.createElement('div'); gb.id='guest-bar';
         gb.innerHTML='<span>👁 Viewing publicly — log in to post, reply, react or zap.</span><button class="btn btn-neon small" id="guest-login">Log in / Sign up</button>';
         document.body.appendChild(gb); }
-      const gl=document.getElementById('guest-login'); if(gl) gl.onclick=()=>{ const b=document.getElementById('guest-bar'); if(b) b.remove(); document.body.classList.remove('guest'); showAuth(); };
+      const gl=document.getElementById('guest-login'); if(gl) gl.onclick=()=>_leaveGuest();
     }
     $('#btn-logout').onclick = logout;
     { const b=$('#btn-install'); if(b){
@@ -2199,6 +2216,27 @@
       } else setSt('no hashtags: '+((r&&r.error)||'try again'));
     }catch(_){ setSt('hashtags failed'); }
   }
+  // Guests get this where the composer would be: whose instance this is, and the two things they might
+  // want to do about it. It sits ABOVE the timeline rather than in a corner because that is the moment
+  // someone decides whether to join — the old bottom bar said "log in to interact" without ever saying
+  // what this place IS, or offering signup as its own step.
+  const SOURCE_URL = 'https://github.com/loblawbob873-svg/posterchanai';
+  function _guestCardHtml(){
+    // A custom site_name wins; the stock one becomes the product's full name rather than the bare
+    // "PosterChan" the setting defaults to.
+    const nm = (CFG && CFG.name || '').trim();
+    const name = (nm && nm !== 'PosterChan') ? nm : 'PosterChan AI';
+    const src = (CFG && CFG.source_url) || SOURCE_URL;   // older backends don't send it → constant
+    return `<div class="guest-card" id="guest-card">
+      <img class="guest-logo" src="${enc((CFG && CFG.logo_url) || LOGO)}" onerror="this.src='${LOGO}'" alt="">
+      <div class="guest-name">${enc(name)}</div>
+      <div class="guest-acts">
+        <button class="btn btn-neon" id="guest-signup">Sign up</button>
+        <button class="btn btn-ghost" id="guest-login2">Log in</button>
+        <a class="guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
+      </div>
+    </div>`;
+  }
   function _timelineHeaderHtml(){
     const canPost = !!(ME && !GUEST);
     const av=(Store.profile(ME&&ME.pubkey)||{}).picture||LOGO;
@@ -2229,7 +2267,7 @@
               <label class="muted small" style="margin-left:auto"><input type="checkbox" id="tl-cmp-poll-multi"> Allow multiple</label></div>
           </div>
         </div>
-      </div>`:'')
+      </div>`:_guestCardHtml())
       +`<div class="tl-tabs" role="tablist">
         <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
         <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
@@ -2238,6 +2276,10 @@
   }
   function _bindTimelineHeader(feed){
     $$('.tltab',feed).forEach(b=> b.onclick=()=>{ const v=b.dataset.tl; if(v!==VIEW) switchView(v); });
+    // Guest card: Sign up goes STRAIGHT to the signup pane. Landing on the login form and having to
+    // find "create an account" is the step that loses people who have no key yet.
+    { const gs=$('#guest-signup',feed); if(gs) gs.onclick=()=>_leaveGuest('signup');
+      const gl=$('#guest-login2',feed); if(gl) gl.onclick=()=>_leaveGuest('login'); }
     // ▦ media grid — lives here rather than the topbar because it only ever applied to these two views.
     // Toggling redraws just #tl-notes, so flip our own state class directly (the header isn't re-rendered).
     { const mb=$('#tl-media-tab',feed); if(mb) mb.onclick=()=>{ _tlMedia=!_tlMedia; ClientSettings.set('tlMedia', _tlMedia);

@@ -151,6 +151,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # (solves the chicken/egg: nobody can grant AI access until an admin exists).
         "admin_unclaimed": len(admin_npubs) == 0,
         "gif_enabled": bool(_setting(db, "tenor_api_key") or _setting(db, "giphy_api_key")),
+        # Public source link shown on the logged-out guest card. Overridable so a fork points at
+        # its own repo instead of ours.
+        "source_url": _setting(db, "source_url", "https://github.com/loblawbob873-svg/posterchanai"),
         "name": _setting(db, "site_name", "PosterChan"),
         # Custom logo URL (Admin → Site Settings); blank → the client keeps its built-in logo.
         "logo_url": _setting(db, "site_logo_url", ""),
