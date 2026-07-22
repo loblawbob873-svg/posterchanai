@@ -679,6 +679,13 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   body.rb-collapsed .rb-toggle{right:32px}                   /* tab slides to the app's edge (= its outer padding) */
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
+/* Hot / From-follows segmented control — one pane, two sources. Panel + line vars only, so it takes
+   the theme the way the nav does instead of needing a light-theme patch. */
+.rb-tabs{display:flex;gap:4px;margin:0 0 10px;padding:3px;background:var(--panel2);border:1px solid var(--line);border-radius:11px}
+.rb-tab{flex:1 1 0;min-width:0;padding:7px 6px;border:0;border-radius:8px;background:transparent;color:var(--muted);
+  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rb-tab:hover{color:var(--text)}
+.rb-tab.active{background:rgba(var(--accent-rgb),.16);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.38)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
   transition:.15s;background:linear-gradient(135deg,rgba(var(--accent-rgb),.05),rgba(var(--accent2-rgb),.05)),rgba(8,5,18,.62);overflow:hidden}
 .rb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(var(--neon),var(--neon2));opacity:.55;transition:.15s}
@@ -1905,8 +1912,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .statbtn{font-size:15.5px}.statbtn b{font-size:16.5px}
 .psearch b{font-size:16.5px}.psearch .muted.small{font-size:14px}
 
-/* extra breathing room (+ a neon divider) between Trending hashtags and Hot */
-#rb-trending{padding-bottom:20px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+/* extra breathing room (+ a divider) between the Topics chips and the post list below them */
+#rb-topics{padding-bottom:18px;margin-bottom:4px;border-bottom:1px solid var(--line)}
 
 /* font consistency: compose/reply textarea, preview + tool buttons larger */
 #cmp,.note-preview .txt{font-size:18px;line-height:1.55;letter-spacing:.2px}

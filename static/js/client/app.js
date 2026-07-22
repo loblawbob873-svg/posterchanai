@@ -1225,7 +1225,10 @@
     if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
-      rb.addEventListener('click', e=>{ const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open); });   // hot + follows rows open their thread
+      rb.addEventListener('click', e=>{
+        const tab=e.target.closest('.rb-tab'); if(tab){ setRbTab(tab.dataset.rbtab); return; }   // Hot / From-follows toggle
+        const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open);  // a row opens its thread
+      });
       startAutoScroll(); }
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
@@ -12180,20 +12183,34 @@
     img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); c.toBlob(b=>{ URL.revokeObjectURL(u); b?res(b):rej(new Error('toBlob')); }, 'image/png'); }catch(e){ URL.revokeObjectURL(u); rej(e); } };
     img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img load')); }; img.src=u; }); }
 
-  // ---------- right column: Hot / Trending (desktop) ----------
-  // First paint: build all three sections. Hot is an infinite-scroll feed (see _hot below).
+  // ---------- right column: Topics + the Hot/Follows pane (desktop) ----------
+  // Two sections now: the Topics chip cloud, and ONE post list behind a Hot / From-follows toggle.
   // The rightbar EXISTS in the DOM even on mobile (CSS display:none ≤820px), so a bare querySelector
   // isn't enough — gate on it being VISIBLE, else we run its heavy trending/hot/follows queries for a
   // sidebar the user can't see (pure waste on a slow phone link).
   function _rightbarShown(){ const rb=document.querySelector('.rightbar'); return !!rb && getComputedStyle(rb).display!=='none'; }
+  // Hot and "From follows" build the identical rb-item card, so they share one #rb-list pane instead
+  // of stacking two lists that read as a second timeline. The choice is remembered across sessions.
+  // rbListEl() hands the pane out ONLY to the tab that currently owns it — that's what stops a
+  // background refresh (or an in-flight query from before a tab switch) writing its rows into the
+  // list the user is actually looking at.
+  let _rbTab='hot'; try{ if(localStorage.getItem('rbTab')==='follows') _rbTab='follows'; }catch(_){}
+  function rbListEl(tab){ return _rbTab===tab ? document.getElementById('rb-list') : null; }
+  function syncRbTabs(){ $$('.rb-tab').forEach(b=> b.classList.toggle('active', b.dataset.rbtab===_rbTab)); }
+  function setRbTab(tab){
+    if((tab!=='hot' && tab!=='follows') || tab===_rbTab) return;
+    _rbTab=tab; try{ localStorage.setItem('rbTab',tab); }catch(_){}
+    syncRbTabs();
+    const el=document.getElementById('rb-list'); if(el) el.innerHTML='<div class="muted small">loading…</div>';
+    if(tab==='hot') loadHot(true); else loadFollows();
+  }
   async function loadRightbar(){
     if(!_rightbarShown()) return;   // display:none on mobile → skip; but build in a backgrounded desktop tab (no document.hidden gate)
-    loadHot(true);                   // Hot = most-engaged posts, infinite-scroll
-    loadTrendingTags();              // Trending = trending hashtags (last 24h)
-    loadDiscover();                  // curated hashtag shortcuts for newcomers
-    loadFollows();                   // From follows = what people you follow liked/boosted
+    loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
+    syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
+    if(_rbTab==='hot') loadHot(true); else loadFollows();
   }
-  // Routine update (timer): refresh the chip clouds and prepend any freshly-hot posts to the top
+  // Routine update (timer): refresh the chip cloud and prepend any freshly-hot posts to the top
   // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
   function refreshRightbar(){
     if(document.hidden || !_rightbarShown()) return;   // skip the periodic refresh while backgrounded or on mobile (hidden rightbar)
@@ -12201,21 +12218,22 @@
     // on a feed it belongs to. Refreshing trending/hot every interval while reading a Community/Profile/
     // Files view was needless CPU + relay load for content that isn't even being looked at.
     if(VIEW!=='home' && VIEW!=='global') return;
-    loadTrendingTags(); loadDiscover(); loadFollows(); refreshHotTop();
+    loadTopics();
+    if(_rbTab==='hot') refreshHotTop(); else loadFollows();   // only the visible list costs a query now
   }
-  // Curated hashtag shortcuts — friendly entry points into popular communities for new users.
+  // Curated hashtag shortcuts — friendly entry points into popular communities. They now PAD the one
+  // Topics cloud rather than owning a section of their own: on a quiet relay the live tally can come
+  // back with two chips, and these keep the block from looking broken.
   const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
                          ['nostr','🟣'], ['art','🎨'], ['news','📰'], ['memes','😂']];
-  function loadDiscover(){
-    const el=document.getElementById('rb-discover'); if(!el) return;
-    el.innerHTML=`<div class="tag-cloud">${DISCOVER_TAGS.map(([t,ic])=>
-      `<button class="tag-chip disc" data-tag="${t.toLowerCase()}"><span class="disc-ic">${ic}</span> #${enc(t)}</button>`).join('')}</div>`;
-    el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
-  }
-  // Trending HASHTAGS: tally #tags across recent notes (explicit `t` tags + inline #hashtags),
-  // rank by how many distinct posts used each, render clickable chips → a #tag feed.
-  async function loadTrendingTags(){
-    const el=document.getElementById('rb-trending'); if(!el) return;
+  const TOPIC_TRENDING=10, TOPIC_MAX=14;
+  // ONE topics cloud = trending hashtags (tallied over the last 24h from explicit `t` tags AND inline
+  // #hashtags in recent notes, ranked by how many distinct posts used each) followed by whatever
+  // curated tags aren't already trending. Both render a clickable chip → a #tag feed. This replaces
+  // the old stacked "Trending" + "Discover" pair, which spent a third of the column on two chip
+  // clouds that a reader can't meaningfully tell apart.
+  async function loadTopics(){
+    const el=document.getElementById('rb-topics'); if(!el) return;
     const since=Math.floor(Date.now()/1000)-24*3600;
     let evs=[]; try{ evs=await Relay.query([{ kinds:[1], since, limit:300 }]); }catch(_){}   // 300 recent posts is plenty for the tag tally; 600 doubled the relay serialize + client regex cost
     const tally={};
@@ -12225,9 +12243,15 @@
       for(const m of (e.content||'').matchAll(/(?:^|\s)#([a-z0-9_]{2,30})\b/gi)) seen.add(m[1].toLowerCase());
       for(const g of seen) tally[g]=(tally[g]||0)+1;
     }
-    const top=Object.entries(tally).filter(([,c])=>c>=2).sort((a,b)=>b[1]-a[1]).slice(0,14);
-    if(!top.length){ el.innerHTML='<div class="muted small">No trending tags yet.</div>'; return; }
-    el.innerHTML=`<div class="tag-cloud">${top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}">#${enc(g)} <span class="tag-n">${c}</span></button>`).join('')}</div>`;
+    const top=Object.entries(tally).filter(([,c])=>c>=2).sort((a,b)=>b[1]-a[1]).slice(0,TOPIC_TRENDING);
+    const live=new Set(top.map(([g])=>g));
+    const chips=top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}">#${enc(g)} <span class="tag-n">${c}</span></button>`);
+    for(const [t,ic] of DISCOVER_TAGS){
+      if(chips.length>=TOPIC_MAX) break;
+      const g=t.toLowerCase(); if(live.has(g)) continue;   // never show a tag twice, once ranked and once curated
+      chips.push(`<button class="tag-chip disc" data-tag="${enc(g)}"><span class="disc-ic">${ic}</span> #${enc(t)}</button>`);
+    }
+    el.innerHTML=`<div class="tag-cloud">${chips.join('')}</div>`;
     el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));
   }
   // a feed of every post carrying a hashtag (NIP-12 `t` filter), with scroll-back pagination
@@ -12312,7 +12336,7 @@
   // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
   // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
   async function loadFollows(){
-    const el=document.getElementById('rb-follows'); if(!el) return;
+    let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane
     const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
     const since=Math.floor(Date.now()/1000)-24*3600;
     let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], authors, since, limit:500 }]); }catch(_){}
@@ -12320,22 +12344,29 @@
     for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
     const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,12).map(x=>x[0]);
-    if(!top.length){ el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
+    // Re-acquire the pane after every await below: the user can hit "Hot" while these queries are in
+    // flight, and the captured `el` would happily paint follow rows into the Hot list.
+    if(!top.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
     await fetchNotes(top);
     const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) return ''; const pr=profOf(ev.pubkey);   // respect mutes + word filter
       const txt=rbSnippet(ev.content);
       return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div>${rbBody(ev)}</div>`;
     }).filter(Boolean).join('');
+    el=rbListEl('follows'); if(!el) return;
     el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
   }
-  // Materialize up to HOT_PAGE not-yet-shown ranked items into the Hot column. `where` = append
+  // Materialize up to HOT_PAGE not-yet-shown ranked items into the shared list pane. `where` = append
   // (scroll-down) or prepend (routine refresh). Returns how many rows were actually added.
-  async function addHot(el, ranked, where){
+  // The pane is looked up AFTER the fetch, not passed in: a tab switch mid-fetch must drop these rows
+  // rather than paint them over whatever Follows has since put there. (Dropping is safe — switching
+  // back to Hot runs loadHot(true), which clears _hot.shown and re-ranks from scratch.)
+  async function addHot(ranked, where){
     const pick=[];
     for(const [id,c] of ranked){ if(_hot.shown.has(id)) continue; pick.push([id,c]); if(pick.length>=HOT_PAGE) break; }
     if(!pick.length) return 0;
     pick.forEach(([id])=>_hot.shown.add(id));   // mark before fetch so concurrent calls don't double-add
     await fetchNotes(pick.map(x=>x[0]));
+    const el=rbListEl('hot'); if(!el) return 0;
     const frag=document.createDocumentFragment();
     for(const [id,c] of pick){ const html=hotRowHtml(id,c); if(!html) continue;
       const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node); }
@@ -12346,20 +12377,22 @@
     return n;
   }
   async function loadHot(reset){
-    const el=document.getElementById('rb-hot'); if(!el) return;
+    let el=rbListEl('hot'); if(!el) return;
     if(reset){ _hot={ loading:true, done:false, win:HOT_WIN0, shown:new Set() }; el.innerHTML='<div class="muted small">loading…</div>'; }
-    const added=await addHot(el, await rankHot(_hot.win), 'append');
-    if(reset && !added) el.innerHTML='<div class="muted small">Nothing yet.</div>';
+    const added=await addHot(await rankHot(_hot.win), 'append');
+    if(reset && !added){ el=rbListEl('hot'); if(el) el.innerHTML='<div class="muted small">Nothing yet.</div>'; }
     _hot.loading=false;
   }
   // Scroll-down handler: widen the window until we manage to append something or hit the cap.
   async function loadMoreHot(){
-    if(_hot.loading||_hot.done) return; const el=document.getElementById('rb-hot'); if(!el) return;
+    if(_hot.loading||_hot.done) return; const el=rbListEl('hot'); if(!el) return;
     if(el.querySelectorAll('.rb-item').length>=HOT_MAX){ _hot.done=true; return; }   // cap so the column can loop
     _hot.loading=true;
     let added=0, guard=0;
     while(added===0 && guard++<8){
-      added=await addHot(el, await rankHot(_hot.win), 'append');
+      if(!rbListEl('hot')) break;   // switched to Follows mid-loop: stop widening the window (and firing
+                                    // relay queries) for a list nobody is looking at, and don't mark it done
+      added=await addHot(await rankHot(_hot.win), 'append');
       if(added===0){ if(_hot.win>=HOT_WIN_MAX){ _hot.done=true; break; } _hot.win=Math.min(_hot.win*2, HOT_WIN_MAX); }
     }
     _hot.loading=false;
@@ -12367,16 +12400,16 @@
   // Routine refresh: prepend genuinely-new hot posts, but only when the user is near the top so we
   // never jump their scroll position out from under them.
   async function refreshHotTop(){
-    const el=document.getElementById('rb-hot'); if(!el||_hot.loading) return;
+    const el=rbListEl('hot'); if(!el||_hot.loading) return;
     const rb=document.querySelector('.rightbar'); if(rb && rb.scrollTop>140) return;
-    _hot.loading=true; try{ await addHot(el, await rankHot(HOT_WIN0), 'prepend'); } finally{ _hot.loading=false; }
+    _hot.loading=true; try{ await addHot(await rankHot(HOT_WIN0), 'prepend'); } finally{ _hot.loading=false; }
   }
   function onRightbarScroll(){
     const rb=document.querySelector('.rightbar'); if(!rb) return;
     if(rb.scrollTop+rb.clientHeight >= rb.scrollHeight-320) loadMoreHot();
   }
   // Gentle auto-scroll "ticker": creep the rightbar down on its own so the column cycles through
-  // Trending → Discover → Hot over and over without a hand on the wheel. Pauses while the pointer is
+  // Topics → the post list over and over without a hand on the wheel. Pauses while the pointer is
   // over the column (reading/clicking) or the tab is hidden. When the bottom is reached it loops
   // back to the top and refreshes the lap. Honours prefers-reduced-motion.
   const _auto={ on:true, acc:0, last:0, hold:0 };
@@ -12393,7 +12426,9 @@
       if(_auto.hold>0){ _auto.hold-=dt; return; }   // brief pause at the top of each lap
       const max=rb.scrollHeight-rb.clientHeight; if(max<=0) return;
       if(rb.scrollTop>=max-1){          // reached the end of the column → start the lap over
-        if(!_hot.done){ loadMoreHot(); return; }   // still has more Hot to surface first
+        // Only Hot paginates; on the Follows tab _hot.done stays false forever, and without the tab
+        // check the ticker would call a loadMoreHot() that no-ops and never loop back to the top.
+        if(_rbTab==='hot' && !_hot.done){ loadMoreHot(); return; }
         rb.scrollTop=0; _auto.acc=0; _auto.hold=1500; refreshRightbar();   // loop + refresh the lap
         return;
       }
