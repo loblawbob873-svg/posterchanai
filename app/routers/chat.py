@@ -1814,8 +1814,20 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 "previous", "last", "above", "said", "also", "more", "again",
                                 "continue", "same", "instead", "another", "shorter", "longer",
                                 "different", "decimal", "further", "else", "other",
+                                # Personal/memory references. "What is my name?" is 17 chars and
+                                # contains no word above, so it was treated as a standalone question
+                                # and answered with no history at all — the user asking the single
+                                # most obvious memory question and being told nothing.
+                                "i", "me", "my", "mine", "we", "us", "our", "you", "your",
+                                "remember", "forget", "earlier", "before", "told", "name",
                             }
-                            _current_words = set(content.lower().split()) if isinstance(content, str) else set()
+                            # Split on WORD characters, not whitespace: `.split()` left punctuation
+                            # attached, so "Where am I from again?" tokenised to "again?" and missed
+                            # "again" entirely. Context words sit at the end of a question far more
+                            # often than not, so this silently disabled history for exactly the
+                            # follow-ups that need it most.
+                            _current_words = (set(re.findall(r"[a-z0-9']+", content.lower()))
+                                              if isinstance(content, str) else set())
                             _is_context_dependent = (
                                 not _is_bare_url and
                                 (bool(_current_words & _CONTEXT_REFS) or
