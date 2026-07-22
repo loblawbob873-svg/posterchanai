@@ -8931,8 +8931,13 @@
     _dmProgress();   // re-attach the "decrypting…" line — the innerHTML above just wiped it
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
     $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
-    // Tapping the AVATAR opens the sender's profile instead of the conversation.
-    $$('.dmav',list).forEach(av=> av.onclick=e=>{ e.stopPropagation(); renderProfileView(av.dataset.prof); });
+    // The name carries data-prof (used elsewhere for profile popovers); inside a list row it must not
+    // steal the tap from the row.
+    $$('.dm-peer .name',list).forEach(n=>{ n.removeAttribute('data-prof'); });
+    // The AVATAR opens the conversation too. It's the biggest target in the row, so making it the one
+    // spot that does something ELSE meant reaching for a chat and landing on a profile. Every
+    // messenger opens the chat from anywhere in the row; the profile is one tap away inside it (the
+    // thread header's name), so nothing is lost.
     // lazily decrypt ONLY the last message of each peer for the preview (not every message). When
     // previews are hidden, skip decryption entirely (privacy + a CPU saving on every list render).
     const need=hidePrev ? [] : peers.filter(pk=>{ const l=dmPeers.get(pk).slice(-1)[0]; return l && l.text==null; });
@@ -9049,7 +9054,16 @@
           <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…"></textarea>
           <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send">➤</button>
         </div></div>`;
-    $('#dm-back').onclick=()=>{ $('#dm-list').classList.remove('has-active'); dmActive=null; };
+    // Back must do something on DESKTOP too. It only removed `has-active`, which is what shows the
+    // thread as a full-screen overlay on a phone — on a two-pane desktop layout that class changes
+    // nothing, so the button looked broken. Now it also clears the open thread and the row highlight,
+    // returning the right pane to its empty state on every layout.
+    $('#dm-back').onclick=()=>{
+      $('#dm-list').classList.remove('has-active');
+      dmActive=null;
+      $$('.dm-peer').forEach(e=>e.classList.remove('active'));
+      const th=$('#dm-thread'); if(th) th.innerHTML='<div class="empty">Select a conversation, or start one.</div>';
+    };
     { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.onclick=()=>renderProfileView(pk); }
     // Mute the DM sender straight from the conversation. Muting drops back to the list (the thread
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
@@ -9094,7 +9108,17 @@
     // element that's actually on screen (not a detached one). Bail if the user navigated away.
     let _patched=false;
     for(const mm of msgs){ if(mm.text==null){ await decryptMsg(pk, mm); if(dmActive!==pk) return;
-      const el=document.querySelector('#dm-msgs .bubble[data-mid="'+mm.id+'"]'); if(el){ el.innerHTML=linkify(mm.text||''); _patched=true; } } }
+      const el=document.querySelector('#dm-msgs .bubble[data-mid="'+mm.id+'"]');
+      if(el){
+        // Patch ONLY the text span. Replacing the bubble's whole innerHTML (what this used to do)
+        // destroyed the .b-txt/.b-meta structure the moment a message decrypted — which is every
+        // message, since DMs decrypt lazily — so timestamps vanished and patched bubbles laid out
+        // differently from unpatched ones.
+        const _t = el.querySelector('.b-txt');
+        if(_t) _t.innerHTML = linkify(mm.text||'');
+        else el.innerHTML = linkify(mm.text||'');
+        _patched=true;
+      } } }
     // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.
     if(_patched && _atBottom && !_wantTop){ const mm2=$('#dm-msgs'); if(mm2) mm2.scrollTop=mm2.scrollHeight; }
   }
