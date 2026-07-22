@@ -125,14 +125,6 @@ async def generate_video_for_user(
     """Generate a clip with node→node load balancing + (local) GPU lock + VRAM swap. Returns the
     assembled, branded MP4 bytes. `local_only` skips remote nodes (set by /api/generate-video).
     Raises VideoError on failure."""
-    # Public stats counter — see image_factory. `local_only` means another node forwarded this to us,
-    # so it's already counted on the node whose user asked for it; counting again would double it.
-    if not local_only:
-        try:
-            from app.services import stats_service
-            stats_service.bump("video")
-        except Exception:
-            pass
 
     cfg = _factory_settings(db)
     if not cfg["enabled"]:
@@ -197,4 +189,11 @@ async def generate_video_for_user(
 
     if video_bytes is None:
         raise last_err or VideoError("Video generation failed on all nodes.")
+    # Public stats counter: count a produced clip, NOT an attempt — same rule as image/music.
+    if not local_only:
+        try:
+            from app.services import stats_service
+            stats_service.bump("video")
+        except Exception:
+            pass
     return video_bytes
