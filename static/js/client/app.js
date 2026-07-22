@@ -6074,7 +6074,10 @@
         // which built `blacked meme meme hello`. Strip a leading meme keyword so it can't double up.
         // A caption of the bare word "meme" is left alone: `meme meme` really is caption "meme".
         const t=(cap.value||'').trim().replace(/^(?:meme\s+)+/i, '');
-        S.meme = t ? ['meme', t] : [];
+        // `meme` is itself one of the effect chips, and the caption keyword is the SAME word. Picking
+        // that chip and typing a caption built `meme meme hello` — the doubling reported at the
+        // bottom of the sheet. When meme is the base effect the caption just follows it.
+        S.meme = t ? (S.effect === 'meme' ? [t] : ['meme', t]) : [];
         return _fxJoin(S); };
       // Repaint selection + the live command. The command line is the whole point of the footer: it
       // shows exactly what will be sent, which the old studio only revealed by looking at the input.
@@ -6178,7 +6181,11 @@
     const mi=t.indexOf('meme'); const pre=mi>=0?t.slice(0,mi):t; const meme=mi>=0?t.slice(mi):[];
     let char=''; let head=pre.slice(); const ci=pre.indexOf('char');
     if(ci>=0 && pre[ci+1]){ char=pre[ci+1]; head=pre.slice(0,ci).concat(pre.slice(ci+2)); }
-    return { effect:head[0]||'', mods:head.slice(1), char, meme };
+    const p = { effect:head[0]||'', mods:head.slice(1), char, meme };
+    // `meme <text>` has no separate base effect — the meme chip IS the effect. Surface it as such so
+    // reopening the studio shows the chip selected and the caption in the caption box.
+    if(!p.effect && p.meme[0]==='meme') p.effect = 'meme';
+    return p;
   }
   function _fxJoin(p){ return [p.effect,...p.mods,...(p.char?['char',p.char]:[]),...p.meme].filter(Boolean).join(' '); }
   function _fxSetEffect(ta, eff){ const p=_fxParse(ta.value); p.effect=eff; ta.value=_fxJoin(p); }
