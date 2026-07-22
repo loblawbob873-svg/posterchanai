@@ -12476,7 +12476,7 @@
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
   // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
   // the in-memory notification store, so unlike Hot/Follows it costs no relay query.
-  const RB_NOTIF_ROWS=6;
+  const RB_NOTIF_ROWS=5;
   function loadNotifs(){
     const el=rbListEl('notifs'); if(!el) return;
     const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
