@@ -1,6 +1,6 @@
 /* #stats — public Server Stats. Anyone (including a logged-out guest) can read them.
  *
- * Data comes from ONE cached endpoint (/client/stats, recomputed at most once a minute server-side),
+ * Data comes from ONE cached endpoint (/client/server-stats, recomputed at most once a minute server-side),
  * so opening this page costs the server a dictionary lookup, not a query.
  *
  * Rendering is deliberately dumb: every chart is a static SVG string built once per refresh — no
@@ -108,6 +108,15 @@
     function render(){
       const feed = $('#feed'); if(!feed) return;
       if(!_data){ feed.innerHTML = `<div class="st-wrap"><div class="spinner"></div></div>`; return; }
+      // Say so out loud rather than rendering an empty page: a payload without `windows` means the
+      // endpoint isn't the stats one (this is exactly what a route-name collision looked like — the
+      // page silently drew nothing while the fetch returned 200).
+      if(!_data.windows){
+        feed.innerHTML = `<div class="st-wrap"><h2 class="st-h1">📊 Server Stats</h2>
+          <p class="muted">Stats aren't available from this server yet — it may need a restart to pick
+          up the stats endpoint.</p></div>`;
+        return;
+      }
       const w = (_data.windows||{})[_range] || {series:{}, n:0};
       const S = w.series || {};
       const notes = S.notes || [];
@@ -189,7 +198,7 @@
     async function load(force){
       if(_busy) return; _busy = true;
       try{
-        const r = await fetch('/client/stats', {credentials:'include'});
+        const r = await fetch('/client/server-stats', {credentials:'include'});
         if(r.ok){ const d = await r.json(); if(!d.error) _data = d; }
       }catch(_){ }
       finally{ _busy = false; }

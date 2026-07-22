@@ -675,9 +675,13 @@ async def suggest_hashtags(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({"hashtags": " ".join(tags)})
 
 
-@router.get("/stats")
-async def client_stats():
+@router.get("/server-stats")
+async def client_server_stats():
     """Public server statistics for the Server Stats page. No auth: these are aggregate counts only.
+
+    NOT /client/stats — that name was already taken by the sidebar ticker above (users/online/relay).
+    FastAPI keeps the FIRST route registered for a path, so reusing it meant this handler never ran
+    and the page silently received the ticker payload instead.
 
     The payload is computed at most once per minute for the whole instance (see stats_service), so
     hitting this endpoint in a loop costs a dictionary lookup, not a query.
