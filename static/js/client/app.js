@@ -9724,7 +9724,18 @@
   async function aiDeleteConversation(){
     const id=_ai.convId; if(!id) return;
     if(!confirm('Delete this chat and all its messages?')) return;
-    try{ const r=await fetch('/api/conversations/'+id, { method:'DELETE' }); if(!r.ok) throw 0; }
+    try{
+      let r=await fetch('/api/conversations/'+id, { method:'DELETE' });
+      // 409 = a command is STILL RUNNING on this chat. A slow one (flashcards can take minutes)
+      // outlives the websocket, so the chat looks dead and deleting is the natural reaction — but
+      // that purges it before the answer lands and the reply is lost. Say so, and let them insist.
+      if(r.status===409){
+        let d={}; try{ d=(await r.json()).detail||{}; }catch(_){ }
+        if(!confirm((d.message||'A command is still running on this chat.')+'\n\nDelete it anyway?')) return;
+        r=await fetch('/api/conversations/'+id+'?force=1', { method:'DELETE' });
+      }
+      if(!r.ok) throw 0;
+    }
     catch(_){ toast('delete failed'); return; }
     try{ if(_ai.ws){ _ai.ws.onclose=null; _ai.ws.close(); } _ai.ws=null; }catch(_){}
     _ai.convId=null;

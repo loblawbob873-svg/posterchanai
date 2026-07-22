@@ -4,6 +4,7 @@ from starlette.requests import Request
 from pydantic import BaseModel
 import asyncio
 import re
+import time
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from pathlib import Path
@@ -138,6 +139,38 @@ async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: s
         return None
     finally:
         s.close()
+
+
+# Conversations with a command still running. A slow one (flashcards held the GPU for 222s) far
+# outlives the websocket, so the chat looks dead and the natural reaction is to delete it — which
+# purges the conversation ~a minute before its answer arrives, so the reply lands nowhere. Deleting
+# now says so instead. Per-process (like the rest of the WS state) and TTL'd, so a crash mid-command
+# can never wedge a conversation as undeletable.
+_inflight: dict = {}
+_INFLIGHT_TTL = 20 * 60
+
+
+def _mark_busy(conv_id: int) -> None:
+    try:
+        _inflight[int(conv_id)] = time.time()
+    except Exception:
+        pass
+
+
+def _clear_busy(conv_id: int) -> None:
+    _inflight.pop(int(conv_id), None)
+
+
+def _busy_for(conv_id: int) -> float:
+    """Seconds a command has been running on this conversation, or 0."""
+    ts = _inflight.get(int(conv_id))
+    if not ts:
+        return 0.0
+    age = time.time() - ts
+    if age > _INFLIGHT_TTL:          # stale (process died mid-command) → not busy
+        _inflight.pop(int(conv_id), None)
+        return 0.0
+    return age
 
 
 def _artifact_url(rel: str, conv_id: int) -> str:
@@ -329,6 +362,7 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: int,
+    force: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -337,7 +371,21 @@ async def delete_conversation(
         Conversation.user_id == current_user.id
     ).first()
     if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        # Already gone: deleting twice is not an error, and racing DELETEs used to 500 on the second
+        # one (ObjectDeletedError) because the row vanished under the session.
+        return {"ok": True, "already_deleted": True}
+
+    # Refuse while a command is still running on this conversation. A slow one (flashcards took 222s)
+    # outlives the websocket, the chat looks dead, and deleting it purges the conversation before the
+    # answer lands — so the reply is lost with no trace. `?force=1` deletes anyway.
+    _busy = _busy_for(conversation_id)
+    if _busy and not force:
+        raise HTTPException(status_code=409, detail={
+            "error": "still working",
+            "seconds": int(_busy),
+            "message": f"I'm still working on this chat ({int(_busy)}s so far) — the answer would be "
+                       f"lost if it's deleted now. Wait for it, or delete anyway.",
+        })
 
     # Delete associated files (non-fatal: never let storage cleanup 500 the delete, or the chat
     # "never leaves" the list — attachment files may live on a remote node and error on cleanup).
@@ -1575,6 +1623,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 except Exception:
                                     pass
                             _ka = asyncio.create_task(_keepalive())
+                            _mark_busy(conversation_id)
                             try:
                                 result = await command_service.execute_command(
                                     command, arg, last_prompt,
@@ -1584,6 +1633,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 )
                             finally:
                                 _ka.cancel()
+                                _clear_busy(conversation_id)
 
                             # Check if stopped during execution
                             if manager.should_stop(user.id, conn_id, conversation_id):

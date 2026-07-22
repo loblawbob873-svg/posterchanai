@@ -928,7 +928,7 @@ async def poll_once(db: Session) -> None:
             await _drain_timeline(db, port, platform, instance_url, token, instance_host,
                                   blocked_domains, include_replies, "local", "fedi_bridge_local_since", deadline)
         except Exception as e:
-            logger.warning("[fedi-bridge] local drain failed: %s", e)
+            logger.warning("[fedi-bridge] local drain failed: %s: %s", type(e).__name__, e, exc_info=True)
 
     await _drain_timeline(db, port, platform, instance_url, token, instance_host,
                           blocked_domains, include_replies, ttype, "fedi_bridge_global_since", deadline)
@@ -961,7 +961,7 @@ def cleanup_state() -> None:
         db.commit()
     except Exception as e:
         db.rollback()
-        logger.warning("[fedi-bridge] state cleanup failed: %s", e)
+        logger.warning("[fedi-bridge] state cleanup failed: %s: %s", type(e).__name__, e)
     finally:
         db.close()
 
@@ -991,7 +991,7 @@ def start_fedi_bridge_scheduler() -> None:
             logger.warning("[fedi-bridge] poll exceeded %ss and was cancelled; retrying next cycle", _POLL_TIMEOUT)
             db.rollback()
         except Exception as e:
-            logger.warning("[fedi-bridge] poll job error: %s", e)
+            logger.warning("[fedi-bridge] poll job error: %s: %s", type(e).__name__, e, exc_info=True)
             db.rollback()
         finally:
             db.close()
@@ -1016,7 +1016,7 @@ def start_fedi_bridge_scheduler() -> None:
             logger.warning("[fedi-bridge] deletion check exceeded 80s; retrying next cycle")
             db.rollback()
         except Exception as e:
-            logger.warning("[fedi-bridge] deletion job error: %s", e)
+            logger.warning("[fedi-bridge] deletion job error: %s: %s", type(e).__name__, e)
             db.rollback()
         finally:
             db.close()
@@ -1035,5 +1035,5 @@ def stop_fedi_bridge_scheduler() -> None:
         try:
             _scheduler.shutdown(wait=False)
         except Exception as e:
-            logger.warning("[fedi-bridge] scheduler shutdown error: %s", e)
+            logger.warning("[fedi-bridge] scheduler shutdown error: %s: %s", type(e).__name__, e)
         _scheduler = None
