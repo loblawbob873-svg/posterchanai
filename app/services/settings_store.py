@@ -37,7 +37,7 @@ _PLUMBING_KEYS = frozenset({
 # are also inherently per-node (each node has its own sync position), so they must stay local: never
 # hydrate (a stale relay cursor would reset progress → re-post old content) and never write-through.
 _RUNTIME_KEYS = frozenset({"nitter_seen", "autopost_last_runs", "autopost_daily_counts",
-                           "fedi_timeline_since"})
+                           "fedi_timeline_since", "stats_counters"})
 _RUNTIME_SUFFIXES = ("_since", "_seen", "_cursor", "_last_runs", "_next_batch")
 
 
@@ -118,6 +118,60 @@ def _save_local_file() -> None:
                 pass
     except Exception as e:
         logger.warning("[settings-store] could not write %s: %s", _LOCAL_PATH, e)
+
+
+def bump_counter(key: str, day: str, metric: str, n: int = 1) -> None:
+    """Increment data[day][metric] in a local-only JSON counter, at the FILE level under flock.
+
+    Counters are incremented from whichever process does the work — image/music/video generation runs
+    in the app, call signaling in the worker — so an in-memory dict is per-process and a periodic
+    flush from the OTHER process writes nothing. (That is exactly why Server Stats showed 0 images and
+    0 music after a day of generating: the app counted them, the worker flushed its own empty copy,
+    and a restart discarded the app's.) Read-modify-write against the file makes the count correct no
+    matter which process observed the event, and durable across the restarts this node does often.
+    """
+    try:
+        os.makedirs(os.path.dirname(_LOCAL_PATH), exist_ok=True)
+        with open(_LOCAL_PATH + ".lock", "w") as lock_f:
+            try:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass
+            disk = _load_local_file()
+            try:
+                data = json.loads(disk.get(key) or "{}")
+                if not isinstance(data, dict):
+                    data = {}
+            except (ValueError, TypeError):
+                data = {}
+            bucket = data.get(day)
+            if not isinstance(bucket, dict):
+                bucket = {}
+            bucket[metric] = int(bucket.get(metric, 0)) + int(n)
+            data[day] = bucket
+            data = dict(sorted(data.items())[-90:])       # bounded: ~90 days is more than any chart
+            disk[key] = json.dumps(data, separators=(",", ":"))
+            tmp = _LOCAL_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(disk, f)
+            os.replace(tmp, _LOCAL_PATH)
+            with _lock:                                   # keep this process's cache in step
+                _CACHE[key] = disk[key]
+            try:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+    except Exception as e:
+        logger.warning("[settings-store] counter bump failed (%s/%s): %s", key, metric, e)
+
+
+def read_counter(key: str) -> dict:
+    """The counter dict straight FROM DISK (another process may have written since our last read)."""
+    try:
+        data = json.loads(_load_local_file().get(key) or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 # ---- synchronous read accessors (replace every db.query(Setting) read) ----

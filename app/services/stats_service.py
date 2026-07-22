@@ -67,7 +67,7 @@ WINDOWS = (
     ("day",    2592000, 86400),
 )
 
-_STATS_D = "pcai:stats:counters"   # kind-30078 doc: {"YYYY-MM-DD": {"calls": n, "image": n, ...}}
+_COUNTER_KEY = "stats_counters"   # local-only settings key: {"YYYY-MM-DD": {"calls": n, ...}}
 # Things that leave NO trace to aggregate later, so they can only be counted as they happen:
 #   calls  — kind-25050 signaling is ephemeral, the relay stores none of it
 #   image/music/video — generated media is returned to the caller, never recorded server-side
@@ -86,14 +86,15 @@ def bump(metric: str, n: int = 1) -> None:
     generation paths, where a slow or failing stats write would be felt as a slow call or a stalled
     image. Persistence happens later, out of band, in flush_counters().
     """
-    global _counts_dirty
     try:
         if metric not in COUNTERS:
             return
-        day = time.strftime("%Y-%m-%d", time.gmtime())
-        _counts.setdefault(day, {})
-        _counts[day][metric] = _counts[day].get(metric, 0) + int(n)
-        _counts_dirty = True
+        # Write THROUGH, don't tally in memory: these events are observed by different processes
+        # (media generation in the app, call signaling in the worker), so a per-process tally plus a
+        # periodic flush counted nothing — each flushed its own empty copy and restarts discarded the
+        # rest. That is why Server Stats read 0 images and 0 music after a day of generating.
+        from app.services import settings_store
+        settings_store.bump_counter(_COUNTER_KEY, time.strftime("%Y-%m-%d", time.gmtime()), metric, n)
     except Exception:
         pass
 
@@ -104,66 +105,22 @@ def bump_call(n: int = 1) -> None:
 
 
 async def _load_counters() -> None:
-    """Read persisted daily counts once, so a restart doesn't reset these charts to zero."""
-    global _counts_loaded
-    if _counts_loaded:
-        return
-    _counts_loaded = True     # set first: a failed read must not retry on every request
-    try:
-        from app.services import settings_store, keystore
-        from app.services.nostr_store import get_doc
-        from app.services.nostr import nostr_service, bip340
-        nsec = keystore.get_operator_nsec()
-        if not nsec:
-            return
-        sk = nostr_service.decode_seckey(nsec)
-        if not sk:
-            return
-        port = settings_store.get_int("nostr_relay_port", 3052)
-        # Plaintext doc (encrypt=False on write) — these are public counts, and the page is public.
-        doc = await get_doc(port, _STATS_D, pubkey=bip340.pubkey_from_seckey(sk).hex(), encrypt=False)
-        if isinstance(doc, dict):
-            for day, metrics in doc.items():
-                if not isinstance(metrics, dict):
-                    continue
-                cur = _counts.setdefault(day, {})
-                for m, n in metrics.items():
-                    try:
-                        # max(), not +=: a reload must not double-count what's already in memory.
-                        cur[m] = max(int(n), cur.get(m, 0))
-                    except Exception:
-                        continue
-    except Exception as e:
-        logger.debug("[stats] counter history load skipped: %s", e)
+    """No-op. Counters are written through to the shared local counter file on every bump and read
+    from disk on every render, so there is nothing to hydrate. Kept so callers need no change."""
+    return
 
 
 async def flush_counters() -> None:
-    """Persist daily counts to the relay (kind-30078). Cheap, idempotent, safe to skip."""
-    global _counts_dirty
-    if not _counts_dirty:
-        return
-    try:
-        from app.services import settings_store, keystore
-        from app.services.nostr_store import put_doc
-        from app.services.nostr import nostr_service
-        nsec = keystore.get_operator_nsec()
-        if not nsec:
-            return
-        sk = nostr_service.decode_seckey(nsec)
-        if not sk:
-            return
-        # Keep ~90 days: more than the longest chart needs, bounded so the doc can't grow forever.
-        keep = dict(sorted(_counts.items())[-90:])
-        port = settings_store.get_int("nostr_relay_port", 3052)
-        await put_doc(port, sk, _STATS_D, keep, encrypt=False)
-        _counts_dirty = False
-    except Exception as e:
-        logger.debug("[stats] counter flush failed: %s", e)
+    """No-op — see _load_counters. The old design tallied in memory and flushed here every 5 minutes,
+    which counted NOTHING: the scheduled flush runs in the WORKER while image/music/video generation
+    happens in the APP, so each process flushed its own empty copy and a restart discarded the rest."""
+    return
 
 
 async def flush_calls() -> None:
-    """Back-compat alias for the scheduled flush job."""
-    await flush_counters()
+    """Back-compat alias for the scheduled job."""
+    return
+
 
 
 def _series(db, now: int):
@@ -187,7 +144,22 @@ def _series(db, now: int):
             metric = _KIND_TO_METRIC.get(int(kind))
             if i is not None and metric:
                 series[metric][i] += int(count)
-        out[key] = {"t0": start, "step": step, "n": n, "series": series}
+        # Per-window totals so the range selector actually applies to the summary sections. Without
+        # these, Network / Games / AI showed all-time figures that never moved when you switched
+        # range, which reads as broken. Measured: 0.01s / 0.08s / 0.50s for the three windows.
+        row = db.execute(text("SELECT count(*), count(DISTINCT pubkey) FROM events "
+                              "WHERE created_at >= :s AND created_at <= :n"),
+                         {"s": start, "n": now}).first()
+        games_like = " OR ".join(["t.value LIKE :p%d" % i for i in range(len(GAME_PREFIXES))])
+        gparams = {"s": start}
+        for i, pre in enumerate(GAME_PREFIXES.values()):
+            gparams["p%d" % i] = pre + "%"
+        gcount = db.execute(text(
+            "SELECT count(DISTINCT t.value) FROM event_tags t JOIN events e ON e.id = t.event_id "
+            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s" % games_like), gparams).scalar() or 0
+        out[key] = {"t0": start, "step": step, "n": n, "series": series,
+                    "totals": {"events": int(row[0] or 0), "people": int(row[1] or 0),
+                               "games": int(gcount)}}
     return out
 
 
@@ -265,14 +237,17 @@ def _chat_series(db, now: int):
 
 def _counter_series(now: int):
     """Daily series for every counted metric, plus totals. 30 days to match the day window."""
+    # Read FROM DISK each time — another process may have counted something since this one started.
+    from app.services import settings_store
+    counts = settings_store.read_counter(_COUNTER_KEY)
     days = [time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400)) for i in range(29, -1, -1)]
     today = time.strftime("%Y-%m-%d", time.gmtime(now))
     out = {"days": days, "metrics": {}}
     for m in COUNTERS:
         out["metrics"][m] = {
-            "series": [int(_counts.get(d, {}).get(m, 0)) for d in days],
-            "total":  int(sum(v.get(m, 0) for v in _counts.values())),
-            "today":  int(_counts.get(today, {}).get(m, 0)),
+            "series": [int((counts.get(d) or {}).get(m, 0)) for d in days],
+            "total":  int(sum(int((v or {}).get(m, 0)) for v in counts.values())),
+            "today":  int((counts.get(today) or {}).get(m, 0)),
         }
     # Said out loud on the page: these counters start when the feature ships, unlike the relay-derived
     # series which are historical. A silent 0 would read as "nobody uses this".

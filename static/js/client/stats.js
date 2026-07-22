@@ -38,6 +38,16 @@
     const bytes = b => { if(!b) return '—'; const u=['B','KB','MB','GB','TB']; let i=0,v=Number(b);
       while(v>=1024 && i<u.length-1){ v/=1024; i++; } return (v>=10?v.toFixed(0):v.toFixed(1))+' '+u[i]; };
     const rateLabel = () => ({minute:'per minute', hour:'per hour', day:'per day'})[_range];
+    // Plain-English name for the selected range, used to label the summary sections so it's obvious
+    // WHAT the number covers (they used to show all-time figures that never moved when you switched
+    // range, which read as broken).
+    const rangeWord = () => ({minute:'last hour', hour:'last 24h', day:'last 30 days'})[_range];
+    // Counters are stored per DAY, so a 60-minute range can't be answered from them — the honest
+    // mapping is: last hour / last 24h -> today, 30 days -> the whole series.
+    const inRange = (series)=>{
+      const a = series || [];
+      return _range === 'day' ? sum(a) : (a.length ? a[a.length-1] : 0);
+    };
 
     // ---- SVG chart builders -----------------------------------------------------------------
     // Both take an already-bounded array (60/24/30 points) and return a string. No DOM, no state.
@@ -90,12 +100,12 @@
 
     /* A card for a counted metric (30 daily points). `note` marks series that only start when the
        feature shipped, so a low number isn't mistaken for low usage. */
-    function seriesCard(id, icon, label, colour, vals, total, today, note){
+    function seriesCard(id, icon, label, colour, vals, ranged, allTime, note){
       return `<div class="st-card" style="--acc:${colour}">
         <div class="st-cardhd"><span class="st-ic">${icon}</span><span class="st-lbl">${enc(label)}</span>
           ${note?'<span class="st-new" title="Counted from when this feature shipped">new</span>':''}</div>
-        <div class="st-num">${nf(total)}</div>
-        <div class="st-sub muted small">${nf(today)} today</div>
+        <div class="st-num">${nf(ranged)}</div>
+        <div class="st-sub muted small">${enc(rangeWord())} · ${nf(allTime)} all time</div>
         <div class="st-spark">${areaChart(vals, colour, 'c_'+id, 46)}</div>
       </div>`;
     }
@@ -119,6 +129,7 @@
       }
       const w = (_data.windows||{})[_range] || {series:{}, n:0};
       const S = w.series || {};
+      const W = w.totals || {events:0, people:0, games:0};   // per-window figures (see stats_service)
       const notes = S.notes || [];
       const T = _data.totals || {}, G = _data.games || {by_game:{}};
       const CT = _data.counters || {metrics:{}}, isNew = !!CT.since_deploy;
@@ -151,31 +162,37 @@
 
         <div class="st-grid">${ORDER.filter(m=>m!=='notes' && (S[m]||[]).some(v=>v>0)).map(m=>card(m, S[m])).join('')}</div>
 
-        <h3 class="st-sec">🌐 Network</h3>
+        <h3 class="st-sec">🌐 Network <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
+        <div class="st-tiles">
+          ${tile(`events ${rangeWord()}`, nf(W.events), 'Events this relay accepted in the selected range')}
+          ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published in the selected range')}
+          ${tile('notes '+rangeWord(), nf(sum(S.notes||[])))}
+          ${tile('zaps '+rangeWord(), nf(sum(S.zaps||[])))}
+        </div>
+        <div class="muted small st-hint">All time:</div>
         <div class="st-tiles">
           ${tile('events stored', nf(T.events), 'Every event this relay holds')}
-          ${tile('events today', nf(T.events_24h))}
-          ${tile('notes all-time', nf(T.notes))}
-          ${tile('people active today', nf(T.pubkeys_24h), 'Distinct pubkeys that published in the last 24h')}
-          ${tile('people active (30d)', nf(T.pubkeys_30d))}
+          ${tile('notes', nf(T.notes))}
           ${tile('profiles known', nf(T.profiles))}
           ${tile('relay database', bytes(T.db_bytes))}
         </div>
 
-        <h3 class="st-sec">🤖 AI &amp; media</h3>
+        <h3 class="st-sec">🤖 AI &amp; media <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-grid">
-          ${seriesCard('chat','💬','AI chat','#22d3ee', chat, T.ai_requests, T.ai_requests_24h, false)}
-          ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, cm.image.total, cm.image.today, isNew)}
-          ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, cm.music.total, cm.music.today, isNew)}
-          ${seriesCard('video','🎬','Video','#34d399', cm.video.series, cm.video.total, cm.video.today, isNew)}
-          ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, cm.calls.total, cm.calls.today, isNew)}
+          ${seriesCard('chat','💬','AI chat','#22d3ee', chat, inRange(chat), T.ai_requests, false)}
+          ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, inRange(cm.image.series), cm.image.total, isNew)}
+          ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, inRange(cm.music.series), cm.music.total, isNew)}
+          ${seriesCard('video','🎬','Video','#34d399', cm.video.series, inRange(cm.video.series), cm.video.total, isNew)}
+          ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, inRange(cm.calls.series), cm.calls.total, isNew)}
         </div>
-        <div class="muted small st-hint">Daily, last 30 days.</div>
+        <div class="muted small st-hint">These are counted per day, so the 60-minute range shows today.</div>
 
-        <h3 class="st-sec">🎮 Games &amp; streams</h3>
+        <h3 class="st-sec">🎮 Games &amp; streams <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-tiles">
-          ${tile('games played', nf(G.total))}
-          ${tile('live streams', nf(T.streams))}
+          ${tile('games played '+rangeWord(), nf(W.games))}
+          ${tile('streams '+rangeWord(), nf(sum(S.streams||[])))}
+          ${tile('games all time', nf(G.total))}
+          ${tile('streams all time', nf(T.streams))}
         </div>
 
         <div class="st-games">${Object.keys(gm).map(k=>`

@@ -2910,3 +2910,5 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
   .dm-row .mini{width:38px;height:38px}
   .bubble{max-width:82%;font-size:16.5px}
 }
+.st-rangelbl{margin-left:8px;font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--cyan);
+  border:1px solid var(--line);border-radius:999px;padding:2px 9px;vertical-align:middle}
