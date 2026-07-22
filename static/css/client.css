@@ -686,8 +686,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    two actions plus a source link. Same box geometry as .tl-cmp so the timeline doesn't shift when you
    sign in and the composer takes its place. */
 .guest-card{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;
-  margin:12px 14px 0;padding:18px 16px;background:var(--panel);border:1px solid var(--line);
-  border-radius:var(--r);box-shadow:var(--glow)}
+  margin:12px 14px 0;padding:18px 16px;background:transparent;border:0;box-shadow:none}
 .guest-logo{width:56px;height:56px;border-radius:14px;object-fit:cover}
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
