@@ -1760,31 +1760,51 @@
     if(t.length <= 60 && _RE_GM.test(t)) return 'gm';
     return '';
   }
-  let _celebObs=null; const _celebDone=new Set();
+  // ONE sweep drives every celebrating post on screen, rather than an IntersectionObserver plus a timer
+  // per note. The observer version started reliably but its "left the viewport" callback did not always
+  // arrive — and a loop that only stops on a callback is a loop that can run forever behind you. A single
+  // interval that checks rects is deterministic, testable, and cheaper than N timers.
+  let _celebTick=null;
+  const _CELEB_SWEEP=1500;
   function observeCelebrations(scope){
     if(NO_IMAGES) return;                                                    // data saver: no decorative animation
     try{ if(matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(_){}
-    if(!('IntersectionObserver' in window)) return;
-    if(!_celebObs) _celebObs=new IntersectionObserver(ens=>{
-      for(const en of ens){ if(!en.isIntersecting) continue; _celebObs.unobserve(en.target); _playCelebration(en.target); }
-    }, { threshold:0.4 });
-    $$('.note[data-celebrate]:not([data-cobs])', scope||document).forEach(el=>{
-      el.setAttribute('data-cobs','1');
-      if(_celebDone.has(el.dataset.id||'')) return;                          // already celebrated this post
-      _celebObs.observe(el);
-    });
+    if(!_celebTick && $$('.note[data-celebrate]', scope||document).length) _celebTick=setInterval(_celebSweep, _CELEB_SWEEP);
+  }
+  function _celebInView(el){
+    const r=el.getBoundingClientRect();
+    const vh=window.innerHeight||document.documentElement.clientHeight||0;
+    return r.height>0 && r.bottom>0 && r.top<vh;
+  }
+  function _celebSweep(){
+    const els=$$('.note[data-celebrate]');
+    // Nothing celebratory rendered any more (view switched, feed re-rendered) → stop entirely. hydrate()
+    // starts it again the moment such a post appears, so there is no idle timer in the common case.
+    if(!els.length){ clearInterval(_celebTick); _celebTick=null; return; }
+    const now=Date.now();
+    for(const el of els){
+      if(!_celebInView(el)){                                                 // scrolled away → clear + pause
+        try{ const b=el.querySelector(':scope > .celeb'); if(b) b.remove(); }catch(_){}
+        el._celebNext=0; continue;
+      }
+      const period = el.dataset.celebrate==='gm' ? 3600 : 3200;
+      if(!el._celebNext || now>=el._celebNext){ _playCelebration(el); el._celebNext=now+period; }
+    }
   }
   function _playCelebration(el){
-    const id=el.dataset.id||'';
-    if(id){ if(_celebDone.has(id)) return; _celebDone.add(id); }
     const kind=el.dataset.celebrate;
+    // One burst at a time per post — the previous overlay goes before the next starts, so repeats can't
+    // stack up into a denser and denser cloud the longer you sit on a post.
+    try{ const old=el.querySelector(':scope > .celeb'); if(old) old.remove(); }catch(_){}
     const box=document.createElement('div');
     box.className='celeb celeb-'+kind;
     if(kind==='confetti'){
       const cols=['#ff5a7a','#ffcf2b','#3fb6c8','#8affc1','#c77dff','#4493f8'];
       // Fall the note's own height (+ a little) so the confetti clears the card whatever size it is.
       box.style.setProperty('--fall', (el.offsetHeight+40)+'px');
-      const N=26; let h='';
+      // Fewer pieces on a phone: this now REPEATS while the post is on screen, and several celebratory
+      // posts can be visible at once, so the per-frame cost is paid over and over on the weakest hardware.
+      const N = (window.innerWidth||1024) <= 820 ? 16 : 26; let h='';
       for(let i=0;i<N;i++){
         const left=(i*(100/N)) + (Math.random()*3 - 1.5);
         h+=`<i style="left:${left.toFixed(1)}%;background:${cols[i%cols.length]};`
