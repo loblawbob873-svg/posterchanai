@@ -3686,10 +3686,10 @@
       FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
     let cur='';
 
-    subModal(`<h3>🌸 Choose a cover</h3>
+    subModal(`<div class="bp-head"><h3>🌸 Choose a cover</h3>
       <p class="muted small" id="bp-count"></p>
-      ${folders.length>1?`<div class="bp-folders">${folders.map(([v,l])=>
-        `<button type="button" class="news-chip bp-folder" data-f="${enc(v)}">${enc(l)}</button>`).join('')}</div>`:''}
+      ${folders.length>1?`<div class="bp-folders"><label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-fsel">${
+        folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('')}</select></label></div>`:''}</div>
       <div class="bp-grid" id="bp-grid"></div>
       <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Cancel</button></div>`, (root, close)=>{
       const grid=$('#bp-grid',root), cnt=$('#bp-count',root);
@@ -3702,9 +3702,9 @@
             <img loading="lazy" src="${enc(u)}" alt="" onerror="this.closest('.bp-cell').remove()"></button>`;
         }).join('') || '<div class="muted small">Nothing in this folder.</div>';
         $$('.bp-cell',grid).forEach(c=> c.onclick=()=>{ close(); try{ onPick(c.dataset.url); }catch(_){ } });
-        $$('.bp-folder',root).forEach(b=> b.classList.toggle('on', (b.dataset.f||'')===cur));
+
       };
-      $$('.bp-folder',root).forEach(b=> b.onclick=()=>{ cur=b.dataset.f||''; draw(); });
+      { const sel=$('#bp-fsel',root); if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
       $('#bp-x',root).onclick=close;
       draw();
     });
@@ -7300,8 +7300,9 @@
   function blossomPicker(ta){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
-    bg.innerHTML=`<div class="modal glass neon-border"><h3>🌸 Attach from your Blossom files</h3>
-      <div id="bp-folders" class="bp-folders"></div>
+    bg.innerHTML=`<div class="modal glass neon-border">
+      <div class="bp-head"><h3>🌸 Attach from your Blossom files</h3>
+        <div id="bp-folders" class="bp-folders"></div></div>
       <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
     $('#modal-root').appendChild(bg);
@@ -7336,11 +7337,17 @@
           const ext=_MIME_EXT[el.dataset.type]||'';
           ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):'');
           ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('attached'); });
-        fbar.querySelectorAll('.bp-folder').forEach(b=> b.classList.toggle('on',(b.dataset.f||'')===cur));
+
       };
-      fbar.innerHTML = folders.length>1 ? folders.map(([v,l])=>
-        `<button type="button" class="news-chip bp-folder" data-f="${enc(v)}">${enc(l)}</button>`).join('') : '';
-      fbar.querySelectorAll('.bp-folder').forEach(b=> b.onclick=()=>{ cur=b.dataset.f||''; draw(); });
+      // ONE ROW, always. A wrapping chip bar grew with the folder count until it filled a phone
+      // screen, and its translucent background let the grid scroll visibly through it. A select is
+      // a fixed-height control and opens the OS picker on mobile.
+      fbar.innerHTML = folders.length>1
+        ? `<label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-folder-sel">${
+            folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('')}</select></label>`
+        : '';
+      { const sel=fbar.querySelector('#bp-folder-sel');
+        if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
       draw();
     })();
   }
