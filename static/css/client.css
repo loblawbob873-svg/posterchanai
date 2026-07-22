@@ -2834,14 +2834,19 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
    margins let the opaque strip span the modal's padding so nothing shows past its edges. */
 /* The sticky region is the FIRST child and carries the title, so nothing can scroll above or through
    it — a bar placed after the title left a padding-height gap where cards showed above it. */
-.bp-head{position:sticky;top:0;z-index:3;background:var(--bg2);margin:-22px -22px 10px;padding:16px 22px 0;
+/* NO negative top margin. Sticky pins the MARGIN box, so a -22px top margin made the header jump by
+   exactly that much the moment it pinned — "it moves as you scroll". The modal drops its own top
+   padding instead (.bp-modal) and the header supplies it, so the pinned position equals the resting
+   position and nothing shifts. */
+.bp-modal{padding-top:0}
+.bp-head{position:sticky;top:0;z-index:3;background:var(--bg2);margin:0 -22px 10px;padding:16px 22px 0;
   border-bottom:1px solid var(--line)}
 .bp-head h3{margin:0 0 6px}
 .bp-folders{margin:0;padding:0 0 10px}
 .bp-folders:empty{display:none}
 .bp-folderlbl{display:flex;align-items:center;gap:8px}
 .bp-folder-sel{margin:0;flex:1 1 auto;min-width:0;font-size:16px;min-height:44px}  /* 16px: iOS zoom */
-@media (max-width:820px){ .bp-head{margin:-16px -16px 8px;padding:12px 16px 0} }
+@media (max-width:820px){ .bp-head{margin:0 -16px 8px;padding:12px 16px 0} }
 /* file-mode fields in the Make-something sheet */
 .gen-file-btn{margin-top:8px;min-height:46px}
 .gen-file-list{margin-top:6px;word-break:break-all}

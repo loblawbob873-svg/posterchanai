@@ -3701,7 +3701,8 @@
           return `<button type="button" class="bp-cell" data-url="${enc(u)}"${nm?` title="${enc(nm)}"`:''}>
             <img loading="lazy" src="${enc(u)}" alt="" onerror="this.closest('.bp-cell').remove()"></button>`;
         }).join('') || '<div class="muted small">Nothing in this folder.</div>';
-        $$('.bp-cell',grid).forEach(c=> c.onclick=()=>{ close(); try{ onPick(c.dataset.url); }catch(_){ } });
+        root.classList.add('bp-modal');   // drops the modal's top padding so the sticky head can't jump
+      $$('.bp-cell',grid).forEach(c=> c.onclick=()=>{ close(); try{ onPick(c.dataset.url); }catch(_){ } });
 
       };
       { const sel=$('#bp-fsel',root); if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
@@ -7300,8 +7301,8 @@
   function blossomPicker(ta){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
-    bg.innerHTML=`<div class="modal glass neon-border">
-      <div class="bp-head"><h3>🌸 Attach from your Blossom files</h3>
+    bg.innerHTML=`<div class="modal glass neon-border bp-modal">
+      <div class="bp-head"><h3>🌸 Blossom Files</h3>
         <div id="bp-folders" class="bp-folders"></div></div>
       <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
