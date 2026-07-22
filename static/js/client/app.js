@@ -10343,13 +10343,24 @@
       _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio); _narrateAudio.play().catch(()=>toast('tap 🔊 to play'));
     }catch(_){ toast('narration failed'); }
   }
+  // Why the mic can't run, phrased so the answer is actionable. The old one-line check reported all
+  // three causes as "voice input not supported on this browser", which is what a desktop-app mic
+  // failure looked like — a dead end. Returns '' when nothing is in the way.
+  function _micBlocker(){
+    // No mediaDevices at all is almost always this: an insecure origin (http://<lan-host>), where
+    // Chromium removes the API outright rather than failing the call.
+    if(!window.isSecureContext) return 'the mic needs an https connection to this instance';
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return 'no microphone access here (mediaDevices missing)';
+    if(!window.MediaRecorder) return 'this browser can’t record audio (MediaRecorder missing)';
+    return '';
+  }
   // 🎤 Voice input: record a clip, transcribe via the node's Whisper STT, append to the AI input.
   let _aiRec=null, _aiChunks=[], _aiMicStarting=false;
   async function aiToggleMic(){
     const mic=$('#ai-mic');
     if(_aiRec && _aiRec.state==='recording'){ _aiRec.stop(); return; }
     if(_aiMicStarting) return;   // a start is already in flight (async getUserMedia) — ignore the double-tap
-    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){ toast('voice input not supported on this browser'); return; }
+    { const why=_micBlocker(); if(why){ toast(why); return; } }
     _aiMicStarting=true;
     let stream=null;
     try{
@@ -10377,7 +10388,7 @@
       toast('🎤 recording — tap to stop');
     }catch(e){
       try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-      toast(e && e.name==='NotAllowedError' ? 'microphone permission denied' : 'could not start recording');
+      toast(e && e.name==='NotAllowedError' ? 'microphone permission denied' : 'could not start recording'+(e&&e.name?' ('+e.name+')':''));
     }finally{
       _aiMicStarting=false;
     }
@@ -10502,7 +10513,7 @@
     if(_ltRec && _ltRec.state==='recording'){ _ltRec.stop(); return; }
     if(_ltMicStarting) return;
     if(_ltBusy){ toast('one moment — still translating the last turn'); return; }   // serialize turns
-    if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)){ toast('voice input not supported on this browser'); return; }
+    { const why=_micBlocker(); if(why){ toast(why); return; } }
     _ltMicStarting=true; let stream=null;
     try{
       stream=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -10523,7 +10534,7 @@
       _ltStatus('listening… tap to stop');
     }catch(e){
       try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-      toast(e && e.name==='NotAllowedError' ? 'microphone permission denied' : 'could not start recording');
+      toast(e && e.name==='NotAllowedError' ? 'microphone permission denied' : 'could not start recording'+(e&&e.name?' ('+e.name+')':''));
     }finally{ _ltMicStarting=false; }
   }
   async function ltPipeline(blob){
