@@ -19,6 +19,15 @@ PREAMBLE_PATTERNS = [
     # leak (e.g. "Here is your reply as Judge Dread:"). Ends at the colon OR the end of the preamble line.
     # Only strips this clear meta-wrapper; an in-character opener like "As Judge Dread, I sentence\u2026" is left.
     re.compile(r"^[\s\U0001F300-\U0001F9FF\u2600-\u26FF\u2700-\u27BF]*Here['']?s?\s+(?:is\s+)?(?:your|my|the)\s+(?:requested\s+)?(?:reply|response|answer|message)(?:\s+as\b[^\n:]*)?\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
+    # "Here is what X would say:" / "X would say:" / "Replying as X:" / "As X, here's my reply:" —
+    # the model REPORTING the performance instead of giving it. All of these require the meta framing
+    # (a "would say"/"here is"/"replying as" wrapper AND a colon or line break), so a genuine
+    # in-character opener like "As Judge Dread, I sentence you to..." is left completely alone.
+    re.compile(r"^[\s\U0001F300-\U0001F9FF☀-⛿✀-➿]*Here['']?s?\s+(?:is\s+)?what\s+[^\n:]{1,60}?\s+would\s+(?:say|reply|respond|write)\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[\s\U0001F300-\U0001F9FF☀-⛿✀-➿]*(?:Replying|Responding|Answering)\s+as\s+[^\n:]{1,60}?\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[\s\U0001F300-\U0001F9FF☀-⛿✀-➿]*As\s+[^\n:]{1,60}?,?\s+here['']?s?\s+(?:is\s+)?(?:my|the)\s+(?:reply|response|answer|message)\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[\s\U0001F300-\U0001F9FF☀-⛿✀-➿]*[A-Z][\w.'\- ]{1,40}\s+would\s+(?:say|reply|respond|write)\s*[:\n]+\s*", re.MULTILINE),
+    re.compile(r"^[\s\U0001F300-\U0001F9FF☀-⛿✀-➿]*\**(?:In|Staying\s+in)\s+character\**\s*[:\n]+\s*", re.IGNORECASE | re.MULTILINE),
     # Generic "Here you go" patterns
     re.compile(r'^Here\s+you\s+go[^:]*:\s*', re.IGNORECASE | re.MULTILINE),
     # "As requested" patterns
