@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 # than this are the ones the model can no longer see, and therefore the ones worth summarising.
 HISTORY_TURNS = 20
 MIN_NEW = 8            # don't burn a generation to fold in one or two stale turns
-MAX_SRC_CHARS = 6000   # cap the input: this runs on the same GPU as everything else
-SUMMARY_MAX_TOKENS = 260
+MAX_SRC_CHARS = 6000   # cap the input: this shares a GPU with image/music/video and the bots
 
 _SYS = (
     "You maintain a running memory of a conversation for an assistant with a short context window. "
@@ -82,12 +81,14 @@ async def refresh(conversation_id: int, user_id: int | None = None) -> bool:
                 parts.append(f"{who}: {body[:400]}")
         src = "\n".join(parts)[:MAX_SRC_CHARS]
 
-        from app.services.inference_factory import get_inference_service
-        svc = get_inference_service(db)
-        res = await svc.chat_completion(
-            [{"role": "system", "content": _SYS}, {"role": "user", "content": src}],
-            max_tokens=SUMMARY_MAX_TOKENS, temperature=0.3)
-        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        # ChatService, NOT get_inference_service: the latter hands back the LOCAL llama service, so
+        # the summary would always burn the local GPU even when a peer node is idle. ChatService
+        # goes through peer offload and the site load balancer first, like a normal chat turn — this
+        # is background work and has no business jumping the queue on a GPU that is already shared
+        # with image, music, video and the bot fleet.
+        from app.services.chat_service import ChatService
+        out = (await ChatService(db, user=None).chat(
+            [{"role": "system", "content": _SYS}, {"role": "user", "content": src}]) or "").strip()
         if not out or out.lower().startswith("error:"):
             return False
 
