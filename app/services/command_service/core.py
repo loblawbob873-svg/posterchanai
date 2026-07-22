@@ -125,6 +125,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "bills": "List your bills: bills (unpaid) | bills all | bills paid",
         "pay": "Pay a bill by name: pay <bill name>",
         "addbill": "Add a bill: addbill <name> <amount> [income]",
+        "bill": "Snap a bill: attach a photo/PDF and send bill — reads the vendor, total and due date, then `bill add` files it in your budget and sets a reminder",
         "screenshot": "Full-page screenshot of a website: screenshot <url>",
         "poll": "Create a poll: poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
     }
@@ -684,6 +685,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._pay_command(arg)
         elif command == "addbill":
             return await self._addbill_command(arg)
+        elif command == "bill":
+            return await self._bill_command(arg, attachments)
         elif command == "screenshot":
             return await self._screenshot_command(arg)
         else:
