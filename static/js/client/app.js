@@ -9026,6 +9026,57 @@
         renderDmThread(dmActive);
       } else renderMessages(); }, 350);
   }
+  // ---- message actions: long-press (touch) / right-click (desktop) ----------------------------
+  // Reply is sent as a QUOTED PREFIX rather than a NIP-10 e-tag: the kind-14 rumor's tags are built
+  // in three separate signer paths (worker, window.nostr, NIP-46), and a tag other clients may not
+  // render buys nothing over a quote every client already shows correctly.
+  let _dmReply = null;                      // {id, text, mine} for the open thread
+  const _DM_HIDDEN_KEY = 'dmHidden';        // ids hidden by "Delete for me" (local, per this client)
+  function _dmHidden(){ try{ return new Set(ClientSettings.get(_DM_HIDDEN_KEY, []) || []); }catch(_){ return new Set(); } }
+  function _dmHide(id){ const h=_dmHidden(); h.add(id); ClientSettings.set(_DM_HIDDEN_KEY, [...h].slice(-2000)); }
+  function _dmQuoteOf(text){
+    const one = String(text||'').replace(/\s+/g,' ').trim();
+    return one.length > 120 ? one.slice(0,117)+'…' : one;
+  }
+  function _dmReplyBanner(){
+    const bar = $('#dm-replybar'); if(!bar) return;
+    if(!_dmReply){ bar.hidden = true; bar.innerHTML=''; return; }
+    bar.hidden = false;
+    bar.innerHTML = `<div class="dm-rb-body"><span class="dm-rb-who">${_dmReply.mine?'Replying to yourself':'Replying'}</span>
+      <span class="dm-rb-txt">${enc(_dmQuoteOf(_dmReply.text))}</span></div>
+      <button class="mini" id="dm-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>`;
+    const x=$('#dm-rb-x',bar); if(x) x.onclick=()=>{ _dmReply=null; _dmReplyBanner(); const i=$('#dm-in'); if(i) i.focus(); };
+  }
+  function _dmMsgMenu(anchorEl, pk, mid){
+    const all = dmPeers.get(pk)||[];
+    const m = all.find(x=>String(x.id)===String(mid));
+    if(!m) return;
+    const items = [['reply','↩ Reply'], ['copy','⧉ Copy text'], ['hide','🗑 Delete for me','danger']];
+    openMenuPopover(anchorEl, items, a=>{
+      if(a==='reply'){ _dmReply = {id:m.id, text:m.text||'', mine:!!m.mine}; _dmReplyBanner();
+        const i=$('#dm-in'); if(i) i.focus(); return; }
+      if(a==='copy'){ try{ navigator.clipboard.writeText(m.text||''); toast('copied'); }catch(_){ toast('copy failed'); } return; }
+      if(a==='hide'){ _dmHide(m.id); toast('deleted for you'); renderDmThread(pk); return; }
+    });
+  }
+  // Long-press opens the same menu touch users expect; right-click does it on desktop. 450ms, and a
+  // finger that MOVES is a scroll, not a press — otherwise scrolling a thread pops menus constantly.
+  function _wireBubbleActions(box, pk){
+    if(!box) return;
+    box.addEventListener('contextmenu', e=>{ const b=e.target.closest('.bubble'); if(!b) return;
+      e.preventDefault(); _dmMsgMenu(b, pk, b.dataset.mid); });
+    let t=null, sx=0, sy=0;
+    const clear=()=>{ if(t){ clearTimeout(t); t=null; } };
+    box.addEventListener('touchstart', e=>{ const b=e.target.closest('.bubble'); if(!b) return;
+      const p=e.touches[0]; sx=p.clientX; sy=p.clientY;
+      clear(); t=setTimeout(()=>{ t=null; try{ navigator.vibrate && navigator.vibrate(12); }catch(_){}
+        _dmMsgMenu(b, pk, b.dataset.mid); }, 450); }, {passive:true});
+    box.addEventListener('touchmove', e=>{ const p=e.touches[0];
+      if(Math.abs(p.clientX-sx)>10 || Math.abs(p.clientY-sy)>10) clear(); }, {passive:true});
+    box.addEventListener('touchend', clear, {passive:true});
+    box.addEventListener('touchcancel', clear, {passive:true});
+  }
+
   async function renderDmThread(pk){
     const wrap=$('#dm-thread'); if(!wrap)return;
     // Backfill this conversation's FULL history once (the initial bulk fetch caps at limit:300 across
@@ -9038,7 +9089,9 @@
           if(added) _scheduleDmRefresh(); })   // re-render only if new msgs arrived (no loop: _dmFull set)
         .catch(()=>{});
     }
-    const p=profOf(pk); needProfile(pk); const all=dmPeers.get(pk)||[];
+    const p=profOf(pk); needProfile(pk);
+    const _hid=_dmHidden();
+    const all=(dmPeers.get(pk)||[]).filter(m=>!_hid.has(m.id));   // "Delete for me" — local only
     // PAGINATION: render only the last N messages (1 on open) so a long thread opens instantly on mobile;
     // "Load older" reveals 20 more each tap.
     const shown=Math.min(all.length, _dmShown.get(pk)||_DM_INIT);
@@ -9063,7 +9116,14 @@
       const startsGroup = !prev || prev.mine!==m.mine || (m.t||0)-(prev.t||0) > GROUP_GAP;
       const newDay = !prev || new Date((prev.t||0)*1000).toDateString() !== new Date((m.t||0)*1000).toDateString();
       const sep = newDay && m.t ? `<div class="dm-day"><span>${enc(_dmDayLabel(m.t))}</span></div>` : '';
-      const body = m.text!=null ? linkify(m.text) : '<span class="muted small">decrypting…</span>';
+      // A reply arrives as "> quoted\n\nmessage" (see _dmReply). Render that leading quote as a
+      // block so it reads like a reply instead of a stray angle bracket.
+      let body;
+      if(m.text==null) body = '<span class="muted small">decrypting…</span>';
+      else {
+        const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
+        body = mq ? `<span class="b-quote">${enc(mq[1])}</span>${linkify(mq[2])}` : linkify(m.text);
+      }
       return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
         + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
@@ -9071,6 +9131,7 @@
     wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}</div>
       <div class="dm-compose">
+        <div class="dm-replybar" id="dm-replybar" hidden></div>
         <div class="dm-atts" id="dm-atts" hidden></div>
         <div class="dm-row">
           <button class="mini" id="dm-attach" title="attach">📎</button>
@@ -9106,7 +9167,12 @@
     { const g=$('#dm-gif'); if(g) g.onclick=()=>gifPicker(inp); }
     let _dmSending=false;
     const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
-      try{ ensureDmInboxList(); await sendDm(pk, t); inp.value=''; _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
+      // A reply goes out as a quote block the receiving client already renders, followed by a blank
+      // line and the actual message.
+      const _body = _dmReply && _dmReply.text
+        ? '> ' + _dmQuoteOf(_dmReply.text) + '\n\n' + t
+        : t;
+      try{ ensureDmInboxList(); await sendDm(pk, _body); inp.value=''; _dmReply=null; _dmReplyBanner(); _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
       catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
       finally{ _dmSending=false; } };
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
@@ -9124,6 +9190,8 @@
       ta.addEventListener('dm-reset', grow);
       grow(); }
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
+    _dmReplyBanner();
+    _wireBubbleActions($('#dm-msgs'), pk);
     const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).

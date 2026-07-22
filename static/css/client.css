@@ -2917,3 +2917,19 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 }
 .st-rangelbl{margin-left:8px;font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--cyan);
   border:1px solid var(--line);border-radius:999px;padding:2px 9px;vertical-align:middle}
+
+/* ---- DM message actions: reply banner (long-press / right-click -> Reply) --------------------
+   Reply is sent as a quote block rather than a NIP-10 e-tag: the kind-14 rumor's tags are built in
+   three separate signer paths, and a tag other clients may not render buys nothing over a quote
+   every client already displays. */
+.dm-replybar{display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:8px;
+  background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--neon);
+  border-radius:10px}
+.dm-rb-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dm-rb-who{font-size:11.5px;color:var(--neon);letter-spacing:.03em}
+.dm-rb-txt{font-size:14px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dm-replybar .mini{flex:0 0 auto;width:36px;height:36px}
+
+/* a quoted line inside a bubble (what a reply looks like on arrival, in any client) */
+.bubble .b-quote{display:block;border-left:2px solid var(--line);padding-left:8px;margin-bottom:6px;
+  color:var(--muted);font-size:.92em;opacity:.9}
