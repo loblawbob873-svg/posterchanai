@@ -2941,3 +2941,17 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
    is why this is deliberately limited to the vertical panes). */
 .dm-msgs,.dm-list,.dm-rows{scrollbar-width:none}
 .dm-msgs::-webkit-scrollbar,.dm-list::-webkit-scrollbar,.dm-rows::-webkit-scrollbar{width:0;height:0}
+
+/* ---- Composer on phones (reply/quote especially) --------------------------------------------
+   .cmp-actions .btn has min-width:120px + 5px side margins, which on a phone forced Draft and Post
+   onto SEPARATE centred rows — two lonely pills stacked, which is the "distorted" look. Below 520px
+   they share one row as equal halves instead. The tool row gets tighter padding for the same reason.
+   And the fixed bottom nav is hidden while a modal is open: a dialog owns the screen, and leaving the
+   bar visible under the backdrop is what made the hamburger look squashed against the sheet. */
+@media (max-width:520px){
+  .cmp-actions{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:nowrap}
+  .cmp-actions .btn{flex:1 1 0;min-width:0;margin:0;white-space:nowrap;padding-left:6px;padding-right:6px}
+  .cmp-tools .btn{padding:8px 10px;font-size:13.5px}
+  .cmp-tools,.cmp-left{gap:6px}
+}
+body.modal-open .mobilenav{display:none}
