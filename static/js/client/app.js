@@ -2331,7 +2331,18 @@
         catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
           else st.textContent='upload failed: '+((err&&err.message)||err); return; } }
       st.textContent=''; };
-    $('#tl-cmp-attach',box).onclick=()=>$('#tl-cmp-file',box).click();
+    // 📎 offers the SAME choices as the full New Post modal — Camera (app only) / Local / Blossom.
+    // The inline composer went straight to the file dialog, so the only way to attach something you
+    // had ALREADY uploaded was to open the full modal instead.
+    $('#tl-cmp-attach',box).onclick=()=>{
+      const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
+                                    : [['local','💻 Local'],['blossom','🌸 Blossom']];
+      openMenuPopover($('#tl-cmp-attach',box), opts, a=>{
+        if(a==='camera') _captureCamera(ta, box);
+        else if(a==='local') $('#tl-cmp-file',box).click();
+        else if(a==='blossom') blossomPicker(ta);
+      });
+    };
     $('#tl-cmp-file',box).onchange=async e=>{ await upload([...e.target.files]); e.target.value=''; };
     ta.addEventListener('paste', e=>{ const f=[...((e.clipboardData&&e.clipboardData.files)||[])]; if(f.length){ e.preventDefault(); upload(f); } });
     // 😀 works fully INLINE — openEmojiPopover/_insertAt/gifPicker are module-level, so there's nothing to
