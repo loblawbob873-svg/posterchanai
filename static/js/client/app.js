@@ -12289,32 +12289,49 @@
   // of your own graph. Deliberately NOT on the 150s refresh: contact lists are big events and this is
   // the heaviest query in the column, so it runs once per session and then only after you act on it.
   const WTF_AUTHORS=40, WTF_MAX=4, WTF_MIN_MUTUAL=2;
+  // The instance operator, from CFG.operator_npub — so a self-hosted node promotes ITS OWN owner
+  // instead of a pubkey hardcoded into the client.
+  function _operatorPk(){
+    const np = CFG && CFG.operator_npub; if(!np) return '';
+    try{ const d=NT().nip19.decode(np); return (d && d.type==='npub') ? d.data : ''; }catch(_){ return ''; }
+  }
   async function loadWhoToFollow(){
     const el=document.getElementById('rb-wtf'); if(!el) return;
     if(typeof ME==='undefined' || !ME || !ME.pubkey){ el.innerHTML='<div class="muted small">Sign in to get suggestions.</div>'; return; }
+    const picks=[];   // [pubkey, mutualCount, isOperator]
+    // Operator first, and BEFORE the follow-count gate below: a brand-new account follows nobody, which
+    // is exactly the moment it most needs somewhere to start — and whoever runs the instance is the one
+    // suggestion that doesn't depend on already having a graph.
+    const op=_operatorPk();
+    if(op && op!==ME.pubkey && !FOLLOWS.has(op) && !MUTED.has(op)) picks.push([op, 0, true]);
     // Cap the author list: a kind-3 REQ for every single follow is a genuinely heavy ask of the relay,
     // and 40 contact lists is already thousands of candidate pubkeys to rank.
     const authors=[...FOLLOWS].filter(p=>p&&p!==ME.pubkey).slice(0,WTF_AUTHORS);
-    if(authors.length<2){ el.innerHTML='<div class="muted small">Follow a few people and suggestions will show up here.</div>'; return; }
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[3], authors, limit:authors.length }]); }catch(_){}
-    // Keep only the NEWEST contact list per author — kind 3 is replaceable, but a relay can still hand
-    // back older copies, and counting both would double-weight whoever that author follows.
-    const newest=new Map();
-    for(const e of evs){ const p=newest.get(e.pubkey); if(!p || e.created_at>p.created_at) newest.set(e.pubkey,e); }
-    const tally=new Map();
-    for(const e of newest.values()) for(const t of (e.tags||[])){
-      const pk = t[0]==='p' ? t[1] : null;
-      if(!pk || pk===ME.pubkey || FOLLOWS.has(pk) || MUTED.has(pk)) continue;
-      tally.set(pk, (tally.get(pk)||0)+1);
+    if(authors.length>=2){
+      let evs=[]; try{ evs=await Relay.query([{ kinds:[3], authors, limit:authors.length }]); }catch(_){}
+      // Keep only the NEWEST contact list per author — kind 3 is replaceable, but a relay can still hand
+      // back older copies, and counting both would double-weight whoever that author follows.
+      const newest=new Map();
+      for(const e of evs){ const p=newest.get(e.pubkey); if(!p || e.created_at>p.created_at) newest.set(e.pubkey,e); }
+      const tally=new Map();
+      for(const e of newest.values()) for(const t of (e.tags||[])){
+        const pk = t[0]==='p' ? t[1] : null;
+        if(!pk || pk===ME.pubkey || pk===op || FOLLOWS.has(pk) || MUTED.has(pk)) continue;   // pk===op: already pinned above
+        tally.set(pk, (tally.get(pk)||0)+1);
+      }
+      for(const [pk,c] of [...tally.entries()].filter(([,c])=>c>=WTF_MIN_MUTUAL).sort((a,b)=>b[1]-a[1])){
+        if(picks.length>=WTF_MAX) break;
+        picks.push([pk,c,false]);
+      }
     }
-    const top=[...tally.entries()].filter(([,c])=>c>=WTF_MIN_MUTUAL).sort((a,b)=>b[1]-a[1]).slice(0,WTF_MAX);
-    if(!top.length){ el.innerHTML='<div class="muted small">No suggestions right now.</div>'; return; }
-    top.forEach(([pk])=>needProfile(pk));   // names/avatars fill in via decorateProfiles when kind-0 lands
-    el.innerHTML=top.map(([pk,c])=>{
+    if(!picks.length){ el.innerHTML=`<div class="muted small">${authors.length<2?'Follow a few people and suggestions will show up here.':'No suggestions right now.'}</div>`; return; }
+    picks.forEach(([pk])=>needProfile(pk));   // names/avatars fill in via decorateProfiles when kind-0 lands
+    el.innerHTML=picks.map(([pk,c,isOp])=>{
       const p=profOf(pk), nm=p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
-      return `<div class="wtf-row" data-pk="${pk}">
+      const sub=isOp ? 'runs this instance' : `followed by ${c} you follow`;
+      return `<div class="wtf-row${isOp?' wtf-op':''}" data-pk="${pk}">
         <img class="rb-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-        <div class="wtf-main"><b>${enc(nm)}</b><span class="wtf-sub">followed by ${c} you follow</span></div>
+        <div class="wtf-main"><b>${enc(nm)}</b><span class="wtf-sub">${sub}</span></div>
         <button class="wtf-follow" data-follow="${pk}">Follow</button></div>`;
     }).join('');
     decorateProfiles();
@@ -12440,6 +12457,7 @@
   }
   // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
   // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
+  const FOLLOWS_ROWS=9;
   async function loadFollows(){
     let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane
     const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
@@ -12448,15 +12466,23 @@
     const tally={}, icon={};
     for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
-    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,9).map(x=>x[0]);
+    // Over-fetch: rank far more candidates than we intend to SHOW. Plenty of the notes your follows
+    // reacted to aren't on this relay at all (nothing to render), and the old code capped candidates
+    // at the display count — so every unresolvable one shrank the list. "Only showing 3 of 9."
+    const ranked=Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+    const cand=ranked.slice(0, FOLLOWS_ROWS*4);
     // Re-acquire the pane after every await below: the user can hit "Hot" while these queries are in
     // flight, and the captured `el` would happily paint follow rows into the Hot list.
-    if(!top.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
-    await fetchNotes(top);
-    const rows=top.map(id=>{ const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) return ''; const pr=profOf(ev.pubkey);   // respect mutes + word filter
-      const txt=rbSnippet(ev.content);
-      return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div>${rbBody(ev)}</div>`;
-    }).filter(Boolean).join('');
+    if(!cand.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
+    await fetchNotes(cand);
+    const built=[];
+    for(const id of cand){
+      if(built.length>=FOLLOWS_ROWS) break;
+      const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) continue;   // respect mutes + word filter
+      const pr=profOf(ev.pubkey);
+      built.push(`<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div>${rbBody(ev)}</div>`);
+    }
+    const rows=built.join('');
     el=rbListEl('follows'); if(!el) return;
     el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
   }
@@ -12466,14 +12492,21 @@
   // rather than paint them over whatever Follows has since put there. (Dropping is safe — switching
   // back to Hot runs loadHot(true), which clears _hot.shown and re-ranks from scratch.)
   async function addHot(ranked, where){
+    // Over-fetch candidates (same reason as From follows): a ranked id whose note isn't on this relay,
+    // isn't a kind 1, or is muted renders nothing, so picking exactly HOT_PAGE ids yielded short pages.
     const pick=[];
-    for(const [id,c] of ranked){ if(_hot.shown.has(id)) continue; pick.push([id,c]); if(pick.length>=HOT_PAGE) break; }
+    for(const [id,c] of ranked){ if(_hot.shown.has(id)) continue; pick.push([id,c]); if(pick.length>=HOT_PAGE*3) break; }
     if(!pick.length) return 0;
-    pick.forEach(([id])=>_hot.shown.add(id));   // mark before fetch so concurrent calls don't double-add
     await fetchNotes(pick.map(x=>x[0]));
     const el=rbListEl('hot'); if(!el) return 0;
     const frag=document.createDocumentFragment();
-    for(const [id,c] of pick){ const html=hotRowHtml(id,c); if(!html) continue;
+    // Burn `shown` only on ids we actually CONSUME — rendered, or proven unusable. The surplus we
+    // fetched but didn't need stays unmarked and feeds the next page. (Every caller holds
+    // _hot.loading, so there's no concurrent addHot to double-add them.)
+    for(const [id,c] of pick){
+      if(frag.childElementCount>=HOT_PAGE) break;
+      _hot.shown.add(id);
+      const html=hotRowHtml(id,c); if(!html) continue;
       const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node); }
     const n=frag.childElementCount; if(!n) return 0;
     Array.from(el.children).forEach(c=>{ if(!c.classList||!c.classList.contains('rb-item')) c.remove(); });  // drop loader/placeholder
