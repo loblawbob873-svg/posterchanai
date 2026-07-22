@@ -8466,7 +8466,9 @@
       if(ts<=seenNotif.last) return false;
       return e.kind===3 ? ts>_notifEpoch : true;
     }).length + (_updBadge?1:0);
-    $$('#notif-badge,#notif-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+    // The rail's Alerts tab is painted from the SAME count as the sidebar bell and the mobile bar —
+    // one computation, three surfaces, so they can't disagree about whether something is unread.
+    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
@@ -8570,7 +8572,7 @@
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
     _updBadge=false;   // viewing Notifications clears the one-shot update badge (no phantom permanent +1)
-    $$('#notif-badge,#notif-badge-m').forEach(b=>b.classList.add('hidden'));
+    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
     feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
@@ -12278,6 +12280,8 @@
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
     loadWhoToFollow();              // friend-of-friend suggestions (once per session — see below)
     syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
+    bumpNotif();                    // ...and its unread count: bumpNotif only fires on ARRIVING events,
+                                    // so a rail built afterwards would show a bare "Alerts" despite unread
     _loadRbTab();
   }
   // Routine update (timer): refresh the chip cloud and prepend any freshly-hot posts to the top
