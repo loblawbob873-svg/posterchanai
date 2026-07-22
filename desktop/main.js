@@ -11,7 +11,7 @@
  *   - the permission grants the client needs (camera/mic for calls, notifications, screen share)
  *   - auto-update (electron-updater, generic feed at https://poster.place/desktop/)
  */
-const { app, BrowserWindow, shell, session, Menu, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, dialog, ipcMain, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -20,6 +20,7 @@ const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;   // re-check every 6h for long-runn
 
 let win = null;
 let cfg = {};
+let insecureInstance = false;   // true when we started with the http-instance switch below applied
 
 // ---- tiny JSON config in userData (instance + window geometry) --------------------------------
 function cfgPath() { return path.join(app.getPath('userData'), 'config.json'); }
@@ -33,6 +34,29 @@ function saveCfg() {
 function instance() { return String(cfg.instance || DEFAULT_INSTANCE).replace(/\/+$/, ''); }
 function clientUrl() { return instance() + '/client'; }
 function originOf(u) { try { return new URL(u).origin; } catch (_) { return ''; } }
+function isOurs(url) { const o = originOf(url); return !!o && o === originOf(instance()); }
+
+// ---- media prerequisites (must run BEFORE app ready — Chromium reads these once, at startup) ----
+// A self-hosted instance reached over plain http is not a SECURE CONTEXT, and Chromium then removes
+// navigator.mediaDevices entirely: mic, camera and screen share all report "not supported" even though
+// the very same instance works over https. Trust the one origin the user configured — nothing else.
+function wireInsecureInstance() {
+  const o = originOf(instance());
+  if (!/^http:\/\//i.test(o)) return;
+  app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', o);
+  // Chromium ignores that switch unless a user-data-dir is on the command line. Passing the path
+  // Electron already uses keeps the profile exactly where it was.
+  app.commandLine.appendSwitch('user-data-dir', app.getPath('userData'));
+  insecureInstance = true;
+}
+
+// Wayland has no X11-style screen grab: capture goes through the xdg-desktop-portal/PipeWire path,
+// which Chromium only takes when this feature is on. Harmless no-op if the feature name ever changes.
+function wireWaylandCapture() {
+  if (process.platform !== 'linux') return;
+  if (!process.env.WAYLAND_DISPLAY && process.env.XDG_SESSION_TYPE !== 'wayland') return;
+  app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+}
 
 // ---- auto-update -------------------------------------------------------------------------------
 // Feed is our own domain (https://poster.place/desktop/), which 302s to the GitHub release assets —
@@ -127,10 +151,75 @@ function createWindow() {
 function wirePermissions() {
   const ALLOW = new Set(['media', 'notifications', 'fullscreen', 'clipboard-read',
     'clipboard-sanitized-write', 'display-capture', 'pointerLock', 'background-sync']);
-  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
-    const from = originOf((details && details.requestingUrl) || (wc && wc.getURL()) || '');
-    cb(ALLOW.has(permission) && from === originOf(instance()));
+  const ses = session.defaultSession;
+
+  ses.setPermissionRequestHandler(async (wc, permission, cb, details) => {
+    const from = (details && (details.requestingUrl || details.securityOrigin)) || (wc && wc.getURL()) || '';
+    if (!ALLOW.has(permission) || !isOurs(from)) { console.warn('[perm] denied', permission, from); return cb(false); }
+    // macOS gates camera/mic behind TCC on top of the page grant: without asking, the OS hands the
+    // renderer a silent black/silent stream. askForMediaAccess is what raises the system prompt.
+    if (process.platform === 'darwin' && permission === 'media') {
+      for (const t of (details && details.mediaTypes) || []) {
+        const kind = t === 'video' ? 'camera' : t === 'audio' ? 'microphone' : null;
+        if (kind && !(await systemPreferences.askForMediaAccess(kind).catch(() => false))) return cb(false);
+      }
+    }
+    cb(true);
   });
+
+  // The other half, and easy to miss: most web APIs run a permission CHECK first and only fall back to
+  // a request if the check says no. Electron answers checks from a separate handler, so a grant above
+  // means nothing on its own.
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    const from = requestingOrigin || (details && details.securityOrigin) || (wc && wc.getURL()) || '';
+    return ALLOW.has(permission) && isOurs(from);
+  });
+
+  // Screen share. getDisplayMedia does NOT go through the handlers above: Electron rejects it outright
+  // unless a display-media handler is set (a browser has a picker built in; an Electron app has to
+  // supply one). That's why "share screen" failed in the app while the same client works in Chrome.
+  // On macOS 15+ the native picker takes over and this handler is never called (useSystemPicker).
+  ses.setDisplayMediaRequestHandler(async (req, cb) => {
+    if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({});
+    let source = null;
+    try { source = await pickScreenSource(); } catch (e) { console.warn('[screen]', (e && e.message) || e); }
+    if (!source) return cb({});   // cancelled → the page sees a plain NotAllowedError, as in a browser
+    // 'loopback' = share the system audio too, which only Windows supports. The client asks for
+    // video-only today; this costs nothing and is right the day it asks for audio.
+    cb(req && req.audioRequested && process.platform === 'win32'
+      ? { video: source, audio: 'loopback' }
+      : { video: source });
+  }, { useSystemPicker: true });
+}
+
+// ---- screen-source picker (our stand-in for the browser's built-in one) -------------------------
+// Modal child window listing every screen + window with a live thumbnail. Resolves to a source, or to
+// null if the user cancels or closes it — never leaves getDisplayMedia hanging.
+let pendingSources = [];
+function pickScreenSource() {
+  return desktopCapturer
+    .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+    .then((sources) => {
+      if (!sources.length) return null;
+      pendingSources = sources;
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (id) => {
+          if (done) return; done = true;
+          resolve(sources.find((s) => s.id === id) || null);
+          if (pick && !pick.isDestroyed()) pick.close();
+        };
+        const pick = new BrowserWindow({
+          parent: win, modal: true, show: false, width: 880, height: 620, minWidth: 520, minHeight: 400,
+          title: 'Choose what to share', backgroundColor: '#0a0a10', autoHideMenuBar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') },
+        });
+        ipcMain.once('pc:screen:pick', (_e, id) => finish(id));
+        pick.once('ready-to-show', () => pick.show());
+        pick.on('closed', () => { ipcMain.removeAllListeners('pc:screen:pick'); finish(null); });
+        pick.loadFile(path.join(__dirname, 'picker.html'));
+      });
+    });
 }
 
 function buildMenu() {
@@ -168,16 +257,30 @@ ipcMain.handle('pc:instance:set', (_e, url) => {
   const clean = String(url || '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\/[^\s/]+$/i.test(clean)) return false;
   cfg.instance = clean; saveCfg();
+  // The insecure-origin switch is read once at startup, so moving to (or off) an http instance only
+  // takes effect after a relaunch — without it that instance would have no mic/camera/screen share.
+  if (/^http:\/\//i.test(clean) !== insecureInstance) { app.relaunch(); app.exit(0); return true; }
   if (win) win.loadURL(clientUrl());
   return true;
 });
 ipcMain.on('pc:retry', () => { if (win) win.loadURL(clientUrl()); });
+// Screen picker: thumbnails as data URLs so the page stays a plain, network-free file:// document.
+ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
+  id: s.id,
+  name: s.name || 'Screen',
+  screen: String(s.id).startsWith('screen:'),
+  thumb: (() => { try { return s.thumbnail.toDataURL(); } catch (_) { return ''; } })(),
+})));
 
 // Second launch → focus the running window instead of opening a duplicate.
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {
+  // Config first: both switches below depend on which instance we're pointed at, and Chromium only
+  // reads them before ready.
+  loadCfg();
+  wireInsecureInstance();
+  wireWaylandCapture();
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.whenReady().then(() => {
-    loadCfg();
     wirePermissions();
     buildMenu();
     createWindow();

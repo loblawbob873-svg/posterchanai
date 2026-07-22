@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Choose what to share</title>
+<!-- The screen-source picker a browser gives you for free and an Electron app has to draw itself.
+     Sources arrive over IPC from main.js (see pickScreenSource); picking one resolves the pending
+     getDisplayMedia call, closing the window cancels it. Styled to match the client's dark shell. -->
+<style>
+  :root { color-scheme: dark }
+  * { box-sizing: border-box }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: #0a0a10; color: #e8e8f0;
+         font: 14px/1.5 'Segoe UI', system-ui, -apple-system, sans-serif; overflow: hidden }
+  header { padding: 16px 20px 10px; border-bottom: 1px solid #1e1e2e }
+  h1 { margin: 0; font-size: 16px; font-weight: 700 }
+  .tabs { display: flex; gap: 8px; margin-top: 12px }
+  .tab { padding: 6px 14px; border: 1px solid #262636; border-radius: 999px; background: #12121c; color: #8b8ba3;
+         cursor: pointer; font: inherit; font-size: 13px }
+  .tab.on { border-color: #00f0ff; color: #00f0ff }
+  .grid { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 12px; padding: 16px 20px;
+          grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); align-content: start }
+  .src { border: 1px solid #262636; border-radius: 12px; background: #12121c; padding: 8px; cursor: pointer;
+         display: flex; flex-direction: column; gap: 8px; text-align: left; color: inherit; font: inherit }
+  .src:hover, .src:focus-visible { border-color: #00f0ff; outline: none }
+  .src img { width: 100%; aspect-ratio: 16/10; object-fit: contain; background: #06060c; border-radius: 8px }
+  .src span { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  footer { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+           padding: 12px 20px; border-top: 1px solid #1e1e2e; color: #5c5c73; font-size: 12.5px }
+  button.cancel { padding: 8px 18px; border: 1px solid #262636; border-radius: 9px; background: #12121c;
+                  color: #e8e8f0; cursor: pointer; font: inherit }
+  button.cancel:hover { border-color: #ff4d6d; color: #ff4d6d }
+  .empty { padding: 40px 20px; text-align: center; color: #8b8ba3 }
+</style>
+<header>
+  <h1>Choose what to share</h1>
+  <div class="tabs">
+    <button class="tab on" data-f="all">Everything</button>
+    <button class="tab" data-f="screen">Screens</button>
+    <button class="tab" data-f="window">Windows</button>
+  </div>
+</header>
+<div class="grid" id="grid"></div>
+<footer><span>Sharing starts as soon as you pick one.</span><button class="cancel" id="cancel">Cancel</button></footer>
+<script>
+  const grid = document.getElementById('grid');
+  let sources = [], filter = 'all';
+
+  function render() {
+    const list = sources.filter((s) => filter === 'all' || (filter === 'screen') === s.screen);
+    grid.innerHTML = '';
+    if (!list.length) {
+      const p = document.createElement('div');
+      p.className = 'empty';
+      p.textContent = 'Nothing to share here.';
+      grid.append(p);
+      return;
+    }
+    for (const s of list) {
+      const b = document.createElement('button');
+      b.className = 'src';
+      const img = document.createElement('img');
+      if (s.thumb) img.src = s.thumb;
+      const label = document.createElement('span');
+      label.textContent = s.name;
+      label.title = s.name;
+      b.append(img, label);
+      b.onclick = () => window.pcScreen.pick(s.id);
+      grid.append(b);
+    }
+  }
+
+  for (const t of document.querySelectorAll('.tab')) {
+    t.onclick = () => {
+      for (const o of document.querySelectorAll('.tab')) o.classList.toggle('on', o === t);
+      filter = t.dataset.f;
+      render();
+    };
+  }
+  document.getElementById('cancel').onclick = () => window.close();
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
+
+  window.pcScreen.list().then((s) => { sources = s || []; render(); });
+</script>

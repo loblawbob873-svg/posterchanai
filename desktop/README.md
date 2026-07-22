@@ -47,6 +47,24 @@ Defaults to `https://poster.place`; **File → Switch instance…** points it at
 PosterChan, stored in `config.json` under the user data dir (same idea as the APK's `pc_instance`).
 The picker also appears automatically when the instance can't be reached.
 
+An instance served over plain **http** is not a secure context, and Chromium then deletes
+`navigator.mediaDevices` outright — mic, camera and screen share all report *"not supported"*. The app
+marks the configured origin (and only that one) as trusted at startup, so a LAN instance behaves like
+an https one. That switch is read once, before any page loads, so switching to or from an http
+instance relaunches the app.
+
+## Camera, mic and screen share
+
+* **Camera/mic** — granted to the instance origin only, via `setPermissionRequestHandler` *and*
+  `setPermissionCheckHandler`. Both are needed: web APIs check first and only request if the check
+  says no, and Electron answers those from separate handlers. On macOS the grant is also asked of the
+  OS (`askForMediaAccess`), and the `NS*UsageDescription` strings live in `build.mac.extendInfo`.
+* **Screen share** — `getDisplayMedia` ignores those handlers: Electron rejects it unless a
+  `setDisplayMediaRequestHandler` is installed, because the source picker a browser draws for you is
+  the app's job here. `picker.html` is that picker (screens + windows with thumbnails, via
+  `desktopCapturer`); on macOS 15+ the native picker replaces it. On Wayland, capture goes through the
+  PipeWire portal, which needs `WebRTCPipeWireCapturer` — enabled when the session is Wayland.
+
 ## Signing
 
 Everything ships unsigned: Windows shows SmartScreen's "More info → Run anyway" on first run, and on

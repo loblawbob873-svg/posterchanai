@@ -23,7 +23,7 @@
     "productName": "PosterChan",
     "copyright": "PosterChan",
     "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "shell.html", "icon.png", "package.json"],
+    "files": ["main.js", "preload.js", "shell.html", "picker.html", "icon.png", "package.json"],
     "win": {
       "icon": "build/icon.png",
       "target": [{ "target": "nsis", "arch": ["x64"] }]
@@ -43,6 +43,10 @@
       "icon": "build/icon.png",
       "category": "public.app-category.social-networking",
       "identity": null,
+      "extendInfo": {
+        "NSCameraUsageDescription": "PosterChan uses your camera for video calls and live streams.",
+        "NSMicrophoneUsageDescription": "PosterChan uses your microphone for calls, live streams and voice input."
+      },
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
       "artifactName": "PosterChan-${arch}.dmg"
     },
