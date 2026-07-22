@@ -162,9 +162,11 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                 # because the finance API has no delete and a mis-read amount would be permanent.
                 _res = await cb_command_service.execute_command("bill", "", attachments=_atts)
                 _txt = (_res or {}).get("content") or "Couldn't read that bill."
-                _staged = "bill add" in _txt          # only the preview path stages a parse
+                # type == "bill" is exactly "a parse was staged"; matching on the message text would
+                # break the moment that wording changes (it already did once).
+                _staged = (_res or {}).get("type") == "bill"
                 await telegram_service.send_message(
-                    chat_id, _txt.replace("Send `bill add` to add it", "Add it").replace("**", ""),
+                    chat_id, _txt.replace("**", ""),
                     reply_markup=({"inline_keyboard": [[
                         {"text": "✅ Add to budget", "callback_data": "media:billadd"},
                         {"text": "✖ Cancel", "callback_data": "media:billno"},

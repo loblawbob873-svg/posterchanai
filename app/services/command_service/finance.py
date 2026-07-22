@@ -208,7 +208,8 @@ class _FinanceMixin:
         self._BILL_PENDING[self.user.id] = {"vendor": vendor, "amount": amount, "due": due, "ts": _time.time()}
         lines = ["📄 **Bill read**", f"• Vendor: {vendor}", f"• Amount: {amount:.2f}"]
         lines.append(f"• Due: {due}" if due else "• Due: not found")
-        lines.append("")
-        lines.append("Send `bill add` to add it to your budget"
-                     + (" and set a reminder 2 days before it's due." if due else "."))
-        return {"type": "text", "content": "\n".join(lines)}
+        # `bill` result type: the web client renders an "Add to budget" button from this instead of
+        # asking the user to type `bill add`. The staged parse still has to be CONFIRMED — the finance
+        # API has no delete — but confirming should be a tap, not a second typed command.
+        return {"type": "bill", "content": "\n".join(lines),
+                "vendor": vendor, "amount": amount, "due": due}

@@ -9418,6 +9418,8 @@
       } }
     $('#ai-msgs').addEventListener('click',e=>{
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
+      const bno=e.target.closest('.ai-billno'); if(bno){ e.preventDefault();
+        const row=bno.closest('.ai-budget-btns'); if(row) row.innerHTML='<span class="muted small">Not added.</span>'; return; }
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
       const ab=e.target.closest('.ai-addbill'); if(ab){ e.preventDefault();
         const income=ab.dataset.income==='1';
@@ -10027,6 +10029,14 @@
       const id='fc'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
       _ai.decks[id]={ cards:d.cards, idx:0, answered:new Array(d.cards.length).fill(null), score:0, title:d.title };
       return `<div class="flashcard-deck" id="${id}">${_fcRender(id)}</div>`;
+    }
+    if(d.type==='bill'){
+      // Confirm-before-write, as a tap. The parse is staged server-side for 15 min; "Add to budget"
+      // just runs `bill add` through the same .ai-cmd path the budget Pay buttons use. The confirm
+      // exists because the finance API has add and pay but NO delete — a wrong amount is permanent.
+      return head
+        + `<div class="ai-budget-btns"><button class="ai-cmd" data-cmd="bill add">✅ Add to budget</button>`
+        + `<button class="ai-billno">✖ Cancel</button></div>`;
     }
     if(d.type==='budget'){
       // Telegram-parity interactive budget: summary text + a Pay button per unpaid bill, Refresh, and
