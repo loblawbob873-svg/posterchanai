@@ -1929,7 +1929,12 @@
     if(VIEW==='messages' && v!=='messages') dmActive=null;
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
-    if(v==='notifications') _notifShown = 25;   // fresh entry → collapse pagination back to one page
+    if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
+      // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
+      // it on a view switch, so opening Notifications kept whatever offset the previous view had left
+      // — you arrived mid-list. One-shot (mirrors _dmScrollTop): the LIVE re-renders that fire as
+      // relay events arrive must NOT yank you back to the top while you're reading.
+      _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
@@ -8373,6 +8378,7 @@
       default: return !(e.kind===3 && _notifTs(e)<=_notifEpoch);
     }
   }
+  let _notifScrollTop = false;   // next notifications render lands at the top (fresh tab entry only)
   function renderNotifications(){
     const feed=$('#feed');
     const all=notifGrouped(notifList().filter(_notifMatch));
@@ -8384,6 +8390,7 @@
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
       : (upd ? '' : '<div class="empty">No notifications here.</div>'));
+    if(_notifScrollTop){ _notifScrollTop=false; feed.scrollTop=0; }
     { const un=$('#upd-notif',feed); if(un && !_updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
     list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
