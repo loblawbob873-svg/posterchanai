@@ -6028,7 +6028,10 @@
     // Seed from whatever is already in the input, so re-opening the studio RESUMES the command
     // instead of silently discarding it.
     const S=_fxParse((ta&&ta.value)||'');
-    const capOf=()=> (S.meme&&S.meme.length>1) ? S.meme.slice(1).join(' ') : '';
+    // With meme as the base effect the array holds ONLY caption words; otherwise meme[0] is the
+    // keyword and the caption follows it.
+    const capOf=()=> S.effect==='meme' ? (S.meme||[]).join(' ')
+                    : ((S.meme && S.meme.length>1) ? S.meme.slice(1).join(' ') : '');
     const chip=(o,cls)=>{ const n=(o&&o.name)||o; const d=(o&&o.desc)||'';
       return `<button type="button" class="fxs-chip ${cls}" data-pick="${enc(n)}"${d?` title="${enc(d)}"`:''}>${enc(n)}</button>`; };
     const src=(_ai.fxImage||(_ai.attach&&_ai.attach[0]));
@@ -6183,14 +6186,17 @@
     if(ci>=0 && pre[ci+1]){ char=pre[ci+1]; head=pre.slice(0,ci).concat(pre.slice(ci+2)); }
     const p = { effect:head[0]||'', mods:head.slice(1), char, meme };
     // `meme <text>` has no separate base effect — the meme chip IS the effect. Surface it as such so
-    // reopening the studio shows the chip selected and the caption in the caption box.
-    if(!p.effect && p.meme[0]==='meme') p.effect = 'meme';
+    // reopening the studio shows the chip selected and the caption in its box. The keyword MUST be
+    // dropped from `meme` when promoted, or _fxJoin re-emits it after the effect ("meme meme test").
+    if(!p.effect && p.meme[0]==='meme'){ p.effect = 'meme'; p.meme = p.meme.slice(1); }
     return p;
   }
   function _fxJoin(p){ return [p.effect,...p.mods,...(p.char?['char',p.char]:[]),...p.meme].filter(Boolean).join(' '); }
   function _fxSetEffect(ta, eff){ const p=_fxParse(ta.value); p.effect=eff; ta.value=_fxJoin(p); }
   function _fxApplyMod(ta, mod){ const p=_fxParse(ta.value);
-    if(mod==='meme '){ if(!p.meme.length) p.meme=['meme']; ta.value=_fxJoin(p)+' '; return; }
+    if(mod==='meme '){                       // 😂 Meme prefill
+      if(p.effect!=='meme' && !p.meme.length) p.meme=['meme'];   // meme-as-effect already says it
+      ta.value=_fxJoin(p)+' '; return; }
     const blocked=_fxModBlock(_fxCatalog, p.effect, mod);
     if(blocked){ toast(`${mod}: ${blocked}`); return; }                                             // don't build a command the renderer refuses
     const MOVE=_fxMove(_fxCatalog);
