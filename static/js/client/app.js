@@ -10164,8 +10164,8 @@
   // Commands match the upload allowlist in chat.py (note: it's `ocr`, not "readtext").
   function _aiAttachActions(){
     const k=new Set(_ai.attach.map(a=>a.kind));
-    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme '],['🧾 Bill','run','bill']];   // Translate: OCRs + translates the text (prefills — add a language or Enter for English). Bill: reads vendor/total/due, then confirms before writing to the budget.
-    if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🧾 Bill','run','bill']];
+    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];   // Translate: OCRs + translates the text (prefills — add a language or Enter for English). Bill: reads vendor/total/due, then confirms before writing to the budget.
+    if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];
     if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio']];   // matches Telegram's video keyboard (Convert is image↔PDF only — useless for video)
     return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
   }

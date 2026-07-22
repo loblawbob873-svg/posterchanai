@@ -526,7 +526,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         elif command == "post":
             return await self._post_command(arg, attachments)
         elif command == "remind":
-            return await self._remind_command(arg)
+            return await self._remind_command(arg, attachments)
         elif command == "reminders":
             return await self._reminders_command()
         elif command == "pin":

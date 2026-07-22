@@ -11,10 +11,15 @@ class _ProductivityMixin:
         """Todo command - DISABLED (CalDAV removed)"""
         return {"type": "text", "content": "⚠️ The todo feature is temporarily unavailable."}
 
-    async def _remind_command(self, arg: str) -> dict:
+    async def _remind_command(self, arg: str, attachments=None) -> dict:
         """Set/cancel a reminder. `remind <what> <when>` parses natural language via the LLM and
         stores it; `remind list` shows them; `remind cancel <id>` cancels one. Delivered later by
-        the reminder scheduler to the web UI (always) and Telegram (if configured)."""
+        the reminder scheduler to the web UI (always) and Telegram (if configured).
+
+        With an IMAGE attached and no text, it reads the picture instead: screenshot a ticket, an
+        appointment confirmation or a "see you Thursday 3pm" message and it extracts what and when.
+        Same shape as `bill` — OCR plus one small extraction call joining two things that already
+        exist, rather than any new machinery."""
         from app.services import reminder_service
 
         if self.user is None:
@@ -22,6 +27,8 @@ class _ProductivityMixin:
         arg = (arg or "").strip()
         low = arg.lower()
 
+        if not arg and attachments:
+            return await self._remind_from_image(attachments)
         if not arg or low == "list":
             return await self._reminders_command()
         if low.startswith("cancel"):
@@ -40,6 +47,82 @@ class _ProductivityMixin:
         human = reminder_service.humanize_due(r.due_at, tz=tz)
         return {"type": "text", "content": (
             f"⏰ Reminder set: **{r.text}** — {human}.\n_id {r.id} · `reminders` to view or cancel._")}
+
+    async def _remind_from_image(self, attachments) -> dict:
+        """Screenshot → reminder. OCR, one extraction call, done."""
+        import base64 as _b64
+        import re as _re
+        import json as _json
+        from datetime import datetime, timedelta
+        from app.services import reminder_service
+        from app.services.document_service import extract_image_text, extract_pdf_text
+        from app.services.media_service import is_image, is_pdf
+
+        parts = []
+        for fn, data, ct in attachments:
+            try:
+                b64 = _b64.b64encode(data).decode() if isinstance(data, (bytes, bytearray)) else data
+            except Exception:
+                continue
+            if is_pdf(fn, ct):
+                parts.append(extract_pdf_text(b64) or "")
+            elif is_image(fn, ct):
+                parts.append(extract_image_text(b64) or "")
+        text = "\n".join(p for p in parts if p and p.strip()).strip()[:3000]
+        if not text:
+            return {"type": "text", "content": "Couldn't read any text in that image."}
+
+        tz = reminder_service.get_user_tzinfo(self.db, self.user.id)
+        now = datetime.now(tz)
+        try:
+            raw = await self.chat_service.chat([
+                {"role": "system", "content": (
+                    "You pull a single reminder out of text taken off someone's screenshot. Reply with "
+                    'ONE line of JSON and nothing else: {"what": str, "when": "YYYY-MM-DD HH:MM"}. '
+                    "`what` is a SHORT description of the thing to be reminded about (3-8 words, no "
+                    "date in it). `when` is when they should be reminded, in 24-hour local time. The "
+                    f"user's local time right now is {now.strftime('%Y-%m-%d %H:%M')} ({now.strftime('%A')}), "
+                    "so resolve weekdays and relative dates against that and never pick a time in the "
+                    "past. If the text names no time or event at all, use null for both.")},
+                {"role": "user", "content": text},
+            ]) or ""
+        except Exception as e:
+            return {"type": "text", "content": f"Couldn't read that: {e}"}
+
+        m = _re.search(r"\{.*\}", raw, _re.S)
+        data = {}
+        if m:
+            try:
+                data = _json.loads(m.group(0))
+            except Exception:
+                data = {}
+        what = str(data.get("what") or "").strip()[:120]
+        when = str(data.get("when") or "").strip()
+        try:
+            due = datetime.strptime(when, "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+        except ValueError:
+            due = None
+        if not what or not due:
+            # Say what was read rather than inventing a time — a reminder that fires at the wrong
+            # moment is worse than one that was never set.
+            return {"type": "text", "content":
+                    "⏰ I read the image but couldn't find a clear event and time in it.\n"
+                    "Try `remind <what> <when>` — e.g. `remind dentist thursday 3pm`."}
+        if due <= now:
+            return {"type": "text", "content":
+                    f"⏰ That looks like it already passed ({due.strftime('%Y-%m-%d %H:%M')}) — "
+                    "nothing set. Use `remind <what> <when>` if you meant a different time."}
+
+        # Store NAIVE UTC — that's what parse_reminder produces and what the scheduler compares
+        # against. `.astimezone()` with no argument converts to the SERVER's local zone instead, which
+        # silently shifted a 3:00 PM appointment by the host's UTC offset.
+        from datetime import timezone as _tzutc
+        due_utc = due.astimezone(_tzutc.utc).replace(tzinfo=None)
+        r = reminder_service.create_reminder(self.db, self.user, what, due_utc)
+        human = reminder_service.humanize_due(r.due_at, tz=tz)
+        return {"type": "text", "content": (
+            f"⏰ Reminder set from the image: **{r.text}** — {human}.\n"
+            f"_id {r.id} · `reminders` to view or cancel._")}
 
     async def _reminders_command(self) -> dict:
         """List pending reminders. Returns a `reminders` result the web UI renders with a Cancel

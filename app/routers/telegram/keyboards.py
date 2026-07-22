@@ -528,6 +528,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
             # Same family as Read text — pull information OUT of the photo. Typing `bill` over an
             # attachment was the wrong shape when this menu already exists.
             {"text": "🧾 Bill", "callback_data": "media:bill"},
+            {"text": "⏰ Remind", "callback_data": "media:remind"},
         ])
         # Bottom row: create/learn/share — kept side-by-side (left→right) rather than stacked.
         bottom = [
@@ -546,6 +547,7 @@ def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
             {"text": "📝 Summarize", "callback_data": "media:summarize"},
             {"text": "🌐 Translate", "callback_data": "media:translate"},
             {"text": "🧾 Bill", "callback_data": "media:bill"},
+            {"text": "⏰ Remind", "callback_data": "media:remind"},
         ])
     # Study material (PDF / slide deck / doc) → interactive flashcards quiz. (Images get the
     # Flashcards button grouped into the create/learn row above, so don't duplicate it here.)

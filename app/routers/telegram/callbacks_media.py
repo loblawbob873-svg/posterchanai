@@ -172,6 +172,12 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                         {"text": "✖ Cancel", "callback_data": "media:billno"},
                     ]]} if _staged else None),
                 )
+            elif _action == "remind":
+                # Screenshot -> reminder: same one-tap shape as Bill. No confirm step here — a wrong
+                # reminder is a notification you dismiss, not a permanent row in your accounts.
+                _res = await cb_command_service.execute_command("remind", "", attachments=_atts)
+                await telegram_service.send_message(
+                    chat_id, ((_res or {}).get("content") or "Couldn't read that.").replace("**", "").replace("_", ""))
             elif _action == "billadd":
                 _res = await cb_command_service.execute_command("bill", "add", attachments=[])
                 await telegram_service.send_message(chat_id, (_res or {}).get("content") or "Couldn't add it.")
