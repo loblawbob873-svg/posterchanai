@@ -9814,7 +9814,7 @@
 
   async function aiMount(feed){
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
@@ -9827,6 +9827,7 @@
     </div>`;
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
+    $('#ai-home').onclick=()=>aiShowWelcome();
     // The splash only exists on an empty chat, but people want to make things mid-conversation too.
     $('#ai-make').onclick=()=>openGenPicker();
     $('#ai-del').onclick=()=>aiDeleteConversation();
@@ -10192,6 +10193,16 @@
   }
   window.__openGenStudio = openGenStudio;
 
+  // 🏠 Home — put the starter splash back mid-conversation, WITHOUT starting a new chat or touching
+  // what's there (that's what ＋ New is for). It lands at the bottom, where you're already looking,
+  // and the next message drops it again (aiAddMessage removes .ai-welcome).
+  function aiShowWelcome(){
+    const box=$('#ai-msgs'); if(!box) return;
+    const cur=box.querySelector('.ai-welcome');
+    if(cur) cur.remove();                       // already up → move it to the bottom rather than stacking
+    box.insertAdjacentHTML('beforeend', _aiWelcomeHtml());
+    aiScroll();
+  }
   function _aiWelcomeHtml(){
     return `<div class="ai-welcome">
       <img class="aw-logo" src="${LOGO}" alt="PosterChan" onerror="this.style.display='none'">
