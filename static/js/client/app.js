@@ -3645,26 +3645,57 @@
   // user never picked as a picture, and showing those would be noise.
   async function _pickBlossomImage(onPick){
     const server=mediaServer();
+    // Folder names live in the encrypted Files index, which is only pulled when you open Files — pull
+    // it here too or the picker would always show a flat, folderless drive.
+    FilesIdx.loadLocal();
+    if(!FilesIdx._pulled){ FilesIdx._pulled=true; try{ await FilesIdx.pull(); }catch(_){ } }
+
     let list=[];
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){ }
-    const imgs=(list||[]).filter(b=> /^image\//.test(b.type||'')).sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
+    // Only real images, and NEVER anything in an encrypted folder: those blobs are ciphertext, so a
+    // viewer on another client would render a broken thumbnail. Newest first.
+    const imgs=(list||[])
+      .filter(b=> /^image\//.test(b.type||''))
+      .filter(b=>{ const m=FilesIdx.meta(b.sha256)||{}; return !m.enc && !FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256)); })
+      .sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
+
     if(!imgs.length){
-      modal(`<h3>🌸 Choose a cover</h3>
+      subModal(`<h3>🌸 Choose a cover</h3>
         <p class="muted">There are no images on your Blossom drive yet. Upload one from
         <b>Files</b> (the 📁 group in the sidebar) and it'll show up here.</p>
         <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Close</button></div>`,
-        root=>{ $('#bp-x',root).onclick=closeModal; });
+        (root, close)=>{ $('#bp-x',root).onclick=close; });
       return;
     }
-    modal(`<h3>🌸 Choose a cover</h3>
-      <p class="muted small">${imgs.length} image${imgs.length===1?'':'s'} on your drive — tap one.</p>
-      <div class="bp-grid">${imgs.slice(0,120).map(b=>
-        `<button type="button" class="bp-cell" data-url="${enc(b.url|| (server+'/'+b.sha256))}">
-           <img loading="lazy" src="${enc(b.url|| (server+'/'+b.sha256))}" alt="" onerror="this.closest('.bp-cell').remove()">
-         </button>`).join('')}</div>
-      <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Cancel</button></div>`, root=>{
-      $$('.bp-cell',root).forEach(c=> c.onclick=()=>{ closeModal(); try{ onPick(c.dataset.url); }catch(_){ } });
-      $('#bp-x',root).onclick=closeModal;
+
+    const urlOf=b=> b.url || (server+'/'+b.sha256);
+    // Folders that actually contain a usable image (plus All), so you never tap into an empty one.
+    const used=new Set(imgs.map(b=>FilesIdx.folderOf(b.sha256)||''));
+    const folders=[['','🗂 All']].concat(
+      FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
+    let cur='';
+
+    subModal(`<h3>🌸 Choose a cover</h3>
+      <p class="muted small" id="bp-count"></p>
+      ${folders.length>1?`<div class="bp-folders">${folders.map(([v,l])=>
+        `<button type="button" class="news-chip bp-folder" data-f="${enc(v)}">${enc(l)}</button>`).join('')}</div>`:''}
+      <div class="bp-grid" id="bp-grid"></div>
+      <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Cancel</button></div>`, (root, close)=>{
+      const grid=$('#bp-grid',root), cnt=$('#bp-count',root);
+      const draw=()=>{
+        const shown=imgs.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
+        cnt.textContent = `${shown.length} image${shown.length===1?'':'s'}${cur?` in ${cur}`:' on your drive'} — tap one.`;
+        grid.innerHTML = shown.slice(0,180).map(b=>{
+          const u=urlOf(b), nm=(FilesIdx.meta(b.sha256)||{}).name||'';
+          return `<button type="button" class="bp-cell" data-url="${enc(u)}"${nm?` title="${enc(nm)}"`:''}>
+            <img loading="lazy" src="${enc(u)}" alt="" onerror="this.closest('.bp-cell').remove()"></button>`;
+        }).join('') || '<div class="muted small">Nothing in this folder.</div>';
+        $$('.bp-cell',grid).forEach(c=> c.onclick=()=>{ close(); try{ onPick(c.dataset.url); }catch(_){ } });
+        $$('.bp-folder',root).forEach(b=> b.classList.toggle('on', (b.dataset.f||'')===cur));
+      };
+      $$('.bp-folder',root).forEach(b=> b.onclick=()=>{ cur=b.dataset.f||''; draw(); });
+      $('#bp-x',root).onclick=close;
+      draw();
     });
   }
 
@@ -11634,6 +11665,20 @@
   // ---------- modal + toast ----------
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
+  // A modal opened ON TOP of another one, closing only ITSELF. modal() stacks layers fine, but
+  // closeModal() empties the whole #modal-root — so a picker opened from inside a sheet took the
+  // sheet down with it when you picked something (Go Live vanished the moment you chose a cover).
+  // onMount receives (root, close) and MUST use that close, never closeModal.
+  function subModal(html, onMount){
+    const root=$('#modal-root');
+    const bg=document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`;
+    const close=()=>{ bg.remove(); if(!root.children.length) document.body.classList.remove('modal-open'); };
+    bg.onclick=e=>{ if(e.target===bg) close(); };
+    root.appendChild(bg); document.body.classList.add('modal-open');
+    if(onMount) onMount(bg.querySelector('.modal'), close);
+    return close;
+  }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
   // with the arrow keys / on-screen arrows / swipe, like every other client. null when there's nothing to
