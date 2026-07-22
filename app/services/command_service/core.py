@@ -47,6 +47,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
         "remind": "Set a reminder in natural language: remind <what> <when> (e.g. remind open the oven in 10m, remind me next tuesday to call mom). Delivered in the web UI and Telegram.",
         "reminders": "Show your pending reminders (clickable to cancel): reminders",
+        "recall": "Search everything you have said before — chat history and your own Nostr notes — by meaning: recall <question>",
         "pin": "Pin something you run often — a search or any command: pin <query|command> (e.g. pin latest xrp news, or pin screenshot https://google.com)",
         "pins": "Show your pins — click to run, or delete: pins",
         "collage": "Combine all attached images into one collage: collage (attach 2+ images)",
@@ -529,6 +530,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._remind_command(arg)
         elif command == "reminders":
             return await self._reminders_command()
+        elif command == "recall":
+            return await self._recall_command(arg)
         elif command == "pin":
             return await self._pin_command(arg)
         elif command == "pins":

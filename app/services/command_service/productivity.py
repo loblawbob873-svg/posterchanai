@@ -1,5 +1,9 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
+import logging
+
 from ._common import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class _ProductivityMixin:
@@ -182,3 +186,58 @@ class _ProductivityMixin:
             "note": note,
             "content": f"🎴 {len(cards)} flashcards from {label}",
         }
+
+    async def _recall_command(self, arg: str) -> dict:
+        """`recall <question>` — search your own chat history and Nostr notes by MEANING, then answer
+        from what it finds. Retrieval is CPU-only (see recall_service); the single short grounded
+        generation at the end is the only GPU work."""
+        from app.services import recall_service
+
+        if self.user is None:
+            return {"type": "text", "content": "Sign in to use recall."}
+        q = (arg or "").strip()
+
+        try:
+            added = await recall_service.index_user(self.db, self.user)
+        except Exception as e:
+            logger.warning("[recall] index failed: %s", e)
+            return {"type": "text", "content": f"Couldn't build the recall index: {e}"}
+
+        if not q or q.lower() in ("status", "index"):
+            from app.models import RecallVector
+            n = self.db.query(RecallVector).filter(RecallVector.user_id == self.user.id).count()
+            return {"type": "text", "content":
+                    f"🧠 Recall index: {n} items"
+                    + (f" (+{added} new)" if added else "")
+                    + "\n\nAsk me something you've said or written before, e.g. "
+                      "`recall what did I decide about the Arc VAE`."}
+
+        try:
+            hits = await recall_service.search(self.db, self.user, q)
+        except Exception as e:
+            logger.warning("[recall] search failed: %s", e)
+            return {"type": "text", "content": f"Recall search failed: {e}"}
+        if not hits:
+            return {"type": "text", "content": "🧠 Nothing in your history looks related to that yet."}
+
+        # Ground the answer in the retrieved snippets, and say so when they don't actually cover it —
+        # a confident answer invented from thin retrieval is worse than "you didn't mention this".
+        ctx = "\n".join(f"[{i+1}] ({'note' if h['source']=='nostr' else 'chat'}, "
+                        f"{recall_service._when(h['ts'])}) {h['text']}"
+                        for i, h in enumerate(hits))
+        try:
+            answer = await self.chat_service.chat([
+                {"role": "system", "content": (
+                    "You answer questions about things the user previously said or wrote, using ONLY "
+                    "the numbered excerpts from their own history. Answer in 1-3 sentences, quoting "
+                    "specifics (names, numbers, decisions) where they appear. Cite the excerpts you "
+                    "used as [1], [2]. If the excerpts do not actually answer the question, say so "
+                    "plainly instead of guessing. No preamble.")},
+                {"role": "user", "content": f"Question: {q}\n\nTheir own words:\n{ctx}"},
+            ]) or ""
+        except Exception as e:
+            answer = ""
+            logger.warning("[recall] answer failed: %s", e)
+
+        body = (answer.strip() or "(couldn't summarise — here's what matched)")
+        return {"type": "text", "content": f"🧠 {body}\n\n—\n{recall_service.format_hits(hits)}"}

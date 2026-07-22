@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger, LargeBinary
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -109,6 +109,31 @@ class Conversation(Base):
 
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at, Message.id")
+
+
+class RecallVector(Base):
+    """Semantic index over a user's own words — chat messages and their Nostr notes.
+
+    A derived CACHE, not a source of truth: every row can be rebuilt from the messages table and the
+    relay, which is why it lives in SQL rather than as relay events. Vectors are 384-dim float32 from
+    all-MiniLM-L6-v2 stored raw (1536 bytes), which is small enough that a user's whole index loads in
+    one query and the similarity search is a numpy dot product — no pgvector, no index server.
+    """
+    __tablename__ = "recall_vectors"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source = Column(String(10), nullable=False)          # 'chat' | 'nostr'
+    ref_id = Column(String(80), nullable=False)          # message id, or nostr event id
+    conversation_id = Column(Integer, nullable=True)     # chat only — for the citation
+    text = Column(Text, nullable=False)                  # the snippet shown back to the user
+    ts = Column(Integer, nullable=False, default=0)      # unix seconds, for "when"
+    vec = Column(LargeBinary, nullable=False)
+
+    __table_args__ = (
+        Index("ix_recall_user", "user_id"),
+        Index("ix_recall_ref", "user_id", "source", "ref_id"),
+    )
 
 
 class Message(Base):
