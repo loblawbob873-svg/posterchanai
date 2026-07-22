@@ -1155,6 +1155,12 @@
     { const gl=$('#nav-golive');
       const _mayStream = !(_aiAuth && _aiAuth.can_stream === false);
       if(gl && CFG.stream_enabled!==false && _mayStream){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
+    // _aiAuth arrives asynchronously (or not at all for a user who never touches AI), so re-check once
+    // it does: hide the entry for an account the server would refuse, instead of leaving a button whose
+    // only outcome is an error toast.
+    { const _sync=()=>{ const gl=$('#nav-golive'); if(!gl) return;
+        if(_aiAuth && _aiAuth.can_stream === false) gl.classList.add('hidden'); };
+      setTimeout(_sync, 2500); setTimeout(_sync, 8000); }
     // Collapsible "Files" group (Blossom + Music), like Games/Discover.
     { const ft=$('#files-toggle'); if(ft){ const sub=$('#files-sub'), chev=$('#files-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
@@ -3547,7 +3553,11 @@
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); switchView('streams'); return; }
     try{ await ensureAiSession(); }catch(_){}
     let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
-    if(!info || info.enabled===false || !info.rtmp_url){ toast('streaming isn’t enabled on this server'); return; }
+    // The server is the authority on permission: the sidebar/More gate can only hide the entry when
+    // the session is already known (_aiAuth is null until ensureAiSession resolves, which for a
+    // non-admin may not have happened yet), so the refusal has to read well on its own.
+    if(!info || info.enabled===false || !info.rtmp_url){
+      toast(info && info.message ? info.message : 'streaming isn’t enabled on this server'); return; }
     const canPhone = !!(info.whip_url && navigator.mediaDevices && window.RTCPeerConnection);
     // Screen share comes from either the native plugin (Android app → RTMP, captured outside the WebView)
     // or a desktop browser's getDisplayMedia over the SAME WHIP ingest the webcam uses. No MOBILE browser
