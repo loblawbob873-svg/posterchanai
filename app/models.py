@@ -259,6 +259,12 @@ class BlossomBlob(Base):
     expires_at = Column(Integer, nullable=True)         # unix seconds; 0/NULL = never
     storage = Column(String(10), nullable=False, default="local")  # "local" | "proxy"
     path = Column(String(512), nullable=False)          # local file path or proxy rel-path
+    # PRIVATE blob: an AI-chat artifact, stored as ciphertext under the owner's derived storage key
+    # and decrypted on demand by /client/file. These must NEVER appear in the public BUD-02 listing:
+    # that listing published the sha256 of every one of them, and the sha256 is the only thing
+    # /client/file requires to hand back the DECRYPTED bytes — so an unauthenticated listing was a
+    # full read of every user's AI-chat files. Public uploads (normal Blossom media) stay listable.
+    private = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class StreamVOD(Base):

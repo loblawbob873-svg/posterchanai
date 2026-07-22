@@ -608,7 +608,8 @@ def _mirror_worker() -> None:
         loop.close()
 
 
-async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True) -> dict:
+async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True,
+                    private: bool = False) -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
     (without `url`, which the router fills from the request base)."""
     cfg = _cfg(db)
@@ -644,7 +645,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     # is driven live by the admin `blossom_blob_ttl_days` setting against created_at.
     blob = BlossomBlob(
         sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=None, storage=storage, path=path,
+        expires_at=None, storage=storage, path=path, private=bool(private),
     )
     db.add(blob)
     try:
@@ -961,11 +962,18 @@ def descriptor(blob: BlossomBlob, base_url: str) -> dict:
     return d
 
 
-def list_for_pubkey(db: Session, pubkey_hex: str) -> list[BlossomBlob]:
-    return (db.query(BlossomBlob)
-            .filter(BlossomBlob.pubkey == pubkey_hex)
-            .order_by(BlossomBlob.created_at.desc())
-            .all())
+def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False) -> list[BlossomBlob]:
+    """BUD-02 listing. Private (AI-chat) blobs are EXCLUDED unless the caller proved ownership.
+
+    This listing is unauthenticated by design (BUD-02 makes auth optional) and that was fine while
+    every blob was public media. It stopped being fine once AI-chat artifacts were stored here: the
+    listing published their sha256, and /client/file hands back the DECRYPTED bytes to anyone holding
+    that sha256 — so `GET /blossom/list/<storage-pubkey>` was an unauthenticated dump of every user's
+    private chat files. The sha256 is the capability, so it must not be listed to strangers."""
+    q = db.query(BlossomBlob).filter(BlossomBlob.pubkey == pubkey_hex)
+    if not include_private:
+        q = q.filter(BlossomBlob.private.is_(False))
+    return q.order_by(BlossomBlob.created_at.desc()).all()
 
 
 # --- expiry cleanup (daemon thread) -----------------------------------------

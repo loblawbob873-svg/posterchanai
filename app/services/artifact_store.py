@@ -22,7 +22,9 @@ async def save_bytes(db, user, conv_id: int, data: bytes, ext: str) -> str | Non
         sk = user_storage_seckey(db, user)
         ct = blobcrypt.encrypt(sk, data)          # AES-256-GCM (handles large images/files)
         pub = bip340.pubkey_from_seckey(sk).hex()
-        desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream")
+        # private=True: an AI-generated artifact must never appear in the public BUD-02 listing —
+        # that listing's sha256 is all /client/file needs to return the decrypted bytes.
+        desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream", private=True)
         sha = desc.get("sha256")
         if not sha:
             return None
