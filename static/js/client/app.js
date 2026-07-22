@@ -3596,9 +3596,11 @@
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
-      <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span>
-        <span class="copyrow"><input class="input" id="gl-img" placeholder="https://… or upload one" autocomplete="off" spellcheck="false"><button class="btn btn-ghost small" id="gl-img-pick">📎 Upload</button></span></label>
-      <img id="gl-img-prev" class="gl-img-prev hidden" alt=""><input type="file" id="gl-img-file" accept="image/*" hidden>
+      <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span></label>
+      <img id="gl-img-prev" class="gl-img-prev hidden" alt="">
+      <div class="gl-cover-acts"><button class="btn btn-ghost small" id="gl-img-pick">🌸 Choose from your drive</button>
+        <button class="btn btn-ghost small hidden" id="gl-img-clear">✕ Clear</button></div>
+      <input type="hidden" id="gl-img">
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
       <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
@@ -3606,20 +3608,20 @@
       const cover=()=>($('#gl-img',root).value||'').trim();
       // Cover image: paste a URL or upload one to Blossom. Without it a stream renders as a bare ▶ tile,
       // which is why Discover → Streams looked empty.
-      { const ip=$('#gl-img',root), pv=$('#gl-img-prev',root), fb=$('#gl-img-file',root), pk=$('#gl-img-pick',root);
-        const showPrev=()=>{ const u=cover(); if(u){ pv.src=u; pv.classList.remove('hidden'); } else pv.classList.add('hidden'); };
-        // Prefill with your avatar — the same value _publishLive would fall back to, but visible and
-        // editable, so the thumbnail isn't a surprise after you're already live.
+      // Cover image: PICK ONE FROM YOUR BLOSSOM DRIVE. It used to be a URL box plus an upload button —
+      // three ways to get this wrong (paste a dead link, upload a duplicate, or leave it blank and get
+      // a bare ▶ tile on Discover → Streams). Your drive already holds the images you'd use.
+      { const ip=$('#gl-img',root), pv=$('#gl-img-prev',root), pk=$('#gl-img-pick',root), cl=$('#gl-img-clear',root);
+        const showPrev=()=>{ const u=cover();
+          if(u){ pv.src=u; pv.classList.remove('hidden'); cl.classList.remove('hidden'); }
+          else { pv.classList.add('hidden'); cl.classList.add('hidden'); } };
+        // Default to your avatar — the same value _publishLive falls back to, but VISIBLE, so the
+        // thumbnail isn't a surprise after you're already live.
         { const mine=(Store.profile(ME.pubkey)||{}).picture; if(mine && !ip.value) ip.value=mine; }
         showPrev();
-        ip.addEventListener('input', showPrev);
         pv.onerror=()=>pv.classList.add('hidden');
-        pk.onclick=()=>fb.click();
-        fb.onchange=async e=>{ const f=(e.target.files||[])[0]; if(!f) return;
-          pk.disabled=true; pk.textContent='uploading…';
-          try{ ip.value=await uploadBlob(f); showPrev(); }
-          catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); } else toast('upload failed'); }
-          finally{ pk.disabled=false; pk.textContent='📎 Upload'; e.target.value=''; } }; }
+        cl.onclick=()=>{ ip.value=''; showPrev(); };
+        pk.onclick=()=> _pickBlossomImage(url=>{ ip.value=url; showPrev(); }); }
       $$('[data-copy]',root).forEach(b=> b.onclick=()=> _copyFrom($('#'+b.dataset.copy,root)));
       { const rc=$('#gl-record',root); if(rc) rc.onchange=()=>{ rc.disabled=true;
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
@@ -3637,6 +3639,35 @@
       };
     });
   }
+  // Pick an image you already have on your Blossom drive. Used by Go Live's cover picker; kept
+  // generic (takes a callback) so anything else needing "choose one of my images" can reuse it.
+  // Filters to images by mime, newest first — the drive also holds encrypted app data and media the
+  // user never picked as a picture, and showing those would be noise.
+  async function _pickBlossomImage(onPick){
+    const server=mediaServer();
+    let list=[];
+    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){ }
+    const imgs=(list||[]).filter(b=> /^image\//.test(b.type||'')).sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
+    if(!imgs.length){
+      modal(`<h3>🌸 Choose a cover</h3>
+        <p class="muted">There are no images on your Blossom drive yet. Upload one from
+        <b>Files</b> (the 📁 group in the sidebar) and it'll show up here.</p>
+        <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Close</button></div>`,
+        root=>{ $('#bp-x',root).onclick=closeModal; });
+      return;
+    }
+    modal(`<h3>🌸 Choose a cover</h3>
+      <p class="muted small">${imgs.length} image${imgs.length===1?'':'s'} on your drive — tap one.</p>
+      <div class="bp-grid">${imgs.slice(0,120).map(b=>
+        `<button type="button" class="bp-cell" data-url="${enc(b.url|| (server+'/'+b.sha256))}">
+           <img loading="lazy" src="${enc(b.url|| (server+'/'+b.sha256))}" alt="" onerror="this.closest('.bp-cell').remove()">
+         </button>`).join('')}</div>
+      <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Cancel</button></div>`, root=>{
+      $$('.bp-cell',root).forEach(c=> c.onclick=()=>{ closeModal(); try{ onPick(c.dataset.url); }catch(_){ } });
+      $('#bp-x',root).onclick=closeModal;
+    });
+  }
+
   // Publish the NIP-53 kind-30311 "live" event + track it locally. Sets _liveStream FIRST so a relay
   // publish failure still leaves the stream trackable + endable (the End button / teardown still work).
   // ONE builder for the 30311's invariant tags. FOUR places re-sign this event (announce, viewer-count
