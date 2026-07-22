@@ -8099,7 +8099,12 @@
       case 'zaps': return e.kind===9735;
       case 'follows': return e.kind===3;
       case 'reports': return e.kind===1984;
-      default: return true;
+      // "All" carries only follows we actually WATCHED arrive (pinned after _notifEpoch, the same test
+      // bumpNotif uses for the badge). Everyone who was already following when this install started is
+      // history — a follower list, not a notification — and belongs in the 🫂 Follows tab. Without this,
+      // a fresh install (new APK, cleared storage) pins each of them at their last contact-list save, so
+      // the ones who saved recently still read as brand-new follows even once the ordering is right.
+      default: return !(e.kind===3 && _notifTs(e)<=_notifEpoch);
     }
   }
   function renderNotifications(){
@@ -8151,7 +8156,14 @@
         g.events.push(e); if(e.created_at>g.created_at) g.created_at=e.created_at;
       } else out.push(e);
     }
-    return out.sort((a,b)=>b.created_at-a.created_at);
+    // Sort by the SAME key notifList() used — _notifTs, not raw created_at. This re-sort ran after it and
+    // silently undid the whole pinning system: a kind-3's created_at is the follower's last contact-list
+    // SAVE, so all ~31 followers who re-saved today floated straight back to the top of Notifications,
+    // above real mentions, each row displaying its (correct, old) pinned time via _notifTs. That is the
+    // follow spam — the badge fix never touched it, because the bug was downstream of the ordering.
+    // Groups (reactions/reposts on one post) legitimately sort by their newest event's created_at.
+    const ord = x => (x && x.type==='group') ? x.created_at : _notifTs(x);
+    return out.sort((a,b)=>ord(b)-ord(a));
   }
   // Clean a notification's content for a compact one-line preview: turn npub/nprofile mentions into @name
   // (resolved from the profile, else a short @npub…) and collapse note/nevent/naddr refs to a 🔗 — so a
