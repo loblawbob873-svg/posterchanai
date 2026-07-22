@@ -44,6 +44,50 @@ _COINS = [
     ("BNB", "BNB"),
 ]
 
+# CoinGecko ids for the same list. Prices come from a PRICE API, never from the news text: asking the model
+# to read a price out of search snippets meant it quoted whatever figure an old article happened to mention
+# — XRP came out at $0.62 against a real $1.14, ADA at $0.92 against $0.173, and Monero/SOL/DOGE simply had
+# no price at all because none of their articles printed one.
+_CG_IDS = {
+    "BTC": "bitcoin", "ETH": "ethereum", "XRP": "ripple", "XMR": "monero",
+    "SOL": "solana", "DOGE": "dogecoin", "ADA": "cardano", "BNB": "binancecoin",
+}
+_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price"
+_PRICE_TIMEOUT = 20.0
+
+
+async def _fetch_prices() -> dict:
+    """{SYM: {"usd": float, "chg24h": float}} for every coin, in ONE request. Never raises — on failure the
+    digest just runs without authoritative prices (and says so) rather than inventing them."""
+    import httpx
+    ids = ",".join(_CG_IDS[s] for s, _ in _COINS if s in _CG_IDS)
+    try:
+        async with httpx.AsyncClient(timeout=_PRICE_TIMEOUT) as client:
+            r = await client.get(_PRICE_URL, params={
+                "ids": ids, "vs_currencies": "usd", "include_24hr_change": "true",
+            })
+        if r.status_code != 200:
+            logger.warning("[markets] price fetch HTTP %s", r.status_code)
+            return {}
+        data = r.json() or {}
+    except Exception as e:
+        logger.warning("[markets] price fetch failed: %s", e)
+        return {}
+    out = {}
+    for sym, _name in _COINS:
+        row = data.get(_CG_IDS.get(sym, "")) or {}
+        usd = row.get("usd")
+        if isinstance(usd, (int, float)):
+            out[sym] = {"usd": float(usd), "chg24h": float(row.get("usd_24h_change") or 0.0)}
+    return out
+
+
+def _fmt_price(usd: float) -> str:
+    """Sub-dollar coins need real precision — DOGE at $0.07 and ADA at $0.17 both round to $0.00 at 2dp."""
+    if usd >= 1:
+        return f"${usd:,.2f}"
+    return f"${usd:.6f}".rstrip("0").rstrip(".")
+
 _COIN_TIMEOUT = 120.0          # hard cap per coin — a hung search/LLM yields an empty card, never stalls the run
 _CONCURRENCY = 3               # coins in flight at once: parallelizes the SearXNG I/O (LLM calls still queue at
                                # the LB) → cuts wall time without a thundering herd on a small self-hosted box.
@@ -89,7 +133,7 @@ def _ai_available() -> bool:
         return False
 
 
-async def _gen_coin(sym: str, name: str) -> dict:
+async def _gen_coin(sym: str, name: str, price: dict = None) -> dict:
     """One coin → {sym, name, summary, articles}. Web search (news-first, proxy handled by the search
     service) + a short AI briefing that leads with the price. Never raises — a failed coin yields a card
     with whatever it got (possibly empty). Opens its OWN short-lived DB session so a slow LLM/search call
@@ -97,7 +141,10 @@ async def _gen_coin(sym: str, name: str) -> dict:
     db = SessionLocal()
     try:
         ss = SearchService(db)
-        query = f"{name} {sym} crypto price today and latest news coindesk"
+        # The price no longer comes from here, so the query asks for NEWS rather than "price today …
+        # coindesk". That brand-anchored phrasing skewed results toward whatever CoinDesk had covered,
+        # which is why Monero — plenty of news, rarely on CoinDesk's front page — kept coming back thin.
+        query = f"{name} ({sym}) cryptocurrency latest news"
         # Two independent searches: the news-filtered one, and (only if it yields nothing OR errors) a
         # plain general search. Separate try/except so an EXCEPTION in the first still tries the fallback.
         results = []
@@ -117,17 +164,32 @@ async def _gen_coin(sym: str, name: str) -> dict:
             if u:
                 articles.append({"title": (r.get("title") or u), "url": u, "published": (r.get("published") or "")})
 
+        # Live price line, handed to the model as the ONLY acceptable price. Without this it quoted stale
+        # figures out of the articles; with it, the briefing and the card header always agree.
+        price_line = ""
+        if price and isinstance(price.get("usd"), float):
+            _chg = price.get("chg24h") or 0.0
+            price_line = f"{_fmt_price(price['usd'])} ({_chg:+.2f}% over 24h)"
+
         summary = ""
         if results:
-            ctx = f"Search results for {name} ({sym}) cryptocurrency — price and latest news:\n\n"
+            ctx = ""
+            if price_line:
+                ctx += f"CURRENT PRICE of {name} ({sym}), live from a price API: {price_line}\n\n"
+            ctx += f"Search results for {name} ({sym}) cryptocurrency — latest news:\n\n"
             for i, r in enumerate(results, 1):
                 _p = f" (published {r['published']})" if r.get("published") else ""
                 ctx += f"{i}. {r.get('title', '')}{_p}\n{r.get('url', '')}\n{r.get('content', '')}\n\n"
             sysmsg = (
-                f"You are a concise crypto market analyst. From the search results, write a SHORT briefing "
-                f"(3-4 sentences) on {name} ({sym}). LEAD with the current price and 24h move if they appear "
-                f"in the results, then the most important recent development. Use ONLY facts present in the "
-                f"results; if no price is present, say prices weren't available. No preamble, no markdown headers."
+                f"You are a concise crypto market analyst. Write a SHORT briefing (3-4 sentences) on "
+                f"{name} ({sym}). "
+                + (f"LEAD with this exact price and 24h move: {price_line}. That figure is authoritative — "
+                   f"any price mentioned in the search results is older and MUST be ignored, never repeated. "
+                   if price_line else
+                   "No live price was available, so say so in the first sentence and do not quote a price "
+                   "from the articles — they may be months out of date. ")
+                + f"Then give the most important recent development from the results. Use ONLY facts present "
+                  f"above. No preamble, no markdown headers."
             )
             try:
                 chat = ChatService(db, user=None)
@@ -143,20 +205,33 @@ async def _gen_coin(sym: str, name: str) -> dict:
                 logger.debug("[markets] summarize %s failed: %s", sym, e)
                 summary = ""
 
-        return {"sym": sym, "name": name, "summary": summary, "articles": articles}
+        # price/chg24h ride along as real fields so the CARD renders them directly — the number a reader
+        # sees never depends on the model having repeated it correctly (or at all).
+        out = {"sym": sym, "name": name, "summary": summary, "articles": articles}
+        if price and isinstance(price.get("usd"), float):
+            out["price"] = price["usd"]
+            out["price_str"] = _fmt_price(price["usd"])
+            out["chg24h"] = price.get("chg24h") or 0.0
+        return out
     finally:
         db.close()
 
 
-async def _gen_coin_guarded(sym: str, name: str, sem: asyncio.Semaphore) -> dict:
+async def _gen_coin_guarded(sym: str, name: str, sem: asyncio.Semaphore, price: dict = None) -> dict:
     """One coin, bounded by the concurrency semaphore and a hard per-coin timeout so a single hung
     search/LLM can't stall the whole digest. Never raises → asyncio.gather never raises."""
     async with sem:
         try:
-            return await asyncio.wait_for(_gen_coin(sym, name), timeout=_COIN_TIMEOUT)
+            return await asyncio.wait_for(_gen_coin(sym, name, price), timeout=_COIN_TIMEOUT)
         except Exception as e:
             logger.debug("[markets] coin %s timed out / failed: %s", sym, e)
-            return {"sym": sym, "name": name, "summary": "", "articles": []}
+            # Keep the price even when the search/LLM half timed out — a card showing the live price with
+            # no briefing is still useful, and it's the part that was wrong before.
+            out = {"sym": sym, "name": name, "summary": "", "articles": []}
+            if price and isinstance(price.get("usd"), float):
+                out["price"], out["price_str"] = price["usd"], _fmt_price(price["usd"])
+                out["chg24h"] = price.get("chg24h") or 0.0
+            return out
 
 
 async def generate_report() -> dict:
@@ -165,8 +240,11 @@ async def generate_report() -> dict:
     it keeps serving the last good one rather than clobbering it with an empty digest."""
     global _memo, _degraded
     async with _genlock:                       # serialize: never two digest passes at once
+        prices = await _fetch_prices()         # ONE request for all 8, before any per-coin work
         sem = asyncio.Semaphore(_CONCURRENCY)
-        coins = list(await asyncio.gather(*[_gen_coin_guarded(s, n, sem) for s, n in _COINS]))
+        coins = list(await asyncio.gather(*[
+            _gen_coin_guarded(s, n, sem, prices.get(s)) for s, n in _COINS
+        ]))
     # Merge: for any coin THIS run couldn't fetch, keep the previous report's card. So a flaky/partial run
     # (e.g. 2 of 8 coins returned) never blanks a coin or clobbers a complete digest with mostly-empty cards.
     if _memo and _memo.get("coins"):
@@ -177,7 +255,9 @@ async def generate_report() -> dict:
                 if p and (p.get("summary") or p.get("articles")):
                     c["summary"], c["articles"] = p.get("summary", ""), p.get("articles", [])
     report = {"generated_at": time.time(), "coins": coins}
-    if not any(c.get("summary") or c.get("articles") for c in coins):
+    # A live price counts as usable content: if search/LLM are down but the price API answered, a digest of
+    # correct prices is worth serving — discarding it would have been throwing away the reliable half.
+    if not any(c.get("summary") or c.get("articles") or c.get("price") for c in coins):
         logger.warning("[markets] generation produced no usable content; keeping previous report")
         if _memo is None:
             _degraded = True                   # nothing good to show and the run failed → 'unavailable'

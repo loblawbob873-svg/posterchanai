@@ -24,10 +24,17 @@
         const u = safeUrl(a.url); if(!u) return '';
         return `<a class="mkts-art" href="${enc(u)}" target="_blank" rel="noopener noreferrer">${enc(a.title||u)}</a>`;
       }).join('');
+      // Price is rendered from real fields, NOT read out of the briefing text: the summary used to be the
+      // only place a price appeared, and the model was quoting stale figures from the articles (XRP $0.62
+      // against a real $1.14) or omitting it entirely (Monero, SOL, DOGE).
+      const chg = (typeof c.chg24h === 'number') ? c.chg24h : null;
+      const px = c.price_str ? `<span class="mkts-px">${enc(c.price_str)}</span>${chg===null?'':
+        `<span class="mkts-chg ${chg>=0?'up':'down'}">${chg>=0?'▲':'▼'} ${Math.abs(chg).toFixed(2)}%</span>`}` : '';
       return `<div class="mkts-card" data-sym="${enc(c.sym)}">
         <div class="mkts-head">
           <span class="mkts-sym">${enc(c.sym)}</span>
           <span class="mkts-name">${enc(c.name)}</span>
+          ${px}
           <button class="mkts-post btn btn-cyan" title="Share as a post">Share</button>
         </div>
         <div class="mkts-sum${c.summary?'':' mkts-muted'}">${c.summary ? enc(c.summary) : 'No data available right now.'}</div>

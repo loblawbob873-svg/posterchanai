@@ -872,6 +872,12 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .mkts-sym{font-weight:800;font-size:15px;color:var(--neon);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:2px 9px;letter-spacing:.5px}
 .mkts-name{font-weight:700;font-size:16px;color:var(--text);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mkts-post{flex:0 0 auto;padding:5px 14px;font-size:13px;border-radius:999px}
+/* Live price + 24h move, next to the ticker. flex:0 0 auto so .mkts-name keeps absorbing the slack and the
+   Share button stays pinned right. Green/red are fixed (not theme vars): up/down must read the same in
+   every theme, and --green/--danger drift per theme. */
+.mkts-px{flex:0 0 auto;font-weight:800;font-size:15px;color:var(--text);font-variant-numeric:tabular-nums}
+.mkts-chg{flex:0 0 auto;font-weight:700;font-size:12.5px;font-variant-numeric:tabular-nums}
+.mkts-chg.up{color:#2fbf71} .mkts-chg.down{color:#ff5a7a}
 .mkts-sum{line-height:1.55;font-size:14.5px;color:var(--text);margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .mkts-arts{display:flex;flex-direction:column;gap:5px;margin-top:10px;border-top:1px solid var(--line);padding-top:9px}
 .mkts-art{font-size:13px;color:var(--muted);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
