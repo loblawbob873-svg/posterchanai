@@ -1,0 +1,64 @@
+{
+  "name": "posterchan-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PosterChan desktop app (Electron) — a native window onto a PosterChan instance",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node -e \"require('fs').mkdirSync('build',{recursive:true});require('fs').copyFileSync('../static/icon-512.png','build/icon.png');require('fs').copyFileSync('../static/icon-512.png','icon.png')\"",
+    "build:win": "npm run icon && electron-builder --win nsis --publish never",
+    "build:linux": "npm run icon && electron-builder --linux AppImage --publish never",
+    "build:mac": "npm run icon && electron-builder --mac dmg --x64 --arm64 --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "place.poster.desktop",
+    "productName": "PosterChan",
+    "copyright": "PosterChan",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "shell.html", "icon.png", "package.json"],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "artifactName": "PosterChan-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createStartMenuShortcut": true,
+      "createDesktopShortcut": true,
+      "menuCategory": false,
+      "shortcutName": "PosterChan",
+      "runAfterFinish": true
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.social-networking",
+      "identity": null,
+      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
+      "artifactName": "PosterChan-${arch}.dmg"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Network",
+      "synopsis": "PosterChan — Nostr client, chat and media",
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "artifactName": "PosterChan.AppImage"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://poster.place/desktop/",
+        "channel": "latest"
+      }
+    ]
+  }
+}

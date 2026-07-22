@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PosterChan</title>
+<style>
+  :root{ --bg:#0a0a10; --panel:#12121c; --line:#262636; --text:#e8e8f0; --muted:#8b8ba3; --neon:#00f0ff }
+  *{box-sizing:border-box}
+  body{margin:0;height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
+       font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  .card{width:min(460px,90vw);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;text-align:center}
+  img{width:72px;height:72px;border-radius:18px;margin-bottom:14px}
+  h1{margin:0 0 6px;font-size:19px}
+  p{margin:0 0 16px;color:var(--muted);font-size:13.5px;word-break:break-word}
+  input{width:100%;padding:11px 13px;margin-bottom:12px;border-radius:11px;border:1px solid var(--line);
+        background:#0d0d16;color:var(--text);font-size:14px}
+  input:focus{outline:none;border-color:var(--neon)}
+  .row{display:flex;gap:9px}
+  button{flex:1;padding:11px 14px;border-radius:11px;border:1px solid var(--line);background:#191926;
+         color:var(--text);font-size:14px;cursor:pointer}
+  button:hover{border-color:var(--neon);color:var(--neon)}
+  button.go{background:rgba(0,240,255,.12);border-color:var(--neon);color:var(--neon)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <img src="icon.png" onerror="this.style.display='none'">
+    <h1 id="title">Can't reach your instance</h1>
+    <p id="msg"></p>
+    <input id="inst" placeholder="https://poster.place" spellcheck="false">
+    <div class="row">
+      <button id="retry">Retry</button>
+      <button class="go" id="save">Connect</button>
+    </div>
+  </div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const pick = q.get('pick') === '1';
+  const inst = document.getElementById('inst');
+  document.getElementById('title').textContent = pick ? 'Choose your instance' : "Can't reach your instance";
+  document.getElementById('msg').textContent = pick
+    ? 'PosterChan can point at any self-hosted instance. Enter its address.'
+    : (q.get('url') || '') + (q.get('err') ? ' — ' + q.get('err') : '') + '. Check your connection, or point the app somewhere else.';
+
+  (async () => { try { inst.value = await window.pcShell.getInstance(); } catch (_) {} inst.focus(); inst.select(); })();
+
+  document.getElementById('retry').onclick = () => window.pcShell.retry();
+  document.getElementById('save').onclick = async () => {
+    let v = inst.value.trim();
+    if (v && !/^https?:\/\//i.test(v)) v = 'https://' + v;      // typing "my.server" should just work
+    if (!(await window.pcShell.setInstance(v))) { inst.style.borderColor = '#e0245e'; }
+  };
+  inst.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('save').click(); });
+</script>
+</body>
+</html>

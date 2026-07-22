@@ -1,0 +1,127 @@
+name: Desktop apps
+
+# Builds the PosterChan desktop app (Electron) for Windows, Linux and macOS on GitHub's runners and
+# publishes every artifact to the rolling "desktop-latest" GitHub Release. poster.place/desktop serves
+# those assets (and the electron-updater feed) — see the /desktop routes in app/main.py.
+#
+# The desktop app is a THIN shell that loads <instance>/client live, so a web-client change ships to
+# desktop users on their next reload — this workflow only needs to run when the shell itself changes.
+# (The Android APK is the opposite: it BUNDLES the client, so android.yml is gated on static/js/client.)
+#
+# Signing: Windows and Linux artifacts are unsigned — SmartScreen shows a "more info" prompt on first
+# run. macOS is unsigned too, which additionally means NO auto-update there (Squirrel.Mac requires a
+# signature); Mac users get the new .dmg from poster.place/desktop/mac.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            script: build:win
+          - os: ubuntu-latest
+            name: linux
+            script: build:linux
+          - os: macos-latest
+            name: mac
+            script: build:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Version == the run number, like the APK's versionCode. electron-updater compares this against
+      # the feed's `version`, so it MUST increase on every build or no client ever sees an update.
+      - name: Version from run number
+        working-directory: desktop
+        run: npm version 1.0.${{ github.run_number }} --no-git-tag-version --allow-same-version
+
+      - name: Install deps
+        working-directory: desktop
+        run: npm install
+
+      - name: Build
+        working-directory: desktop
+        run: npm run ${{ matrix.script }}
+
+      # Insurance: `--publish never` means electron-builder doesn't run its publisher, and whether it
+      # still writes the update feed varies by version. Generate it from the built bytes when missing —
+      # a shipped app with no feed silently never updates.
+      - name: Ensure the update feed exists
+        if: matrix.name != 'mac'
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            node scripts/make-update-yml.js dist PosterChan-Setup.exe latest.yml
+          else
+            node scripts/make-update-yml.js dist PosterChan.AppImage latest-linux.yml
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/*.AppImage
+            desktop/dist/*.dmg
+            desktop/dist/latest*.yml
+
+  publish:
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what we're shipping
+        run: ls -la artifacts
+
+      # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the
+      # assets under a rolling tag never touches it, so desktop-latest would keep showing an old date
+      # next to a fresh build. Deleting the release (the TAG and therefore every
+      # /releases/download/desktop-latest/... URL survives) makes the next step re-create it with an
+      # honest date. Never fail the build over this. make_latest stays false so the APK release keeps
+      # the repo's "Latest" badge.
+      - name: Retire the previous rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete desktop-latest --yes --repo "$GITHUB_REPOSITORY" || true
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: PosterChan Desktop (latest)
+          body: |
+            PosterChan desktop app — auto-built from `desktop/`. Version 1.0.${{ github.run_number }}.
+
+            * Windows — `PosterChan-Setup.exe` (Start-menu installer, auto-updates)
+            * Linux — `PosterChan.AppImage` (auto-updates)
+            * macOS — `PosterChan-arm64.dmg` / `PosterChan-x64.dmg` (unsigned: right-click → Open)
+
+            Downloads: https://poster.place/desktop
+          make_latest: false
+          files: artifacts/*

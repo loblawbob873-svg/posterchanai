@@ -838,6 +838,57 @@ async def apk_version():
     return {"build": build, "versionName": (f"1.0.{build}" if build else "")}
 
 
+# ---- desktop app (Electron: Windows / Linux / macOS) -------------------------------------------
+# GitHub Actions (.github/workflows/desktop.yml) builds every target and publishes them to the rolling
+# 'desktop-latest' Release; these routes are the stable public face of that release. They also ARE the
+# electron-updater feed: the app is built with a generic provider pointing at https://poster.place/desktop/,
+# so it fetches /desktop/latest.yml and then the artifact named inside it. Going through this server
+# instead of electron-updater's GitHub provider keeps the feed correct — the repo carries two rolling
+# releases (apk-latest, desktop-latest) and that provider just takes whichever was published last.
+_DESKTOP_DL = "https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/"
+# Allowlist, not a passthrough: this route redirects off-site, so an unchecked name is an open redirect.
+_DESKTOP_ASSETS = {
+    "PosterChan-Setup.exe", "PosterChan-Setup.exe.blockmap",
+    "PosterChan.AppImage", "PosterChan-arm64.dmg", "PosterChan-x64.dmg",
+    "latest.yml", "latest-linux.yml",
+}
+_DESKTOP_ALIASES = {
+    "win": "PosterChan-Setup.exe", "windows": "PosterChan-Setup.exe",
+    "linux": "PosterChan.AppImage", "appimage": "PosterChan.AppImage",
+    "mac": "PosterChan-arm64.dmg", "mac-intel": "PosterChan-x64.dmg",
+}
+
+
+@app.get("/desktop", response_class=HTMLResponse)
+async def desktop_page():
+    """Download page for the desktop app (one build per platform, all from the same Electron shell)."""
+    return HTMLResponse("""<!doctype html><meta charset=utf-8><title>PosterChan for desktop</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a10;color:#e8e8f0;
+font:16px/1.55 system-ui,Segoe UI,Roboto,sans-serif}.c{width:min(430px,92vw);text-align:center;padding:26px}
+img{width:84px;height:84px;border-radius:20px}h1{font-size:22px;margin:14px 0 4px}p{color:#8b8ba3;font-size:14px;margin:0 0 20px}
+a{display:block;margin:9px 0;padding:13px;border:1px solid #262636;border-radius:12px;color:#e8e8f0;text-decoration:none;background:#12121c}
+a:hover{border-color:#00f0ff;color:#00f0ff}a.s{background:transparent;font-size:13.5px;color:#8b8ba3}
+small{color:#5c5c73;font-size:12px;display:block;margin-top:18px}</style>
+<div class=c><img src="/static/icon-512.png"><h1>PosterChan for desktop</h1>
+<p>The same client, in its own window. Auto-updates on Windows and Linux.</p>
+<a href="/desktop/win">⊞ &nbsp;Windows installer</a>
+<a href="/desktop/linux">🐧 &nbsp;Linux AppImage</a>
+<a href="/desktop/mac">🍎 &nbsp;macOS (Apple silicon)</a>
+<a class=s href="/desktop/mac-intel">macOS (Intel)</a>
+<a class=s href="/apk">📱 Android APK</a>
+<small>Unsigned builds — Windows shows a SmartScreen prompt (More info → Run anyway);
+on macOS right-click the app → Open.</small></div>""")
+
+
+@app.get("/desktop/{asset}")
+async def desktop_asset(asset: str):
+    name = _DESKTOP_ALIASES.get(asset.lower(), asset)
+    if name not in _DESKTOP_ASSETS:
+        return RedirectResponse(url="/desktop", status_code=302)
+    return RedirectResponse(url=_DESKTOP_DL + name, status_code=302)
+
+
 @app.get("/login")
 async def login_page(request: Request, next: str = None):
     # Old password login UI retired — log in with your Nostr key in the unified client. (The session
