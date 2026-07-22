@@ -216,7 +216,13 @@ def _totals(db, now: int):
         except Exception:
             return default
 
-    ai_day = scalar("SELECT count(*) FROM messages WHERE role='user' AND created_at >= now() - interval '24 hours'")
+    # Chat volume from the ENCRYPTED transcript events (the plaintext `messages` table is gone).
+    # We count events, never read content — the d-tag identifies them, the body stays encrypted.
+    # ~half of the events are assistant replies, so this counts TURNS, not user prompts; the label
+    # on the page says "AI chat" rather than "requests" for that reason.
+    ai_day = scalar("""SELECT count(*) FROM event_tags t JOIN events e ON e.id = t.event_id
+                        WHERE t.tag = 'd' AND t.value LIKE 'pcai:msg:%' AND e.created_at >= :s""",
+                    {"s": now - 86400})
     return {
         "events":        scalar("SELECT count(*) FROM events"),
         "events_24h":    scalar("SELECT count(*) FROM events WHERE created_at >= :s", {"s": now - 86400}),
@@ -225,7 +231,8 @@ def _totals(db, now: int):
         "pubkeys_24h":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s", {"s": now - 86400}),
         "pubkeys_30d":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s", {"s": now - 2592000}),
         "profiles":      scalar("SELECT count(*) FROM events WHERE kind=0"),
-        "ai_requests":   scalar("SELECT count(*) FROM messages WHERE role='user'"),
+        "ai_requests":   scalar("""SELECT count(*) FROM event_tags
+                                    WHERE tag = 'd' AND value LIKE 'pcai:msg:%'"""),
         "ai_requests_24h": ai_day,
         "db_bytes":      scalar("SELECT pg_database_size(current_database())"),
     }
@@ -243,11 +250,11 @@ def _chat_series(db, now: int):
     counts = {d: 0 for d in days}
     try:
         rows = db.execute(text("""
-            SELECT to_char(created_at, 'YYYY-MM-DD') AS d, count(*)
-              FROM messages
-             WHERE role = 'user' AND created_at >= (now() at time zone 'utc') - interval '30 days'
+            SELECT to_char(to_timestamp(e.created_at) at time zone 'utc', 'YYYY-MM-DD') AS d, count(*)
+              FROM event_tags t JOIN events e ON e.id = t.event_id
+             WHERE t.tag = 'd' AND t.value LIKE 'pcai:msg:%' AND e.created_at >= :since
              GROUP BY 1
-        """)).fetchall()
+        """), {"since": now - 2592000}).fetchall()
         for d, n in rows:
             if d in counts:
                 counts[d] = int(n)

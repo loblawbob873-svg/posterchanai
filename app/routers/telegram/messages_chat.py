@@ -192,21 +192,21 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         ).order_by(Conversation.updated_at.desc()).first()
 
                         if conversation:
-                            recent_messages = db.query(Message).filter(
-                                Message.conversation_id == conversation.id
-                            ).order_by(Message.id.desc()).limit(6).all()
+                            # History comes from the ENCRYPTED relay transcript, not plaintext rows.
+                            from app.services import chat_history
+                            recent_messages = (await chat_history.load(db, user_obj, conversation.id))[-6:]
 
                             HISTORY_CHAR_LIMIT = 2000  # large enough to hold a full URL summary
-                            for msg in reversed(recent_messages):
-                                if msg.role == last_role:
+                            for msg in recent_messages:
+                                _role = msg.get("role") or ""
+                                if not _role or _role == last_role:
                                     continue
                                 # Don't feed prior code-block replies back as context — they make
                                 # the model keep emitting code (self-perpetuating loop). Skip them.
-                                if msg.role == "assistant" and "```" in (msg.content or ""):
+                                if _role == "assistant" and "```" in (msg.get("content") or ""):
                                     continue
-                                content = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
-                                messages.append({"role": msg.role, "content": content})
-                                last_role = msg.role
+                                messages.append({"role": _role, "content": (msg.get("content") or "")[:HISTORY_CHAR_LIMIT]})
+                                last_role = _role
                     
                     # If there are image attachments, add them to the message for vision models
                     if has_images and attachments:
@@ -427,13 +427,14 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         # Save the raw user text (not the injected URL content — keep history short).
                         # Save the full bot reply so follow-ups ("turn that into a post") have
                         # complete context — truncating to 500 chars cut off summaries mid-sentence.
-                        db.add(Message(conversation_id=tg_conv.id, role="user", content=text))
+                        from app.services import chat_history as _ch
+                        await _ch.append(db, user_obj, tg_conv.id, "user", text)
                         bot_reply = result.get("content", "")
                         APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
                         # Don't save errors, apologies, or truncated responses (they corrupt future context)
                         _reply_looks_complete = bot_reply and not (len(bot_reply) < 80 and bot_reply.rstrip().endswith(":"))
                         if _reply_looks_complete and bot_reply != APOLOGY and not bot_reply.startswith("Error:") and not bot_reply.startswith("Sorry,"):
-                            db.add(Message(conversation_id=tg_conv.id, role="assistant", content=bot_reply))
+                            await _ch.append(db, user_obj, tg_conv.id, "assistant", bot_reply)
                         tg_conv.updated_at = datetime.utcnow()
                         db.commit()
                     except Exception as _save_err:

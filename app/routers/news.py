@@ -335,12 +335,11 @@ async def get_headlines(
             Conversation.user_id == current_user.id
         ).first()
         if conversation:
-            message = Message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=markdown
-            )
-            db.add(message)
+            # Encrypted transcript event, not a plaintext row (see chat_history).
+            from app.services import chat_history
+            from datetime import datetime as _dt
+            await chat_history.append(db, current_user, conversation_id, "assistant", markdown)
+            conversation.updated_at = _dt.utcnow()
             db.commit()
 
     return {"markdown": markdown}

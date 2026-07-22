@@ -20,7 +20,7 @@ from app.models import User, Conversation, Message
 from app.services import settings_store
 from app.schemas import ConversationCreate, ConversationResponse, ConversationWithMessages, MessageResponse
 from app.auth import get_current_user, get_user_from_websocket, get_ai_user
-from app.services import chat_store, artifact_store   # Phase 2: relay chat mirror + encrypted artifacts
+from app.services import chat_store, chat_history, artifact_store   # Phase 2: relay chat mirror + encrypted artifacts
 from app.services.chat_service import ChatService
 from app.services.command_service import CommandService
 from app.services.storage_service import StorageService
@@ -304,12 +304,10 @@ async def get_conversation(
     try:
         if chat_store.enabled(db):
             rel = await chat_store.get_messages(db, current_user, conversation_id)
-            # FRESHNESS GUARD: the relay mirror is PACED and lags the synchronous Postgres commit by up to
-            # tens of seconds. A freshly-finished reply (slow effect/video render) is therefore missing here
-            # for that whole window — which is EXACTLY when the client polls this endpoint to recover a lost
-            # live WS frame, so the result appeared to "never update until refresh". If Postgres already has
-            # more messages, it's fresher → fall through to the DB rows so recovery sees the reply now.
-            if len(rel) >= len(conversation.messages):
+            # The transcript is written to the relay SYNCHRONOUSLY now (chat_history.append is awaited),
+            # so it can no longer lag behind a SQL copy — the old count-comparison fallback to plaintext
+            # `messages` rows is gone along with the rows themselves.
+            if True:
                 msgs = [{"id": i + 1, "role": m.get("role", ""), "content": m.get("content", ""),
                          "image_path": _img_url(m.get("image_path")),
                          "created_at": datetime.utcfromtimestamp(m.get("ts") or 0)}
@@ -317,17 +315,15 @@ async def get_conversation(
                 return {"id": conversation.id, "title": conversation.title,
                         "created_at": conversation.created_at, "updated_at": conversation.updated_at,
                         "messages": msgs}
-            logger.info("[CHAT] conv %s: relay mirror behind (%d < %d) — serving fresh DB rows so recovery isn't blocked",
-                        conversation_id, len(rel), len(conversation.messages))
     except Exception as e:
         logger.warning("[CHAT] relay history load failed, falling back to DB: %s", e)
     # DB path: map each message's stored image_path to a served URL too (so the in-client AI
     # view can render generated/uploaded images on reload).
+    # Relay read failed (above logs it). Return the conversation with no transcript rather than a
+    # plaintext copy — there isn't one any more.
     return {"id": conversation.id, "title": conversation.title,
             "created_at": conversation.created_at, "updated_at": conversation.updated_at,
-            "messages": [{"id": m.id, "role": m.role, "content": m.content,
-                          "image_path": _img_url(m.image_path), "created_at": m.created_at}
-                         for m in conversation.messages]}
+            "messages": []}
 
 
 @router.delete("/conversations/{conversation_id}")
@@ -657,9 +653,10 @@ async def chat_send(
             logger.warning(f"[chat/send] user image save failed (non-fatal): {_e}")
             user_image_path = None
     try:
-        db.add(Message(conversation_id=conversation_id, role="user", content=content, image_path=user_image_path))
-        db.commit()
-        first_msg = len(conversation.messages) <= 1
+        # Transcript goes to the ENCRYPTED relay event ONLY — no plaintext row (see chat_history).
+        prior = await chat_history.load(db, user, conversation_id)
+        await chat_history.append(db, user, conversation_id, "user", content, image_path=user_image_path)
+        first_msg = len(prior) == 0
         if first_msg:
             conversation.title = content[:50] + ("..." if len(content) > 50 else "")
         conversation.updated_at = datetime.utcnow()
@@ -701,45 +698,27 @@ async def chat_send(
             system_prompt = chat_service.system_prompt.replace("{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d"))
             messages = [{"role": "system", "content": system_prompt}]
             last_role = "system"
-            for msg in sorted(conversation.messages, key=lambda m: m.id)[-21:-1]:
-                if msg.role == last_role:
-                    continue
-                messages.append({"role": msg.role, "content": (msg.content or "")[:500]})
-                last_role = msg.role
-            if last_role != "user":
-                messages.append({"role": "user", "content": content})
+            # Conversation memory comes from the encrypted transcript now, not SQL rows.
+            messages += chat_history.for_llm(prior + [{"role": "user", "content": content}], content)
             save_content = await chat_service.chat(messages)
         except Exception as llm_err:
             logger.error(f"[chat/send] LLM failed: {llm_err}", exc_info=True)
             save_content = f"Error: {llm_err}"
 
     # --- persist the assistant message (retry once for a dropped idle DB conn, like the WS) ---
-    saved = None
-    for _attempt in (1, 2):
-        try:
-            saved = Message(conversation_id=conversation_id, role="assistant",
-                            content=save_content, image_path=generated_image_path)
-            db.add(saved)
-            db.commit()
-            break
-        except Exception as save_err:
-            logger.error(f"[chat/send] assistant save failed (attempt {_attempt}): {save_err}")
-            saved = None
-            try:
-                db.rollback()
-            except Exception:
-                pass
+    saved = await chat_history.append(db, user, conversation_id, "assistant",
+                                      save_content, image_path=generated_image_path)
     img_url = None
     if generated_image_path:
         from urllib.parse import quote as _q
         img_url = f"/api/files/{_q(user.username, safe='')}/{conversation_id}/{_q(Path(generated_image_path).name)}"
-    return {"ok": saved is not None, "message": {
-        "id": getattr(saved, "id", None), "role": "assistant",
+    return {"ok": bool(saved), "message": {
+        "id": None, "role": "assistant",
         "content": save_content, "image_path": img_url, "type": result.get("type", "text")}}
 
 
 @router.get("/conversations/{conversation_id}/messages")
-def get_messages(
+async def get_messages(
     conversation_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -751,20 +730,20 @@ def get_messages(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Build response with image URLs
+    # Transcript comes from the ENCRYPTED relay events (there are no plaintext rows any more).
+    from urllib.parse import quote
+    from datetime import datetime as _dt
     result = []
-    for msg in conversation.messages:
+    for i, m in enumerate(await chat_history.load(db, current_user, conversation_id)):
         msg_dict = {
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "created_at": msg.created_at,
+            "id": i + 1,
+            "role": m.get("role", ""),
+            "content": m.get("content", ""),
+            "created_at": _dt.utcfromtimestamp(m.get("ts") or 0),
             "image_path": None
         }
-        # Convert file path to API URL if exists
-        if msg.image_path:
-            filename = Path(msg.image_path).name
-            from urllib.parse import quote
+        if m.get("image_path"):
+            filename = Path(m["image_path"]).name
             msg_dict["image_path"] = f"/api/files/{quote(current_user.username, safe='')}/{conversation_id}/{quote(filename)}"
         result.append(msg_dict)
     return result
@@ -1228,11 +1207,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     logger.error(f"[CHAT] Failed to save merged PDF: {_save_err}")
                                     _reply = f"✅ Merged {len(_pdf_bytes_list)} PDFs but could not save to storage: {_save_err}"
                                 # Save messages and stream reply
-                                _user_msg = Message(conversation_id=conversation_id, role="user", content=content or "Merge PDFs")
-                                db.add(_user_msg)
-                                _ai_msg = Message(conversation_id=conversation_id, role="assistant", content=_reply)
-                                db.add(_ai_msg)
-                                db.commit()
+                                await chat_history.append(db, user, conversation_id, "user", content or "Merge PDFs")
+                                await chat_history.append(db, user, conversation_id, "assistant", _reply)
                                 await websocket.send_json({"type": "stream", "content": _reply})
                                 await websocket.send_json({"type": "stream_end"})
                                 continue
@@ -1316,19 +1292,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         await manager.send_json(user.id, {"type": "stream_end"}, conn_id)
                         continue
 
-                    # Save user message with image path if uploaded
-                    try:
-                        user_msg = Message(
-                            conversation_id=conversation_id,
-                            role="user",
-                            content=content,
-                            image_path=user_image_path
-                        )
-                        db.add(user_msg)
-                        db.commit()
+                    # Save the user message as an ENCRYPTED relay event (no plaintext SQL row).
+                    _prior = []          # defined up-front: the LLM context below reads it, and an
+                    try:                 # exception in this block must not turn that into a NameError
+                        _prior = await chat_history.load(db, user, conversation_id)
+                        await chat_history.append(db, user, conversation_id, "user", content,
+                                                  image_path=user_image_path)
 
                         # Update conversation title if it's the first message
-                        first_msg = len(conversation.messages) <= 1
+                        first_msg = len(_prior) == 0
                         if first_msg:
                             conversation.title = content[:50] + ("..." if len(content) > 50 else "")
 
@@ -1370,13 +1342,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         youtube_result = await command_service.check_youtube_url(content)
                         if youtube_result:
                             # Save and send YouTube summary
-                            assistant_msg = Message(
-                                conversation_id=conversation_id,
-                                role="assistant",
-                                content=youtube_result.get("content", "")
-                            )
-                            db.add(assistant_msg)
-                            db.commit()
+                            await chat_history.append(db, user, conversation_id, "assistant",
+                                                      youtube_result.get("content", ""))
                             await manager.send_json(user.id, {
                                 "type": "response",
                                 "data": youtube_result
@@ -1651,16 +1618,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                         # rollback discards the dead connection, and pool_pre_ping hands the retry a fresh
                         # one. (This is also what mirrors the message to the relay, the sole read store.)
                         assistant_msg = None
-                        for _attempt in (1, 2):
+                        for _attempt in (1,):
                             try:
-                                assistant_msg = Message(
-                                    conversation_id=conversation_id,
-                                    role="assistant",
-                                    content=_save_content,
-                                    image_path=generated_image_path
-                                )
-                                db.add(assistant_msg)
-                                db.commit()
+                                assistant_msg = await chat_history.append(
+                                    db, user, conversation_id, "assistant", _save_content,
+                                    image_path=generated_image_path)
                                 break
                             except Exception as save_err:
                                 logger.error(f"Failed to save assistant message (attempt {_attempt}): {save_err}")
@@ -1727,13 +1689,8 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             continue
 
                                         # Save assistant response
-                                        assistant_msg = Message(
-                                            conversation_id=conversation_id,
-                                            role="assistant",
-                                            content=action_result.get("content", "")
-                                        )
-                                        db.add(assistant_msg)
-                                        db.commit()
+                                        await chat_history.append(db, user, conversation_id, "assistant",
+                                                                  action_result.get("content", ""))
 
                                         # Send response
                                         await manager.send_json(user.id, {
@@ -1761,7 +1718,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             ]
                             # Get last 19 messages (excluding the one we just added)
                             # Sort by ID to ensure correct order (timestamps can be identical)
-                            sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
+                            # Conversation memory: the ENCRYPTED relay transcript (no plaintext rows).
+                            # _prior was loaded before this turn was appended, so it is already
+                            # "everything except the in-flight message" — mirroring the old [-21:-1].
+                            sorted_messages = list(_prior)
                             # Filter to ensure alternating roles (user/assistant/user/assistant)
                             # Truncate history messages to prevent context bloat from URL content
                             HISTORY_CHAR_LIMIT = 500
@@ -1809,13 +1769,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             )
 
                             if _is_context_dependent:
-                                for msg in sorted_messages[-21:-1]:
+                                for msg in sorted_messages[-20:]:
+                                    _role = (msg.get("role") or "")
                                     # Skip if this role is same as last (prevents "Conversation roles must alternate" error)
-                                    if msg.role == last_role:
+                                    if not _role or _role == last_role:
                                         continue
-                                    content_trunc = msg.content[:HISTORY_CHAR_LIMIT] if len(msg.content) > HISTORY_CHAR_LIMIT else msg.content
-                                    messages.append({"role": msg.role, "content": content_trunc})
-                                    last_role = msg.role
+                                    _c = msg.get("content") or ""
+                                    messages.append({"role": _role, "content": _c[:HISTORY_CHAR_LIMIT]})
+                                    last_role = _role
 
                             # Detect and fetch URLs in user message AND system prompt (with timeout to avoid hanging)
                             url_context = ""
@@ -2053,13 +2014,7 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 clean_response = chat_service.strip_thinking_tags(full_response)
 
                                 # Save assistant response
-                                assistant_msg = Message(
-                                    conversation_id=conversation_id,
-                                    role="assistant",
-                                    content=clean_response
-                                )
-                                db.add(assistant_msg)
-                                db.commit()
+                                await chat_history.append(db, user, conversation_id, "assistant", clean_response)
 
                         except Exception as stream_err:
                             logger.error(f"Error during streaming: {stream_err}", exc_info=True)

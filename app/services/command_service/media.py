@@ -300,15 +300,12 @@ Files are saved to your Storage.""",
         )
         if not conversation:
             return {"type": "text", "content": "No conversation found to translate."}
-        last_msg = (
-            self.db.query(Message)
-            .filter(Message.conversation_id == conversation.id, Message.role == "assistant")
-            .order_by(Message.created_at.desc())
-            .first()
-        )
-        if not last_msg or not last_msg.content:
+        from app.services import chat_history
+        _msgs = await chat_history.load(self.db, self.user, conversation.id)
+        last_msg = next((m for m in reversed(_msgs) if m.get("role") == "assistant" and m.get("content")), None)
+        if not last_msg:
             return {"type": "text", "content": "No previous response to translate."}
-        return await self._translate_text(last_msg.content, language)
+        return await self._translate_text(last_msg["content"], language)
 
     @staticmethod
     def _parse_language(arg: str) -> str:

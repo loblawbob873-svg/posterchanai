@@ -41,7 +41,10 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                             Conversation.title == "📱 Telegram"
                         ).order_by(Conversation.updated_at.desc()).first()
                         if tg_conv:
-                            db.query(Message).filter(Message.conversation_id == tg_conv.id).delete()
+                            # The transcript is relay events now — deleting SQL rows would leave the
+                            # history intact and "clear" would do nothing.
+                            from app.services import chat_store
+                            await chat_store.delete_conversation(db, user_obj, tg_conv.id)
                             db.commit()
                         await telegram_service.send_message(chat_id, "Conversation cleared. Starting fresh!")
                         return {"ok": True}

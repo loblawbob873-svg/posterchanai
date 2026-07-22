@@ -272,7 +272,8 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
 
         # Store in the admin's Logs conversation
         logs_chat = get_or_create_logs_chat(db, admin.id)
-        db.add(Message(conversation_id=logs_chat.id, role="assistant", content=message_text))
+        from app.services import chat_history
+        await chat_history.append(db, admin, logs_chat.id, "assistant", message_text)   # encrypted event
         logs_chat.updated_at = datetime.utcnow()
         db.commit()
         logger.info("Added health report to Logs chat for admin")

@@ -261,7 +261,8 @@ async def deliver(db: Session, reminder: Reminder) -> None:
     # Web UI (always): persist into the "⏰ Reminders" conversation so it's there whenever the
     # user looks, then best-effort push live to a connected websocket.
     chat = _get_or_create_reminders_chat(db, user.id)
-    db.add(Message(conversation_id=chat.id, role="assistant", content=body))
+    from app.services import chat_history
+    await chat_history.append(db, user, chat.id, "assistant", body)   # encrypted event, no plaintext row
     chat.updated_at = datetime.utcnow()
     db.commit()
     try:
