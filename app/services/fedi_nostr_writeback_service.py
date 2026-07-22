@@ -215,21 +215,52 @@ def _persist_delivered(inst: str, note_id: str, note_uri, eid: str, pk: str) -> 
         logger.warning("[fedi-writeback] dedup row re-persist failed (%s): %s", note_id, e)
 
 
-async def _parent_visibility(inst: str, token: str, status_id: str) -> str:
+async def _parent_status(inst: str, token: str, status_id: str) -> dict | None:
+    """Fetch the parent status once — both the audience and the thread's participants come from it."""
+    if not status_id:
+        return None
+    try:
+        return await pleroma_service.fetch_status(inst, token, status_id)
+    except Exception as e:
+        logger.debug("[fedi-writeback] parent lookup failed (%s): %s", status_id, e)
+        return None
+
+
+def _visibility_of(st: dict | None) -> str:
     """The audience to reply with: the parent status's own visibility. Unknown → "unlisted", which is
     the safe direction (never widens the audience beyond the post being answered)."""
-    if not status_id:
+    v = ((st or {}).get("visibility") or "").strip().lower()
+    if v in ("public", "unlisted", "private", "direct"):
+        return v
+    if v == "home":              # Misskey naming for unlisted
         return "unlisted"
-    try:
-        st = await pleroma_service.fetch_status(inst, token, status_id)
-        v = ((st or {}).get("visibility") or "").strip().lower()
-        if v in ("public", "unlisted", "private", "direct"):
-            return v
-        if v == "home":          # Misskey naming for unlisted
-            return "unlisted"
-    except Exception as e:
-        logger.debug("[fedi-writeback] parent visibility lookup failed (%s): %s", status_id, e)
     return "unlisted"
+
+
+def _thread_handles(st: dict | None, own_acct: str = "") -> list:
+    """Everyone who should stay addressed in the reply: the parent's author PLUS everyone the parent
+    itself mentioned, in that order, de-duplicated.
+
+    The fediverse carries the whole participant list forward on every reply — that's how a multi-person
+    thread stays readable and how the others keep getting notified. We were prepending ONLY the direct
+    parent's author, so replying into a thread silently dropped everyone else from it (reported by a
+    fediverse user: "your replies drop all previous mentions in the thread"). Our own handle is
+    excluded — self-mentioning reads as noise."""
+    out, seen = [], set()
+    own = (own_acct or "").lstrip("@").lower()
+
+    def add(acct):
+        acct = (acct or "").strip().lstrip("@")
+        if not acct or acct.lower() == own or acct.lower() in seen:
+            return
+        seen.add(acct.lower())
+        out.append(acct)
+
+    add(((st or {}).get("account") or {}).get("acct"))
+    for m in ((st or {}).get("mentions") or []):
+        if isinstance(m, dict):
+            add(m.get("acct"))
+    return out
 
 
 def _target_row(db, ev: dict):
@@ -265,6 +296,31 @@ _handle_cache: dict = {}        # pubkey_hex -> "@user@host" (positive; handles 
 _handle_neg: dict = {}          # pubkey_hex -> monotonic time of last "no identity" miss (TTL-rechecked)
 _HANDLE_NEG_TTL = 300           # re-resolve a "no fedi identity" pubkey after this (user may link later)
 _HANDLE_RE = _re.compile(r"nostr:((?:npub1|nprofile1)[0-9a-z]{20,})", _re.I)
+
+
+_own_acct_cache: dict = {}
+
+
+async def _own_acct(user) -> str:
+    """This user's own fediverse handle (`user@host`), cached per user.
+
+    Needed so a reply doesn't @-mention the sender in their own post: the parent's mention list
+    normally includes us, and echoing it back reads as noise."""
+    key = getattr(user, "id", None)
+    if key in _own_acct_cache:
+        return _own_acct_cache[key]
+    acct = ""
+    try:
+        me = await pleroma_service.verify_credentials(user.pleroma_instance_url, user.pleroma_access_token)
+        a = (me or {}).get("acct") or (me or {}).get("username") or ""
+        if a:
+            host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
+            acct = a if "@" in a else f"{a}@{host}"
+    except Exception as e:
+        logger.debug("[fedi-writeback] own acct lookup failed: %s", e)
+    if acct:
+        _own_acct_cache[key] = acct
+    return acct
 
 
 async def _fedi_handle_for_pubkey(db, pk_hex: str) -> str | None:
@@ -632,8 +688,16 @@ async def _handle(db, ev: dict) -> None:
             text, media = await _extract_media(text)
             if not text and not media:
                 return
-            if row.author_acct and ("@" + row.author_acct) not in text:
-                text = f"@{row.author_acct} {text}".strip()
+            # Address the WHOLE thread, not just the direct parent: fediverse replies carry every
+            # participant forward, and dropping them broke thread continuity for everyone else.
+            parent = await _parent_status(inst, token, target_id)
+            own_acct = await _own_acct(user)
+            handles = _thread_handles(parent, own_acct)
+            if not handles and row.author_acct:
+                handles = [row.author_acct]          # parent unavailable → at least keep the author
+            prefix = " ".join(f"@{h}" for h in handles if ("@" + h) not in text)
+            if prefix:
+                text = f"{prefix} {text}".strip()
             # Idempotency-Key = the Nostr event id → even a crash/replay double-send can't create a
             # duplicate fediverse status (server dedups on the key).
             # INHERIT the parent's audience. post_status defaults to "public", and the mirror admits
@@ -641,7 +705,7 @@ async def _handle(db, ev: dict) -> None:
             # publicly — listed in the instance's public/federated timelines and hashtag search while
             # the post it answers deliberately isn't. Fall back to unlisted (not public) when the
             # parent's audience can't be determined, so an unknown parent fails quiet, not loud.
-            vis = await _parent_visibility(inst, token, target_id)
+            vis = _visibility_of(parent)     # same fetch as the mention list above
             status = await pleroma_service.post_status(inst, token, text, in_reply_to_id=target_id,
                                                        media=media or None, idempotency_key=eid,
                                                        visibility=vis)
