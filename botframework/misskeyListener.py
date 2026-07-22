@@ -195,6 +195,13 @@ from image_backend import generate_image_bytes
 
 # Persistent sets to track processed mentions and replied notes
 _processed_mention_ids = set()
+# Restart guard — how much pre-start history a freshly spawned listener will still answer.
+# 2 min covers the restart gap without re-answering what the previous process handled.
+try:
+    _STARTUP_CATCHUP = max(0, int(os.getenv("BOT_STARTUP_CATCHUP_SECS", "120")))
+except ValueError:
+    _STARTUP_CATCHUP = 120
+_PROCESS_START = None   # set on the first poll, when the tz is known
 _replied_note_ids = set()
 def _state_suffix() -> str:
     """Per-account suffix so multiple bot ACCOUNTS don't share (and clobber) one dedup file.
@@ -314,7 +321,14 @@ def process_mentions():
 
     # Filter to mentions from the last 10 minutes (we have persistent tracking to prevent duplicates)
     tz = pytz.timezone("UTC")
+    # Restart guard: a freshly spawned listener must not re-answer mentions the previous
+    # process already handled (this service restarts constantly in development).
+    # No-op once the process has been up longer than its own window.
     cutoff_time = datetime.now(tz) - timedelta(minutes=10)
+    global _PROCESS_START
+    if _PROCESS_START is None:
+        _PROCESS_START = datetime.now(tz)
+    cutoff_time = max(cutoff_time, _PROCESS_START - timedelta(seconds=_STARTUP_CATCHUP))
     print(f"[DEBUG] Current time: {datetime.now(tz)}, cutoff: {cutoff_time}", flush=True)
     mentions = []
     for mention in all_mentions[:5]:  # Log first 5 for debugging

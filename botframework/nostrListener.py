@@ -84,6 +84,14 @@ _RR_WINDOW = 3600
 _rr_starts = SlidingWindowLimiter(0, _RR_PER_HOUR, _RR_WINDOW)   # global-only: N new threads/hour
 _rr_threads: dict = {}    # thread-root id -> bot reply count (random-reply-initiated threads only)
 _rr_seen: set = set()     # note ids already considered (bounded)
+# Restart guard — see the cutoff in the mention loop. BOT_STARTUP_CATCHUP_SECS controls how much
+# pre-start history a freshly spawned listener will still answer (default 2 min: enough to cover the
+# restart gap itself, not enough to re-answer what the previous process handled).
+_PROCESS_START = datetime.now(timezone.utc)
+try:
+    _STARTUP_CATCHUP = max(0, int(os.getenv("BOT_STARTUP_CATCHUP_SECS", "120")))
+except ValueError:
+    _STARTUP_CATCHUP = 120
 _rr_cursor = [0]          # newest created_at seen, so each poll only scans new notes
 _rr_next_scan = [0.0]     # throttle: replies are ≤N/hour, so scan the timeline every ~45s, not every poll
 
@@ -428,7 +436,13 @@ def process_mentions():
 
     mentions = get_mentions(limit=40)
     print(f"[nostr] fetched {len(mentions)} p-tagged notes", flush=True)
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    # A RESTARTED process must not reach back into mentions the previous one already answered.
+    # The claim-file + relay guard should cover that, but both have failed in practice (two confirmed
+    # same-bot double replies, each a fresh pid a few minutes after the first), and in development
+    # this service restarts constantly — so bound how far back a young process is willing to look.
+    # Once it's been up longer than the window this is a no-op and behaviour is unchanged.
+    cutoff = max(datetime.now(timezone.utc) - timedelta(minutes=10),
+                 _PROCESS_START - timedelta(seconds=_STARTUP_CATCHUP))
 
     for note in mentions:
         nid = note.get("id")
