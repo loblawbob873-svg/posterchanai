@@ -1088,6 +1088,25 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .fld{display:block;margin:12px 0 2px;font-size:13.5px;color:#c2c4e6;text-transform:uppercase;letter-spacing:.7px;font-weight:600}
 .fld .input,.fld textarea{margin-top:4px;text-transform:none;letter-spacing:0}
 .note{position:relative}
+/* Congrats confetti / gm sunrise (see _playCelebration). Purely decorative: absolutely positioned inside
+   the already-relative .note, clipped to the card, and pointer-events:none so it can never block a tap or
+   shift a single pixel of layout. The element is removed once the animation is done. */
+.celeb{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:2}
+.celeb i{position:absolute;top:-16px;width:7px;height:12px;border-radius:2px;opacity:0;
+  animation-name:celeb-fall;animation-timing-function:cubic-bezier(.25,.6,.5,1);animation-fill-mode:forwards}
+@keyframes celeb-fall{
+  0%{opacity:0;transform:translateY(0) rotate(0)}
+  12%{opacity:1}
+  85%{opacity:1}
+  100%{opacity:0;transform:translateY(var(--fall,340px)) rotate(var(--rot,360deg))}
+}
+/* gm: a warm wash over the card with the sun climbing through it */
+.celeb-gm{background:linear-gradient(180deg,rgba(255,186,72,.20),rgba(255,186,72,.04) 55%,transparent 75%);
+  animation:celeb-glow 2.6s ease-out forwards}
+.celeb-sun{position:absolute;left:50%;bottom:-34px;font-size:30px;line-height:1;animation:celeb-rise 2.6s ease-out forwards}
+@keyframes celeb-glow{0%{opacity:0}18%{opacity:1}70%{opacity:1}100%{opacity:0}}
+@keyframes celeb-rise{0%{transform:translate(-50%,0);opacity:0}22%{opacity:1}75%{opacity:1}100%{transform:translate(-50%,-72px);opacity:0}}
+@media(prefers-reduced-motion:reduce){ .celeb{display:none} }   /* JS skips it too — this is the backstop */
 .note::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.15s}
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}

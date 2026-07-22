@@ -1742,6 +1742,63 @@
     _profObs=new IntersectionObserver(ents=>{ for(const en of ents){ if(en.isIntersecting){ const pk=en.target.dataset.pk; _profObs.unobserve(en.target); if(pk) needProfile(pk); } } }, { rootMargin:'600px 0px' });
     return _profObs;
   }
+  // ---------- little celebrations ----------
+  // A post that congratulates someone gets confetti; a plain "gm" gets a sunrise. Fires ONCE per post per
+  // session, the first time it scrolls into view — decoration, never a layout change (the overlay is
+  // position:absolute + pointer-events:none inside the already-relative .note, so it can't move anything
+  // or eat a click).
+  // Leading [^a-z] keeps "incongruent"/"uncongratulated" out; the trailing suffix group covers
+  // congrats/congratz/congratulations/congratulating/congratulatory.
+  const _RE_CONGRATS = /(^|[^a-z])congrat(s|z|ulations?|ulating|ulatory)?\b/i;
+  const _RE_GM = /^\s*(gm+|good\s*morning)\b/i;
+  function _celebrateOf(txt){
+    const t = (txt||'').trim();
+    if(!t) return '';
+    if(_RE_CONGRATS.test(t)) return 'confetti';
+    // Only when the post IS the greeting: "gm" is a whole genre of one-word posts, but a 300-word thread
+    // that happens to open with "gm" shouldn't sunrise. `\b` also keeps "gmail"/"gm-something" out.
+    if(t.length <= 60 && _RE_GM.test(t)) return 'gm';
+    return '';
+  }
+  let _celebObs=null; const _celebDone=new Set();
+  function observeCelebrations(scope){
+    if(NO_IMAGES) return;                                                    // data saver: no decorative animation
+    try{ if(matchMedia('(prefers-reduced-motion: reduce)').matches) return; }catch(_){}
+    if(!('IntersectionObserver' in window)) return;
+    if(!_celebObs) _celebObs=new IntersectionObserver(ens=>{
+      for(const en of ens){ if(!en.isIntersecting) continue; _celebObs.unobserve(en.target); _playCelebration(en.target); }
+    }, { threshold:0.4 });
+    $$('.note[data-celebrate]:not([data-cobs])', scope||document).forEach(el=>{
+      el.setAttribute('data-cobs','1');
+      if(_celebDone.has(el.dataset.id||'')) return;                          // already celebrated this post
+      _celebObs.observe(el);
+    });
+  }
+  function _playCelebration(el){
+    const id=el.dataset.id||'';
+    if(id){ if(_celebDone.has(id)) return; _celebDone.add(id); }
+    const kind=el.dataset.celebrate;
+    const box=document.createElement('div');
+    box.className='celeb celeb-'+kind;
+    if(kind==='confetti'){
+      const cols=['#ff5a7a','#ffcf2b','#3fb6c8','#8affc1','#c77dff','#4493f8'];
+      // Fall the note's own height (+ a little) so the confetti clears the card whatever size it is.
+      box.style.setProperty('--fall', (el.offsetHeight+40)+'px');
+      const N=26; let h='';
+      for(let i=0;i<N;i++){
+        const left=(i*(100/N)) + (Math.random()*3 - 1.5);
+        h+=`<i style="left:${left.toFixed(1)}%;background:${cols[i%cols.length]};`
+          +`animation-duration:${(1.5+Math.random()*0.9).toFixed(2)}s;`
+          +`animation-delay:${(Math.random()*0.5).toFixed(2)}s;`
+          +`--rot:${(Math.random()<0.5?-1:1)*(180+Math.round(Math.random()*540))}deg"></i>`;
+      }
+      box.innerHTML=h;
+    } else {
+      box.innerHTML='<span class="celeb-sun">🌅</span>';
+    }
+    el.appendChild(box);
+    setTimeout(()=>{ try{ box.remove(); }catch(_){} }, kind==='confetti'?3400:2800);
+  }
   function observeProfiles(scope){
     if(!NO_IMAGES) return;                       // lazy only in data saver; normal mode already fetched eagerly
     const ob=_ensureProfObs(); if(!ob) return;
@@ -4965,7 +5022,8 @@
     const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
     const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
-    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}>
+    const _celeb = _celebrateOf(bodyTxt);   // 🎉 congrats / 🌅 gm → a one-shot animation when it scrolls in
+    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
@@ -11016,7 +11074,7 @@
   }
 
   // ---------- helpers ----------
-  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); hydratePolls(scope); observeProfiles(scope); }
+  function hydrate(scope){ decorateProfiles(); hydrateLinkCards(scope); hydrateCounts(); hydratePolls(scope); observeProfiles(scope); observeCelebrations(scope); }
   // Fetch reactions/reposts/replies for the posts currently on screen and show the counts +
   // liked/reposted state (the timeline sub only carries notes, so without this the counts are 0).
   let _ixT=null;
