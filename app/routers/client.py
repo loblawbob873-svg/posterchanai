@@ -1569,6 +1569,51 @@ class AiAccessReq(BaseModel):
     auth: str            # base64 signed admin event (p-tags target), same proof as /block
 
 
+class StreamRequestReq(BaseModel):
+    pubkey: str
+    auth: str            # self-signed proof, same shape as claim-nip05
+
+
+@router.post("/stream-request")
+async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
+    """A user asks for live-streaming access. Records it so the admin can see the queue even if the
+    DM is missed, and notifies the admins — the same two halves the AI request has (Blossom only
+    DMs, which loses the request if the admin never reads it)."""
+    from app.models import UserSetting
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not u:
+        return JSONResponse({"ok": False, "error": "sign in first"}, status_code=404)
+    if u.is_admin or getattr(u, "can_stream", False):
+        return JSONResponse({"ok": True, "already": True})
+    row = db.query(UserSetting).filter(UserSetting.user_id == u.id,
+                                       UserSetting.key == "stream_requested").first()
+    if row:
+        row.value = str(int(time.time()))
+    else:
+        db.add(UserSetting(user_id=u.id, key="stream_requested", value=str(int(time.time()))))
+    db.commit()
+    logger.info("[client] streaming access requested by %s", u.username)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/stream-requests")
+async def stream_requests(db: Session = Depends(get_db)):
+    """Pending streaming-access requests, mirroring /ai-requests so the admin panel can list both."""
+    from app.models import UserSetting
+    out = []
+    for r in db.query(UserSetting).filter(UserSetting.key == "stream_requested").all():
+        u = db.query(User).filter(User.id == r.user_id).first()
+        if u and u.nostr_npub and not (u.is_admin or getattr(u, "can_stream", False)):
+            out.append({"npub": u.nostr_npub, "name": u.username, "ts": r.value})
+    out.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    return JSONResponse({"ok": True, "requests": out})
+
+
 @router.get("/ai-requests")
 async def ai_requests(db: Session = Depends(get_db)):
     """Pending AI-access requests (users who asked, not yet granted), for admins to see + approve in

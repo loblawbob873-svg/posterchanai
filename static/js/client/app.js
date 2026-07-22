@@ -1152,15 +1152,10 @@
     // all, so treat "missing" as enabled rather than hiding the button on every node until they restart.
     // Shown only when the NODE streams and THIS account may. _aiAuth carries can_stream from the
     // session; it's absent on an older backend, so treat missing as allowed and let the server refuse.
-    { const gl=$('#nav-golive');
-      const _mayStream = !(_aiAuth && _aiAuth.can_stream === false);
-      if(gl && CFG.stream_enabled!==false && _mayStream){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
-    // _aiAuth arrives asynchronously (or not at all for a user who never touches AI), so re-check once
-    // it does: hide the entry for an account the server would refuse, instead of leaving a button whose
-    // only outcome is an error toast.
-    { const _sync=()=>{ const gl=$('#nav-golive'); if(!gl) return;
-        if(_aiAuth && _aiAuth.can_stream === false) gl.classList.add('hidden'); };
-      setTimeout(_sync, 2500); setTimeout(_sync, 8000); }
+    { const gl=$('#nav-golive'); if(gl && CFG.stream_enabled!==false){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
+    // Deliberately NOT hidden for accounts without permission — Blossom and AI both keep the feature
+    // visible and turn the refusal into a request, and you cannot ask for access to a button you can't
+    // see. _goLive() explains and offers to DM the admin.
     // Collapsible "Files" group (Blossom + Music), like Games/Discover.
     { const ft=$('#files-toggle'); if(ft){ const sub=$('#files-sub'), chev=$('#files-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
@@ -3556,6 +3551,15 @@
     // The server is the authority on permission: the sidebar/More gate can only hide the entry when
     // the session is already known (_aiAuth is null until ensureAiSession resolves, which for a
     // non-admin may not have happened yet), so the refusal has to read well on its own.
+    if(info && info.error==='no_permission'){
+      // Not "streaming is off" — streaming works, this account just isn't allowed yet. Offer the ask.
+      modal(`<h3>🔴 Go Live</h3><p>${enc(info.message||'Live streaming isn’t enabled for your account yet.')}</p>
+        <div class="row" style="margin-top:14px"><button class="btn btn-neon" id="sreq">🔴 Request streaming access</button>
+        <button class="btn btn-ghost" id="sreqx">Close</button></div>`, root=>{
+        $('#sreq',root).onclick=e=>requestStreamAccess(e.target);
+        $('#sreqx',root).onclick=()=>closeModal();
+      });
+      return; }
     if(!info || info.enabled===false || !info.rtmp_url){
       toast(info && info.message ? info.message : 'streaming isn’t enabled on this server'); return; }
     const canPhone = !!(info.whip_url && navigator.mediaDevices && window.RTCPeerConnection);
@@ -6268,8 +6272,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['__golive','🔴','Go Live'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
-                   && !(v==='__golive' && (CFG.stream_enabled===false
-                                           || (_aiAuth && _aiAuth.can_stream === false))));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
+                   && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
@@ -7128,6 +7131,24 @@
   function _blossomDenied(err){ const m=String(err&&err.message||err||'').toLowerCase(); return m.includes('not authorized')||m.includes('403')||m.includes('privilege'); }
   let _blossomReqSent=false;
   // DM the instance operator asking for upload access; the admin grants it in Admin → Users.
+  let _streamReqSent=false;
+  async function requestStreamAccess(btn){
+    // Same shape as requestBlossomAccess: DM the operator, once per session unless the user clicks.
+    const op=safePk(CFG.operator_npub||'');
+    if(!op){ toast('no admin contact is configured on this server'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+    const me=profOf(ME.pubkey)||{}; const nm=me.name||me.display_name||'A user';
+    const body=`🔴 Live-streaming access request\n${nm} (${ME.npub}) would like permission to go live on ${location.host}. You can grant it in Admin → Users (🔴 Go Live).`;
+    // RECORD it server-side as well as DMing. A DM alone is what Blossom does, and it loses the
+    // request entirely if the admin never reads that inbox; the record shows up in the admin queue.
+    try{
+      const auth = await sign(27235, 'stream-request', [['p', ME.pubkey]]);
+      await fetch('/client/stream-request', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) });
+    }catch(_){}
+    try{ await sendDm(op, body); _streamReqSent=true; toast('✅ Request sent to the admin'); if(btn){ btn.textContent='✅ Request sent'; } }
+    catch(e){ toast('could not send the request'); if(btn){ btn.disabled=false; btn.textContent='🔴 Request streaming access'; } }
+  }
   async function requestBlossomAccess(btn){
     if(!btn && _blossomReqSent) return;   // auto-trigger (failed upload): only DM the admin once/session
     const op=safePk(CFG.operator_npub||'');
