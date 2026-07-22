@@ -1611,6 +1611,18 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .notif-toast{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px;pointer-events:auto}
 .notif-toast img{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 
+/* iOS "Add to Home Screen" hint — only ever injected on iPhone Safari (see _maybeIosInstallHint).
+   Sits above the bottom nav, clears the home indicator, and matches the panel styling. */
+.ios-install-hint{position:fixed;left:8px;right:8px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:60;
+  display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:14px;
+  background:var(--panel2);border:1px solid var(--line);box-shadow:0 6px 22px rgba(0,0,0,.4);
+  font-size:13.5px;color:var(--text);animation:fade .2s}
+.ios-install-hint .iih-txt{flex:1 1 auto;line-height:1.35}
+.ios-install-hint .iih-ic{width:16px;height:16px;vertical-align:-3px;margin:0 1px;color:var(--neon)}
+.ios-install-hint .iih-x{flex:0 0 auto;display:inline-grid;place-items:center;width:28px;height:28px;
+  border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;font-size:14px}
+.ios-install-hint .iih-x:active{background:var(--panel)}
+
 .mobilenav{display:none}
 /* ===== responsive ===== */
 @media(max-width:820px){

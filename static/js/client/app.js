@@ -55,6 +55,27 @@
   let _deferredInstall = null;
   window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); _deferredInstall=e; const b=$('#btn-install'); if(b) b.classList.remove('hidden'); });
   window.addEventListener('appinstalled', ()=>{ _deferredInstall=null; const b=$('#btn-install'); if(b) b.classList.add('hidden'); });
+  // iOS Safari never fires beforeinstallprompt, and #btn-install lives in the (mobile-hidden) sidebar,
+  // so an iPhone user gets NO cue that the app is installable. Show a one-time dismissible hint telling
+  // them the manual Share → Add to Home Screen path. Feature-gated hard: iOS UA + NOT already running
+  // standalone + not previously dismissed — so it can never appear on Android, desktop, the Electron
+  // app, or an already-installed PWA. Additive; touches no existing install path.
+  function _maybeIosInstallHint(){
+    try{
+      const ua = navigator.userAgent || '';
+      const isIOS = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1); // iPadOS masquerades as Mac
+      const standalone = (window.navigator.standalone === true) || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+      if(!isIOS || standalone) return;
+      if(localStorage.getItem('pc_ios_install_dismissed')==='1') return;
+    }catch(_){ return; }
+    if(document.getElementById('ios-install-hint')) return;
+    const bar=document.createElement('div'); bar.id='ios-install-hint'; bar.className='ios-install-hint';
+    // Inline SVG of the iOS share glyph (box + up arrow) — reliable, unlike the SF-Symbol PUA codepoint.
+    const share='<svg class="iih-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8.5 6.5L12 3l3.5 3.5M6 11v8a1 1 0 001 1h10a1 1 0 001-1v-8"/></svg>';
+    bar.innerHTML=`<span class="iih-txt">Install PosterChan: tap <b>Share</b> ${share} then <b>Add to Home Screen</b></span><button class="iih-x" aria-label="Dismiss">✕</button>`;
+    bar.querySelector('.iih-x').onclick=()=>{ try{ localStorage.setItem('pc_ios_install_dismissed','1'); }catch(_){} bar.remove(); };
+    document.body.appendChild(bar);
+  }
   // Extensionless Blossom blobs (/<sha256>) carry NO type in the URL, so we render them as <img>;
   // if that fails the blob is likely a video (bots post bare video URLs) — try <video>, and only
   // if THAT fails fall back to a plain link. (Fixes videos showing as a link instead of playing.)
@@ -1252,6 +1273,7 @@
     // instance this install talks to (build-www.sh sets __PC_API_BASE__; it's absent on the web).
     { const _b=window.__PC_API_BASE__;
       if(_b) $$('.rb-app[data-path]').forEach(a=>{ a.href=_b+a.dataset.path; a.target='_blank'; a.rel='noopener'; }); }
+    _maybeIosInstallHint();   // iPhone-only "Add to Home Screen" cue (no-op everywhere else)
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
     // These two are document-level delegates — bind them ONCE. startApp() re-runs on login-without-reload
