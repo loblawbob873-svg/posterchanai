@@ -142,6 +142,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "relay_url": _relay_url(request, db),
         "blossom_url": _blossom_url(request, db),
         "blossom_enabled": _setting(db, "blossom_enabled", "false").lower() == "true",
+        # Whether this node runs the built-in media server. The client uses it only to decide whether
+        # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
+        "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
         # Fresh install with no admin yet → the client offers first-run "become admin" setup

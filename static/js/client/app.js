@@ -1135,6 +1135,10 @@
           try{ await _deferredInstall.userChoice; }catch(_){} _deferredInstall=null; b.classList.add('hidden'); }; } }
     $('#me-card').onclick = ()=>renderProfileView(ME.pubkey);
     { const nm=$('#nav-music'); if(nm) nm.onclick=openMusic; }
+    // Go Live: a top-level sidebar action, because inside Discover → Streams nobody ever found it. Shown
+    // only where the node actually runs the media server — but an OLDER backend doesn't send the flag at
+    // all, so treat "missing" as enabled rather than hiding the button on every node until they restart.
+    { const gl=$('#nav-golive'); if(gl && CFG.stream_enabled!==false){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
     // Collapsible "Files" group (Blossom + Music), like Games/Discover.
     { const ft=$('#files-toggle'); if(ft){ const sub=$('#files-sub'), chev=$('#files-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
@@ -6035,14 +6039,17 @@
     const counts={drafts:dn};
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
     // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
-    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai'));   // hide AI+Translate in Nostr-only
+    // '__golive' opens the go-live sheet directly — the phone camera path is the one most people want,
+    // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
+    const items=[['ai','🤖','PosterChan AI'],['calls','📞','Calls'],['__golive','🔴','Go Live'],['translate','🌐','Live Translate'],['drafts','✐','Drafts'],['bookmarks','🔖','Bookmarks'],['__discover','🧭','Discover'],['__games','🎮','Games'],['__files','📁','Files'],['profile','👤','Profile'],['settings','⚙','Settings'],['logout','⎋','Logout']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
+                   && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
     const _stat=`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span></div>`;
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ic}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
-      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
+      $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
   }
   function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group

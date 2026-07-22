@@ -114,6 +114,11 @@
             <button class="nav-item" data-view="messages"><span class="ic">✉️</span><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="bookmarks"><span class="ic">🔖</span><span>Bookmarks</span></button>
             <button class="nav-item" data-view="calls"><span class="ic">📞</span><span>Calls</span></button>
+            <!-- Go Live was reachable ONLY from inside Discover → Streams, three levels down a collapsed
+                 group, so nobody found it. It's an action, not a view (opens the go-live sheet), hence an
+                 id + onclick like #nav-music rather than data-view. Hidden when the node has no media
+                 server (CFG.stream_enabled). -->
+            <button class="nav-item nav-golive hidden" id="nav-golive"><span class="ic">🔴</span><span>Go Live</span></button>
             <button class="nav-item" data-view="drafts"><span class="ic">📝</span><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="disc-toggle"><span class="ic">🧭</span><span>Discover</span><span class="chev" id="disc-chev">▾</span></button>
