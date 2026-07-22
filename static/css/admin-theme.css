@@ -106,12 +106,12 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 .admin-page .btn-small:hover{ filter:brightness(1.12) !important; box-shadow:0 0 14px rgba(0,255,255,.4) !important; }
 .admin-page .btn-small.btn-danger{ background: linear-gradient(135deg,#ff3366,#ff6688) !important; color:#fff !important; }
 .admin-page .btn-small.btn-danger:hover{ filter:brightness(1.1) !important; box-shadow:0 0 14px rgba(255,51,102,.4) !important; }
-/* Give the × real dimensions + a centred glyph — this rule wins over admin-tabs.css but set none of
-   font-size/padding/size, so the times glyph rendered tiny and off-centre in a bare box ("the X is
-   not filled in"). Grid-centre a 32px square with a legible glyph. */
-.admin-page .bot-modal-close{ display:inline-grid; place-items:center; width:32px; height:32px; padding:0;
-  font-size:22px; background:transparent; border:1px solid rgba(0,255,255,.3); color:#bff8ff; border-radius:8px; cursor:pointer; line-height:1; }
-.admin-page .bot-modal-close:hover{ border-color:#00ffff; color:#fff; background:rgba(0,255,255,.12); }
+/* Solid RED close button with a white × — a filled, obvious "close this window" control (was a bare
+   transparent outline where the glyph barely showed). */
+.admin-page .bot-modal-close{ display:inline-grid; place-items:center; width:34px; height:34px; padding:0;
+  font-size:22px; font-weight:700; background:#e0245e; border:1px solid #e0245e; color:#fff;
+  border-radius:8px; cursor:pointer; line-height:1; transition:background .12s, box-shadow .12s; }
+.admin-page .bot-modal-close:hover{ background:#ff2d55; border-color:#ff2d55; box-shadow:0 0 12px rgba(224,36,94,.55); }
 
 /* bot cards → glass */
 .bot-card{ background: rgba(18,18,28,.66); border:1px solid var(--border-color); border-radius:13px; backdrop-filter: blur(8px); }
