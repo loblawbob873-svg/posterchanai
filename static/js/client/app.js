@@ -12308,11 +12308,16 @@
   // of your own graph. Deliberately NOT on the 150s refresh: contact lists are big events and this is
   // the heaviest query in the column, so it runs once per session and then only after you act on it.
   const WTF_AUTHORS=40, WTF_MAX=4, WTF_MIN_MUTUAL=2;
-  // The instance operator, from CFG.operator_npub — so a self-hosted node promotes ITS OWN owner
-  // instead of a pubkey hardcoded into the client.
+  // The node admin to promote, so a self-hosted instance pins ITS OWN owner (never a pubkey baked into
+  // the client). CFG.operator_npub is the designated operator; fall back to the first admin account
+  // (CFG.admin_npubs) when the operator hasn't set a nostr_npub — the admin still gets pinned either way.
+  function _npubToHex(np){ try{ const d=NT().nip19.decode(np); return (d && d.type==='npub') ? d.data : ''; }catch(_){ return ''; } }
   function _operatorPk(){
-    const np = CFG && CFG.operator_npub; if(!np) return '';
-    try{ const d=NT().nip19.decode(np); return (d && d.type==='npub') ? d.data : ''; }catch(_){ return ''; }
+    if(!CFG) return '';
+    if(CFG.operator_npub){ const h=_npubToHex(CFG.operator_npub); if(h) return h; }
+    const admins = Array.isArray(CFG.admin_npubs) ? CFG.admin_npubs : [];
+    for(const np of admins){ const h=_npubToHex(np); if(h) return h; }
+    return '';
   }
   async function loadWhoToFollow(){
     const el=document.getElementById('rb-wtf'); if(!el) return;
