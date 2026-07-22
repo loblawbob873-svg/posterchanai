@@ -692,8 +692,9 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .guest-acts .btn{margin:0}
-.guest-src{color:var(--muted);font-size:13.5px;font-weight:600;text-decoration:none;padding:0 4px}
-.guest-src:hover{color:var(--cyan);text-decoration:underline}
+/* Source is a real button like the other two — as a bare text link it read as decoration and nobody
+   saw it. .btn/.btn-ghost do the work; this only kills the underline an <a> brings. */
+.guest-src{text-decoration:none}
 @media(max-width:820px){ .guest-card{margin:8px 10px 0;padding:15px 12px} .guest-logo{width:48px;height:48px}
   .guest-name{font-size:19px} }
 .tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
@@ -931,17 +932,14 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .chat-react-img{width:17px;height:17px;object-fit:contain;vertical-align:middle;display:inline-block}
 /* NIP-30 custom emoji rendered inline in note text, names and notifications (sized to the line). */
 .emoji-inline{height:1.4em;width:auto;max-width:none;vertical-align:-0.28em;display:inline-block;margin:0 1px}
-/* public read-only (guest) mode: a slim login banner + no write affordances */
-#guest-bar{position:fixed;left:0;right:0;bottom:0;z-index:200;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;
-  padding:10px 14px;background:var(--panel);border-top:1px solid var(--neon);box-shadow:0 -4px 18px rgba(0,0,0,.4);color:var(--text);font-size:13.5px}
-@media(max-width:820px){ #guest-bar{bottom:calc(62px + env(safe-area-inset-bottom))} }
+/* public read-only (guest) mode: no write affordances (the CTA is the guest card up top) */
 body.guest #btn-compose,body.guest #btn-compose-m{display:none}
 /* ?embed=1 — strip all app chrome so a screenshot/preview shows just the note, instance-branded.
    .app is a GRID with fixed sidebar columns; hiding the asides isn't enough — collapse the grid to a
    single full-width column AND let main/feed grow to content height (they're normally 100vh + clipped),
    so the full-page capture gets the whole note instead of a tiny offset sliver. */
 body.embed .app{display:block !important;height:auto !important}
-body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilenav,body.embed #guest-bar{display:none !important}
+body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilenav{display:none !important}
 body.embed .main{margin:0 !important;width:100% !important;height:auto !important;overflow:visible !important}
 body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important;overflow:visible !important}
 .chat-zap{display:inline-flex;align-items:center;gap:4px;color:var(--neon2);font-size:13px;font-weight:700}

@@ -910,10 +910,9 @@
     }catch(_){}
     try{ _instancePicker(); }catch(_){}
   }
-  // Drop the guest chrome and open the auth gate. Shared by the guest card, the bottom bar and every
-  // _guestPrompt() path so they can't drift.
+  // Drop the guest chrome and open the auth gate. Shared by the guest card and every _guestPrompt()
+  // path so they can't drift.
   function _leaveGuest(which){
-    const b=document.getElementById('guest-bar'); if(b) b.remove();
     document.body.classList.remove('guest');
     showAuth(which);
   }
@@ -1138,13 +1137,9 @@
     // it can stay. Browsers also discourage auto-requests. In-app toasts work without it; OS
     // notifications are opt-in via Settings (a user gesture) instead. [was: Notification.requestPermission]
     $('#auth-gate').classList.add('hidden'); $('#app').classList.remove('hidden');
-    if(GUEST){   // a slim banner offering login; the rest of the app renders read-only
-      let gb=document.getElementById('guest-bar');
-      if(!gb){ gb=document.createElement('div'); gb.id='guest-bar';
-        gb.innerHTML='<span>👁 Viewing publicly — log in to post, reply, react or zap.</span><button class="btn btn-neon small" id="guest-login">Log in / Sign up</button>';
-        document.body.appendChild(gb); }
-      const gl=document.getElementById('guest-login'); if(gl) gl.onclick=()=>_leaveGuest();
-    }
+    // No bottom guest bar any more: the guest CARD above the timeline (logo, name, Sign up / Log in
+    // / Source) says the same thing with more information, in the place people are already looking.
+    // Two standing calls-to-action for the same action was just clutter.
     $('#btn-logout').onclick = logout;
     { const b=$('#btn-install'); if(b){
         if(_deferredInstall) b.classList.remove('hidden');   // prompt already captured before mount
@@ -2233,7 +2228,7 @@
       <div class="guest-acts">
         <button class="btn btn-neon" id="guest-signup">Sign up</button>
         <button class="btn btn-ghost" id="guest-login2">Log in</button>
-        <a class="guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
+        <a class="btn btn-ghost guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
       </div>
     </div>`;
   }
