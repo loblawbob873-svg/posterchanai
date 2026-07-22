@@ -5181,7 +5181,13 @@
       // returned above as a lightbox; video & co. must keep their own controls), and skip when the
       // user just drag-SELECTED text (so highlight-to-copy works instead of opening the thread).
       const hasSelection = window.getSelection && String(window.getSelection()).length>0;
-      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.media-row,.media-grid,.media-car,.link-card')) renderThread(art.dataset.id); return; }
+      // Excluding the media CONTAINERS (.media-row/.media-grid/.media-car) made their empty space dead.
+      // .media-row is a flex row and its images are `width:auto` — a portrait or narrow photo sits at the
+      // left and leaves the rest of the full-width row bare, so clicking the RIGHT of a post with an image
+      // hit the container, matched the exclusion, and did nothing at all. Exclude the media ITSELF instead:
+      // an <img> already returned further up (lightbox), video/audio keep their controls via the tag names,
+      // .mc-nav is a <button>, and the carousel dots are the one control that needs naming.
+      if(!btn){ if(art && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) renderThread(art.dataset.id); return; }
       if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
