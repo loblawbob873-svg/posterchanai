@@ -903,7 +903,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 /* overflow-anchor:none — the live-prepend (_prependLive) manages scrollTop itself; the browser's own
    scroll-anchoring double-corrects on every prepend, which is what made the timeline "bounce"/look unstable
    at the top. overscroll-behavior:contain kills the rubber-band overscroll + scroll-chaining at the top. */
-.feed{flex:1;min-height:0;overflow-y:auto;overflow-anchor:none;overscroll-behavior-y:contain;padding:8px 0 90px;scrollbar-width:auto;scrollbar-color:var(--neon2) transparent}
+.feed{flex:1;min-height:0;overflow-y:auto;overflow-anchor:none;overscroll-behavior-y:contain;padding:8px 0 90px;scrollbar-width:none}
 /* Pull-to-refresh indicator (mobile) — a fixed pill near the top that follows the drag; .ready when
    past the trigger, .spin while the refresh runs. Centring is via left:50% + translateX(-50%); the JS
    composes translateY/rotate onto the same transform as you pull. */
@@ -985,10 +985,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .act.actq:hover{color:var(--neon)}
 .act.actq .q-ico{width:22px;height:22px}
 .act .rp-ico{width:20px;height:20px}
-.feed::-webkit-scrollbar{width:14px}
-.feed::-webkit-scrollbar-thumb{background:var(--neon2);border-radius:8px;border:3px solid var(--bg);min-height:40px}
-.feed::-webkit-scrollbar-thumb:hover{background:var(--neon)}
-.feed::-webkit-scrollbar-track{background:transparent}
+/* No visible scrollbar on the timeline: a 14px magenta bar down the side of the feed read as chrome
+   from a different app. Scrolling itself is untouched — only the painted track/thumb is gone
+   (scrollbar-width:none on the rule above covers Firefox). */
+.feed::-webkit-scrollbar{width:0;height:0}
 
 /* ===== note card ===== */
 .note{display:flex;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);transition:background .15s;animation:fade .25s;cursor:pointer}
