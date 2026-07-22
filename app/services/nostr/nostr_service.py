@@ -35,6 +35,8 @@ DEFAULT_RELAYS = [
     "wss://nostr.corebreach.com/",
     "wss://social.amanah.eblessing.co/",
     "wss://relay.sovrgn.co.za/",
+    "wss://nostr.azzamo.net/",
+    "wss://relay.nostr.net/",
     # 0xchat interop (NIP-17 DMs) — relay.0xchat.com is where 0xchat users + their kind-10050 live.
     # We deliberately do NOT add the highest-volume firehoses (relay.damus.io, relay.nostr.band), the
     # AUTH/paid/bridge relays (auth.nostr1.com, inbox.nostr.wine, nostr.wine[429], relay.mostr.pub), or
