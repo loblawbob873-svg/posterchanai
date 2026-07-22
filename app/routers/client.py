@@ -1411,6 +1411,7 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     cur = _whitelist_hex(db)
+    _was = target in cur          # 0->1 only: re-saving the list shouldn't re-DM everyone on it
     if data.grant:
         cur.add(target)
     else:
@@ -1426,6 +1427,11 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     # blossom_service re-reads the setting on its next (short-TTL) cache miss — no reload.
     # settings_store.put persists locally + writes through to the relay (authoritative store).
     settings_store.put("blossom_whitelist", value)
+    if data.grant and not _was:
+        # DM the PUBKEY. Whitelisting shouldn't conjure a User row for someone who has never signed
+        # in — an account appearing as a side effect of a notification is a side effect too far.
+        from app.services.access_notify_service import notify_access_granted
+        await notify_access_granted(db, target, "blossom")
     return JSONResponse({"ok": True, "whitelisted": data.grant, "count": len(cur)})
 
 
@@ -1693,9 +1699,15 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)   # pre-grant: create the account if it doesn't exist
+    _was = bool(u.can_ai)
     u.can_ai = bool(data.grant)
     db.commit()
     logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
+    # Tell them straight away. Only on the 0->1 transition: re-saving the same permission shouldn't
+    # re-DM, and a revoke certainly shouldn't.
+    if bool(data.grant) and not _was:
+        from app.services.access_notify_service import notify_access_granted
+        await notify_access_granted(db, u, "ai")
     try:
         from app.services import users_store
         await users_store.sync_user(db, u)

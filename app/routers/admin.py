@@ -877,12 +877,19 @@ def update_user_capabilities(
     user.can_music = can_music
     user.can_video = can_video
     user.can_torrent = can_torrent
+    _was_blossom, _was_ai = bool(user.can_blossom), bool(user.can_ai)
     user.can_blossom = can_blossom
     user.can_ai = can_ai
+    _newly = [k for k, was, now in (("ai", _was_ai, can_ai), ("blossom", _was_blossom, can_blossom))
+              if now and not was]
     db.commit()
     db.refresh(user)
     from app.services import users_store
     users_store.sync_user_blocking(db, user)   # caps → relay (authoritative)
+    # DM the user about anything newly GRANTED (not revoked, not re-saved unchanged).
+    if _newly:
+        from app.services.access_notify_service import notify_access_granted_blocking
+        notify_access_granted_blocking(db, user, _newly)   # one message, however many caps changed
     logger.info(f"[ADMIN] Updated capabilities for user {user_id} ({user.username}): "
                 f"image={can_image} music={can_music} video={can_video} torrent={can_torrent} "
                 f"blossom={can_blossom} ai={can_ai}")
