@@ -9787,7 +9787,7 @@
       blurb:'Paste a link — YouTube, TikTok, X, SoundCloud and friends.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
     videodl: { go:'Download', cmd:'ytdl video', icon:'🎬', title:'Download a video',
-      blurb:'Paste a link and I will fetch the video file.',
+      blurb:'Paste a YouTube, X, TikTok or Nitter link and I will fetch the video file.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
     shot: { go:'Capture', cmd:'screenshot', icon:'📸', title:'Screenshot a web page',
       blurb:'Paste a page URL and I will capture it.',
@@ -9801,6 +9801,34 @@
     search: { go:'Search', cmd:'search', icon:'🔍', title:'Search the web',
       blurb:'What do you want to look up?',
       ph:'best nostr clients 2026', rows:1 },
+    // ---- things you do TO A FILE. Same sheet, but it asks for the file first (and any argument the
+    // command needs) instead of a prompt. These were only reachable by attaching something and finding
+    // the action bar, so nobody discovered them from an empty chat.
+    compress: { go:'Compress', cmd:'compress', icon:'🗜', title:'Compress a file', file:true,
+      accept:'image/*,video/*,application/pdf',
+      blurb:'Shrink an image, video or PDF. Attach the file and I will do the rest.' },
+    clip: { go:'Clip', cmd:'clip', icon:'✂️', title:'Clip a video', file:true, accept:'video/*',
+      blurb:'Trim a section out of a video. Times look like 0:10 and 0:30.',
+      extra:[['start','Start','0:10'],['end','End','0:30']], needExtra:true },
+    convert: { go:'Convert', cmd:'convert', icon:'🔄', title:'Convert a file', file:true,
+      accept:'image/*,application/pdf',
+      blurb:'Images become a PDF; a PDF becomes images. Attach it and I will pick the direction.' },
+    extractaudio: { go:'Extract', cmd:'extractaudio', icon:'🎵', title:'Extract the audio', file:true,
+      accept:'video/*', blurb:'Pull the soundtrack out of a video as an MP3.' },
+    circlecrop: { go:'Crop', cmd:'circlecrop', icon:'⭕', title:'Circle-crop an image', file:true,
+      accept:'image/*', blurb:'Round the image into a circle on a transparent background.' },
+    removebackground: { go:'Remove', cmd:'removebackground', icon:'🪄', title:'Remove the background', file:true,
+      accept:'image/*', blurb:'Cut the subject out onto a transparent background.' },
+    ocr: { go:'Read', cmd:'ocr', icon:'🔤', title:'Read the text in a file', file:true,
+      accept:'image/*,application/pdf', blurb:'Pull the words out of a photo, screenshot or PDF.' },
+    meme: { go:'Make it', cmd:'meme', icon:'😂', title:'Add meme text', file:true, accept:'image/*',
+      blurb:'Outlined white caption across the image.',
+      extra:[['text','Caption','when the code finally works']], needExtra:true },
+    collage: { go:'Combine', cmd:'collage', icon:'🖼', title:'Make a collage', file:true, multi:true,
+      accept:'image/*', blurb:'Combine several images into one. Pick two or more.' },
+    flashcards: { go:'Study', cmd:'flashcards', icon:'🎴', title:'Make study flashcards', file:true,
+      accept:'image/*,application/pdf,.ppt,.pptx,.doc,.docx',
+      blurb:'Turn a PDF, slide deck or photo of your notes into a quiz.' },
     images: { go:'Search', cmd:'images', icon:'🖼️', title:'Search for images',
       blurb:'What are you looking for?',
       ph:'shiba inu puppy', rows:1,
@@ -9812,7 +9840,12 @@
     const items=[['image','Make an image'],['music','Make a song'],['video','Make a video'],
                  ['audio','Get the audio from a link'],['videodl','Download a video'],
                  ['shot','Screenshot a page'],['translate','Translate text'],
-                 ['search','Search the web'],['images','Find images']];
+                 ['search','Search the web'],['images','Find images'],
+                 ['compress','Compress a file'],['clip','Clip a video'],['extractaudio','Extract the audio'],
+                 ['convert','Convert images / PDF'],['removebackground','Remove a background'],
+                 ['circlecrop','Circle-crop an image'],['meme','Add meme text'],
+                 ['collage','Make a collage'],['ocr','Read the text in a file'],
+                 ['flashcards','Make study flashcards']];
     modal(`<h3>✨ Make something</h3>
       <div class="gen-picker">${items.map(([k,label])=>{ const G=_GEN[k];
         return `<button class="gen-pick" data-gen="${k}"><span class="awc-ic">${G.icon}</span>
@@ -9835,12 +9868,20 @@
           <button type="button" class="fxs-x" id="gen-x" aria-label="Close">✕</button></div>
       </div>
       <div class="fxs-body">
+        ${G.file ? `
+        <div class="fxs-sec">📎 ${G.multi?'Your files':'Your file'}</div>
+        <button type="button" class="btn btn-ghost full gen-file-btn" id="gen-file-btn">📎 Choose ${G.multi?'files':'a file'}</button>
+        <input type="file" id="gen-file" accept="${enc(G.accept||'')}" ${G.multi?'multiple':''} hidden>
+        <div class="gen-file-list muted small" id="gen-file-list"></div>
+        ${(G.extra||[]).map(([id,label,ph])=>`<div class="fxs-sec">${enc(label)}</div>
+          <input class="input gen-x" id="gen-x-${enc(id)}" placeholder="${enc(ph)}" autocomplete="off">`).join('')}
+        ` : `
         <div class="fxs-sec">${G.kind==='url' ? '🔗 Link' : '✍️ What do you want?'}</div>
         ${rows>1
           ? `<textarea class="input gen-prompt" id="gen-prompt" rows="${rows}" placeholder="${enc(G.ph)}"></textarea>`
           : `<input class="input gen-prompt" id="gen-prompt" type="${G.kind==='url'?'url':'text'}"
                inputmode="${G.kind==='url'?'url':'text'}" autocapitalize="off" autocorrect="off"
-               spellcheck="false" placeholder="${enc(G.ph)}">`}
+               spellcheck="false" placeholder="${enc(G.ph)}">`}`}
         ${groups.map(([label,opts])=>`<div class="fxs-sec">${enc(label)} <span class="fxs-hint">optional · tap to add</span></div>
           <div class="fxs-grid">${opts.map(chip).join('')}</div>`).join('')}
         ${music?`<div class="fxs-sec">🎤 Lyrics <span class="fxs-hint">leave blank and the AI writes them</span></div>
@@ -9853,8 +9894,24 @@
       root.classList.add('fxs-modal');
       if(root.parentElement) root.parentElement.classList.add('fxs-bg');
       const ta=$('#gen-prompt',root), cmdEl=$('#gen-cmd',root), go=$('#gen-go',root);
+      let files=[];
+      if(G.file){
+        const fb=$('#gen-file-btn',root), fi=$('#gen-file',root), fl=$('#gen-file-list',root);
+        fb.onclick=()=>fi.click();
+        fi.onchange=e=>{ files=[...(e.target.files||[])]; if(!G.multi) files=files.slice(0,1);
+          fl.textContent = files.length ? files.map(f=>f.name).join(', ') : '';
+          fb.textContent = files.length ? `📎 ${files.length>1?files.length+' files':'Change file'}` : `📎 Choose ${G.multi?'files':'a file'}`;
+          sync(); };
+      }
       const lyEl=$('#gen-lyrics',root), instEl=$('#gen-inst',root);
       const build=()=>{
+        if(G.file){
+          if(!files.length) return '';
+          const args=(G.extra||[]).map(([id])=>(($('#gen-x-'+id,root)||{}).value||'').trim());
+          if(G.needExtra && args.some(a=>!a)) return '';     // clip needs BOTH times; meme needs the caption
+          if(G.multi && files.length<2) return '';           // a collage of one image is just the image
+          return (G.cmd+' '+args.join(' ')).trim();
+        }
         const base=(ta.value||'').trim();
         if(!base) return '';
         if(G.compose) return G.compose(base, [...picked]);
@@ -9869,7 +9926,10 @@
         $$('.gen-chip',root).forEach(b=> b.classList.toggle('on', picked.has(b.dataset.pick)));
         if(lyEl) lyEl.disabled=instrumental;
         const c=build();
-        cmdEl.textContent = c || (G.kind==='url' ? 'paste a link first' : 'describe something first');
+        cmdEl.textContent = c || (G.file
+            ? (!files.length ? (G.multi?'choose at least two images':'choose a file first')
+               : (G.multi && files.length<2 ? 'choose at least two images' : 'fill in the field above'))
+            : (G.kind==='url' ? 'paste a link first' : 'describe something first'));
         cmdEl.classList.toggle('muted', !c);
         go.disabled = !c;
       };
@@ -9881,19 +9941,22 @@
         else { if(G.single) picked.clear(); picked.add(v); }   // single-select: you translate INTO one language
         sync();
       });
-      ta.addEventListener('input', sync);
+      if(ta) ta.addEventListener('input', sync);
+      $$('.gen-x',root).forEach(i=> i.addEventListener('input', sync));
       if(lyEl) lyEl.addEventListener('input', ()=>{ lyrics=lyEl.value; sync(); });
       if(instEl) instEl.addEventListener('change', ()=>{ instrumental=instEl.checked; sync(); });
       $('#gen-x',root).onclick=()=>closeModal();
-      go.onclick=()=>{
+      go.onclick=async()=>{
         const c=build(); if(!c) return;
         closeModal();
+        // File commands run on ATTACHMENTS, so the file has to be attached before the command is sent.
+        if(G.file && files.length){ try{ await aiAddFiles(files); }catch(_){ } }
         const inp=$('#ai-input');
         if(inp){ inp.value=c; inp.dispatchEvent(new Event('input')); }
         aiSend();                                  // one tap = it runs; no command to remember
       };
       sync();
-      if(matchMedia('(min-width:821px)').matches) ta.focus();
+      if(ta && matchMedia('(min-width:821px)').matches) ta.focus();
     });
   }
   window.__openGenStudio = openGenStudio;
@@ -9911,11 +9974,24 @@
       <p class="muted small aw-or">…or grab something from the web:</p>
       <div class="aw-make">
         <button class="aw-card" data-gen="audio"><span class="awc-ic">🎧</span><b>Get the audio</b><span>a link → MP3</span></button>
-        <button class="aw-card" data-gen="videodl"><span class="awc-ic">📥</span><b>Download a video</b><span>a link → video file</span></button>
+        <button class="aw-card" data-gen="videodl"><span class="awc-ic">📥</span><b>Download a video</b><span>YouTube, X, TikTok → file</span></button>
         <button class="aw-card" data-gen="shot"><span class="awc-ic">📸</span><b>Screenshot a page</b><span>capture any URL</span></button>
         <button class="aw-card" data-gen="translate"><span class="awc-ic">🌐</span><b>Translate</b><span>text → any language</span></button>
         <button class="aw-card" data-gen="search"><span class="awc-ic">🔍</span><b>Search the web</b><span>look something up</span></button>
         <button class="aw-card" data-gen="images"><span class="awc-ic">🖼️</span><b>Find images</b><span>image search</span></button>
+      </div>
+      <p class="muted small aw-or">…or work with a file you already have:</p>
+      <div class="aw-make">
+        <button class="aw-card" data-gen="compress"><span class="awc-ic">🗜</span><b>Compress</b><span>image, video or PDF</span></button>
+        <button class="aw-card" data-gen="clip"><span class="awc-ic">✂️</span><b>Clip a video</b><span>trim start → end</span></button>
+        <button class="aw-card" data-gen="extractaudio"><span class="awc-ic">🎵</span><b>Extract audio</b><span>video → MP3</span></button>
+        <button class="aw-card" data-gen="convert"><span class="awc-ic">🔄</span><b>Convert</b><span>images ↔ PDF</span></button>
+        <button class="aw-card" data-gen="removebackground"><span class="awc-ic">🪄</span><b>Remove background</b><span>transparent PNG</span></button>
+        <button class="aw-card" data-gen="circlecrop"><span class="awc-ic">⭕</span><b>Circle crop</b><span>round avatar cut-out</span></button>
+        <button class="aw-card" data-gen="meme"><span class="awc-ic">😂</span><b>Meme text</b><span>caption an image</span></button>
+        <button class="aw-card" data-gen="collage"><span class="awc-ic">🖼</span><b>Collage</b><span>several images → one</span></button>
+        <button class="aw-card" data-gen="ocr"><span class="awc-ic">🔤</span><b>Read the text</b><span>OCR a photo or PDF</span></button>
+        <button class="aw-card" data-gen="flashcards"><span class="awc-ic">🎴</span><b>Flashcards</b><span>PDF or notes → quiz</span></button>
       </div>
       <p class="muted small">Tap <span class="ai-cmd" data-cmd="help">help</span> to see everything I can do.</p>
     </div>`;
