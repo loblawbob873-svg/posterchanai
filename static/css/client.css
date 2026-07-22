@@ -691,9 +691,12 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .guest-acts .btn{margin:0}
-/* Source is a real button like the other two — as a bare text link it read as decoration and nobody
-   saw it. .btn/.btn-ghost do the work; this only kills the underline an <a> brings. */
+/* Three buttons, three weights: Sign up is the filled primary (btn-neon), Log in the accent outline
+   (btn-ghost), and Source a muted tertiary — same size and shape, clearly not competing with the two
+   actions that matter. `.guest-src.btn` (0,2,0) is what beats .btn-ghost's own colours. */
 .guest-src{text-decoration:none}
+.guest-src.btn{background:var(--panel2);border-color:var(--line);color:var(--muted)}
+.guest-src.btn:hover{border-color:var(--cyan);color:var(--cyan);background:var(--panel2)}
 @media(max-width:820px){ .guest-card{margin:8px 10px 0;padding:15px 12px} .guest-logo{width:48px;height:48px}
   .guest-name{font-size:19px} }
 .tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
