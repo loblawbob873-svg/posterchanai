@@ -12436,7 +12436,7 @@
   // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
   // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
   // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=21;   // a sidebar digest, not a second feed
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=5, HOT_MAX=15;   // a sidebar digest, not a second feed
   let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
   // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
   async function rankHot(windowSec){
@@ -12476,7 +12476,7 @@
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
   // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
   // the in-memory notification store, so unlike Hot/Follows it costs no relay query.
-  const RB_NOTIF_ROWS=8;
+  const RB_NOTIF_ROWS=6;
   function loadNotifs(){
     const el=rbListEl('notifs'); if(!el) return;
     const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
@@ -12496,7 +12496,7 @@
     all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     decorateProfiles();
   }
-  const FOLLOWS_ROWS=9;
+  const FOLLOWS_ROWS=5;
   async function loadFollows(){
     let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane
     const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
