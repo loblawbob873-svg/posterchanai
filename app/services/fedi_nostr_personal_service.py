@@ -264,7 +264,15 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             return True
         if ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
-            tags = [["p", recipient]] + ([["e", target]] if target else [])
+            if not target:
+                # No `e` tag = a NIP-25 reaction pointing at nothing. Clients cannot render "X liked
+                # ..." without the target, and opening the event directly gives an empty thread —
+                # exactly what one of these produced when it reached a user. A like we can't attach
+                # to a post is worth less than nothing, so skip it rather than publish it broken.
+                logger.info("[fedi-personal] %s from %s: reacted status %s isn't mirrored — skipping",
+                            ntype, acct, status.get("id"))
+                return True
+            tags = [["p", recipient], ["e", target]]
             if ntype == "favourite":
                 content = "+"
             else:
@@ -279,7 +287,12 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
             return ok
         if ntype == "reblog" and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
-            tags = [["p", recipient]] + ([["e", target]] if target else [])
+            if not target:
+                # Same as reactions: a kind-6 with no `e` tag is a repost of nothing.
+                logger.info("[fedi-personal] reblog from %s: status %s isn't mirrored — skipping",
+                            acct, status.get("id"))
+                return True
+            tags = [["p", recipient], ["e", target]]
             ok, _ = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
             return ok
         if ntype in ("follow", "follow_request"):

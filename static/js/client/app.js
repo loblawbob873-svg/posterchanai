@@ -8118,7 +8118,12 @@
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey));
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
+      // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
+      // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
+      // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
+      // bridge produced one — can't put an unusable row in the list.
+      && !((e.kind===7 || e.kind===6) && !e.tags.some(t=>t[0]==='e'&&t[1])));
     // PIN each follower's notification time on FIRST sight (persisted) BEFORE sorting — otherwise a
     // re-saved contact list (a NEW kind-3 with a fresh created_at) keeps sorting to the top and re-shows
     // an old follower as "followed you" over and over. _followTs records once; _notifTs then reads it.
