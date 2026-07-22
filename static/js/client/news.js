@@ -14,12 +14,11 @@
     const safeUrl = u => /^https?:\/\//i.test(u||'') ? u : '';
 
     const FEEDS_D = 'pcai:news-feeds', READ_D = 'pcai:news-read', READ_CAP = 2000, MAX_ITEMS = 2000;
-    const DEFAULTS = [
-      { url:'https://feeds.bbci.co.uk/news/rss.xml', name:'BBC News' },
-      { url:'https://hnrss.org/frontpage', name:'Hacker News' },
-      { url:'https://www.theverge.com/rss/index.xml', name:'The Verge' },
-      { url:'https://feeds.arstechnica.com/arstechnica/index', name:'Ars Technica' },
-    ];
+    // Empty by default: a new account (and a logged-out visitor) starts with NO feeds and adds their
+    // own with ＋. Shipping four starter feeds meant every fresh client showed the same borrowed list,
+    // which reads as "someone else's news" rather than yours — and it's the same rule the server-side
+    // news sources follow (no inheriting anyone else's list).
+    const DEFAULTS = [];
 
     let _feeds = null;        // [{url,name}]
     let _active = 'all';      // 'all' or a feed url
@@ -295,8 +294,12 @@
     function renderList(){
       const list = $('#news-list'); if(!list) return;
       if(_loading && !_items.length){ list.innerHTML='<div class="spinner"></div>'; return; }
+      // Distinguish "you have no feeds" from "your feeds returned nothing" — with no starter feeds,
+      // the first is now the normal first-run state and has to say what to do about it.
       list.innerHTML = _items.length ? _items.map(_card).join('')
-        : '<div class="empty">No articles — add a feed with ＋ or try again.</div>';
+        : (!_feeds || !_feeds.length
+            ? '<div class="empty">No feeds yet — tap ＋ to add an RSS or Atom URL, or import an OPML file.</div>'
+            : '<div class="empty">No articles — add a feed with ＋ or try again.</div>');
       // wire actions
       $$('.news-post', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); const it=_items[+b.dataset.i]; if(it) compose({ text: it.title + '\n\n' + it.link }); });
       $$('.news-sum', list).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); summarize(_items[+b.dataset.i], b); });
