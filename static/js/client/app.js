@@ -9787,8 +9787,19 @@
       blurb:'Paste a link — YouTube, TikTok, X, SoundCloud and friends.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
     videodl: { go:'Download', cmd:'ytdl video', icon:'🎬', title:'Download a video',
-      blurb:'Paste a YouTube, X, TikTok or Nitter link and I will fetch the video file.',
-      ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
+      blurb:'Paste a YouTube, X, TikTok or Nitter link. Trim or shrink it on the way down.',
+      ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url',
+      // ytdl takes `clip <start> <end>` and `compress` as modifiers. They're worth surfacing for a
+      // second reason: a PLAIN download is copied to server storage and only reported as a path,
+      // while a clipped/compressed one is delivered straight into the chat (and therefore into
+      // Files). Trimming a long video is also how you avoid waiting for the whole thing.
+      opts:[['clipfrom','Clip from','0:10','text'],['clipto','Clip to','0:30','text']],
+      toggles:[['compress','🗜 Compress it (smaller file)']],
+      compose:(base, picks, o)=>{
+        let out='ytdl video '+base;
+        if((o.clipfrom||'').trim() && (o.clipto||'').trim()) out+=` clip ${o.clipfrom.trim()} ${o.clipto.trim()}`;
+        if(o.compress) out+=' compress';
+        return out; } },
     shot: { go:'Capture', cmd:'screenshot', icon:'📸', title:'Screenshot a web page',
       blurb:'Paste a page URL and I will capture it.',
       ph:'https://example.com', rows:1, kind:'url' },
@@ -9884,6 +9895,12 @@
                spellcheck="false" placeholder="${enc(G.ph)}">`}`}
         ${groups.map(([label,opts])=>`<div class="fxs-sec">${enc(label)} <span class="fxs-hint">optional · tap to add</span></div>
           <div class="fxs-grid">${opts.map(chip).join('')}</div>`).join('')}
+        ${(G.opts||[]).length?`<div class="fxs-sec">✂️ Trim <span class="fxs-hint">optional · leave blank for the whole thing</span></div>
+          <div class="gen-optrow">${(G.opts||[]).map(([id,label,ph])=>
+            `<label class="gen-opt"><span class="muted small">${enc(label)}</span>
+              <input class="input gen-x" id="gen-x-${enc(id)}" placeholder="${enc(ph)}" autocomplete="off"></label>`).join('')}</div>`:''}
+        ${(G.toggles||[]).map(([id,label])=>`<label class="gen-check">
+          <input type="checkbox" class="gen-t" id="gen-t-${enc(id)}"> ${enc(label)}</label>`).join('')}
         ${music?`<div class="fxs-sec">🎤 Lyrics <span class="fxs-hint">leave blank and the AI writes them</span></div>
           <label class="gen-check"><input type="checkbox" id="gen-inst"> Instrumental — no vocals at all</label>
           <textarea class="input gen-lyrics" id="gen-lyrics" rows="3" placeholder="[verse]&#10;your words here…"></textarea>`:''}
@@ -9914,7 +9931,12 @@
         }
         const base=(ta.value||'').trim();
         if(!base) return '';
-        if(G.compose) return G.compose(base, [...picked]);
+        if(G.compose){
+          const o={};
+          (G.opts||[]).forEach(([id])=>{ o[id]=(($('#gen-x-'+id,root)||{}).value||''); });
+          (G.toggles||[]).forEach(([id])=>{ o[id]=!!(($('#gen-t-'+id,root)||{}).checked); });
+          return G.compose(base, [...picked], o);
+        }
         let out=G.cmd+' '+[base, ...picked].join(', ');
         if(music){
           if(instrumental) out+=' instrumental';
@@ -9943,6 +9965,7 @@
       });
       if(ta) ta.addEventListener('input', sync);
       $$('.gen-x',root).forEach(i=> i.addEventListener('input', sync));
+      $$('.gen-t',root).forEach(i=> i.addEventListener('change', sync));
       if(lyEl) lyEl.addEventListener('input', ()=>{ lyrics=lyEl.value; sync(); });
       if(instEl) instEl.addEventListener('change', ()=>{ instrumental=instEl.checked; sync(); });
       $('#gen-x',root).onclick=()=>closeModal();

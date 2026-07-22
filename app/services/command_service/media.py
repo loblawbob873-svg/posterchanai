@@ -198,7 +198,26 @@ Files are saved to your Storage.""",
             )
             return {"type": "text", "content": format_download_result(result)}
         else:
-            logger.info(f"[ytdl] Command: video url={target_url!r} user_id={self.user.id}")
+            import asyncio
+            logger.info(f"[ytdl] Command: video inline url={target_url!r} user_id={self.user.id}")
+            # Deliver the video INLINE, exactly like the mp3 and the clipped/compressed paths above.
+            # It used to go straight to a storage DIRECTORY and report a filesystem path — pre-Blossom
+            # behaviour that left the download unreachable from the client: not playable in the chat,
+            # and absent from Files (nothing references an artifact, so there was nothing to list).
+            # Inline means it lands in Blossom like every other artifact. Storage stays as the
+            # fallback for something too big to hold in memory.
+            res = await asyncio.to_thread(download_ytdl_bytes, target_url, video=True)
+            if res.get("ok"):
+                return {
+                    "type": "files",
+                    "content": "🎬 Video",
+                    "files": [{
+                        "filename": res["filename"],
+                        "data": res["data"],
+                        "content_type": res.get("mime", "video/mp4"),
+                    }],
+                }
+            logger.info(f"[ytdl] video inline fell back to storage: {res.get('error')}")
             result = await download_video_and_save_to_storage(
                 url=target_url,
                 user_id=self.user.id,

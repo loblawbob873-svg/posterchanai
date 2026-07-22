@@ -2836,3 +2836,6 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .gen-file-btn{margin-top:8px;min-height:46px}
 .gen-file-list{margin-top:6px;word-break:break-all}
 .modal input.gen-x,.gen-x{width:100%;font-size:16px;min-height:0}   /* 16px: iOS zooms below that */
+/* optional argument row in the Make-something sheet (e.g. ytdl clip from/to) */
+.gen-optrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.gen-opt{flex:1 1 140px;display:flex;flex-direction:column;gap:3px;min-width:0}
