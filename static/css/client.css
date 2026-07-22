@@ -268,6 +268,26 @@
 :root[data-theme="win98"] .conn, :root[data-theme="win98"] .conn span,
 :root[data-theme="win98"] .usercount, :root[data-theme="win98"] .usercount *{ color:#16161c !important; }
 *{box-sizing:border-box}
+
+/* ---- Scrollbars -------------------------------------------------------------
+   Chromium on Windows paints the classic wide light-grey bar, which is why the desktop app showed
+   one down the right rail against the dark UI while Linux/macOS looked fine. Style it once, here,
+   from the theme vars so every scrolling panel (right rail, modals, settings, menus) matches.
+   `color-scheme` is the other half: it tells the browser which palette to draw native chrome with —
+   the Firefox scrollbar, form controls and select popups included. Panels that deliberately hide
+   their bar (.feed, .dm-msgs, .mc-track, …) keep doing so: those rules are class-scoped and so
+   outrank these universal/element ones regardless of order. */
+:root{color-scheme:dark}
+:root[data-theme="cherryblossom"],:root[data-theme="professional"],:root[data-theme="win98"],
+:root[data-theme="winxp"],:root[data-theme="animegirl"]{color-scheme:light}
+*{scrollbar-width:thin;scrollbar-color:rgba(var(--accent-rgb),.38) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+/* padding-box + transparent border = the thumb floats with a 2px gutter instead of filling the track */
+::-webkit-scrollbar-thumb{background:rgba(var(--accent-rgb),.32);background-clip:padding-box;
+  border:2px solid transparent;border-radius:9px}
+::-webkit-scrollbar-thumb:hover{background:rgba(var(--accent-rgb),.6);background-clip:padding-box}
+
 html,body{margin:0;height:100%}
 body{
   /* Inter for all UI/body/input text — clean + highly readable. Rajdhani (condensed display) read
