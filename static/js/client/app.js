@@ -1924,18 +1924,25 @@
   }
 
   // ---------- view routing ----------
-  // Views whose middle column isn't a feed: a settings FORM, a game BOARD, the Files media GRID, and
-  // Messages' own list+thread split. On those the 340px right rail is pure cost — and it's stale on
-  // top of that, since refreshRightbar() only updates while you're on home/global. Hide it there and
-  // give the width back to the thing you came to use.
-  const RB_HIDE_VIEWS = new Set(['settings','messages','blossom','chess','ttt','hangman','connect4','blackjack','holdem']);
+  // The 340px right rail is a companion to a TIMELINE — it only makes sense beside a vertical list of
+  // notes. Almost nothing else in the app is that: AI chat, News, Markets, Stats, Torrents, 4chan,
+  // Repos, chat rooms, Shopping, Streams, Pics, Calls, Files, Settings, Admin, Live Translate and the
+  // games are all forms, boards, grids, players or their own split panes, and every one of them would
+  // rather have the width. The rail is stale there too — refreshRightbar() only updates on home/global.
+  //
+  // So this is an ALLOWLIST, not a blocklist: "not a feed" is the majority case, and a view added
+  // later should default to the full width rather than silently inherit a rail that doesn't suit it.
+  // Includes the entity views that render note cards (thread/profile/hashtag/search/community) —
+  // those set VIEW directly, without going through switchView.
+  const RB_SHOW_VIEWS = new Set(['home','global','notifications','bookmarks','drafts',
+                                 'profile','thread','hashtag','search','community']);
   let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
   let _rbBooted=false;   // has the post-onReady delay elapsed? gates the retry below off the cold socket
   function _syncRightbar(){
     // Deliberately its OWN body class, NOT the rb-collapsed one the ▸ toggle uses: that toggle
     // persists to localStorage, so reusing it would write "collapsed" into the user's saved
     // preference on a trip to Settings and leave the rail gone once they navigated back.
-    document.body.classList.toggle('rb-off', RB_HIDE_VIEWS.has(VIEW));
+    document.body.classList.toggle('rb-off', !RB_SHOW_VIEWS.has(VIEW));
     // First view where the rail is genuinely visible: build it. Without this, starting out on a
     // hidden-rail view means the one-shot initial loadRightbar() found it display:none and skipped —
     // and the 150s timer would leave the column blank for minutes once the user navigated back.

@@ -677,10 +677,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
   body.rb-collapsed .rb-toggle{right:32px}                   /* tab slides to the app's edge (= its outer padding) */
-  /* Per-VIEW hide (RB_HIDE_VIEWS in app.js): Settings, Messages, Files and the games get the full
-     width, because none of them is a feed the rail complements. Same column drop as the manual
-     collapse but a SEPARATE class — rb-collapsed is the user's persisted preference and must not be
-     written by navigation. The ▸ tab goes too: leaving it would be a control that does nothing. */
+  /* Per-VIEW hide. app.js allowlists the timeline-shaped views (RB_SHOW_VIEWS) and sets .rb-off on
+     everything else — AI chat, News, Markets, Stats, Torrents, Shopping, Streams, chat rooms, Files,
+     Settings, the games… all of which would rather have the width than a rail of unrelated posts.
+     Same column drop as the manual collapse but a SEPARATE class — rb-collapsed is the user's
+     persisted preference and must not be written by navigation. The ▸ tab goes too: leaving it
+     behind would be a visible control that does nothing. */
   body.rb-off .app{grid-template-columns:300px minmax(0,1fr)}
   body.rb-off .rightbar,body.rb-off .rb-toggle{display:none}
 }
