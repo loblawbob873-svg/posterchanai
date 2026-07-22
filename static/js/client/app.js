@@ -5947,6 +5947,59 @@
   // search, the picked state visible only as text in the input, and the whole thing scrolled away as
   // soon as anything else was said. A sheet gives it a sticky search + a sticky Apply bar and ONE
   // scroll region, and keeps the selection on screen while you build the command.
+  // Command sheet — the readable form of `help`. Deliberately mirrors the Effects studio: ONE scroll
+  // region, a sticky search over everything, and a footer showing exactly what will be inserted.
+  let _cmdCatalog=null;
+  async function openCommandSheet(){
+    if(!_cmdCatalog){ try{ _cmdCatalog=await fetch('/client/commands').then(r=>r.ok?r.json():null); }catch(_){ _cmdCatalog=null; } }
+    const cat=_cmdCatalog||{groups:[]}, groups=cat.groups||[];
+    if(!groups.length){ _cmdCatalog=null; return false; }   // nothing to show → caller falls back
+    const n=groups.reduce((a,g)=>a+(g.items||[]).length,0);
+    const ta=$('#ai-input');
+    const row=(it)=>`<button type="button" class="cmds-item" data-cmd="${enc(it.name)}" title="${enc(it.desc)}">
+        <span class="cmds-name">${enc(it.name)}</span><span class="cmds-desc">${enc(it.desc)}</span></button>`;
+    modal(`<div class="fxs">
+      <div class="fxs-hd">
+        <div class="fxs-title"><div><h3>💡 What can I do?</h3>
+          <div class="muted small">${n} commands · tap one to start it${cat.effects_count?` · plus ${cat.effects_count} effects in the Effects studio`:''}</div></div>
+          <button type="button" class="fxs-x" id="cmds-close" aria-label="Close">✕</button></div>
+        <input class="input fxs-search" id="cmds-q" placeholder="Search commands…" autocomplete="off">
+      </div>
+      <div class="fxs-body" id="cmds-body">
+        ${groups.map(g=>`<div class="fxs-sec cmds-sec">${enc(g.title)}</div>
+          <div class="cmds-grid">${(g.items||[]).map(row).join('')}</div>`).join('')}
+        <div class="fxs-empty hidden" id="cmds-none">Nothing matches that.</div>
+      </div>
+      <div class="fxs-ft"><code class="fxs-cmd muted" id="cmds-pick">tap a command</code>
+        <div class="fxs-acts">${cat.effects_count?'<button class="btn btn-ghost small" id="cmds-fx">🎬 Effects…</button>':''}</div></div>
+    </div>`, root=>{
+      root.classList.add('fxs-modal');
+      if(root.parentElement) root.parentElement.classList.add('fxs-bg');
+      const pick=$('#cmds-pick',root);
+      root.addEventListener('click', e=>{
+        const b=e.target.closest('.cmds-item'); if(!b) return;
+        e.preventDefault();
+        // Insert, never auto-run: most commands take an argument, and silently firing one because a
+        // row was tapped is how you generate an image nobody asked for.
+        closeModal();
+        if(ta){ ta.value=b.dataset.cmd+' '; ta.focus(); ta.dispatchEvent(new Event('input')); }
+      });
+      { const q=$('#cmds-q',root), none=$('#cmds-none',root);
+        q.addEventListener('input', ()=>{ const t=q.value.trim().toLowerCase(); let hits=0;
+          $$('.cmds-item',root).forEach(b=>{ const hit=!t || (b.dataset.cmd+' '+b.title).toLowerCase().includes(t);
+            b.classList.toggle('hidden', !hit); if(hit) hits++; });
+          // hide a section header whose whole grid filtered out
+          $$('.cmds-grid',root).forEach(g=>{ const any=[...g.children].some(c=>!c.classList.contains('hidden'));
+            g.classList.toggle('hidden', !any);
+            const sec=g.previousElementSibling; if(sec && sec.classList.contains('cmds-sec')) sec.classList.toggle('hidden', !any); });
+          none.classList.toggle('hidden', hits>0);
+          pick.textContent = t && hits ? `${hits} match${hits===1?'':'es'}` : 'tap a command'; }); }
+      $('#cmds-close',root).onclick=()=>closeModal();
+      { const fx=$('#cmds-fx',root); if(fx) fx.onclick=()=>{ closeModal(); showEffectGuide(); }; }
+      if(matchMedia('(min-width:821px)').matches){ const q=$('#cmds-q',root); if(q) q.focus(); }
+    });
+    return true;
+  }
   function openEffectsStudio(cat){
     cat=cat||{};
     const effects=cat.effects||[], enhance=cat.enhance||[], chars=cat.chars||[];
@@ -10165,6 +10218,17 @@
   function aiSend(){
     const ta=$('#ai-input'); if(!ta) return; const text=ta.value.trim();
     if(!text && !_ai.attach.length) return;
+    // `help` used to answer with 109 commands as one 8,900-character wall of markdown, which reads as
+    // intimidating rather than helpful. Open the searchable sheet instead — same shape as the Effects
+    // studio. Only the bare word: "help me write X" is still a real question for the model.
+    if(!_ai.attach.length && /^help$/i.test(text)){
+      // The APK ships its own copy of this client and updates independently of the server, so a new
+      // app can meet an older backend with no /client/commands. Only swallow `help` once we KNOW we
+      // have a catalogue to show — otherwise let it through and the server answers as it always did.
+      ta.value=''; ta.dispatchEvent(new Event('input'));
+      openCommandSheet().then(ok=>{ if(!ok){ ta.value='help'; aiSend(); } });
+      return;
+    }
     const att=_ai.attach.slice(); _ai.attach=[]; aiRenderAttach();
     const labels=att.map(a=>`📎 ${enc(a.name)}`).join(' ');
     aiAddMessage('user', (text?enc(text):'') + (labels?`<div class="ai-userfiles">${labels}</div>`:''));

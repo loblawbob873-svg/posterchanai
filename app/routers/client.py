@@ -675,6 +675,51 @@ async def suggest_hashtags(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({"hashtags": " ".join(tags)})
 
 
+@router.get("/commands")
+async def client_commands():
+    """The command catalogue for the client's help sheet — grouped, with descriptions.
+
+    `help` used to answer with all 109 commands as one 8,900-character wall of markdown in the chat,
+    which reads as intimidating rather than helpful. The client renders this as a searchable sheet
+    instead (same shape as the Effects studio). Grouping lives HERE so the sheet can't drift from what
+    CommandService actually dispatches: anything not named below still shows up under "More", so a new
+    command is never invisible just because nobody updated a list.
+    """
+    from app.services.command_service import CommandService as CS
+    cmds = getattr(CS, "COMMANDS", {}) or {}
+    effects = set(getattr(CS, "MOTION_EFFECTS", ()) or ())
+
+    groups = [
+        ("✨ Create", "geni musicgeni videogeni narrate poll"),
+        ("🔍 Find", "search images yt news dailynews 4chan files torrents nyaa"),
+        ("🖼 Files & media", "compress clip convert extractaudio circlecrop removebackground ocr collage ytdl screenshot"),
+        ("📚 Learn", "flashcards translate"),
+        ("💰 Money", "budget bills bill addbill pay"),
+        ("⏰ Keep track", "remind reminders pin pins mail"),
+        ("📣 Share", "post"),
+        ("⚙️ System", "logs node help"),
+    ]
+
+    def entry(name):
+        d = cmds.get(name, "")
+        if isinstance(d, dict):
+            d = d.get("description") or d.get("help") or ""
+        return {"name": name, "desc": str(d or "").strip()}
+
+    out, seen = [], set()
+    for title, names in groups:
+        items = [entry(n) for n in names.split() if n in cmds]
+        for n in names.split():
+            seen.add(n)
+        if items:
+            out.append({"title": title, "items": items})
+    # Anything not categorised (and not an effect — those have their own studio) still appears.
+    rest = [entry(n) for n in sorted(cmds) if n not in seen and n not in effects]
+    if rest:
+        out.append({"title": "🧩 More", "items": rest})
+    return JSONResponse({"groups": out, "effects_count": len(effects)})
+
+
 @router.get("/effects")
 async def client_effects():
     """The image/video effects available to the Nostr client's Effects studio (names + descriptions,
