@@ -9527,6 +9527,7 @@
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
+        <button class="mini" id="ai-make" title="Make something (image, song, video…)">✨</button>
         <button class="mini" id="ai-mic" title="Voice input (speech-to-text)">🎤</button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
         <button class="btn btn-neon" id="ai-send">▶</button>
@@ -9534,6 +9535,8 @@
     </div>`;
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
+    // The splash only exists on an empty chat, but people want to make things mid-conversation too.
+    $('#ai-make').onclick=()=>openGenPicker();
     $('#ai-del').onclick=()=>aiDeleteConversation();
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
     $('#ai-attach').onclick=()=>{
@@ -9573,6 +9576,8 @@
         });
       } }
     $('#ai-msgs').addEventListener('click',e=>{
+      // Guided card → open the studio for that command (no syntax to remember).
+      const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); openGenStudio(gc.dataset.gen); return; }
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const bno=e.target.closest('.ai-billno'); if(bno){ e.preventDefault();
         const row=bno.closest('.ai-budget-btns'); if(row) row.innerHTML='<span class="muted small">Not added.</span>'; return; }
@@ -9651,22 +9656,173 @@
     }
     aiConnect(id);
   }
+  // ---- Create studio: guided image / music / video generation ---------------------------------
+  // Typing `musicgeni <style prompt> | <lyrics>` assumes you know the command AND its syntax. This is
+  // the same idea as the Effects studio: pick from options, watch the command build itself in the
+  // footer, hit Generate. The command is still what gets sent, so the chat/Telegram paths are
+  // untouched and anyone who prefers typing keeps working exactly as before.
+  const _GEN = {
+    image: { cmd:'geni', icon:'🎨', title:'Generate an image',
+      blurb:'Describe what you want to see. Add a style if you like.',
+      ph:'a neon city street in the rain, a lone figure with an umbrella',
+      groups:[
+        ['Style', ['photorealistic','anime','oil painting','watercolour','3D render','pixel art','comic book','cyberpunk','vaporwave','low poly']],
+        ['Mood',  ['moody lighting','golden hour','neon glow','dark and gritty','soft pastel','high contrast']],
+        ['Shot',  ['close-up portrait','wide landscape','top-down','macro detail']],
+      ] },
+    music: { cmd:'musicgeni', icon:'🎵', title:'Generate a song',
+      blurb:'Describe the style. Lyrics are optional — leave them blank and the AI writes them.',
+      ph:'dreamy synthwave with a driving bassline, 90 BPM',
+      groups:[
+        ['Genre', ['synthwave','lo-fi hip hop','hard rock','acoustic folk','jazz','drum and bass','country','metal','reggae','orchestral']],
+        ['Mood',  ['upbeat','melancholic','dreamy','aggressive','chill','epic']],
+        ['Vocals',['male vocals','female vocals','choir','no vocals']],
+      ] },
+    video: { cmd:'videogeni', icon:'🎬', title:'Generate a short video',
+      blurb:'Describe the shot. Keep it simple — short clips work best.',
+      ph:'a paper plane gliding over a misty forest at sunrise',
+      groups:[
+        ['Look',   ['cinematic','anime','claymation','drone footage','black and white','vintage film']],
+        ['Motion', ['slow pan','orbiting camera','zoom in','static shot','handheld']],
+      ] },
+    // The rest of the splash actions get the same treatment: one field, the right keyboard, and a
+    // preview of the exact command. `single` groups are radio-style (you translate INTO one language);
+    // `compose` overrides how the picks attach when appending them as ", a, b" would be wrong.
+    audio: { go:'Download', cmd:'ytdl mp3', icon:'🎧', title:'Download audio as MP3',
+      blurb:'Paste a link — YouTube, TikTok, X, SoundCloud and friends.',
+      ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
+    videodl: { go:'Download', cmd:'ytdl video', icon:'🎬', title:'Download a video',
+      blurb:'Paste a link and I will fetch the video file.',
+      ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
+    shot: { go:'Capture', cmd:'screenshot', icon:'📸', title:'Screenshot a web page',
+      blurb:'Paste a page URL and I will capture it.',
+      ph:'https://example.com', rows:1, kind:'url' },
+    translate: { go:'Translate', cmd:'translate', icon:'🌐', title:'Translate text',
+      blurb:'Paste the text, then pick a language (English if you skip it).',
+      ph:'paste the text to translate…', rows:3,
+      groups:[['Into', ['English','Spanish','French','German','Portuguese','Italian','Japanese','Korean','Chinese','Russian','Arabic','Hindi']]],
+      single:true,
+      compose:(base, picks)=> 'translate ' + base + (picks[0] ? ' to ' + picks[0] : '') },
+    search: { go:'Search', cmd:'search', icon:'🔍', title:'Search the web',
+      blurb:'What do you want to look up?',
+      ph:'best nostr clients 2026', rows:1 },
+    images: { go:'Search', cmd:'images', icon:'🖼️', title:'Search for images',
+      blurb:'What are you looking for?',
+      ph:'shiba inu puppy', rows:1,
+      groups:[['Refine', ['wallpaper','transparent png','black and white','high resolution','vector']]] },
+  };
+
+  // The ✨ button: which guided action? (the splash shows these as cards; this is the mid-chat route)
+  function openGenPicker(){
+    const items=[['image','Make an image'],['music','Make a song'],['video','Make a video'],
+                 ['audio','Get the audio from a link'],['videodl','Download a video'],
+                 ['shot','Screenshot a page'],['translate','Translate text'],
+                 ['search','Search the web'],['images','Find images']];
+    modal(`<h3>✨ Make something</h3>
+      <div class="gen-picker">${items.map(([k,label])=>{ const G=_GEN[k];
+        return `<button class="gen-pick" data-gen="${k}"><span class="awc-ic">${G.icon}</span>
+          <span><b>${enc(label)}</b><span class="muted small">${enc(G.blurb)}</span></span></button>`; }).join('')}</div>`,
+      root=>{ $$('.gen-pick',root).forEach(b=> b.onclick=()=>{ closeModal(); openGenStudio(b.dataset.gen); }); });
+  }
+
+  function openGenStudio(kind){
+    const G=_GEN[kind]; if(!G) return;
+    const picked=new Set();
+    let lyrics='', instrumental=false;
+    const chip=(v)=>`<button type="button" class="fxs-chip gen-chip" data-pick="${enc(v)}">${enc(v)}</button>`;
+    const music = kind==='music';
+    const rows = G.rows || 3;
+    const groups = G.groups || [];
+    modal(`<div class="fxs">
+      <div class="fxs-hd">
+        <div class="fxs-title"><div><h3>${G.icon} ${enc(G.title)}</h3>
+          <div class="muted small">${enc(G.blurb)}</div></div>
+          <button type="button" class="fxs-x" id="gen-x" aria-label="Close">✕</button></div>
+      </div>
+      <div class="fxs-body">
+        <div class="fxs-sec">${G.kind==='url' ? '🔗 Link' : '✍️ What do you want?'}</div>
+        ${rows>1
+          ? `<textarea class="input gen-prompt" id="gen-prompt" rows="${rows}" placeholder="${enc(G.ph)}"></textarea>`
+          : `<input class="input gen-prompt" id="gen-prompt" type="${G.kind==='url'?'url':'text'}"
+               inputmode="${G.kind==='url'?'url':'text'}" autocapitalize="off" autocorrect="off"
+               spellcheck="false" placeholder="${enc(G.ph)}">`}
+        ${groups.map(([label,opts])=>`<div class="fxs-sec">${enc(label)} <span class="fxs-hint">optional · tap to add</span></div>
+          <div class="fxs-grid">${opts.map(chip).join('')}</div>`).join('')}
+        ${music?`<div class="fxs-sec">🎤 Lyrics <span class="fxs-hint">leave blank and the AI writes them</span></div>
+          <label class="gen-check"><input type="checkbox" id="gen-inst"> Instrumental — no vocals at all</label>
+          <textarea class="input gen-lyrics" id="gen-lyrics" rows="3" placeholder="[verse]&#10;your words here…"></textarea>`:''}
+      </div>
+      <div class="fxs-ft"><code class="fxs-cmd muted" id="gen-cmd">${G.kind==='url'?'paste a link first':'describe something first'}</code>
+        <div class="fxs-acts"><button class="btn btn-neon" id="gen-go" disabled>▶ ${enc(G.go||'Generate')}</button></div></div>
+    </div>`, root=>{
+      root.classList.add('fxs-modal');
+      if(root.parentElement) root.parentElement.classList.add('fxs-bg');
+      const ta=$('#gen-prompt',root), cmdEl=$('#gen-cmd',root), go=$('#gen-go',root);
+      const lyEl=$('#gen-lyrics',root), instEl=$('#gen-inst',root);
+      const build=()=>{
+        const base=(ta.value||'').trim();
+        if(!base) return '';
+        if(G.compose) return G.compose(base, [...picked]);
+        let out=G.cmd+' '+[base, ...picked].join(', ');
+        if(music){
+          if(instrumental) out+=' instrumental';
+          else if(lyrics.trim()) out+=' | '+lyrics.trim().replace(/\s*\n\s*/g,' / ');
+        }
+        return out;
+      };
+      const sync=()=>{
+        $$('.gen-chip',root).forEach(b=> b.classList.toggle('on', picked.has(b.dataset.pick)));
+        if(lyEl) lyEl.disabled=instrumental;
+        const c=build();
+        cmdEl.textContent = c || (G.kind==='url' ? 'paste a link first' : 'describe something first');
+        cmdEl.classList.toggle('muted', !c);
+        go.disabled = !c;
+      };
+      root.addEventListener('click', e=>{
+        const b=e.target.closest('.gen-chip'); if(!b) return;
+        e.preventDefault();
+        const v=b.dataset.pick;
+        if(picked.has(v)) picked.delete(v);
+        else { if(G.single) picked.clear(); picked.add(v); }   // single-select: you translate INTO one language
+        sync();
+      });
+      ta.addEventListener('input', sync);
+      if(lyEl) lyEl.addEventListener('input', ()=>{ lyrics=lyEl.value; sync(); });
+      if(instEl) instEl.addEventListener('change', ()=>{ instrumental=instEl.checked; sync(); });
+      $('#gen-x',root).onclick=()=>closeModal();
+      go.onclick=()=>{
+        const c=build(); if(!c) return;
+        closeModal();
+        const inp=$('#ai-input');
+        if(inp){ inp.value=c; inp.dispatchEvent(new Event('input')); }
+        aiSend();                                  // one tap = it runs; no command to remember
+      };
+      sync();
+      if(matchMedia('(min-width:821px)').matches) ta.focus();
+    });
+  }
+  window.__openGenStudio = openGenStudio;
+
   function _aiWelcomeHtml(){
     return `<div class="ai-welcome">
       <img class="aw-logo" src="${LOGO}" alt="PosterChan" onerror="this.style.display='none'">
       <h3>Welcome to PosterChan AI</h3>
-      <p class="muted">Just chat with me, or run a command. A few to try (tap to fill it in):</p>
-      <div class="aw-cmds">
-        <button class="ai-eg" data-cmd="geni ">🎨 <b>geni</b> &lt;prompt&gt;<span>generate an image</span></button>
-        <button class="ai-eg" data-cmd="musicgeni ">🎵 <b>musicgeni</b> &lt;prompt&gt;<span>generate a song</span></button>
-        <button class="ai-eg" data-cmd="ytdl mp3 ">🎧 <b>ytdl mp3</b> &lt;url&gt;<span>download audio as MP3</span></button>
-        <button class="ai-eg" data-cmd="ytdl video ">🎬 <b>ytdl video</b> &lt;url&gt;<span>download a video</span></button>
-        <button class="ai-eg" data-cmd="screenshot ">📸 <b>screenshot</b> &lt;url&gt;<span>capture a web page</span></button>
-        <button class="ai-eg" data-cmd="translate ">🌐 <b>translate</b> &lt;text&gt;<span>translate text</span></button>
-        <button class="ai-eg" data-cmd="search ">🔍 <b>search</b> &lt;query&gt;<span>web search</span></button>
-        <button class="ai-eg" data-cmd="images ">🖼️ <b>images</b> &lt;query&gt;<span>image search</span></button>
+      <p class="muted">Ask me anything — or make something. Tap a card and I'll walk you through it.</p>
+      <div class="aw-make">
+        <button class="aw-card" data-gen="image"><span class="awc-ic">🎨</span><b>Make an image</b><span>describe it, pick a style</span></button>
+        <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
+        <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
       </div>
-      <p class="muted small">Type <span class="ai-cmd" data-cmd="help">help</span> for the full list of commands.</p>
+      <p class="muted small aw-or">…or grab something from the web:</p>
+      <div class="aw-make">
+        <button class="aw-card" data-gen="audio"><span class="awc-ic">🎧</span><b>Get the audio</b><span>a link → MP3</span></button>
+        <button class="aw-card" data-gen="videodl"><span class="awc-ic">📥</span><b>Download a video</b><span>a link → video file</span></button>
+        <button class="aw-card" data-gen="shot"><span class="awc-ic">📸</span><b>Screenshot a page</b><span>capture any URL</span></button>
+        <button class="aw-card" data-gen="translate"><span class="awc-ic">🌐</span><b>Translate</b><span>text → any language</span></button>
+        <button class="aw-card" data-gen="search"><span class="awc-ic">🔍</span><b>Search the web</b><span>look something up</span></button>
+        <button class="aw-card" data-gen="images"><span class="awc-ic">🖼️</span><b>Find images</b><span>image search</span></button>
+      </div>
+      <p class="muted small">Tap <span class="ai-cmd" data-cmd="help">help</span> to see everything I can do.</p>
     </div>`;
   }
   function aiConnect(id){

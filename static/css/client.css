@@ -2757,3 +2757,46 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 .st-new{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc);
   border:1px solid currentColor;border-radius:999px;padding:1px 6px;opacity:.9}
 .st-hint{margin-top:8px}
+
+/* ---- ✨ Make something: guided image/music/video/link actions --------------------------------
+   Cards replace "type the command and hope you got the syntax right". Sized for THUMBS first:
+   every target is >=44px tall, the grid collapses to one column on a phone, and the sheet reuses
+   the Effects-studio shell (.fxs) so it already scrolls correctly inside a fixed viewport. */
+.aw-make{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:10px 0 4px;width:100%}
+.aw-card{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:76px;
+  background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  color:var(--text);cursor:pointer;text-align:left;transition:.15s}
+.aw-card:hover,.aw-card:active{border-color:var(--cyan);transform:translateY(-1px)}
+.aw-card b{font-size:15px}
+.aw-card>span:last-child{color:var(--muted);font-size:12px}
+.awc-ic{font-size:20px;line-height:1.1}
+.aw-or{margin:16px 0 2px}
+
+/* picker sheet (the ✨ composer button, mid-chat) */
+.gen-picker{display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:min(60vh,460px);overflow-y:auto}
+.gen-pick{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:12px;padding:10px 14px;color:var(--text);cursor:pointer;text-align:left}
+.gen-pick:hover{border-color:var(--cyan)}
+.gen-pick>span:last-child{display:flex;flex-direction:column;min-width:0}
+.gen-pick b{font-size:15px}
+.gen-pick .muted{white-space:normal}
+
+/* studio fields */
+/* `.modal textarea` (specificity 0,1,1) forces min-height:220px + font-size:15px — it beats a plain
+   class, so these are scoped to match it. 220px-tall boxes made the sheet unusable on a phone, and
+   <16px makes iOS zoom the whole page the moment the field is focused. */
+.modal textarea.gen-prompt,.modal input.gen-prompt,.gen-prompt{width:100%;font-size:16px;min-height:0}
+.modal textarea.gen-prompt{min-height:76px}
+.modal textarea.gen-lyrics,.gen-lyrics{width:100%;font-size:16px;margin-top:8px;min-height:76px}
+.gen-lyrics:disabled{opacity:.45}
+.gen-check{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;cursor:pointer;min-height:32px}
+.gen-check input{width:18px;height:18px}
+.gen-chip.on{color:#04121a;background:var(--cyan);border-color:var(--cyan);font-weight:700}
+
+@media (max-width:820px){
+  .aw-make{grid-template-columns:1fr;gap:8px}
+  .aw-card{min-height:64px;padding:11px 13px;flex-direction:row;align-items:center;gap:10px}
+  .aw-card>div,.aw-card b{flex:0 0 auto}
+  .aw-card>span:last-child{flex:1 1 auto}
+  .gen-picker{max-height:64vh}
+}
