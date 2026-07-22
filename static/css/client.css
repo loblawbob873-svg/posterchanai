@@ -280,13 +280,14 @@
 :root{color-scheme:dark}
 :root[data-theme="cherryblossom"],:root[data-theme="professional"],:root[data-theme="win98"],
 :root[data-theme="winxp"],:root[data-theme="animegirl"]{color-scheme:light}
-*{scrollbar-width:thin;scrollbar-color:rgba(var(--accent-rgb),.38) transparent}
-::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
-/* padding-box + transparent border = the thumb floats with a 2px gutter instead of filling the track */
-::-webkit-scrollbar-thumb{background:rgba(var(--accent-rgb),.32);background-clip:padding-box;
-  border:2px solid transparent;border-radius:9px}
-::-webkit-scrollbar-thumb:hover{background:rgba(var(--accent-rgb),.6);background-clip:padding-box}
+/* No painted scrollbars anywhere — the same call .feed and the DM panes already made, now global, so a
+   new scrolling panel can't reintroduce one. Scrolling itself is untouched (wheel, drag, keys, touch).
+   NB: `scrollbar-width` is not just the Firefox half — Chromium 121+ implements it too, and once it or
+   `scrollbar-color` is set on an element Chromium IGNORES that element's ::-webkit-scrollbar rules. So
+   `thin` here would have OVERRIDDEN the pseudo-element styling below and left a bar on screen. */
+*{scrollbar-width:none}
+::-webkit-scrollbar{width:0;height:0}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner,::-webkit-scrollbar-thumb{background:transparent}
 
 html,body{margin:0;height:100%}
 body{

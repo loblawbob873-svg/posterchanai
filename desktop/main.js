@@ -196,21 +196,25 @@ function wirePermissions() {
 // Modal child window listing every screen + window with a live thumbnail. Resolves to a source, or to
 // null if the user cancels or closes it — never leaves getDisplayMedia hanging.
 let pendingSources = [];
+let pickerOpen = false;
 function pickScreenSource() {
+  if (pickerOpen) return Promise.resolve(null);   // one picker at a time — a second request just cancels
+  pickerOpen = true;
   return desktopCapturer
     .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
     .then((sources) => {
-      if (!sources.length) return null;
+      if (!sources.length) { pickerOpen = false; return null; }
       pendingSources = sources;
       return new Promise((resolve) => {
         let done = false;
         const finish = (id) => {
-          if (done) return; done = true;
+          if (done) return; done = true; pickerOpen = false;
           resolve(sources.find((s) => s.id === id) || null);
           if (pick && !pick.isDestroyed()) pick.close();
         };
         const pick = new BrowserWindow({
-          parent: win, modal: true, show: false, width: 880, height: 620, minWidth: 520, minHeight: 400,
+          parent: win && !win.isDestroyed() ? win : undefined,
+          modal: !!(win && !win.isDestroyed()), show: false, width: 880, height: 620, minWidth: 520, minHeight: 400,
           title: 'Choose what to share', backgroundColor: '#0a0a10', autoHideMenuBar: true,
           webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') },
         });
