@@ -1289,7 +1289,7 @@
     };
     Relay.onReady = ()=>{
       hydrateUser();
-      setTimeout(loadRightbar, 1500);
+      setTimeout(()=>{ _rbBooted=true; loadRightbar(); }, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
     // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
     // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
@@ -1924,6 +1924,29 @@
   }
 
   // ---------- view routing ----------
+  // Views whose middle column isn't a feed: a settings FORM, a game BOARD, the Files media GRID, and
+  // Messages' own list+thread split. On those the 340px right rail is pure cost — and it's stale on
+  // top of that, since refreshRightbar() only updates while you're on home/global. Hide it there and
+  // give the width back to the thing you came to use.
+  const RB_HIDE_VIEWS = new Set(['settings','messages','blossom','chess','ttt','hangman','connect4','blackjack','holdem']);
+  let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
+  let _rbBooted=false;   // has the post-onReady delay elapsed? gates the retry below off the cold socket
+  function _syncRightbar(){
+    // Deliberately its OWN body class, NOT the rb-collapsed one the ▸ toggle uses: that toggle
+    // persists to localStorage, so reusing it would write "collapsed" into the user's saved
+    // preference on a trip to Settings and leave the rail gone once they navigated back.
+    document.body.classList.toggle('rb-off', RB_HIDE_VIEWS.has(VIEW));
+    // First view where the rail is genuinely visible: build it. Without this, starting out on a
+    // hidden-rail view means the one-shot initial loadRightbar() found it display:none and skipped —
+    // and the 150s timer would leave the column blank for minutes once the user navigated back.
+    // Gated on _rbBooted so this can never run its queries against a still-connecting relay socket;
+    // the boot path keeps owning the first load (Relay.onReady + 1.5s), this only ever retries after.
+    if(_rbBooted && !_rbLoaded) loadRightbar();
+  }
+  // Clearing the sidebar highlight is the one line EVERY view entry point shares, so it's also where
+  // the rail's per-view visibility is kept in sync — VIEW is assigned in a dozen places and routing
+  // them all through here is what stops the two drifting apart (e.g. Messages → open a thread).
+  function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   function switchView(v){
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
@@ -1939,6 +1962,7 @@
       // relay events arrive must NOT yank you back to the top while you're reading.
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
+    _syncRightbar();
     $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -2785,7 +2809,7 @@
     list.querySelectorAll('.art-cc').forEach(el=>{ const n=counts.get(el.dataset.addr)||0; if(n) el.textContent=` · 💬 ${n}`; });
   }
   function openArticle(e){
-    VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Article';
+    VIEW='article'; _clearNav(); $('#view-title').textContent='Article';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
@@ -2892,7 +2916,7 @@
     if(coords.size){ try{ await publish(5, 'draft published', [...coords].map(c=>['a',c])); }catch(_){} }
   }
   function renderArticleEditor(existing){
-    VIEW='article'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit article':'Write article';
+    VIEW='article'; _clearNav(); $('#view-title').textContent=existing?'Edit article':'Write article';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
     feed.innerHTML=`<div class="article-editor">
       <button class="btn btn-ghost small" id="ae-back">← Cancel</button>
@@ -3037,7 +3061,7 @@
       </div></article>`;
   }
   function openListing(e){
-    VIEW='listing'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Listing';
+    VIEW='listing'; _clearNav(); $('#view-title').textContent='Listing';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
     const imgs=mktImages(e); const price=fmtPrice(e);
@@ -3094,7 +3118,7 @@
     catch(err){ toast('delete failed: '+(err.message||'')); }
   }
   function renderListingEditor(existing){
-    VIEW='listing'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent=existing?'Edit listing':'New listing';
+    VIEW='listing'; _clearNav(); $('#view-title').textContent=existing?'Edit listing':'New listing';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
     const pTag=existing?mktPriceTag(existing):null;
     let images = existing?mktImages(existing):[];
@@ -3362,7 +3386,7 @@
       </div></article>`;
   }
   function openStream(e){
-    VIEW='stream'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Stream';
+    VIEW='stream'; _clearNav(); $('#view-title').textContent='Stream';
     const feed=$('#feed'); const hpk=streamHost(e); const p=profOf(hpk); needProfile(hpk);
     const _tag=(n)=>(e.tags.find(t=>t[0]===n)||[])[1]||'';
     const title=_tag('title')||'(untitled stream)';
@@ -4359,7 +4383,7 @@
       </div></article>`;
   }
   async function openCommunity(e){
-    VIEW='community'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Community';
+    VIEW='community'; _clearNav(); $('#view-title').textContent='Community';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const name=(e.tags.find(t=>t[0]==='name')||[])[1]||d||'(unnamed)';
@@ -4443,7 +4467,7 @@
     VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
     if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
     if(_chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }
-    $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
+    _clearNav();
     const m=_chanMeta(e); $('#view-title').textContent=m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
     feed.innerHTML=`<div class="chatroom">
@@ -4732,7 +4756,7 @@
     VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set();
     _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
     if(_groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }
-    $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
+    _clearNav();
     $('#view-title').textContent=g.m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
     // Writable now: posting/reacting/joining go out as NIP-42-authed events to the group's relay. The
@@ -9257,7 +9281,7 @@
     cleanupInlineStream();   // e.g. tapping the host's name from a stream
     _hidePill();
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
-    if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; }
+    if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; _syncRightbar(); }
     const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
@@ -11618,7 +11642,7 @@
   }
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
-    VIEW='thread'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Thread';
+    VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
@@ -11825,7 +11849,7 @@
     verifyNip05(pubkey, nip05).then(ok => { if(ok && document.contains(slot)) slot.innerHTML = VCHECK; });
   }
   async function runSearch(q){
-    VIEW='search'; $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='Search';
+    VIEW='search'; _clearNav(); $('#view-title').textContent='Search';
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // People naturally type a handle as "@name@domain" — strip the leading @ so it matches the NIP-05
     // resolver below (else it falls through to full-text search for the literal string and finds nothing).
@@ -12205,7 +12229,8 @@
     if(tab==='hot') loadHot(true); else loadFollows();
   }
   async function loadRightbar(){
-    if(!_rightbarShown()) return;   // display:none on mobile → skip; but build in a backgrounded desktop tab (no document.hidden gate)
+    if(!_rightbarShown()) return;   // display:none on mobile OR body.rb-off → skip; but build in a backgrounded desktop tab (no document.hidden gate)
+    _rbLoaded=true;                 // only once it's genuinely visible — _syncRightbar retries otherwise
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
     syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
     if(_rbTab==='hot') loadHot(true); else loadFollows();
@@ -12258,7 +12283,7 @@
   let _hashtag={ tag:'', oldest:0, loading:false, done:false };
   async function renderHashtag(tag){
     tag=String(tag||'').toLowerCase().replace(/^#/,''); if(!tag) return;
-    VIEW='hashtag'; _hidePill(); $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); $('#view-title').textContent='#'+tag;
+    VIEW='hashtag'; _hidePill(); _clearNav(); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // The relay's #t filter is case-SENSITIVE, but trending lowercases tags AND counts inline #hashtags —

@@ -677,6 +677,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
   body.rb-collapsed .rb-toggle{right:32px}                   /* tab slides to the app's edge (= its outer padding) */
+  /* Per-VIEW hide (RB_HIDE_VIEWS in app.js): Settings, Messages, Files and the games get the full
+     width, because none of them is a feed the rail complements. Same column drop as the manual
+     collapse but a SEPARATE class — rb-collapsed is the user's persisted preference and must not be
+     written by navigation. The ▸ tab goes too: leaving it would be a control that does nothing. */
+  body.rb-off .app{grid-template-columns:300px minmax(0,1fr)}
+  body.rb-off .rightbar,body.rb-off .rb-toggle{display:none}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
 /* Hot / From-follows segmented control — one pane, two sources. Panel + line vars only, so it takes
