@@ -231,6 +231,13 @@ _FELIZ_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/feliz.mp3",
 ]
 _FELIZ_DURATION = 9.0
+_HORSE_AUDIO_CANDIDATES = [
+    os.environ.get("HORSE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "horse.mp3"),
+    "/var/lib/posterchanai/assets/horse.mp3",
+]
+_HORSE_DURATION = 4.0   # clip is 3.03s (0:01-0:04) — ~1s of headroom
+
 _SLEEPWELL_AUDIO_CANDIDATES = [
     os.environ.get("SLEEPWELL_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "sleepwell.mp3"),
