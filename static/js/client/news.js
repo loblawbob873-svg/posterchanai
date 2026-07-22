@@ -43,6 +43,13 @@
       let pk=''; try{ pk=(window.__PC && window.__PC.ME && window.__PC.ME.pubkey) || ''; }catch(_){}
       return pk ? ('pc_news_'+name+':'+pk.slice(0,16)) : '';
     }
+    // Delete the legacy UNSCOPED keys once. Ignoring them is enough for correctness, but they are one
+    // user's feed list sitting in another user's browser — so remove them rather than leave them
+    // readable by any future code path or by anyone poking at localStorage.
+    (function _dropLegacyNewsCache(){
+      try{ for(const k of ['pc_news_feeds','pc_news_read','pc_news_seen_ts','pc_news_unread','pc_news_snap'])
+             localStorage.removeItem(k); }catch(_){}
+    })();
     function _lsGet(name){ const k=_nsKey(name); if(!k) return null; try{ return localStorage.getItem(k); }catch(_){ return null; } }
     function _lsSet(name, val){ const k=_nsKey(name); if(!k) return; try{ localStorage.setItem(k, val); }catch(_){} }
 
