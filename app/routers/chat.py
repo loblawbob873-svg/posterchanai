@@ -699,6 +699,13 @@ async def chat_send(
         result = {"type": "text"}
         try:
             system_prompt = chat_service.system_prompt.replace("{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d"))
+            try:                                   # rolling memory (see the WS path for why it folds in)
+                from app.services import chat_memory_service as _mem
+                _sum = _mem.summary_for(conversation)
+                if _sum:
+                    system_prompt += "\n\nEarlier in this conversation:\n" + _sum
+            except Exception:
+                pass
             messages = [{"role": "system", "content": system_prompt}]
             last_role = "system"
             for msg in sorted(conversation.messages, key=lambda m: m.id)[-21:-1]:
@@ -721,6 +728,11 @@ async def chat_send(
                             content=save_content, image_path=generated_image_path)
             db.add(saved)
             db.commit()
+            try:
+                from app.services import chat_memory_service as _mem
+                _mem.schedule_refresh(conversation_id)
+            except Exception:
+                pass
             break
         except Exception as save_err:
             logger.error(f"[chat/send] assistant save failed (attempt {_attempt}): {save_err}")
@@ -1756,6 +1768,20 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                 "{{CURRENT_DATE}}", datetime.utcnow().strftime("%Y-%m-%d")
                             )
 
+                            # Rolling memory: the digest of turns that have aged out of the window
+                            # below. Costs nothing here (a stored string) and is what stops the chat
+                            # forgetting everything past the last 20 messages. Folded INTO the system
+                            # prompt rather than appended as a second system message: our own
+                            # _ensure_alternating_roles passes both through, but plenty of chat
+                            # templates render only the first, and a silently-ignored memory is worse
+                            # than none.
+                            try:
+                                from app.services import chat_memory_service as _mem
+                                _sum = _mem.summary_for(conversation)
+                                if _sum:
+                                    system_prompt += "\n\nEarlier in this conversation:\n" + _sum
+                            except Exception:
+                                pass
                             messages = [
                                 {"role": "system", "content": system_prompt}
                             ]
@@ -2048,6 +2074,15 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                                 )
                                 db.add(assistant_msg)
                                 db.commit()
+                                # Fold anything that just aged out of the window into the rolling
+                                # memory. Scheduled AFTER the reply, never before: one GPU task runs
+                                # at a time here, so doing it up front would make the user wait for
+                                # a summary before getting their answer.
+                                try:
+                                    from app.services import chat_memory_service as _mem
+                                    _mem.schedule_refresh(conversation_id)
+                                except Exception:
+                                    pass
 
                         except Exception as stream_err:
                             logger.error(f"Error during streaming: {stream_err}", exc_info=True)

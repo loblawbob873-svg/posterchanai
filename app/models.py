@@ -101,6 +101,12 @@ class Conversation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Rolling memory: a short digest of the turns that have aged out of the model's window, plus the
+    # highest message id it covers. Without it a conversation forgets everything past the last ~20
+    # messages — and on a 16k-context node, "send more history" is not the fix. See chat_memory_service.
+    summary = Column(Text, nullable=True)
+    summary_upto_id = Column(Integer, default=0)
+
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at, Message.id")
 
