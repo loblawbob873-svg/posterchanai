@@ -119,14 +119,14 @@
                  id + onclick like #nav-music rather than data-view. Hidden when the node has no media
                  server (CFG.stream_enabled). -->
             <button class="nav-item nav-golive hidden" id="nav-golive"><span class="ic">🔴</span><span>Go Live</span></button>
+            {% if not nostr_only %}<button class="nav-item" data-view="translate"><span class="ic">🗣️</span><span>Live Translate</span></button>{% endif %}
             <button class="nav-item" data-view="drafts"><span class="ic">📝</span><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="disc-toggle"><span class="ic">🧭</span><span>Discover</span><span class="chev" id="disc-chev">▾</span></button>
                 <div class="nav-sub" id="disc-sub">
                     <button class="nav-item sub" data-view="news"><span class="ic">🗞️</span><span>News</span><span class="news-badge" style="display:none"></span></button>
                     {% if not nostr_only %}<button class="nav-item sub" data-view="markets"><span class="ic">📈</span><span>Markets</span></button>{% endif %}
-                    {% if not nostr_only %}<button class="nav-item sub" data-view="translate"><span class="ic">🗣️</span><span>Live Translate</span></button>{% endif %}
-                    <button class="nav-item sub" data-view="articles"><span class="ic">📰</span><span>Articles</span></button>
+                            <button class="nav-item sub" data-view="articles"><span class="ic">📰</span><span>Articles</span></button>
                     <button class="nav-item sub" data-view="market"><span class="ic">🛍️</span><span>Shopping</span></button>
                     <button class="nav-item sub" data-view="streams"><span class="ic">📺</span><span>Streams</span></button>
                     <button class="nav-item sub" data-view="communities"><span class="ic">👥</span><span>Communities</span></button>
@@ -134,6 +134,7 @@
                     <button class="nav-item sub" data-view="torrents"><span class="ic">🧲</span><span>Torrents</span></button>
                     <button class="nav-item sub" data-view="repos"><span class="ic">🌱</span><span>Git Repos</span></button>
                     <button class="nav-item sub" data-view="4chan"><span class="ic">🍀</span><span>4chan</span></button>
+                    <button class="nav-item sub" data-view="stats"><span class="ic">📊</span><span>Server Stats</span></button>
                 </div>
             </div>
             <div class="nav-group">
@@ -218,6 +219,7 @@
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
 <script src="/static/js/client/news.js?v={{ ver }}"></script>
 <script src="/static/js/client/markets.js?v={{ ver }}"></script>
+<script src="/static/js/client/stats.js?v={{ ver }}"></script>
 <script src="/static/js/client/chess.js?v={{ ver }}"></script>
 <script src="/static/js/client/ttt.js?v={{ ver }}"></script>
 <script src="/static/js/client/hangman.js?v={{ ver }}"></script>

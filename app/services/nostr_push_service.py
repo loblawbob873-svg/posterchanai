@@ -155,6 +155,14 @@ async def _call_handler(ev: dict):
         return
     for pk in fresh:
         _call_recent[pk] = now
+    # Count the call for the public stats page. The per-callee cooldown above has already collapsed
+    # this call's offer/ice/bye burst into one event, so this counts calls, not signaling frames.
+    # In-memory and exception-proof: nothing in the stats path may delay or break a ring.
+    try:
+        from app.services import stats_service
+        stats_service.bump_call(len(fresh))
+    except Exception:
+        pass
 
     def _lookup_subs():
         from app.database import SessionLocal
@@ -183,6 +191,14 @@ async def _call_handler(ev: dict):
         logger.warning(f"[nostr-push] call handler error: {e}")
 
 
+async def _flush_call_stats():
+    try:
+        from app.services import stats_service
+        await stats_service.flush_calls()
+    except Exception as e:
+        logger.debug("[nostr-push] call stat flush skipped: %s", e)
+
+
 async def _call_sub_loop():
     try:
         await relay.subscribe(_local_relay()[0], [{"kinds": [_CALL_KIND]}], _call_handler,
@@ -197,6 +213,8 @@ def start_nostr_push_scheduler():
         return
     _sched = AsyncIOScheduler()
     _sched.add_job(_poll, "interval", seconds=_POLL_SECS, max_instances=1, coalesce=True)
+    # Persist the day's call tally to the relay every few minutes, so a restart doesn't lose it.
+    _sched.add_job(_flush_call_stats, "interval", seconds=300, max_instances=1, coalesce=True)
     _sched.start()
     try:
         if _local_relay():

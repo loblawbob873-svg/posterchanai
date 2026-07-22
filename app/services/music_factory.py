@@ -111,6 +111,15 @@ async def generate_music_for_user(
     """Generate a song with node→node load balancing + (local) GPU lock + VRAM swap. Returns
     (audio_bytes, ext). `local_only` skips remote nodes (set by the /api/generate-music endpoint so
     a forwarded request generates here instead of bouncing onward). Raises MusicError on failure."""
+    # Public stats counter — see image_factory. `local_only` means another node forwarded this to us,
+    # so it's already counted on the node whose user asked for it; counting again would double it.
+    if not local_only:
+        try:
+            from app.services import stats_service
+            stats_service.bump("music")
+        except Exception:
+            pass
+
     cfg = music_service.get_settings(db)
     if not cfg["enabled"]:
         raise MusicError(

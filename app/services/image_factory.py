@@ -249,6 +249,16 @@ async def generate_image_for_user(
     - Falls back to local backend
     Returns base64 encoded image or None.
     """
+    # Public stats counter (Server Stats page). Generated images are returned to the caller and never
+    # recorded, so there's nothing to aggregate later — count it here, at the user-facing entry.
+    # Peer-forwarded requests arrive via generate_image_with_load_balancing() instead, so this counts
+    # requests made BY this node's users, not work relayed from another node.
+    try:
+        from app.services import stats_service
+        stats_service.bump("image")
+    except Exception:
+        pass
+
     # Use load balancing (will alternate between local and remote)
     return await generate_image_with_load_balancing(
         db=db,

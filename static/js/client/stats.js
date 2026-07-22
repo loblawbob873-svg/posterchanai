@@ -1,0 +1,214 @@
+/* #stats — public Server Stats. Anyone (including a logged-out guest) can read them.
+ *
+ * Data comes from ONE cached endpoint (/client/stats, recomputed at most once a minute server-side),
+ * so opening this page costs the server a dictionary lookup, not a query.
+ *
+ * Rendering is deliberately dumb: every chart is a static SVG string built once per refresh — no
+ * canvas, no animation loop, no requestAnimationFrame, no charting library. The only motion is a
+ * CSS transition on hover. That keeps a page full of graphs at ~0% CPU when idle, which matters on
+ * a phone and on the shared GPU box this runs on.
+ */
+(function(){
+  function init(){
+    const PC = window.__PC;
+    if(!PC){ return setTimeout(init, 50); }
+    const { $, enc } = PC;
+    const inView = () => window.__PC.VIEW === 'stats';
+
+    const RANGES = [['minute','60 min'],['hour','24 hours'],['day','30 days']];
+    let _range = 'hour', _data = null, _timer = null, _busy = false;
+
+    // Per-metric accent + label. Colours are the client's own neon palette so the page matches the
+    // rest of the app rather than inventing a second one.
+    const M = {
+      notes:     ['#22d3ee','🖊️','Notes'],
+      reactions: ['#f472b6','❤️','Reactions'],
+      replies:   ['#a78bfa','💬','Replies'],
+      reposts:   ['#34d399','🔁','Reposts'],
+      zaps:      ['#fbbf24','⚡','Zaps'],
+      dms:       ['#60a5fa','✉️','DMs'],
+      articles:  ['#f97316','📰','Articles'],
+      files:     ['#2dd4bf','📎','Files'],
+      profiles:  ['#c084fc','👤','Profile updates'],
+      streams:   ['#ef4444','📺','Live streams'],
+    };
+    const ORDER = ['notes','reactions','replies','reposts','zaps','dms','articles','files','profiles','streams'];
+
+    const nf = n => (n==null?'—':Number(n).toLocaleString());
+    const bytes = b => { if(!b) return '—'; const u=['B','KB','MB','GB','TB']; let i=0,v=Number(b);
+      while(v>=1024 && i<u.length-1){ v/=1024; i++; } return (v>=10?v.toFixed(0):v.toFixed(1))+' '+u[i]; };
+    const rateLabel = () => ({minute:'per minute', hour:'per hour', day:'per day'})[_range];
+
+    // ---- SVG chart builders -----------------------------------------------------------------
+    // Both take an already-bounded array (60/24/30 points) and return a string. No DOM, no state.
+
+    /* Area + line. `id` must be unique per chart on the page: the gradient is referenced by id. */
+    function areaChart(vals, colour, id, h){
+      const W = 300, H = h || 80, n = vals.length;
+      if(!n) return '';
+      const max = Math.max(1, ...vals);
+      const x = i => (n===1 ? 0 : (i/(n-1))*W);
+      const y = v => H - 2 - (v/max)*(H-8);
+      const pts = vals.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      return `<svg class="st-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="g${id}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${colour}" stop-opacity=".38"/>
+          <stop offset="100%" stop-color="${colour}" stop-opacity="0"/></linearGradient></defs>
+        <polygon points="0,${H} ${pts} ${W},${H}" fill="url(#g${id})"/>
+        <polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="2"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+      </svg>`;
+    }
+
+    /* Bars — used for the big hero chart, where individual buckets are worth reading. */
+    function barChart(vals, colour, h){
+      const W = 300, H = h || 140, n = vals.length;
+      if(!n) return '';
+      const max = Math.max(1, ...vals);
+      const gap = n > 40 ? 0.4 : 1.2;
+      const bw = Math.max(0.6, W/n - gap);
+      return `<svg class="st-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        ${vals.map((v,i)=>{ const bh=Math.max(v>0?1.5:0, (v/max)*(H-6));
+          return `<rect x="${(i*(W/n)).toFixed(2)}" y="${(H-bh).toFixed(2)}" width="${bw.toFixed(2)}"
+            height="${bh.toFixed(2)}" fill="${colour}" opacity="${0.55 + 0.45*(v/max)}" rx="1"/>`; }).join('')}
+      </svg>`;
+    }
+
+    function sum(a){ return a.reduce((x,y)=>x+y,0); }
+
+    // ---- page ---------------------------------------------------------------------------------
+    function card(metric, vals){
+      const [colour, icon, label] = M[metric];
+      const total = sum(vals), last = vals[vals.length-1]||0;
+      return `<div class="st-card" style="--acc:${colour}">
+        <div class="st-cardhd"><span class="st-ic">${icon}</span><span class="st-lbl">${enc(label)}</span></div>
+        <div class="st-num">${nf(total)}</div>
+        <div class="st-sub muted small">${nf(last)} in the last ${_range==='minute'?'minute':_range==='hour'?'hour':'day'}</div>
+        <div class="st-spark">${areaChart(vals, colour, metric+'_'+_range, 46)}</div>
+      </div>`;
+    }
+
+    /* A card for a counted metric (30 daily points). `note` marks series that only start when the
+       feature shipped, so a low number isn't mistaken for low usage. */
+    function seriesCard(id, icon, label, colour, vals, total, today, note){
+      return `<div class="st-card" style="--acc:${colour}">
+        <div class="st-cardhd"><span class="st-ic">${icon}</span><span class="st-lbl">${enc(label)}</span>
+          ${note?'<span class="st-new" title="Counted from when this feature shipped">new</span>':''}</div>
+        <div class="st-num">${nf(total)}</div>
+        <div class="st-sub muted small">${nf(today)} today</div>
+        <div class="st-spark">${areaChart(vals, colour, 'c_'+id, 46)}</div>
+      </div>`;
+    }
+
+    function tile(label, value, title){
+      return `<div class="st-tile"${title?` title="${enc(title)}"`:''}>
+        <div class="st-tval">${enc(String(value))}</div><div class="st-tlbl muted small">${enc(label)}</div></div>`;
+    }
+
+    function render(){
+      const feed = $('#feed'); if(!feed) return;
+      if(!_data){ feed.innerHTML = `<div class="st-wrap"><div class="spinner"></div></div>`; return; }
+      const w = (_data.windows||{})[_range] || {series:{}, n:0};
+      const S = w.series || {};
+      const notes = S.notes || [];
+      const T = _data.totals || {}, G = _data.games || {by_game:{}};
+      const CT = _data.counters || {metrics:{}}, isNew = !!CT.since_deploy;
+      const blank = {series:[], total:0, today:0};
+      const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank}, CT.metrics||{});
+      const chat = (_data.chat||{}).series || [];
+      const gm = G.by_game || {};
+      const gmax = Math.max(1, ...Object.values(gm));
+      const GAME_LBL = {chess:'♟️ Chess', tictactoe:'⭕ Tic-Tac-Toe', hangman:'🎯 Hangman',
+                        connect4:'🔴 Connect Four', blackjack:'🃏 Blackjack', holdem:'🂡 Hold’em'};
+
+      feed.innerHTML = `<div class="st-wrap">
+        <div class="st-head">
+          <div><h2 class="st-h1">📊 Server Stats</h2>
+            <div class="muted small">What this node is doing right now — public, no account needed.</div></div>
+        </div>
+
+        <div class="st-ranges">${RANGES.map(([k,l])=>
+          `<button class="st-range${_range===k?' on':''}" data-range="${k}">${enc(l)}</button>`).join('')}</div>
+
+        <div class="st-hero" style="--acc:${M.notes[0]}">
+          <div class="st-herohd">
+            <div><div class="st-lbl">🖊️ Notes ${enc(rateLabel())}</div>
+              <div class="st-hnum">${nf(sum(notes))}</div>
+              <div class="muted small">in the last ${_range==='minute'?'hour':_range==='hour'?'24 hours':'30 days'}</div></div>
+            <div class="st-peak muted small">peak ${nf(Math.max(0,...notes))}</div>
+          </div>
+          <div class="st-herochart">${barChart(notes, M.notes[0], 150)}</div>
+        </div>
+
+        <div class="st-grid">${ORDER.filter(m=>m!=='notes' && (S[m]||[]).some(v=>v>0)).map(m=>card(m, S[m])).join('')}</div>
+
+        <h3 class="st-sec">🌐 Network</h3>
+        <div class="st-tiles">
+          ${tile('events stored', nf(T.events), 'Every event this relay holds')}
+          ${tile('events today', nf(T.events_24h))}
+          ${tile('notes all-time', nf(T.notes))}
+          ${tile('people active today', nf(T.pubkeys_24h), 'Distinct pubkeys that published in the last 24h')}
+          ${tile('people active (30d)', nf(T.pubkeys_30d))}
+          ${tile('profiles known', nf(T.profiles))}
+          ${tile('relay database', bytes(T.db_bytes))}
+        </div>
+
+        <h3 class="st-sec">🤖 AI &amp; media</h3>
+        <div class="st-grid">
+          ${seriesCard('chat','💬','AI chat','#22d3ee', chat, T.ai_requests, T.ai_requests_24h, false)}
+          ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, cm.image.total, cm.image.today, isNew)}
+          ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, cm.music.total, cm.music.today, isNew)}
+          ${seriesCard('video','🎬','Video','#34d399', cm.video.series, cm.video.total, cm.video.today, isNew)}
+          ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, cm.calls.total, cm.calls.today, isNew)}
+        </div>
+        <div class="muted small st-hint">Daily, last 30 days.</div>
+
+        <h3 class="st-sec">🎮 Games &amp; streams</h3>
+        <div class="st-tiles">
+          ${tile('games played', nf(G.total))}
+          ${tile('live streams', nf(T.streams))}
+        </div>
+
+        <div class="st-games">${Object.keys(gm).map(k=>`
+          <div class="st-grow"><span class="st-glbl">${enc(GAME_LBL[k]||k)}</span>
+            <span class="st-gbar"><i style="width:${Math.round((gm[k]/gmax)*100)}%"></i></span>
+            <span class="st-gnum">${nf(gm[k])}</span></div>`).join('')}</div>
+
+        ${isNew ? `<div class="st-note muted small">Items marked <span class="st-new">new</span> are counted
+          from when this feature shipped: generated media isn't stored server-side, and call signaling is
+          ephemeral (kind&nbsp;25050), so there is no past to read. AI chat, and everything above, is
+          full history.</div>` : ''}
+
+        <div class="st-foot muted small">Refreshes every ${enc(String(_data.ttl||60))}s ·
+          computed in ${enc(String(_data.ms||0))}ms · shared by every viewer</div>
+      </div>`;
+
+      feed.querySelectorAll('.st-range').forEach(b=> b.onclick = ()=>{ _range = b.dataset.range; render(); });
+    }
+
+    async function load(force){
+      if(_busy) return; _busy = true;
+      try{
+        const r = await fetch('/client/stats', {credentials:'include'});
+        if(r.ok){ const d = await r.json(); if(!d.error) _data = d; }
+      }catch(_){ }
+      finally{ _busy = false; }
+      if(inView()) render();
+    }
+
+    async function renderStats(){
+      render();                 // paint the last snapshot (or a spinner) immediately
+      await load();
+      // Poll only while the page is actually open AND the tab is visible — a backgrounded phone must
+      // not keep waking to fetch stats.
+      if(_timer) clearInterval(_timer);
+      _timer = setInterval(()=>{
+        if(!inView()){ clearInterval(_timer); _timer=null; return; }
+        if(document.visibilityState === 'visible') load();
+      }, 60000);
+    }
+
+    window.PCStats = { render: renderStats };
+  }
+  init();
+})();

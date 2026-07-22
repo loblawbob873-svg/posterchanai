@@ -675,6 +675,21 @@ async def suggest_hashtags(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({"hashtags": " ".join(tags)})
 
 
+@router.get("/stats")
+async def client_stats():
+    """Public server statistics for the Server Stats page. No auth: these are aggregate counts only.
+
+    The payload is computed at most once per minute for the whole instance (see stats_service), so
+    hitting this endpoint in a loop costs a dictionary lookup, not a query.
+    """
+    from app.services import stats_service
+    try:
+        return JSONResponse(await stats_service.get_stats())
+    except Exception as e:
+        logger.warning("[client] stats failed: %s", e)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
 @router.get("/commands")
 async def client_commands():
     """The command catalogue for the client's help sheet — grouped, with descriptions.
@@ -691,7 +706,7 @@ async def client_commands():
 
     groups = [
         ("✨ Create", "geni musicgeni videogeni narrate poll"),
-        ("🔍 Find", "search images yt news dailynews 4chan files torrents nyaa"),
+        ("🔍 Find", "search images yt news dailynews files torrents nyaa"),
         ("🖼 Files & media", "compress clip convert extractaudio circlecrop removebackground ocr collage ytdl screenshot"),
         ("📚 Learn", "flashcards translate"),
         ("💰 Money", "budget bills bill addbill pay"),
