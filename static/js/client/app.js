@@ -8679,6 +8679,31 @@
     await Promise.all(wraps.map(w=>ingestWrap(w, false).finally(()=>{
       if(++_done % 10 === 0 || _done === wraps.length) _dmProgress(_done, wraps.length);
     })));
+    // DRAIN THE REST OF THE HISTORY. The bulk query above caps at 400 wraps and the "unlimited" live
+    // sub below is not actually unlimited: a filter with NO limit is capped by the relay (ours
+    // defaults to 500), so a long history is silently truncated to the newest few hundred and older
+    // conversations arrive half-empty or not at all. Page BACKWARDS with `until` until a page comes
+    // back short. Runs in the background so the thread still opens instantly, and is bounded so a
+    // huge inbox can't spin.
+    if(modern) (async()=>{
+      let until = wraps.length ? Math.min(...wraps.map(w=>w.created_at)) - 1 : Math.floor(Date.now()/1000);
+      for(let page=0; page<40; page++){
+        let batch=[];
+        try{ batch = await Relay.query([{ kinds:[1059], '#p':[ME.pubkey], limit:500, until }]); }catch(_){ break; }
+        if(!batch || !batch.length) break;
+        const fresh = batch.filter(e=>Store.saveEvent(e));
+        if(fresh.length){ await Promise.all(fresh.map(w=>ingestWrap(w, false))); _scheduleDmRefresh(); }
+        const oldest = batch.reduce((a,e)=>Math.min(a, e.created_at||0), Infinity);
+        if(!isFinite(oldest) || oldest > until) break;   // relay ignored `until` → stop rather than loop
+        // INCLUSIVE cursor: several wraps can share a second, and `oldest - 1` skipped any that the
+        // page limit cut off at that exact timestamp. Re-fetching the boundary is free (Store dedups),
+        // and "no fresh events in a whole page" is the termination condition instead.
+        until = oldest;
+        if(!fresh.length) break;                         // nothing new → end of history (or a tie loop)
+        if(batch.length < 500) break;                    // short page = end of history
+      }
+    })();
+
     // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
     // Messages view was opened, so DMs received while away still alert — not just live ones.
     recountDmUnread();
