@@ -91,6 +91,15 @@
   // ready; after a few tries hand off to __blobFallback (plain link). Self-heals — no cache clear needed.
   window.__aiMediaRetry = function(el){
     if(!el || !el.dataset) return;
+    // A 403 here means the ownership cookie for /client/file is missing or lapsed (it's short-lived
+    // by design). Re-prove once, then let the retry below reload the image. Costs one signature and
+    // only on the failing path — the cookie normally covers a whole session.
+    if(!el.dataset.reauth && window.__ensureFileAuth){
+      el.dataset.reauth = '1';
+      try{ window.__ensureFileAuth(true).then(ok=>{ if(ok){ const b=(el.getAttribute('src')||'').split('#')[0];
+        el.setAttribute('src', b + (b.indexOf('?')<0?'?':'&') + '_a=' + Date.now()); } }); }catch(_){ }
+      return;
+    }
     if(!el.dataset.osrc) el.dataset.osrc = (el.getAttribute('src')||'').split('#')[0].replace(/[?&]_r=\d+/,'');
     const n = (+el.dataset.r || 0), base = el.dataset.osrc;
     if(!base) return;
@@ -8043,8 +8052,30 @@
   };
   // AI Chat tab — uploads + generated images, stored encrypted under the storage key (separate from
   // the public Blossom list); shown via the decrypting /client/file route. Renders into `pane`.
+  // /client/file serves DECRYPTED AI-chat artifacts, so it demands proof of ownership (the sha256 in
+  // the URL is not authorisation — it used to be, and that made every user's chat files fetchable by
+  // anyone holding the link). Those URLs sit in <img src>, which can't send an Authorization header,
+  // so we prove ownership once here and the server issues a short-lived HttpOnly cookie the browser
+  // attaches automatically. Cheap and idempotent: re-proved only when the cookie is near expiry.
+  let _fileAuthAt = 0;
+  const _FILE_AUTH_REFRESH = 10 * 3600 * 1000;   // server TTL is 12h — renew before it lapses
+  async function ensureFileAuth(force){
+    if(!ME || !ME.pubkey || GUEST) return false;
+    if(!force && _fileAuthAt && (Date.now() - _fileAuthAt) < _FILE_AUTH_REFRESH) return true;
+    try{
+      const auth = await sign(27235, 'file-auth', [['p', ME.pubkey]]);
+      const r = await fetch('/client/file-auth', {method:'POST', credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth))})});
+      if(r.ok){ _fileAuthAt = Date.now(); return true; }
+    }catch(_){ }
+    return false;
+  }
+  window.__ensureFileAuth = ensureFileAuth;   // used by the image error path below
+
   async function renderAiFiles(pane){
     let files=[], err='';
+    await ensureFileAuth();          // the thumbnails below hit /client/file — cookie must exist first
     try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-files',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());

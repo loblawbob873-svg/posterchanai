@@ -15,6 +15,8 @@ This router only:
 import asyncio
 import base64
 import glob
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -1909,6 +1911,69 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
     return JSONResponse({"ok": True, "files": out})
 
 
+
+# ---- AI-chat file access: a signed, expiring, HttpOnly cookie -------------------------------------
+# /client/file used to serve DECRYPTED artifacts to anyone who knew the blob's sha256, on the theory
+# that the sha was a secret capability. Two public sources leaked it (the BUD-02 listing and the
+# upload doc's d-tag, both since fixed) — but "you have to know the hash" was never privacy: the URL
+# is bearer, permanent, and survives being pasted anywhere. These files are private, so the endpoint
+# now demands proof of ownership.
+#
+# It has to be a COOKIE, not a header: these URLs go in <img src>/<video src>, which cannot carry an
+# Authorization header. The client proves ownership ONCE (a signed kind-27235, same scheme as
+# /client/ai-files) and gets a short-lived cookie the browser then attaches automatically.
+_FILE_COOKIE = "pc_file"
+_FILE_TTL = 12 * 3600
+
+
+def _file_auth_secret() -> bytes:
+    """HMAC key derived from this node's operator key: stable across restarts, never leaves the box,
+    and needs no new stored secret."""
+    from app.services import keystore
+    seed = (keystore.get_operator_nsec() or "pcai-no-operator-key")
+    return hashlib.sha256(b"pcai-file-auth|" + seed.encode()).digest()
+
+
+def _mint_file_cookie(pubkey_hex: str) -> str:
+    exp = int(time.time()) + _FILE_TTL
+    msg = f"{pubkey_hex}.{exp}".encode()
+    sig = hmac.new(_file_auth_secret(), msg, hashlib.sha256).hexdigest()[:32]
+    return f"{pubkey_hex}.{exp}.{sig}"
+
+
+def _file_cookie_pubkey(raw: str) -> str:
+    """The pubkey a cookie proves ownership of, or "" when absent/forged/expired."""
+    try:
+        pk, exp, sig = (raw or "").split(".")
+        if int(exp) < int(time.time()):
+            return ""
+        good = hmac.new(_file_auth_secret(), f"{pk}.{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+        return pk if hmac.compare_digest(sig, good) else ""
+    except Exception:
+        return ""
+
+
+class FileAuthReq(BaseModel):
+    pubkey: str
+    auth: str
+
+
+@router.post("/file-auth")
+async def client_file_auth(data: FileAuthReq):
+    """Exchange a signed ownership proof for the short-lived cookie /client/file requires."""
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    resp = JSONResponse({"ok": True, "expires_in": _FILE_TTL})
+    # SameSite=None so the APK's WebView (a different origin from the API host) still sends it;
+    # Secure keeps that safe. HttpOnly: script never needs to read it.
+    resp.set_cookie(_FILE_COOKIE, _mint_file_cookie(pk), max_age=_FILE_TTL, httponly=True,
+                    secure=True, samesite="none", path="/client/file")
+    return resp
+
+
 @router.get("/file/{npub}/{conv}/{name}")
 async def client_file(npub: str, conv: str, name: str, request: Request, db: Session = Depends(get_db)):
     """Serve a decrypted AI-chat artifact for the Nostr client. The client has NO server session, so
@@ -1919,6 +1984,10 @@ async def client_file(npub: str, conv: str, name: str, request: Request, db: Ses
     pk = nostr_service.to_pubkey_hex(npub)
     if not pk:
         return JSONResponse({"error": "invalid npub"}, status_code=400)
+    # Ownership required: the sha256 alone is NOT authorisation (see _FILE_COOKIE above). The cookie
+    # must prove the SAME key the file belongs to, so one user's proof can't read another's files.
+    if _file_cookie_pubkey(request.cookies.get(_FILE_COOKIE, "")) != pk:
+        return JSONResponse({"error": "not authorized"}, status_code=403)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     m = re.match(r'^enc_([0-9a-fA-F]{64})\.(\w+)$', name or "")
     if not user or not m:
