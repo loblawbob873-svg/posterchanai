@@ -2933,3 +2933,11 @@ textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-
 /* a quoted line inside a bubble (what a reply looks like on arrival, in any client) */
 .bubble .b-quote{display:block;border-left:2px solid var(--line);padding-left:8px;margin-bottom:6px;
   color:var(--muted);font-size:.92em;opacity:.9}
+
+/* Messages: hide the painted scrollbars, matching .feed. A 14px bar down the thread and another
+   down the conversation list read as chrome from a different app — the rest of the client already
+   hides them. Scrolling itself is untouched: only the track/thumb is gone, and both panes are
+   vertical (a hidden bar on a HORIZONTAL strip is what made the news feed chips unreachable, which
+   is why this is deliberately limited to the vertical panes). */
+.dm-msgs,.dm-list,.dm-rows{scrollbar-width:none}
+.dm-msgs::-webkit-scrollbar,.dm-list::-webkit-scrollbar,.dm-rows::-webkit-scrollbar{width:0;height:0}
