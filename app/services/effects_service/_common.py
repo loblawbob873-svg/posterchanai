@@ -227,6 +227,12 @@ _FELIZ_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/feliz.mp3",
 ]
 _FELIZ_DURATION = 9.0
+_SLEEPWELL_AUDIO_CANDIDATES = [
+    os.environ.get("SLEEPWELL_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "sleepwell.mp3"),
+    "/var/lib/posterchanai/assets/sleepwell.mp3",
+]
+_SLEEPWELL_DURATION = 24.0   # clip is 23.04s (CG5 - Sleep Well, 2:28-2:51) — ~1s of headroom
 _PRAYER_AUDIO_CANDIDATES = [
     os.environ.get("PRAYER_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "prayer.mp3"),

@@ -88,6 +88,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "terminator": "Turn an attached image into a short MP4 set to the terminator clip: terminator",
         "reze": "Turn an attached image into a short MP4 set to the reze clip: reze",
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
+        "sleepwell": "Turn an attached image into a short MP4 set to the Sleep Well clip: sleepwell",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
         "munsters": "Turn an attached image into an MP4 set to the Munsters theme clip: munsters",
@@ -161,7 +162,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
-        "feltedtables", "glow", "prayer", "alive", "feliz",
+        "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
@@ -611,6 +612,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._reze_command(attachments)
         elif command == "feliz":
             return await self._feliz_command(attachments)
+        elif command == "sleepwell":
+            return await self._sleepwell_command(attachments)
         elif command == "sopranos":
             return await self._sopranos_command(attachments)
         elif command == "cheers":
