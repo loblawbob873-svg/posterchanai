@@ -701,12 +701,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   font-family:inherit;font-size:24px;line-height:1;transition:.15s}
 .tl-cmp-btn:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 .tl-cmp-post{margin:0;padding:12px 30px;font-size:16px;font-weight:700;border-radius:24px}
-/* Post always sits at the RIGHT end of the tools row. It needs the extra class in the selector to beat
-   `.tl-cmp-tools .btn{margin:0}` below (0,2,0) — a bare `.tl-cmp-post{margin-left:auto}` (0,1,0) lost
-   the cascade, so Post was only ever pushed right by .tl-cmp-status's flex:1 sitting in front of it.
-   Hide the status (≤380px) or leave it empty and Post collapsed back against the ⋯ icon, left-justified
-   in the middle of the row. It also right-aligns Post when the row WRAPS it onto a line of its own. */
-.tl-cmp-tools .tl-cmp-post{margin-left:auto}
+/* (Post's right-alignment lives further down, AFTER `.tl-cmp-tools .btn{margin:0}` — see there.) */
 /* Inline panels — the timeline composer never opens the modal, so poll + content-warning live here. */
 .tl-cmp-btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan)}
 .tl-cmp-cw{margin-top:8px}
@@ -754,6 +749,14 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   width:min(72px,64%);height:3px;border-radius:3px 3px 0 0;
   background:linear-gradient(90deg,var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .tl-cmp-tools .btn{white-space:nowrap}
+/* Post sits at the RIGHT end of the tools row — including when the row WRAPS it onto a line of its own
+   on a narrow phone, where it was landing directly under the 📎 icon.
+   This has lost the cascade to `.tl-cmp-tools .btn{margin:0}` above TWICE now: a bare
+   `.tl-cmp-post{margin-left:auto}` is (0,1,0) and loses on specificity, and `.tl-cmp-tools
+   .tl-cmp-post` is (0,2,0) — a TIE, decided by source order, and the reset comes later. The button is
+   class="btn btn-neon tl-cmp-post", so match both classes for (0,3,0) AND sit after the reset: it now
+   wins on specificity and on order. */
+.tl-cmp-tools .btn.tl-cmp-post{margin-left:auto}
 /* ▦ media-grid toggle, right-aligned in the tab row (it moved out of the topbar). */
 .tltab-media{flex:0 0 auto;margin-left:auto;padding:9px 12px;border:0;border-radius:11px;
   background:transparent;color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;line-height:1;transition:.15s}
