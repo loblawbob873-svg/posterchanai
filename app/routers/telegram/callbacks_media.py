@@ -155,6 +155,26 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                         if _t:
                             _texts.append(_t)
                 await telegram_service.send_message(chat_id, ("🔤 *Extracted text:*\n\n" + "\n\n".join(_texts)) if _texts else "No text found in the image(s).")
+            elif _action == "bill":
+                # 🧾 Bill: read the attachment, then offer Add / Cancel as BUTTONS. The command form
+                # needs a second typed message (`bill add`) to confirm; from a photo you have just
+                # tapped, another round of typing is the wrong shape — but the confirm itself stays,
+                # because the finance API has no delete and a mis-read amount would be permanent.
+                _res = await cb_command_service.execute_command("bill", "", attachments=_atts)
+                _txt = (_res or {}).get("content") or "Couldn't read that bill."
+                _staged = "bill add" in _txt          # only the preview path stages a parse
+                await telegram_service.send_message(
+                    chat_id, _txt.replace("Send `bill add` to add it", "Add it").replace("**", ""),
+                    reply_markup=({"inline_keyboard": [[
+                        {"text": "✅ Add to budget", "callback_data": "media:billadd"},
+                        {"text": "✖ Cancel", "callback_data": "media:billno"},
+                    ]]} if _staged else None),
+                )
+            elif _action == "billadd":
+                _res = await cb_command_service.execute_command("bill", "add", attachments=[])
+                await telegram_service.send_message(chat_id, (_res or {}).get("content") or "Couldn't add it.")
+            elif _action == "billno":
+                await telegram_service.send_message(chat_id, "🧾 Not added.")
             elif _action == "post":
                 # Prompt for an optional caption before showing the platform
                 # buttons. The reply is routed (see _SOCIAL_CAPTION_PROMPT) back
