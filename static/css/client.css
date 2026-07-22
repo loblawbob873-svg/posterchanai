@@ -111,8 +111,6 @@
 :root[data-theme] .note .txt,
 :root[data-theme] .note .name,
 :root[data-theme] .usercount,
-:root[data-theme] .rb-item b,
-:root[data-theme] .rb-item .rb-txt,
 :root[data-theme] .nav-item.active,
 :root[data-theme] .me .mn{ color:var(--text); }
 
@@ -136,7 +134,6 @@
 /* nav / rightbar active+hover states were neon gradients on near-black → theme panel + line */
 :root[data-theme] .nav-item.active{ background:var(--panel2); box-shadow:inset 0 0 0 1px var(--line); }
 :root[data-theme] .nav-item:hover{ background:var(--panel); color:var(--text); }
-:root[data-theme] .rb-item:hover{ background:var(--panel2); box-shadow:none; }
 :root[data-theme] .note:hover{ background:var(--panel); }
 
 /* more hardcoded light-on-X text → theme text: form labels, fc-post body, the AI/permission gate
@@ -197,13 +194,8 @@
 :root[data-theme] .usercount,
 :root[data-theme] .conn{ color:var(--text) !important; }
 
-/* "From Follows" / trending right column: give the cards a themed panel (were transparent over a
-   deep-violet hover) and route the hardcoded neon body/heading text to theme colours (also above). */
-:root[data-theme] .rb-item{ background:var(--panel); }
-:root[data-theme] .rb-item b{ color:var(--text); }                 /* author name (was hardcoded #fff) */
-:root[data-theme] .rb-item .rb-txt{ color:var(--text); }           /* snippet (was hardcoded #7dfcff) */
-:root[data-theme] .rb-fire{ color:var(--amber); }
-:root[data-theme] .rb-av{ background:var(--panel2); }              /* avatar fallback (was #1a1230) */
+/* Right column: the rb-item cards are built from theme vars natively now (flat, no hardcoded neon),
+   so the old per-theme colour patches for them are gone — only the heading still needs routing. */
 :root[data-theme] .rb-section h3{ color:var(--text); }
 :root[data-theme] .rb-github{ color:var(--text); }
 
@@ -695,18 +687,41 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .rb-tab:hover{color:var(--text)}
 .rb-tab.active{background:rgba(var(--accent-rgb),.16);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.38)}
 .rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
-  transition:.15s;background:linear-gradient(135deg,rgba(var(--accent-rgb),.05),rgba(var(--accent2-rgb),.05)),rgba(8,5,18,.62);overflow:hidden}
-.rb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(var(--neon),var(--neon2));opacity:.55;transition:.15s}
-.rb-item:hover{border-color:var(--neon);background:linear-gradient(135deg,rgba(var(--accent-rgb),.12),rgba(var(--accent2-rgb),.10)),rgba(8,5,18,.7);box-shadow:0 0 14px rgba(var(--accent-rgb),.18)}
-.rb-item:hover::before{opacity:1;box-shadow:0 0 8px var(--neon)}
+  transition:.15s;background:var(--panel);overflow:hidden}
+/* Flat cards. Every colour here is a theme var — the snippet used to be a hardcoded #7dfcff with a
+   double neon text-shadow and the tile a hardcoded near-black, which the theme layer then had to patch
+   back to var(--text) after the fact. Native vars mean no patch, and it matches the calmer nav. */
+.rb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--neon);opacity:.35;transition:.15s}
+.rb-item:hover{border-color:var(--neon);background:var(--panel2)}
+.rb-item:hover::before{opacity:1}
 .rb-head{display:flex;align-items:center;gap:7px}
-.rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:#1a1230}
-.rb-item b{font-size:16px;color:#fff;text-shadow:0 0 6px rgba(var(--accent-rgb),.35)}
-.rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap;text-shadow:0 0 7px rgba(255,207,43,.5)}
-.rb-item .rb-txt{color:#7dfcff;font-size:15.5px;line-height:1.5;margin-top:5px;text-shadow:0 0 6px rgba(var(--accent-rgb),.55),0 0 12px rgba(var(--accent-rgb),.28);
-  display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:var(--panel2)}
+.rb-item b{font-size:15px;font-weight:650;color:var(--text)}
+.rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap}
+.rb-item .rb-txt{color:var(--muted);font-size:14.5px;line-height:1.5;margin-top:5px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* Who to follow — a row, not a card: avatar + name/handle + one Follow button. Deliberately lighter
+   than .rb-item so the column reads as "suggestions" rather than a third post list. */
+.wtf-row{display:flex;align-items:center;gap:9px;padding:7px 2px;cursor:pointer}
+.wtf-row .rb-av{width:34px;height:34px}
+.wtf-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
+.wtf-row b{font-size:14.5px;font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wtf-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wtf-follow{flex:0 0 auto;padding:6px 13px;border-radius:999px;border:1px solid var(--line);cursor:pointer;
+  background:rgba(var(--accent-rgb),.14);color:var(--neon);font-family:inherit;font-size:12.5px;font-weight:700;transition:.15s}
+.wtf-follow:hover:not(:disabled){background:rgba(var(--accent-rgb),.26);border-color:var(--neon)}
+.wtf-follow:disabled{opacity:.55;cursor:default}
+/* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
+   takes the margin-top:auto now, so the pair sits together at the foot of the column). */
+.rb-apps{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
+.rb-apps h4{margin:0 0 9px;font-size:11.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
+.rb-appgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.rb-app{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);color:var(--text);text-decoration:none;font-size:13px;font-weight:600;transition:.15s}
+.rb-app:hover{border-color:var(--neon);color:var(--neon)}
+.rb-app svg.ic{width:17px;height:17px}
 .rb-item .rb-media{display:block;width:100%;max-height:160px;object-fit:cover;border-radius:9px;margin-top:7px;border:1px solid var(--line)}
-.rb-github{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
+.rb-github{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
 /* No box: .glass gave it a border on all four sides AND a translucent panel, so every view header read as

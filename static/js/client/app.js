@@ -1224,12 +1224,22 @@
     window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
     if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
+    // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
+    // It fought anyone trying to read it, and with the merged Hot/Follows pane the column is short
+    // enough that there's nothing to cycle through. Scrolling is the user's again.
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
       rb.addEventListener('click', e=>{
         const tab=e.target.closest('.rb-tab'); if(tab){ setRbTab(tab.dataset.rbtab); return; }   // Hot / From-follows toggle
+        const fb=e.target.closest('.wtf-follow'); if(fb){ _wtfFollow(fb); return; }              // Follow, before the row handler
+        const wr=e.target.closest('.wtf-row'); if(wr){ renderProfileView(wr.dataset.pk); return; }
         const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open);  // a row opens its thread
       });
-      startAutoScroll(); }
+    }
+    // "Get the app" links: in the bundled native app the client is served from a local origin, so the
+    // plain /apk and /desktop/* hrefs would resolve against the bundle and 404. Point them at whichever
+    // instance this install talks to (build-www.sh sets __PC_API_BASE__; it's absent on the web).
+    { const _b=window.__PC_API_BASE__;
+      if(_b) $$('.rb-app[data-path]').forEach(a=>{ a.href=_b+a.dataset.path; a.target='_blank'; a.rel='noopener'; }); }
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
     // These two are document-level delegates — bind them ONCE. startApp() re-runs on login-without-reload
@@ -1901,7 +1911,7 @@
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
-    $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
+    $$('.rb-item[data-pk],.wtf-row[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
       const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
     }});
@@ -1934,8 +1944,10 @@
   // later should default to the full width rather than silently inherit a rail that doesn't suit it.
   // Includes the entity views that render note cards (thread/profile/hashtag/search/community) —
   // those set VIEW directly, without going through switchView.
+  // 'community' is deliberately NOT here: reading a community's posts is reading, and it wants the
+  // width the same way an article or the News/Markets dashboards do.
   const RB_SHOW_VIEWS = new Set(['home','global','notifications','bookmarks','drafts',
-                                 'profile','thread','hashtag','search','community']);
+                                 'profile','thread','hashtag','search']);
   let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
   let _rbBooted=false;   // has the post-onReady delay elapsed? gates the retry below off the cold socket
   function _syncRightbar(){
@@ -12239,6 +12251,7 @@
     if(!_rightbarShown()) return;   // display:none on mobile OR body.rb-off → skip; but build in a backgrounded desktop tab (no document.hidden gate)
     _rbLoaded=true;                 // only once it's genuinely visible — _syncRightbar retries otherwise
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
+    loadWhoToFollow();              // friend-of-friend suggestions (once per session — see below)
     syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
     if(_rbTab==='hot') loadHot(true); else loadFollows();
   }
@@ -12259,6 +12272,53 @@
   const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
                          ['nostr','🟣'], ['art','🎨'], ['news','📰'], ['memes','😂']];
   const TOPIC_TRENDING=10, TOPIC_MAX=14;
+  // ---- Who to follow: friend-of-friend ------------------------------------------------------
+  // Pull the contact lists (kind 3) of people you already follow and rank the pubkeys THEY follow
+  // that you don't. No server endpoint and no global "top accounts" chart — the suggestions come out
+  // of your own graph. Deliberately NOT on the 150s refresh: contact lists are big events and this is
+  // the heaviest query in the column, so it runs once per session and then only after you act on it.
+  const WTF_AUTHORS=40, WTF_MAX=4, WTF_MIN_MUTUAL=2;
+  async function loadWhoToFollow(){
+    const el=document.getElementById('rb-wtf'); if(!el) return;
+    if(typeof ME==='undefined' || !ME || !ME.pubkey){ el.innerHTML='<div class="muted small">Sign in to get suggestions.</div>'; return; }
+    // Cap the author list: a kind-3 REQ for every single follow is a genuinely heavy ask of the relay,
+    // and 40 contact lists is already thousands of candidate pubkeys to rank.
+    const authors=[...FOLLOWS].filter(p=>p&&p!==ME.pubkey).slice(0,WTF_AUTHORS);
+    if(authors.length<2){ el.innerHTML='<div class="muted small">Follow a few people and suggestions will show up here.</div>'; return; }
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[3], authors, limit:authors.length }]); }catch(_){}
+    // Keep only the NEWEST contact list per author — kind 3 is replaceable, but a relay can still hand
+    // back older copies, and counting both would double-weight whoever that author follows.
+    const newest=new Map();
+    for(const e of evs){ const p=newest.get(e.pubkey); if(!p || e.created_at>p.created_at) newest.set(e.pubkey,e); }
+    const tally=new Map();
+    for(const e of newest.values()) for(const t of (e.tags||[])){
+      const pk = t[0]==='p' ? t[1] : null;
+      if(!pk || pk===ME.pubkey || FOLLOWS.has(pk) || MUTED.has(pk)) continue;
+      tally.set(pk, (tally.get(pk)||0)+1);
+    }
+    const top=[...tally.entries()].filter(([,c])=>c>=WTF_MIN_MUTUAL).sort((a,b)=>b[1]-a[1]).slice(0,WTF_MAX);
+    if(!top.length){ el.innerHTML='<div class="muted small">No suggestions right now.</div>'; return; }
+    top.forEach(([pk])=>needProfile(pk));   // names/avatars fill in via decorateProfiles when kind-0 lands
+    el.innerHTML=top.map(([pk,c])=>{
+      const p=profOf(pk), nm=p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
+      return `<div class="wtf-row" data-pk="${pk}">
+        <img class="rb-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
+        <div class="wtf-main"><b>${enc(nm)}</b><span class="wtf-sub">followed by ${c} you follow</span></div>
+        <button class="wtf-follow" data-follow="${pk}">Follow</button></div>`;
+    }).join('');
+    decorateProfiles();
+  }
+  // Follow from a suggestion row. toggleFollow() returns false when the relay didn't store the kind-3,
+  // so the row only disappears on a follow that actually landed — no ghost follows.
+  async function _wtfFollow(btn){
+    const pk=btn.dataset.follow; if(!pk || btn.disabled) return;
+    btn.disabled=true; btn.textContent='…';
+    const ok=await toggleFollow(pk);
+    if(!ok){ btn.disabled=false; btn.textContent='Follow'; return; }
+    const row=btn.closest('.wtf-row'); if(row) row.remove();
+    const el=document.getElementById('rb-wtf');
+    if(el && !el.querySelector('.wtf-row')) loadWhoToFollow();   // emptied the list → refill, your graph just grew
+  }
   // ONE topics cloud = trending hashtags (tallied over the last 24h from explicit `t` tags AND inline
   // #hashtags in recent notes, ranked by how many distinct posts used each) followed by whatever
   // curated tags aren't already trending. Both render a clickable chip → a #tag feed. This replaces
@@ -12331,7 +12391,7 @@
   // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
   // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
   // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=12, HOT_MAX=48;
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=6, HOT_MAX=18;   // a sidebar digest, not a second feed
   let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
   // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
   async function rankHot(windowSec){
@@ -12375,7 +12435,7 @@
     const tally={}, icon={};
     for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
       tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
-    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,12).map(x=>x[0]);
+    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>x[0]);
     // Re-acquire the pane after every await below: the user can hit "Hot" while these queries are in
     // flight, and the captured `el` would happily paint follow rows into the Hot list.
     if(!top.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
@@ -12418,7 +12478,7 @@
   // Scroll-down handler: widen the window until we manage to append something or hit the cap.
   async function loadMoreHot(){
     if(_hot.loading||_hot.done) return; const el=rbListEl('hot'); if(!el) return;
-    if(el.querySelectorAll('.rb-item').length>=HOT_MAX){ _hot.done=true; return; }   // cap so the column can loop
+    if(el.querySelectorAll('.rb-item').length>=HOT_MAX){ _hot.done=true; return; }   // hard cap on the column's length
     _hot.loading=true;
     let added=0, guard=0;
     while(added===0 && guard++<8){
@@ -12440,36 +12500,6 @@
     const rb=document.querySelector('.rightbar'); if(!rb) return;
     if(rb.scrollTop+rb.clientHeight >= rb.scrollHeight-320) loadMoreHot();
   }
-  // Gentle auto-scroll "ticker": creep the rightbar down on its own so the column cycles through
-  // Topics → the post list over and over without a hand on the wheel. Pauses while the pointer is
-  // over the column (reading/clicking) or the tab is hidden. When the bottom is reached it loops
-  // back to the top and refreshes the lap. Honours prefers-reduced-motion.
-  const _auto={ on:true, acc:0, last:0, hold:0 };
-  function startAutoScroll(){
-    const rb=document.querySelector('.rightbar'); if(!rb) return;
-    if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    rb.addEventListener('mouseenter', ()=>{ _auto.on=false; });
-    rb.addEventListener('mouseleave', ()=>{ _auto.on=true; });
-    const SPEED=20;   // px/sec — slow, readable creep
-    const step=(ts)=>{
-      requestAnimationFrame(step);
-      const dt=_auto.last?Math.min(ts-_auto.last,100):0; _auto.last=ts;
-      if(!_auto.on || document.hidden) return;
-      if(_auto.hold>0){ _auto.hold-=dt; return; }   // brief pause at the top of each lap
-      const max=rb.scrollHeight-rb.clientHeight; if(max<=0) return;
-      if(rb.scrollTop>=max-1){          // reached the end of the column → start the lap over
-        // Only Hot paginates; on the Follows tab _hot.done stays false forever, and without the tab
-        // check the ticker would call a loadMoreHot() that no-ops and never loop back to the top.
-        if(_rbTab==='hot' && !_hot.done){ loadMoreHot(); return; }
-        rb.scrollTop=0; _auto.acc=0; _auto.hold=1500; refreshRightbar();   // loop + refresh the lap
-        return;
-      }
-      _auto.acc += SPEED*dt/1000;
-      if(_auto.acc>=1){ const d=Math.floor(_auto.acc); _auto.acc-=d; rb.scrollTop+=d; }
-    };
-    requestAnimationFrame(step);
-  }
-
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
   // ===== Voice/Video calls (WebRTC, P2P-first, signaled over Nostr) =====

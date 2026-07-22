@@ -77,6 +77,11 @@
   <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.6 20c0-3.6 3.4-5.7 7.4-5.7s7.4 2.1 7.4 5.7"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9.4 20.6H6a2 2 0 01-2-2V5.4a2 2 0 012-2h3.4"/><path d="M15.8 16.2l4.2-4.2-4.2-4.2"/><path d="M20 12H9.6"/></symbol>
+  <!-- platform marks for the "Get the app" links -->
+  <symbol id="i-android" viewBox="0 0 24 24"><path d="M5.6 11.4a6.4 6.4 0 0112.8 0z"/><path d="M8.2 7.6L6.9 5.5M15.8 7.6l1.3-2.1"/><circle cx="9.7" cy="9.5" r=".85" fill="currentColor" stroke="none"/><circle cx="14.3" cy="9.5" r=".85" fill="currentColor" stroke="none"/><rect x="5.6" y="12.9" width="12.8" height="6.6" rx="2"/></symbol>
+  <symbol id="i-windows" viewBox="0 0 24 24"><path d="M3.6 6.3l7-1v6.2h-7zM12.2 5.1l8.2-1.2v7.6h-8.2zM3.6 12.6h7v6.2l-7-1zM12.2 12.6h8.2v7.6l-8.2-1.2z"/></symbol>
+  <symbol id="i-apple" viewBox="0 0 24 24"><path d="M15.9 12.5c0-2 1.6-3 1.7-3.1-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.3 2-1.4 2.4-.4 6 1 8 .7 1 1.5 2.1 2.5 2 1-.04 1.4-.65 2.6-.65s1.5.65 2.6.63c1.1-.02 1.8-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.3-.02 0-2.1-.8-2.1-3z"/><path d="M13.9 6.2c.5-.6.9-1.5.8-2.4-.8.03-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.4.9.07 1.8-.4 2.3-1.2z"/></symbol>
+  <symbol id="i-linux" viewBox="0 0 24 24"><path d="M12 3.2c-2.1 0-3.5 1.7-3.5 3.9 0 1.2-.3 2-1 3-1 1.5-1.9 3.2-1.9 5.2 0 2.9 2.9 5.4 6.4 5.4s6.4-2.5 6.4-5.4c0-2-.9-3.7-1.9-5.2-.7-1-1-1.8-1-3 0-2.2-1.4-3.9-3.5-3.9z"/><circle cx="10.5" cy="7.4" r=".8" fill="currentColor" stroke="none"/><circle cx="13.5" cy="7.4" r=".8" fill="currentColor" stroke="none"/><path d="M12 8.7l-1.1 1.5h2.2z"/></symbol>
 </defs></svg>
 <script>
 // ICO(name) → the same sprite reference the static markup uses, for JS-rendered rows (More sheet,
@@ -234,12 +239,26 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
         <div class="rb-section"><h3><svg class="ic h-ic"><use href="#i-chart"></use></svg>Topics</h3><div id="rb-topics"><div class="muted small">loading…</div></div></div>
         <!-- Hot and "From follows" render the identical rb-item card, so they share ONE pane behind a
              segmented control rather than stacking two lists that read as a second timeline. -->
+        <!-- Friend-of-friend suggestions: built from the contact lists of people you already follow,
+             so it's your own graph talking rather than a global "top accounts" chart. -->
+        <div class="rb-section"><h3><svg class="ic h-ic"><use href="#i-users"></use></svg>Who to follow</h3><div id="rb-wtf"><div class="muted small">loading…</div></div></div>
         <div class="rb-section rb-feed">
             <div class="rb-tabs">
                 <button class="rb-tab active" data-rbtab="hot">Hot</button>
                 <button class="rb-tab" data-rbtab="follows">From follows</button>
             </div>
             <div id="rb-list"><div class="muted small">loading…</div></div>
+        </div>
+        <!-- Native builds. href is the plain server route; in the bundled app (Capacitor, local origin)
+             app.js rewrites these to data-path off __PC_API_BASE__, or /apk would 404 against the bundle. -->
+        <div class="rb-apps">
+            <h4>Get the app</h4>
+            <div class="rb-appgrid">
+                <a class="rb-app" href="/apk" data-path="/apk"><svg class="ic"><use href="#i-android"></use></svg><span>Android</span></a>
+                <a class="rb-app" href="/desktop/win" data-path="/desktop/win"><svg class="ic"><use href="#i-windows"></use></svg><span>Windows</span></a>
+                <a class="rb-app" href="/desktop/mac" data-path="/desktop/mac"><svg class="ic"><use href="#i-apple"></use></svg><span>macOS</span></a>
+                <a class="rb-app" href="/desktop/linux" data-path="/desktop/linux"><svg class="ic"><use href="#i-linux"></use></svg><span>Linux</span></a>
+            </div>
         </div>
         <a class="rb-github" href="https://github.com/loblawbob873-svg/posterchanai" target="_blank" rel="noopener">
             <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
