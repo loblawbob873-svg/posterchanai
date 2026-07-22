@@ -137,6 +137,21 @@
 
     // ---- feed list: local cache first, then hydrate from the relay ----
     function _feedsLocal(){ try{ const c=JSON.parse(_lsGet('feeds')||'null'); if(Array.isArray(c)&&c.length) return c; }catch(_){} return null; }
+    // Which pubkey _feeds was hydrated for. Without this, `if(!_feeds) await loadState()` hydrates
+    // exactly ONCE per page load — and this client supports guest→login and account switches WITHOUT
+    // a reload. So a guest who browsed (feeds = DEFAULTS) then logged in kept the defaults, never
+    // hydrated their own kind-30078 doc, and the next saveFeeds() would publish those defaults over
+    // their real list. Re-hydrate whenever the identity changes.
+    let _feedsPk = null;
+    function _curPk(){ try{ return (window.__PC && window.__PC.ME && window.__PC.ME.pubkey) || ''; }catch(_){ return ''; } }
+    async function ensureState(){
+      const pk = _curPk();
+      if(_feeds && _feedsPk === pk) return;
+      _feeds = null; _readIds = []; _readSet = new Set();   // drop the previous identity's state
+      await loadState();
+      _feedsPk = pk;
+    }
+
     async function loadState(){
       _loadReadLocal();
       _feeds = _feedsLocal() || DEFAULTS.slice();
@@ -245,7 +260,7 @@
       if(_bgBusy || !me || !me.pubkey) return;   // reentrancy / not logged in (would cache DEFAULTS) → skip
       _bgBusy = true;
       try{
-        if(!_feeds) await loadState();
+        await ensureState();
         if(!_feeds || !_feeds.length) return;
         const { items } = await _fetchAllItems();
         _applyAll(items);
@@ -307,7 +322,7 @@
       const gen = ++_gen;                       // supersede any older in-flight render
       const feed = $('#feed');
       feed.innerHTML = `<div class="news-wrap"><div id="news-head"></div><div id="news-list"><div class="spinner"></div></div></div>`;
-      if(!_feeds) await loadState();
+      await ensureState();
       if(gen!==_gen || !inView()) return;       // navigated away / superseded during loadState
       const head = $('#news-head'); if(!head) return;
       head.innerHTML = _chips();
