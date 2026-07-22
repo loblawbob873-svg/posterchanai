@@ -3431,7 +3431,12 @@
     let info; try{ info=await fetch('/api/streams/ingest',{headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}}).then(r=>r.json()); }catch(_){ }
     if(!info || info.enabled===false || !info.rtmp_url){ toast('streaming isn’t enabled on this server'); return; }
     const canPhone = !!(info.whip_url && navigator.mediaDevices && window.RTCPeerConnection);
-    const canScreen = !!_screenPlugin();   // native app only — no mobile browser can capture a screen
+    // Screen share comes from either the native plugin (Android app → RTMP, captured outside the WebView)
+    // or a desktop browser's getDisplayMedia over the SAME WHIP ingest the webcam uses. No MOBILE browser
+    // implements getDisplayMedia, so this still hides itself there — but gating it on the plugin ALONE hid
+    // it on desktop too, where the only route left was to go live with the webcam and then swap mid-stream.
+    const canScreen = !!_screenPlugin()
+      || !!(canPhone && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     modal(`<h3>🔴 Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
@@ -3567,12 +3572,31 @@
     });
   }
   // Go live straight from the phone/browser camera via WHIP (WebRTC ingest to the built-in MediaMTX).
-  async function _phoneGoLive(info, title, doAnnounce, cover){
+  async function _phoneGoLive(info, title, doAnnounce, cover, opts){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
     _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
+    const wantScreen = !!(opts && opts.screen);   // desktop "go live sharing this screen" — same WHIP publish
     let local=null, pc=null; let facing='user';
-    try{ local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:facing},audio:true}); }
-    catch(e){ toast(_mediaErrMsg(e)); _goingLive=false; return; }
+    try{
+      if(wantScreen){
+        const disp=await navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false});
+        // _soleVideoTrack drops the system-audio track some Chromium builds hand back despite audio:false —
+        // otherwise that capture leaks for the life of the page.
+        const vt=_soleVideoTrack(disp);
+        if(!vt) throw new DOMException('no screen track','NotFoundError');
+        // Voiceover is a SEPARATE capture and deliberately optional: a screen share with no mic is still
+        // worth broadcasting, so a refused/absent microphone must not abort going live.
+        let mic=null; try{ mic=await navigator.mediaDevices.getUserMedia({audio:true}); }catch(_){}
+        local=new MediaStream(mic ? [vt, ...mic.getAudioTracks()] : [vt]);
+      } else {
+        local=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:facing},audio:true});
+      }
+    }
+    // Dismissing the screen picker throws NotAllowedError — the same name a BLOCKED camera throws — and
+    // _mediaErrMsg's "Camera/mic blocked, click the 🔒 icon in the address bar" is nonsense for a picker
+    // the user simply closed. Say what actually happened.
+    catch(e){ toast(wantScreen && (e&&e.name)==='NotAllowedError' ? 'screen share cancelled' : _mediaErrMsg(e));
+      _goingLive=false; return; }
     toast('connecting…');
     try{
       let ice=[]; try{ const c=await _fetchIceServers(); ice=c.iceServers||[]; }catch(_){}
@@ -3606,14 +3630,19 @@
     let devId=null; try{ const s=local.getVideoTracks()[0].getSettings(); devId=s.deviceId||null; if(s.facingMode) facing=s.facingMode; }catch(_){}
     // `info` is kept so a later switch to the native screen share can build its RTMP target from the same
     // ingest (same token ⇒ same kind-30311, so viewers never have to re-open the stream).
-    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:'camera', info };
+    _phoneStream={ pc, local, token:info.token, facing, deviceId:devId, source:wantScreen?'screen':'camera', info };
+    // The browser's own "Stop sharing" bar ends the display track directly. Same fallback the mid-stream
+    // swap installs: drop back to the camera so the broadcast survives, and end it if there's no camera.
+    if(wantScreen){ try{ local.getVideoTracks()[0].onended=()=>_onScreenShareEnded(_phoneStream); }catch(_){} }
     // Liveness for a phone stream is the WebRTC connection itself — NOT the HLS heartbeat (which 404s
     // during the WebRTC→HLS remux warm-up and would falsely kill a healthy stream). End if the pc drops.
     pc.onconnectionstatechange=()=>{ if(_phoneStream && _phoneStream.pc===pc && (pc.connectionState==='failed'||pc.connectionState==='closed')) _endLive(); };
     _goingLive=false;
     try{ await _publishLive(info, title, cover); }catch(_){ toast('live — but couldn’t announce on Nostr yet'); }
     if(doAnnounce){ try{ await _announceStreamPost(info, title); }catch(_){} }
-    _phoneLiveOverlay(); toast('🔴 you’re live from your phone');
+    _phoneLiveOverlay();
+    toast(wantScreen ? '🔴 you’re live — sharing your screen'
+                     : (isDesktop() ? '🔴 you’re live from your webcam' : '🔴 you’re live from your phone'));
   }
   function _phoneLiveOverlay(){
     let el=document.getElementById('phone-live'); if(el) el.remove();
@@ -3953,7 +3982,15 @@
   // stream's liveness is reported by the plugin's status events rather than a PeerConnection.
   async function _screenGoLive(info, title, doAnnounce, cover){
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
-    const SS=_screenPlugin(); if(!SS){ toast('screen sharing needs the PosterChan app'); return; }
+    const SS=_screenPlugin();
+    // Desktop browser: no plugin, but getDisplayMedia + the WHIP ingest do the same job. It's the webcam
+    // path with a different capture, so hand off rather than duplicate the PeerConnection/WHIP dance.
+    if(!SS){
+      if(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+        return _phoneGoLive(info, title, doAnnounce, cover, { screen:true });
+      toast('this browser can’t share a screen — use the PosterChan app, or a desktop browser');
+      return;
+    }
     if(!info.rtmp_native_url){ toast('this server is too old for in-app screen sharing'); return; }
     _goingLive=true;
     let granted=false;
