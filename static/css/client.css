@@ -2298,7 +2298,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media (min-width:821px) and (max-width:1366px){ body{ zoom:.67 } .app{ height:calc(100dvh / .67) } .main{ height:100% } }
 /* 4K / very large screens: at native 1.0 the whole app read a touch small on a big panel, so scale it
    up slightly (mirror of the laptop tiers, but above 1.0). Laptops (≤1920) are untouched. */
-@media (min-width:1921px){ body{ zoom:1.07 } .app{ height:calc(100dvh / 1.07) } .main{ height:100% } }
+@media (min-width:1921px){ body{ zoom:1.15 } .app{ height:calc(100dvh / 1.15) } .main{ height:100% } }
 /* Feed post cards are intrinsically sized for a big 4K panel (avatar 52px, body 18.5px), so at laptop
    widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
    the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
