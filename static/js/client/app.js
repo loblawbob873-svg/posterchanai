@@ -12392,6 +12392,32 @@
     return close;
   }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
+
+  // Ctrl/Cmd+F find-in-page. ONLY in the Electron desktop shell — a browser/PWA already has a real
+  // native find bar (Ctrl+F), but the desktop app has none, so the key did nothing. Uses the Chromium
+  // window.find() the renderer provides, so we don't have to walk/highlight text nodes ourselves.
+  (function(){
+    if(!/electron/i.test(navigator.userAgent||'')) return;   // don't override the browser's own find
+    let bar=null, inp=null, lastQ='';
+    const closeFind=()=>{ if(bar){ bar.remove(); bar=null; inp=null; } try{ window.getSelection().removeAllRanges(); }catch(_){} };
+    const doFind=(back)=>{ const q=inp.value; if(!q){ inp.classList.remove('nofind'); return; }
+      let ok=false; try{ ok=window.find(q, false, !!back, true, false, false, false); }catch(_){ }   // advances the selection each call
+      inp.classList.toggle('nofind', !ok); };
+    const openFind=()=>{ if(bar){ inp.focus(); inp.select(); return; }
+      bar=document.createElement('div'); bar.className='find-bar';
+      bar.innerHTML='<input type="text" class="find-input" placeholder="Find in page…" spellcheck="false"><button class="find-btn" data-f="prev" title="Previous (⇧Enter)">▲</button><button class="find-btn" data-f="next" title="Next (Enter)">▼</button><button class="find-btn" data-f="x" title="Close (Esc)">✕</button>';
+      document.body.appendChild(bar);
+      inp=bar.querySelector('.find-input'); if(lastQ) inp.value=lastQ; inp.focus(); inp.select();
+      inp.addEventListener('keydown', e=>{
+        if(e.key==='Enter'){ e.preventDefault(); lastQ=inp.value; doFind(e.shiftKey); }
+        else if(e.key==='Escape'){ e.preventDefault(); closeFind(); } });
+      bar.addEventListener('click', e=>{ const b=e.target.closest('[data-f]'); if(!b) return;
+        if(b.dataset.f==='x'){ closeFind(); return; } lastQ=inp.value; doFind(b.dataset.f==='prev'); inp.focus(); });
+    };
+    document.addEventListener('keydown', e=>{
+      if((e.ctrlKey||e.metaKey) && !e.altKey && !e.shiftKey && (e.key==='f'||e.key==='F')){ e.preventDefault(); openFind(); }
+    }, true);
+  })();
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
   // with the arrow keys / on-screen arrows / swipe, like every other client. null when there's nothing to
   // page through (a lone attachment, or an image sitting inline in the text).
