@@ -1,5 +1,48 @@
 """Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
+import asyncio
 from ._common import Callable, Optional, logger
+
+
+# Background node-agent runs. run_agent() is a long multi-step loop; awaiting it inline pins it to the
+# chat request, so closing the app would cancel it and lose the result. Instead we run it as a DETACHED
+# task with its OWN DB session and deliver the final summary through the same `notify` channel a finished
+# job uses (persisted to the conversation) — so the user can close the chat and the result lands when it's
+# done. We hold a reference to each task so it isn't garbage-collected mid-run.
+_AGENT_BG_TASKS: set = set()
+
+
+async def _agent_bg(targets, goal, uid, chat_service, notify):
+    """Run the agent over one-or-more (name, target) nodes on a FRESH session, then deliver the combined
+    summary via notify({'type':'agent_result', ...}) — chat.py persists + pushes it (queued if offline)."""
+    from app.database import SessionLocal
+    from app.models import User as _User
+    from app.services import node_service
+    db = SessionLocal()
+    sections = []
+    multi = len(targets) > 1
+    try:
+        u = db.query(_User).filter(_User.id == uid).first() if uid else None
+        for name, target in targets:
+            # Prefix live step-progress with the node name only when fanning out (matches the old `all` path).
+            nfy = (lambda txt, _p=name: notify(f"[{_p}] {txt}")) if (notify and multi) else notify
+            try:
+                sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service, notify=nfy))
+            except Exception as e:
+                logger.error(f"[node] background agent error on {name}: {e}", exc_info=True)
+                sections.append(f"## Agent on `{name}` — goal: {goal}\n\n**⚠️ Error:** {e}")
+    finally:
+        db.close()
+    if notify:
+        try:
+            await notify({"type": "agent_result", "content": "\n\n---\n\n".join(sections)})
+        except Exception as e:
+            logger.warning(f"[node] background agent deliver failed: {e}")
+
+
+def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
+    t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify))
+    _AGENT_BG_TASKS.add(t)
+    t.add_done_callback(_AGENT_BG_TASKS.discard)
 
 
 class _SystemMixin:
@@ -141,29 +184,33 @@ class _SystemMixin:
                 return {"type": "text", "content": "Usage: `node agent <name> <goal>` (or `node agent all <goal>`)"}
             name, goal = parts[1], parts[2]
 
-            # `node agent all <goal>` — run the agent on every node toward the same goal.
-            # Sequential (not parallel): they share one DB session, and LLM inference serializes
-            # on the GPU lock anyway, so parallelism wouldn't help and risks interleaved state.
+            # Resolve the node(s) to run against. `all` fans out over every node (sequentially: LLM
+            # inference serializes on the GPU lock, so parallelism wouldn't help and risks interleaved state).
             if name == "all":
-                sections = []
-                for _n, _t in nodes.items():
-                    _nfy = (lambda txt, _p=_n: notify(f"[{_p}] {txt}")) if notify else None
-                    try:
-                        sections.append(await node_service.run_agent(
-                            self.db, self.user, _n, _t, goal, self.chat_service, notify=_nfy))
-                    except Exception as e:
-                        logger.error(f"[node] agent error on {_n}: {e}", exc_info=True)
-                        sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n**⚠️ Error:** {e}")
-                return {"type": "text", "content": "\n\n---\n\n".join(sections)}
+                targets = list(nodes.items())
+                if not targets:
+                    return {"type": "text", "content": _fmt_nodes()}
+            else:
+                if name not in nodes:
+                    return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
+                targets = [(name, nodes[name])]
 
-            if name not in nodes:
-                return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
-            try:
-                summary = await node_service.run_agent(self.db, self.user, name, nodes[name], goal, self.chat_service, notify=notify)
-                return {"type": "text", "content": summary}
-            except Exception as e:
-                logger.error(f"[node] agent error: {e}", exc_info=True)
-                return {"type": "text", "content": f"Agent error: {e}"}
+            # With a live channel (web UI), run the agent in the BACKGROUND and post the result back when it's
+            # done — so the user can close the chat instead of babysitting a multi-minute run. Without one
+            # (no delivery channel), fall back to running inline and returning the summary directly.
+            if notify:
+                _spawn_agent_bg(targets, goal, self.user.id if self.user else None, self.chat_service, notify)
+                where = "all nodes" if name == "all" else f"`{name}`"
+                return {"type": "text", "content": f"🤖 Agent started on {where} — working on: {goal}\n\nI'll post the result here when it's done. You can close this and come back to it."}
+
+            sections = []
+            for _n, _t in targets:
+                try:
+                    sections.append(await node_service.run_agent(self.db, self.user, _n, _t, goal, self.chat_service, notify=None))
+                except Exception as e:
+                    logger.error(f"[node] agent error on {_n}: {e}", exc_info=True)
+                    sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n**⚠️ Error:** {e}")
+            return {"type": "text", "content": "\n\n---\n\n".join(sections)}
 
         # --- direct command: node <name> <command...> ---
         name = sub

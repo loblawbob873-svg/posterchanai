@@ -291,6 +291,27 @@ def list_conversations(
     ).order_by(Conversation.updated_at.desc()).all()
 
 
+@router.get("/node/state")
+def node_state(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Read-only state for the Node Control panel: node NAMES (never the SSH targets) + THIS user's own
+    jobs. Gated EXACTLY like the `node` command (node exec is unrestricted RCE) — a caller who isn't on
+    the node_exec allowlist gets 403 and learns nothing about the fleet. All *actions* (run / kill / log)
+    go through the already-gated chat command pipeline, so this endpoint mutates nothing."""
+    from app.services import node_service
+    if not node_service.is_enabled(db) or not node_service.user_allowed(db, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Node access is not enabled for your account")
+    names = list(node_service.get_nodes(db).keys())          # names only — targets (user@host) stay server-side
+    if not any(n.lower() == "local" for n in names):
+        names.insert(0, "local")                             # synthetic local target, like the node command
+    jobs = [
+        {"id": j.id, "node": j.node, "command": (j.command or "")[:120],
+         "status": j.status, "exit_code": j.exit_code,
+         "started_at": j.started_at, "finished_at": j.finished_at}
+        for j in node_service.list_jobs(user_id=current_user.id, limit=20)   # owner-scoped; no output blob
+    ]
+    return {"enabled": True, "nodes": names, "jobs": jobs}
+
+
 @router.post("/conversations", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED)
 def create_conversation(
     data: ConversationCreate,
@@ -1572,6 +1593,29 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": job}}, _conn, _conv)
                                         except Exception as _e:
                                             logger.warning(f"[node] webui step notify failed: {_e}")
+                                        return
+                                    # Background AGENT finished — persist its summary to the conversation and
+                                    # push it (queued if the socket is gone), so a run the user walked away
+                                    # from still lands here when it's done. Same delivery shape as a job.
+                                    if isinstance(job, dict) and job.get("type") == "agent_result":
+                                        _atext = (job.get("content") or "").strip() or "(the agent produced no summary)"
+                                        _adb = SessionLocal()
+                                        try:
+                                            _adb.add(_Msg(conversation_id=_conv, role="assistant", content=_atext))
+                                            _ac = _adb.query(_Conv).filter(_Conv.id == _conv).first()
+                                            if _ac:
+                                                _ac.updated_at = datetime.utcnow()
+                                            _adb.commit()
+                                        except Exception as _e:
+                                            logger.warning(f"[node] webui agent-result save failed: {_e}")
+                                            _adb.rollback()
+                                        finally:
+                                            _adb.close()
+                                        try:
+                                            await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": _atext}}, _conn, _conv)
+                                            await manager.send_json(_uid, {"type": "stream_end"}, _conn)
+                                        except Exception as _e:
+                                            logger.warning(f"[node] webui agent-result send failed: {_e}")
                                         return
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()
