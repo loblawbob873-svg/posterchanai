@@ -214,13 +214,27 @@ def _read_config() -> dict:
             # ingest_kinds) addressed to this node from the upstream cluster relay — so a node can use
             # ONLY its local relay and still receive jobs/results via the WoT upstream sync.
             "dvm_enabled": gb("nostr_dvm_enabled", False),
+            # Node-agent transport (kind 5300/6300 exec-over-Nostr) rides the SAME firehose DVM
+            # subscription, but it's a SEPARATE feature from GPU-sharing DVM — so the DVM firehose
+            # branch spawns when EITHER is on (a node can run agent commands without offloading compute).
+            "agent_enabled": gb("node_exec_nostr_enabled", False),
             # Shared-cluster PEERS → the relay's write-gate accepts these npubs' DVM job-kind events even
             # if they aren't WoT members (sharing compute is a deliberate grant, separate from the social
-            # web of trust). Each `nostr_dvm_peers` line is "npub relay"; we take the leading npub.
-            "dvm_allowed": frozenset(filter(None,
-                (nostr_service.to_pubkey_hex(_ln.split()[0])
-                 for _ln in g("nostr_dvm_peers", "").replace(",", "\n").splitlines() if _ln.split()))),
-            "dvm_req_kinds": frozenset((5050, 5100, 5201, 5202)),  # NIP-90 request kinds (see nostr_dvm._REQ_KIND)
+            # web of trust). Each `nostr_dvm_peers` line is "npub relay"; we take the leading npub. The
+            # node-agent transport (kind 5300/6300) rides the SAME DVM cluster path, so its worker nodes
+            # (`node_exec_node_npubs`, "name npub" per line) and controllers (`node_exec_trusted_npubs`,
+            # one npub per line/comma) are allowlisted here too — exec is still gated a second time by
+            # nostr_dvm.is_agent_trusted before anything runs.
+            "dvm_allowed": frozenset(filter(None, (
+                *(nostr_service.to_pubkey_hex(_ln.split()[0])
+                  for _ln in g("nostr_dvm_peers", "").replace(",", "\n").splitlines() if _ln.split()),
+                *(nostr_service.to_pubkey_hex(_ln.split()[1])
+                  for _ln in g("node_exec_node_npubs", "").splitlines() if len(_ln.split()) >= 2),
+                *(nostr_service.to_pubkey_hex(_ln.strip())
+                  for _ln in g("node_exec_trusted_npubs", "").replace(",", "\n").splitlines() if _ln.strip()),
+            ))),
+            # NIP-90 request kinds (see nostr_dvm._REQ_KIND); 5300 = node-agent exec (result 6300).
+            "dvm_req_kinds": frozenset((5050, 5100, 5201, 5202, 5300)),
             # How many upstream relays the firehose streams from (0 = ALL). It's the sole
             # real-time ingestion path now, so default to all for completeness.
             "firehose_max_relays": gi("nostr_relay_firehose_max_relays", 0),
@@ -692,10 +706,12 @@ async def _main(cfg: dict) -> None:
                              max_relays=mr, extra={"#p": _ops}, stagger_span=span, label=" (DM inbox)")))
             # Distributed-LB (DVM): stream cluster job (5xxx) + result (6xxx) events addressed to
             # THIS node (#p=operator) from the upstream cluster relay, so a worker can use only its
-            # LOCAL relay and still receive jobs/results via the WoT upstream sync.
-            if cfg.get("dvm_enabled"):
+            # LOCAL relay and still receive jobs/results via the WoT upstream sync. Also covers the
+            # node-agent transport (5300/6300) whenever exec-over-Nostr is enabled on this node.
+            if cfg.get("dvm_enabled") or cfg.get("agent_enabled"):
                 grp.append(asyncio.create_task(
-                    run_firehose(cfg["upstream"], [5050, 5100, 5201, 5202, 6050, 6100, 6201, 6202],
+                    run_firehose(cfg["upstream"],
+                                 [5050, 5100, 5201, 5202, 5300, 6050, 6100, 6201, 6202, 6300],
                                  _firehose_event, fstop, cfg["direct"], max_relays=mr,
                                  extra={"#p": _ops}, stagger_span=span, label=" (DVM)")))
         _firehose["tasks"], _firehose["stop"] = grp, fstop
@@ -887,6 +903,7 @@ async def _main(cfg: dict) -> None:
                             cfg["ingest_kinds"] = fresh["ingest_kinds"]
                             cfg["operator"] = fresh["operator"]
                             cfg["dvm_enabled"] = fresh["dvm_enabled"]
+                            cfg["agent_enabled"] = fresh["agent_enabled"]
                             # Respawn the receive path FIRST; only retarget the send path once it
                             # succeeds, so a respawn failure doesn't leave the outbox publishing to
                             # the new set while the firehose ingests nothing.
