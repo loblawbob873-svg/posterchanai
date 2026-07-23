@@ -1637,6 +1637,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             await manager.send_json(_uid, {"type": "stream_end"}, _conn)
                                         except Exception as _e:
                                             logger.warning(f"[node] webui agent-result send failed: {_e}")
+                                        # A background agent finishes minutes later, and the user has usually navigated
+                                        # away from the launch chat — so the result above is queued/invisible and they
+                                        # have "no idea when it finished or failed". Broadcast a completion signal to ALL
+                                        # the user's sockets (conn_id=None) so the client toasts it whatever they're viewing.
+                                        try:
+                                            _ok = not any(_m in _atext for _m in ("⚠️", "❌", "⏹️", "Stopped", "Error"))
+                                            await manager.send_json(_uid, {"type": "agent_done", "ok": _ok, "conv": _conv})
+                                        except Exception:
+                                            pass
                                         return
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()

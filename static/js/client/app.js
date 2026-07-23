@@ -10899,7 +10899,19 @@
       _ai.streamEl=null; _ai.streamBuf=''; _ai.awaiting=false;
     } else if(d.type==='reminder'){
       reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder');   // fired reminder → popup + sound
+    } else if(d.type==='agent_done'){
+      _agentDoneNotify(!!d.ok, d.conv);   // background agent finished — tell the user wherever they are
     }
+  }
+  // A background agent run finished (success or failure). The result was persisted to its launch
+  // conversation, but the user has usually navigated away — so surface a longer-lived, CLICKABLE toast
+  // that jumps to that chat, and if they're already on it, reload so the persisted result renders.
+  function _agentDoneNotify(ok, conv){
+    if(VIEW==='ai' && _ai.convId===conv){ try{ aiOpenConversation(conv); }catch(_){} }
+    const t=document.createElement('div'); t.className='toast'; t.style.cursor='pointer';
+    t.textContent=(ok?'✅ Agent run finished':'⚠️ Agent run finished with problems')+' — tap to open';
+    t.onclick=()=>{ try{ t.remove(); }catch(_){} switchView('ai'); if(conv) aiOpenConversation(conv); };
+    const root=$('#toast-root'); if(root){ root.appendChild(t); setTimeout(()=>{ try{ t.remove(); }catch(_){} }, 12000); }
   }
   // A reminder fired (pushed over the chat WS) — full-screen pulsing card + a beep, like the old UI.
   function reminderAlert(text){
