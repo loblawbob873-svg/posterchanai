@@ -58,6 +58,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "fire": "Set an attached image on fire: fire",
         "gay": "Stamp a big red GAY rubber stamp on an attached image: gay",
         "hag": "Stamp a big red HAG stamp + draw a cute old lady on an attached image: hag",
+        "goon": "Stamp a big red GOON rubber stamp on an attached image: goon",
         "blacked": "Slap the BLACKED logo on an attached image: blacked",
         "kosher": "Stamp a 100% KOSHER certification seal on an attached image: kosher",
         "blue": "Smear dripping blue paint around the mouth (then stamp KOSHER) on an attached image: blue",
@@ -158,7 +159,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "saved": "pins",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "hag",
+        "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze",
@@ -563,6 +564,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._gay_command(attachments)
         elif command == "hag":
             return await self._hag_command(attachments)
+        elif command == "goon":
+            return await self._goon_command(attachments)
         elif command == "blacked":
             return await self._blacked_command(attachments)
         elif command == "kosher":

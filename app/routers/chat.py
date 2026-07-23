@@ -118,7 +118,7 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
 
 # Commands whose handlers consume the RAW uploaded file bytes (not extracted text). Shared by the
 # chat WebSocket handler and the HTTP `/chat/send` fallback so both gate attachment-building the same.
-MEDIA_ATTACHMENT_COMMANDS = ("bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "hag", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse")
+MEDIA_ATTACHMENT_COMMANDS = ("bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "hag", "goon", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse")
 
 
 async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: str) -> str | None:
@@ -403,6 +403,16 @@ async def delete_conversation(
         # Already gone: deleting twice is not an error, and racing DELETEs used to 500 on the second
         # one (ObjectDeletedError) because the row vanished under the session.
         return {"ok": True, "already_deleted": True}
+
+    # Cancel any background agent launched from this chat — otherwise deleting the chat leaves the run
+    # churning and its result would RESURRECT the chat you just deleted. Cancel reaps its sandbox
+    # container (the task's finally) and skips delivery.
+    try:
+        from app.services.command_service.system import cancel_agent_for_conv
+        if cancel_agent_for_conv(conversation_id):
+            logger.info("[node] cancelled background agent for deleted conv %s", conversation_id)
+    except Exception as _e:
+        logger.warning("[node] agent-cancel on delete failed for conv %s: %s", conversation_id, _e)
 
     # Refuse while a command is still running on this conversation. A slow one (flashcards took 222s)
     # outlives the websocket, the chat looks dead, and deleting it purges the conversation before the
@@ -1689,6 +1699,9 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         await manager.send_json(_uid, {"type": "stream_end"}, _conn)
                                     except Exception as _e:
                                         logger.warning(f"[node] webui notify send failed: {_e}")
+                                # Tag the closure with its launch conversation so deleting that chat can
+                                # find + cancel a still-running background agent (system.cancel_agent_for_conv).
+                                node_notify.conv_id = conversation_id
 
                             # Keep the socket alive across a long render. Effects/video run in a worker
                             # thread (asyncio.to_thread), so the event loop is FREE here — but with no

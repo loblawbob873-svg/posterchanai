@@ -203,6 +203,21 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _goon_command(self, attachments: Optional[list]) -> dict:
+        """Stamp a big red GOON rubber stamp on an attached image: `goon`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `goon`."}
+
+        import asyncio
+        from app.services.effects_service import goon_attachments
+
+        outputs, summary = await asyncio.to_thread(goon_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _hag_command(self, attachments: Optional[list]) -> dict:
         """Stamp a big red HAG rubber stamp + a cute old lady on an attached image: `hag`."""
         from app.services.media_service import is_image

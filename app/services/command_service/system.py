@@ -63,10 +63,34 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
             logger.warning(f"[node] background agent deliver failed: {e}")
 
 
+_AGENT_BG_BY_CONV: dict = {}   # conversation_id -> task, so deleting the chat cancels the run
+
+
 def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
     t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify))
     _AGENT_BG_TASKS.add(t)
-    t.add_done_callback(_AGENT_BG_TASKS.discard)
+    # The chat.py notify closure carries the launch conversation id (set as an attribute), so a delete
+    # of that chat can find and cancel THIS run instead of leaving it churning + resurrecting the chat.
+    _conv = getattr(notify, "conv_id", None)
+    if _conv is not None:
+        _AGENT_BG_BY_CONV[_conv] = t
+
+    def _done(_t):
+        _AGENT_BG_TASKS.discard(_t)
+        if _conv is not None and _AGENT_BG_BY_CONV.get(_conv) is _t:
+            _AGENT_BG_BY_CONV.pop(_conv, None)
+    t.add_done_callback(_done)
+
+
+def cancel_agent_for_conv(conv_id) -> bool:
+    """Cancel a background agent tied to this conversation (called when the chat is deleted). The task's
+    per-target `finally` still reaps any sandbox container; the cancel skips result delivery, so a
+    deliberately-deleted chat is NOT resurrected. Returns True if a live run was cancelled."""
+    t = _AGENT_BG_BY_CONV.pop(conv_id, None)
+    if t is not None and not t.done():
+        t.cancel()
+        return True
+    return False
 
 
 class _SystemMixin:
