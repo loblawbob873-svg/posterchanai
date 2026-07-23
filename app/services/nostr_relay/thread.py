@@ -235,6 +235,12 @@ def _read_config() -> dict:
             ))),
             # NIP-90 request kinds (see nostr_dvm._REQ_KIND); 5300 = node-agent exec (result 6300).
             "dvm_req_kinds": frozenset((5050, 5100, 5201, 5202, 5300)),
+            # DVM RESULT kinds (request + 1000). A node with its OWN relay publishes results as a WoT
+            # member, so this never mattered — but the STANDALONE agent (agent/pcnode_agent.py, e.g.
+            # router.lan) is a keyless client with no local relay: it publishes its 6xxx result to a
+            # peer's relay as a NON-member, so the write-gate must accept result kinds from a
+            # dvm_allowed npub too (else the command runs but the result is rejected + never returns).
+            "dvm_res_kinds": frozenset((6050, 6100, 6201, 6202, 6300)),
             # How many upstream relays the firehose streams from (0 = ALL). It's the sole
             # real-time ingestion path now, so default to all for completeness.
             "firehose_max_relays": gi("nostr_relay_firehose_max_relays", 0),

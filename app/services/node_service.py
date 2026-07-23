@@ -1,18 +1,19 @@
-"""Remote node management: run OS commands on configured nodes over SSH (or 'local'
-on this host), as long-running background jobs, plus a small agentic loop that lets the
-LLM drive commands toward a natural-language goal.
+"""Node management: run OS commands + an agentic loop toward a natural-language goal.
+
+Transport is **Nostr-only** (SSH removed): a REMOTE node is a worker addressed by its npub —
+the command rides an encrypted NIP-90 event to it (`run_agent_over_nostr` → `nostr_dvm.run_remote`),
+the worker runs it LOCALLY and returns an encrypted result. The single exception is ``local``:
+commands for THIS host run directly here as subprocesses (no round-trip to self). The node registry
+is `node_exec_node_npubs` (`name npub…`); see `all_nodes()`. The system health report
+(logs_scheduler) drives the same two paths.
 
 Config lives in admin Settings:
   node_exec_enabled            "true"/"false"
-  node_exec_nodes              one per line: name|user@host  (host 'local'/empty = this host)
+  node_exec_node_npubs         one per line: name npub…   (the worker for each remote node)
+  node_exec_trusted_npubs      controllers allowed to run commands on THIS host (worker side)
   node_exec_users              comma/newline-separated npubs allowed (first user/admin always allowed)
   node_exec_agent_max_steps    max LLM iterations in agentic mode
   node_exec_job_timeout        per-job timeout in seconds (0 = no timeout)
-
-Remote nodes need nothing installed: we just SSH in with key-based BatchMode auth. This
-works for any SSH-reachable device (servers, routers, switches) - the target never runs
-posterchanai code. The system health report (logs_scheduler) drives run_agent over this
-same path, so SSH/local execution lives here only.
 """
 import asyncio
 import logging
@@ -57,48 +58,19 @@ def is_enabled(db: Session) -> bool:
     return _get(db, "node_exec_enabled", "false").strip().lower() == "true"
 
 
-def get_nodes(db: Session) -> dict[str, str]:
-    """Parse node_exec_nodes into {name: target}. target 'local' means run on this host."""
-    nodes: dict[str, str] = {}
-    raw = _get(db, "node_exec_nodes", "")
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or "|" not in line:
-            continue
-        name, target = line.split("|", 1)
-        name, target = name.strip(), target.strip()
-        if not name:
-            continue
-        nodes[name] = target if target else "local"
-    return nodes
-
-
-def _local_host_ids() -> set:
-    """Names/IPs that identify THIS host (for collapsing a node that points back at ourselves)."""
-    import socket
-    ids = {"localhost", "127.0.0.1", "0.0.0.0", "::1", ""}
-    try:
-        hostname = socket.gethostname()
-        ids.add(hostname.lower())
-        ids.add(socket.getfqdn().lower())
-        ids.add(socket.gethostbyname(hostname))
-        for info in socket.getaddrinfo(hostname, None):
-            ip = info[4][0]
-            if ip and not ip.startswith("::"):
-                ids.add(ip)
-    except Exception:
-        pass
-    return ids
-
-
-def is_local_target(target: str) -> bool:
-    """True if an SSH-style target (``user@host``/``host``/``local``/empty) is this machine.
-    Used to dedupe a Remote Node Management entry that points at our own LB IP against ``local``."""
-    t = (target or "").strip().lower()
-    if not t or t == "local":
-        return True
-    host = t.split("@", 1)[-1].split(":", 1)[0].strip()
-    return host in _local_host_ids()
+def all_nodes(db: Session) -> dict[str, str]:
+    """The Nostr-only node registry: ``name -> target`` where target is ``"local"`` (run directly on
+    THIS host) or ``"nostr:<pkhex>"`` (a worker addressed over Nostr). Sourced from
+    `node_exec_node_npubs`; a synthetic ``local`` is always present, and any mapped npub equal to THIS
+    host's own worker key collapses to ``local`` (run here — no encrypted round-trip to self). This is
+    the single builder shared by the `node` command, `/api/node/state`, and the health report, so the
+    node list can never drift or double-count a host."""
+    from app.services import nostr_dvm
+    out: dict[str, str] = {"local": "local"}
+    me = (nostr_dvm.node_pubkey() or "").lower()
+    for name, pk in nostr_dvm.agent_node_map().items():
+        out[name] = "local" if (pk and pk.lower() == me) else f"nostr:{pk}"
+    return out
 
 
 def user_allowed(db: Session, user: Optional["User"]) -> bool:
@@ -196,35 +168,25 @@ class Job:
         return self.status != "running"
 
 
-def _ssh_argv(target: str, command: str) -> list[str]:
-    # List form (exec, no shell) so the command reaches the remote as a single argument,
-    # which keeps awk/grep quoting intact in transit.
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, command]
-
-
 async def _run(job: Job, timeout: Optional[float]) -> None:
-    """Spawn the process, stream merged output into job.output, and finalize status."""
+    """Spawn the LOCAL process, stream merged output into job.output, and finalize status.
+
+    Jobs only ever run on ``local`` now — remote nodes go over Nostr (`run_agent_over_nostr`), where the
+    worker runs its own local job. A non-local target here is a routing bug, so fail loudly."""
     try:
+        if job.target != "local":
+            raise RuntimeError(f"node_service jobs are local-only now; remote '{job.target}' must go over Nostr")
         # start_new_session=True puts each job in its OWN process group/session, so on
         # timeout/kill we can signal the whole group (the shell AND its children, e.g. a `sleep`
         # in `cmd && sleep 10`) instead of orphaning grandchildren. Also makes getpgid(pid)==pid,
         # so _terminate's killpg can only ever hit this job's group, never the service.
-        if job.target == "local":
-            proc = await asyncio.create_subprocess_shell(
-                job.command,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
-        else:
-            proc = await asyncio.create_subprocess_exec(
-                *_ssh_argv(job.target, job.command),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
+        proc = await asyncio.create_subprocess_shell(
+            job.command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
         job._proc = proc
 
         async def pump() -> None:

@@ -8,9 +8,11 @@ Type=simple
 # Filled in by install-agent.sh (User, WorkingDirectory, ExecStart, Environment).
 User=__USER__
 WorkingDirectory=__DIR__
-Environment=PCNODE_RELAY=__RELAY__
-Environment=PCNODE_TRUST=__TRUST__
-Environment=PCNODE_DATA=__DATA__
+# Quote the values: systemd Environment= otherwise splits on spaces, silently dropping every trust
+# npub / relay after the first (a multi-controller worker would then trust/hear only one of them).
+Environment="PCNODE_RELAY=__RELAY__"
+Environment="PCNODE_TRUST=__TRUST__"
+Environment="PCNODE_DATA=__DATA__"
 ExecStart=__PY__ __DIR__/pcnode_agent.py
 Restart=always
 RestartSec=5

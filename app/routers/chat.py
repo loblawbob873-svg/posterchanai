@@ -300,14 +300,9 @@ def node_state(db: Session = Depends(get_db), current_user: User = Depends(get_c
     from app.services import node_service
     if not node_service.is_enabled(db) or not node_service.user_allowed(db, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Node access is not enabled for your account")
-    names = list(node_service.get_nodes(db).keys())          # names only — targets (user@host) stay server-side
-    from app.services import nostr_dvm                        # Nostr workers (addressed by npub) — names only
-    if nostr_dvm.agent_worker_enabled():
-        for _nn in nostr_dvm.agent_node_map().keys():
-            if _nn not in names:
-                names.append(_nn)
-    if not any(n.lower() == "local" for n in names):
-        names.insert(0, "local")                             # synthetic local target, like the node command
+    # Nostr-only registry: synthetic `local` + the npub workers (a self-mapped npub collapses to
+    # local). Single builder, so the dropdown never double-counts a host. Names only — no targets.
+    names = list(node_service.all_nodes(db).keys())
     jobs = [
         {"id": j.id, "node": j.node, "command": (j.command or "")[:120],
          "status": j.status, "exit_code": j.exit_code,
@@ -1606,10 +1601,19 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         _atext = (job.get("content") or "").strip() or "(the agent produced no summary)"
                                         _adb = SessionLocal()
                                         try:
-                                            _adb.add(_Msg(conversation_id=_conv, role="assistant", content=_atext))
+                                            # The panel opens a FRESH conversation per run; a multi-minute agent
+                                            # outlives it and the row can be gone by the time the result lands
+                                            # (deleted/pruned) → a bare insert FK-violates and the result is LOST
+                                            # ("never came back"). Resurrect the exact conversation id (safe: the
+                                            # id sequence has moved past it, so no collision) so the message
+                                            # persists AND the client's live push to _conv still matches.
                                             _ac = _adb.query(_Conv).filter(_Conv.id == _conv).first()
-                                            if _ac:
-                                                _ac.updated_at = datetime.utcnow()
+                                            if not _ac:
+                                                _ac = _Conv(id=_conv, user_id=_uid, title="🤖 Agent run")
+                                                _adb.add(_ac)
+                                                _adb.flush()
+                                            _ac.updated_at = datetime.utcnow()
+                                            _adb.add(_Msg(conversation_id=_conv, role="assistant", content=_atext))
                                             _adb.commit()
                                         except Exception as _e:
                                             logger.warning(f"[node] webui agent-result save failed: {_e}")
@@ -1641,10 +1645,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                 _text += f"\n\n[⬇️ full output](/api/files/{_q(_uname, safe='')}/{_conv}/{_q(_saved)})"
                                             except Exception as _fe:
                                                 logger.warning(f"[node] webui full-output save failed: {_fe}")
-                                        _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))
+                                        # Resurrect the conversation if a long job outlived it (same reason as
+                                        # the agent-result branch above) so the finished job's output is never lost.
                                         _c = _db.query(_Conv).filter(_Conv.id == _conv).first()
-                                        if _c:
-                                            _c.updated_at = datetime.utcnow()
+                                        if not _c:
+                                            _c = _Conv(id=_conv, user_id=_uid, title="🛰️ Node job")
+                                            _db.add(_c)
+                                            _db.flush()
+                                        _c.updated_at = datetime.utcnow()
+                                        _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))
                                         _db.commit()
                                     except Exception as _e:
                                         logger.warning(f"[node] webui notify save failed: {_e}")

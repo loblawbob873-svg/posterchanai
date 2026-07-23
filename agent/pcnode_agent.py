@@ -142,9 +142,12 @@ class Agent:
         self.pk = bip340.pubkey_from_seckey(self.sk).hex()
         self.npub = npub(self.pk)
         self.trusted = set(filter(None, (decode_npub(t) for t in cfg.trust)))
-        self.queue: asyncio.Queue = asyncio.Queue()
-        self.seen: set = set()          # dedup by event id
-        self.ws = None
+        import re as _re
+        _raw = cfg.relay if isinstance(cfg.relay, list) else [cfg.relay]
+        self.relays = [u for entry in _raw for u in _re.split(r"[,\s]+", (entry or "").strip()) if u] \
+            or ["wss://poster.place/relay"]
+        self.queue: asyncio.Queue = asyncio.Queue()   # holds (event, ws) so the reply goes back the way it came
+        self.seen: set = set()          # dedup by event id (shared across relays)
 
     def _decrypt(self, author_hex: str, content: str) -> dict | None:
         try:
@@ -160,9 +163,11 @@ class Agent:
                                   tags=[["p", author_hex], ["e", req_id]])
 
     async def _worker(self):
-        """Single consumer → ONE job at a time (queue prevents overload)."""
+        """Single consumer → ONE job at a time (queue prevents overload). Each item is (event, ws):
+        the result is published back on the SAME relay the request arrived on, which is where the
+        controller awaits it (a controller only ever sees its own relay)."""
         while True:
-            ev = await self.queue.get()
+            ev, ws = await self.queue.get()
             author = ev["pubkey"]
             params = self._decrypt(author, ev["content"]) or {}
             jid = params.get("id") or ev["id"][:8]
@@ -173,14 +178,10 @@ class Agent:
                 result = {"status": "error", "summary": f"agent error: {e}", "output": "", "exit": None}
             log.info("✔ job %s → %s", jid, result.get("status"))
             try:
-                await self._send(["EVENT", self._result_event(author, ev["id"], jid, result)])
+                await ws.send(json.dumps(["EVENT", self._result_event(author, ev["id"], jid, result)]))
             except Exception as e:
                 log.warning("publish result failed for %s: %s", jid, e)
             self.queue.task_done()
-
-    async def _send(self, msg: list):
-        if self.ws:
-            await self.ws.send(json.dumps(msg))
 
     def _accept(self, ev: dict) -> bool:
         if ev.get("kind") != REQ_KIND or ev.get("id") in self.seen:
@@ -193,25 +194,18 @@ class Agent:
             return False
         return True
 
-    async def run(self):
-        print(f"\n  pcnode agent — this worker's npub:\n\n    {self.npub}\n")
-        print(f"  Add it as a Worker node AND trust your controller npub(s): {', '.join(npub(t) for t in self.trusted) or '(none set — use --trust)'}")
-        print(f"  Relay: {self.cfg.relay}\n", flush=True)
-        if not self.trusted:
-            log.warning("No --trust npubs set: this worker will accept NOTHING until you add one.")
-        try:
-            import websockets
-        except ImportError:
-            sys.exit("Missing dependency: pip install websockets")
-        asyncio.create_task(self._worker())
+    async def _listen(self, relay: str):
+        """Connect to ONE relay, subscribe for our command events, and enqueue accepted ones with this
+        relay's ws so the reply goes back here. Reconnects forever. Runs one per configured relay so a
+        keyless worker can be commanded by MULTIPLE controllers (each publishes only to its own relay)."""
+        import websockets
         while True:
             try:
-                async with websockets.connect(self.cfg.relay, max_size=2 ** 22, ping_interval=30) as ws:
-                    self.ws = ws
+                async with websockets.connect(relay, max_size=2 ** 22, ping_interval=30) as ws:
                     sub = "pcnode-" + os.urandom(4).hex()
                     await ws.send(json.dumps(["REQ", sub, {"kinds": [REQ_KIND], "#p": [self.pk],
                                                             "since": int(time.time()) - 5}]))
-                    log.info("connected to %s, listening…", self.cfg.relay)
+                    log.info("connected to %s, listening…", relay)
                     async for raw in ws:
                         try:
                             m = json.loads(raw)
@@ -221,16 +215,30 @@ class Agent:
                             ev = m[2]
                             if self._accept(ev):
                                 self.seen.add(ev["id"])
-                                await self.queue.put(ev)
+                                await self.queue.put((ev, ws))
             except Exception as e:
-                self.ws = None
-                log.warning("relay connection lost (%s); reconnecting in 5s…", e)
+                log.warning("relay %s connection lost (%s); reconnecting in 5s…", relay, e)
                 await asyncio.sleep(5)
+
+    async def run(self):
+        print(f"\n  pcnode agent — this worker's npub:\n\n    {self.npub}\n")
+        print(f"  Add it as a Worker node AND trust your controller npub(s): {', '.join(npub(t) for t in self.trusted) or '(none set — use --trust)'}")
+        print(f"  Relays: {', '.join(self.relays)}\n", flush=True)
+        if not self.trusted:
+            log.warning("No --trust npubs set: this worker will accept NOTHING until you add one.")
+        try:
+            import websockets  # noqa: F401
+        except ImportError:
+            sys.exit("Missing dependency: pip install websockets")
+        asyncio.create_task(self._worker())
+        await asyncio.gather(*(self._listen(r) for r in self.relays))
 
 
 def main():
     ap = argparse.ArgumentParser(description="PosterChan standalone node agent")
-    ap.add_argument("--relay", default=os.environ.get("PCNODE_RELAY", "wss://poster.place/relay"))
+    ap.add_argument("--relay", default=os.environ.get("PCNODE_RELAY", "wss://poster.place/relay"),
+                    help="relay URL(s) — repeatable, or one arg with comma/space-separated URLs. Connect to "
+                         "EACH controller's relay so any of them can command this worker.", action="append")
     ap.add_argument("--trust", action="append", default=(os.environ.get("PCNODE_TRUST", "").split() or []),
                     help="controller npub allowed to command this worker (repeatable)")
     ap.add_argument("--data-dir", default=os.environ.get("PCNODE_DATA", os.path.expanduser("~/.pcnode-agent")))

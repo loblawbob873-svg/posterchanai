@@ -148,20 +148,12 @@ def get_logs_settings(db=None) -> dict:
 
 
 def selected_nodes(db) -> dict:
-    """Return {name: target} for the nodes to include in the report — just the Remote Node
-    Management nodes (Admin → Services). No synthetic ``local``: this host is already one of those
-    entries (its own LB IP), so adding ``local`` reported it twice. A node that points back at THIS
-    host runs locally (no SSH-to-self). ``logs_nodes`` (if set) narrows by name; empty = all."""
-    available = {
-        name: ("local" if node_service.is_local_target(target) else target)
-        for name, target in node_service.get_nodes(db).items()
-    }
-    # Nostr-addressed workers (node_exec_node_npubs) go through the Nostr transport — mark them so the
-    # loop dispatches over Nostr instead of SSH. Their run_agent/uptime rides the same encrypted channel.
-    from app.services import nostr_dvm
-    if nostr_dvm.agent_worker_enabled():
-        for _nn, _pk in nostr_dvm.agent_node_map().items():
-            available.setdefault(_nn, f"nostr:{_pk}")
+    """Return {name: target} for the nodes to include in the report. Nostr-only: the shared
+    `node_service.all_nodes` registry — synthetic ``local`` (this host, direct) + the npub workers
+    (`node_exec_node_npubs`) as ``nostr:<pkhex>``; a self-mapped npub collapses to ``local`` so the
+    host is never reported twice. The loop dispatches ``nostr:`` targets over the encrypted channel and
+    ``local`` directly. ``logs_nodes`` (if set) narrows by name; empty = all."""
+    available = node_service.all_nodes(db)
     chosen = get_logs_settings(db)["nodes"]
     if not chosen:
         return available

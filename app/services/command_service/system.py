@@ -13,7 +13,9 @@ _AGENT_BG_TASKS: set = set()
 
 async def _agent_bg(targets, goal, uid, chat_service, notify):
     """Run the agent over one-or-more (name, target) nodes on a FRESH session, then deliver the combined
-    summary via notify({'type':'agent_result', ...}) — chat.py persists + pushes it (queued if offline)."""
+    summary via notify({'type':'agent_result', ...}) — chat.py persists + pushes it (queued if offline).
+    Each target is "local" (LLM loop runs HERE) or "nostr:<pkhex>" (the worker runs its own loop and
+    returns an encrypted summary) — SSH is gone."""
     from app.database import SessionLocal
     from app.models import User as _User
     from app.services import node_service
@@ -26,7 +28,13 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
             # Prefix live step-progress with the node name only when fanning out (matches the old `all` path).
             nfy = (lambda txt, _p=name: notify(f"[{_p}] {txt}")) if (notify and multi) else notify
             try:
-                sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service, notify=nfy))
+                if target.startswith("nostr:"):
+                    if nfy:
+                        await nfy(f"🛰️ dispatching to `{name}` over Nostr…")
+                    body = await node_service.run_agent_over_nostr(target[len("nostr:"):], goal, mode="agent")
+                    sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
+                else:
+                    sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service, notify=nfy))
             except Exception as e:
                 logger.error(f"[node] background agent error on {name}: {e}", exc_info=True)
                 sections.append(f"## Agent on `{name}` — goal: {goal}\n\n**⚠️ Error:** {e}")
@@ -82,13 +90,15 @@ class _SystemMixin:
 
         parts = arg.strip().split(maxsplit=2)
         sub = parts[0].lower() if parts else ""
-        nodes = node_service.get_nodes(self.db)
-        if "local" not in nodes:
-            nodes["local"] = "local"   # synthetic 'local' = run on THIS host (matches the panel + logs report)
-        # Nostr transport: nodes addressed by npub (node_exec_node_npubs). When on, a `node <name> …` for an
-        # npub-mapped name is dispatched over Nostr (run_remote) instead of SSH. See docs/NODE_AGENT_NOSTR.md.
         from app.services import nostr_dvm
-        _npub_nodes = nostr_dvm.agent_node_map() if nostr_dvm.agent_worker_enabled() else {}
+        # Nostr-only registry (SSH removed). `_reg`: name -> "local" (run on THIS host directly) or
+        # "nostr:<pkhex>" (a worker addressed over an encrypted NIP-90 event — the worker runs it
+        # locally and returns the result; see docs/NODE_AGENT_NOSTR.md). Split into the two shapes the
+        # rest of this method expects: `nodes` (local-run names, value "local") and `_npub_nodes`
+        # (name -> worker pubkey hex). A self-mapped npub lands in `nodes` (no round-trip to self).
+        _reg = node_service.all_nodes(self.db)
+        nodes = {n: t for n, t in _reg.items() if not t.startswith("nostr:")}
+        _npub_nodes = {n: t[len("nostr:"):] for n, t in _reg.items() if t.startswith("nostr:")}
 
         def _fmt_nodes() -> str:
             if not nodes and not _npub_nodes:
@@ -178,32 +188,33 @@ class _SystemMixin:
             ok = node_service.kill_job(int(parts[1]), user_id=_uid)
             return {"type": "text", "content": f"{'🛑 Killed' if ok else 'Could not kill (already finished?)'} job #{parts[1]}."}
 
-        # --- fan-out: run the same command on every node ---
+        # --- fan-out: run the same command on every node (local jobs + Nostr workers) ---
         if sub == "all":
             import asyncio
             command = arg.strip()[len(parts[0]):].strip()
             if not command:
                 return {"type": "text", "content": "Usage: `node all <command>`"}
-            if not nodes:
+            if not _reg:
                 return {"type": "text", "content": _fmt_nodes()}
-            jobs = {
-                name: node_service.start_job(
-                    self.db, name, target, command,
-                    user_id=self.user.id if self.user else None,
-                )
-                for name, target in nodes.items()
-            }
-            await asyncio.gather(*(node_service.await_job(j, wait=10.0) for j in jobs.values()))
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}
-            lines = [f"## `{command}` on {len(jobs)} node(s)"]
+            lines = [f"## `{command}` on {len(_reg)} node(s)"]
+            # Local nodes → background jobs (await briefly); Nostr workers → encrypted dispatch (await result).
+            jobs = {name: node_service.start_job(self.db, name, "local", command,
+                                                 user_id=self.user.id if self.user else None)
+                    for name in nodes}
+            _nostr_results = await asyncio.gather(*(
+                _dispatch_nostr(name, pk, "shell", command) for name, pk in _npub_nodes.items()
+            )) if _npub_nodes else []
+            await asyncio.gather(*(node_service.await_job(j, wait=10.0) for j in jobs.values()))
             for name, j in jobs.items():
                 if j.done:
                     out = (j.output or "(no output)").strip()
                     lines.append(f"\n**{icon.get(j.status, 'ℹ️')} {name}** (exit {j.exit_code})\n```\n{node_service.tail(out, 1200)}\n```")
                 else:
-                    # Still running — deliver its output to this channel when it finishes.
-                    node_service.notify_on_done(j, notify)
+                    node_service.notify_on_done(j, notify)   # still running — deliver when it finishes
                     lines.append(f"\n**⏳ {name}** — still running (job #{j.id}, `node log {j.id}`)")
+            for name, res in zip(_npub_nodes.keys(), _nostr_results):
+                lines.append(f"\n**🛰️ {name}**\n{(res.get('content') or '').strip()}")
             return {"type": "text", "content": "\n".join(lines)}
 
         # --- agentic mode ---
@@ -212,25 +223,20 @@ class _SystemMixin:
                 return {"type": "text", "content": "Usage: `node agent <name> <goal>` (or `node agent all <goal>`)"}
             name, goal = parts[1], parts[2]
 
-            # Nostr-addressed worker → dispatch over Nostr (mode 'agent': the worker runs its own LLM loop
-            # locally). No SSH; awaits the encrypted result. `all` and background streaming stay on the SSH path.
-            if name in _npub_nodes:
-                return await _dispatch_nostr(name, _npub_nodes[name], "agent", goal)
-
-            # Resolve the node(s) to run against. `all` fans out over every node (sequentially: LLM
-            # inference serializes on the GPU lock, so parallelism wouldn't help and risks interleaved state).
+            # Resolve target(s) from the Nostr-only registry. A "nostr:<pk>" target runs the agent loop
+            # ON the worker; "local" runs it here. `all` fans out over every node.
             if name == "all":
-                targets = list(nodes.items())
+                targets = list(_reg.items())
                 if not targets:
                     return {"type": "text", "content": _fmt_nodes()}
+            elif name in _reg:
+                targets = [(name, _reg[name])]
             else:
-                if name not in nodes:
-                    return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
-                targets = [(name, nodes[name])]
+                return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
 
             # With a live channel (web UI), run the agent in the BACKGROUND and post the result back when it's
-            # done — so the user can close the chat instead of babysitting a multi-minute run. Without one
-            # (no delivery channel), fall back to running inline and returning the summary directly.
+            # done — so the user can close the chat instead of babysitting a multi-minute run (this holds for
+            # Nostr workers too, so a remote agent no longer blocks the socket). Without a channel, run inline.
             if notify:
                 _spawn_agent_bg(targets, goal, self.user.id if self.user else None, self.chat_service, notify)
                 where = "all nodes" if name == "all" else f"`{name}`"
@@ -239,7 +245,11 @@ class _SystemMixin:
             sections = []
             for _n, _t in targets:
                 try:
-                    sections.append(await node_service.run_agent(self.db, self.user, _n, _t, goal, self.chat_service, notify=None))
+                    if _t.startswith("nostr:"):
+                        body = await node_service.run_agent_over_nostr(_t[len("nostr:"):], goal, mode="agent")
+                        sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n{body}")
+                    else:
+                        sections.append(await node_service.run_agent(self.db, self.user, _n, _t, goal, self.chat_service, notify=None))
                 except Exception as e:
                     logger.error(f"[node] agent error on {_n}: {e}", exc_info=True)
                     sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n**⚠️ Error:** {e}")
@@ -248,7 +258,7 @@ class _SystemMixin:
         # --- direct command: node <name> <command...> ---
         name = sub
         command = arg.strip()[len(parts[0]):].strip()
-        # Nostr-addressed worker → run the shell command over Nostr (no SSH).
+        # Nostr-addressed worker → run the shell command over Nostr (the worker runs it locally).
         if name in _npub_nodes:
             if not command:
                 return {"type": "text", "content": f"Usage: `node {name} <command>`"}
@@ -260,7 +270,7 @@ class _SystemMixin:
             return {"type": "text", "content": f"Usage: `node {name} <command>`"}
 
         job = node_service.start_job(
-            self.db, name, nodes[name], command,
+            self.db, name, "local", command,
             user_id=self.user.id if self.user else None,
         )
         await node_service.await_job(job, wait=8.0)

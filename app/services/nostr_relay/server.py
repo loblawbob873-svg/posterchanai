@@ -542,10 +542,13 @@ class RelayServer:
             if _wot and not any(len(t) >= 2 and t[0] == "p" and self.gate.is_member(t[1]) for t in ev.get("tags", [])):
                 self._send(conn, ["OK", eid, False, "blocked: zap not for a web-of-trust member"])
                 return
-        elif kind in self.cfg.get("dvm_req_kinds", ()) and ev.get("pubkey", "") in self.cfg.get("dvm_allowed", ()):
-            # DVM compute job from a SHARE-ALLOWLISTED sender: accepted even if not a WoT member —
-            # sharing your GPU is a deliberate per-npub grant, separate from the social web of trust.
-            # The DVM worker re-checks the same allowlist (is_trusted) before running anything.
+        elif ev.get("pubkey", "") in self.cfg.get("dvm_allowed", ()) and (
+                kind in self.cfg.get("dvm_req_kinds", ()) or kind in self.cfg.get("dvm_res_kinds", ())):
+            # DVM compute JOB (5xxx) or RESULT (6xxx) from a SHARE-ALLOWLISTED sender: accepted even if
+            # not a WoT member — sharing your GPU (or running a node-agent) is a deliberate per-npub
+            # grant, separate from the social web of trust. The DVM worker re-checks the same allowlist
+            # (is_trusted / is_agent_trusted) before running anything. Accepting the result kind lets a
+            # STANDALONE agent (keyless, no local relay) publish its 6xxx result back to a peer's relay.
             pass
         elif _is_puppet and kind in (0, 1, 3, 5, 6, 7):
             # Fediverse-bridge puppet: the app mirrors the global fediverse timeline through these

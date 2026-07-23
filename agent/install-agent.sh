@@ -2,14 +2,17 @@
 # Standalone installer for the PosterChan node agent (systemd). Run ON the worker machine.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-RELAY="wss://poster.place/relay"; TRUST=""; CLAUDE=""; DANGER=""
+RELAY=""; TRUST=""; CLAUDE=""; DANGER=""
 while [ $# -gt 0 ]; do case "$1" in
-  --relay) RELAY="$2"; shift 2;;
+  --relay) RELAY="${RELAY:+$RELAY,}$2"; shift 2;;   # repeatable — comma-joined (one controller relay each)
   --trust) TRUST="$TRUST $2"; shift 2;;
   --claude) CLAUDE=1; shift;;
   --claude-dangerous) CLAUDE=1; DANGER=1; shift;;
   *) echo "unknown arg: $1"; exit 1;;
 esac; done
+[ -z "$RELAY" ] && RELAY="wss://poster.place/relay"
+# Comma-join (NOT space): systemd Environment= splits on spaces, so a space-separated list would
+# become bogus extra assignments. pcnode_agent.py splits PCNODE_RELAY on commas/whitespace.
 [ -z "$TRUST" ] && { read -rp "Controller npub to trust: " TRUST; }
 
 echo "[pcnode] creating venv + deps…"
@@ -29,7 +32,8 @@ sed -e "s|__USER__|$USER|g" -e "s|__DIR__|$DIR|g" -e "s|__RELAY__|$RELAY|g" \
 [ -n "$CLAUDE" ]  && sudo sed -i '/Environment=PCNODE_DATA/a Environment=PCNODE_CLAUDE=1' "$UNIT"
 [ -n "$DANGER" ]  && sudo sed -i '/Environment=PCNODE_DATA/a Environment=PCNODE_CLAUDE_DANGEROUS=1' "$UNIT"
 sudo systemctl daemon-reload
-sudo systemctl enable --now pcnode-agent.service
+sudo systemctl enable pcnode-agent.service
+sudo systemctl restart pcnode-agent.service   # restart (not just enable --now) so a REINSTALL reloads the unit
 
 echo ""
 echo "  ✅ pcnode-agent running. This worker's npub:"

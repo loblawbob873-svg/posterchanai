@@ -307,9 +307,8 @@ class SettingsResponse(BaseModel):
     # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
     # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
     fedi_bridge_blocked_domains: str = ""
-    # Remote node management (run OS commands on nodes over SSH, or 'local' on this host)
+    # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
-    node_exec_nodes: str = ""  # one per line: name|user@host  (host 'local' or empty = run on this host)
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)
     node_exec_agent_max_steps: str = "8"  # max LLM iterations in agentic mode
     node_exec_agent_model: str = "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"  # agentic-tuned model for `node agent` (falls back to default if absent)
