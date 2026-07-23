@@ -82,6 +82,16 @@ def _collect_stats(days: int = _DAYS, months: int = _MONTHS) -> dict:
             except Exception:
                 pass
 
+        # Drop fedi→Nostr bridge puppets. They carry a nip05_name (so they'd otherwise count), but their
+        # kind-1s are MIRRORED fediverse posts, not native Nostr activity — counting them inflates the
+        # numbers misleadingly ("only here for now"). Same DB as `events` (posterchan_relay); the table
+        # may be absent on a node that never bridged, so fall back to counting all nip05 users.
+        try:
+            cur.execute("SELECT pubkey_hex FROM fedi_puppets")
+            nip05 -= {r[0] for r in cur.fetchall() if r[0]}
+        except Exception:
+            conn.rollback()   # a failed statement poisons the txn for the following named-cursor scan
+
         now = datetime.now(timezone.utc)
         midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
         starts = [int((midnight - timedelta(days=days - 1 - i)).timestamp()) for i in range(days)]

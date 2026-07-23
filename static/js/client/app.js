@@ -12209,7 +12209,8 @@
       if(it.kind==='video'){ el=document.createElement('video'); el.src=it.src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
       else if(it.kind==='audio'){ el=document.createElement('audio'); el.src=it.src; el.controls=true; el.autoplay=true; }
       else { el=document.createElement('img'); el.src=it.src;
-        el.onclick=(e)=>{ e.stopPropagation(); bg.classList.toggle('lb-zoom'); };   // tap the image to zoom (fit ↔ full-res, scrollable)
+        el.onclick=(e)=>{ e.stopPropagation(); };   // don't let a tap on the image reach the backdrop-close
+        _lbZoom(bg, el);   // continuous pinch/wheel zoom + pan (magnifies even low-res posts, unlike the old fit↔natural toggle)
       }
       // Keep the media a DIRECT child of .lightbox — the zoom/centring CSS is written against that shape.
       if(cur) bg.replaceChild(el, cur); else bg.insertBefore(el, bg.firstChild);
@@ -12240,6 +12241,56 @@
     render();
     bg.onclick=(e)=>{ if(e.target===bg) close(); };   // tap the backdrop to close too
     document.body.appendChild(bg); }
+  // Continuous zoom + pan for a lightbox <img>. scale=1 is the fitted view (CSS max-width/height); we
+  // transform ABOVE that, so even a small, low-res post magnifies (the old toggle only went to natural
+  // size — useless when natural < fitted). Wheel/pinch zoom toward the cursor, drag/one-finger to pan,
+  // double-tap|dblclick to toggle. `lb-zoom` on the backdrop (scale>1) hides the pager + disables swipe.
+  function _lbZoom(bg, el){
+    let scale=1, tx=0, ty=0;
+    const MIN=1, MAX=8;
+    const vw=()=>window.innerWidth, vh=()=>window.innerHeight;
+    const apply=(anim)=>{ el.style.transition = anim ? 'transform .18s ease' : 'none';
+      el.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`; };
+    const clamp=()=>{ // keep the (scaled) image from being dragged fully off-screen
+      const mx=Math.max(0,(el.clientWidth*scale - vw())/2 + 24);
+      const my=Math.max(0,(el.clientHeight*scale - vh())/2 + 24);
+      tx=Math.max(-mx,Math.min(mx,tx)); ty=Math.max(-my,Math.min(my,ty)); };
+    const setScale=(ns,cx,cy,anim)=>{
+      ns=Math.max(MIN,Math.min(MAX,ns));
+      if(cx==null){ cx=vw()/2; cy=vh()/2; }
+      const Cx=vw()/2+tx, Cy=vh()/2+ty, k=ns/scale;   // keep the point under the cursor fixed: C' = S - k*(S-C)
+      tx=(cx - k*(cx-Cx)) - vw()/2; ty=(cy - k*(cy-Cy)) - vh()/2;
+      scale=ns;
+      if(scale<=1.001){ scale=1; tx=0; ty=0; }
+      clamp(); apply(anim);
+      const zoomed=scale>1.001;
+      bg.classList.toggle('lb-zoom', zoomed);
+      el.style.cursor = zoomed ? 'grab' : 'zoom-in'; };
+    el.addEventListener('wheel',(e)=>{ e.preventDefault(); setScale(scale*(e.deltaY<0?1.18:1/1.18), e.clientX, e.clientY, false); }, {passive:false});
+    el.addEventListener('dblclick',(e)=>{ e.preventDefault(); e.stopPropagation(); setScale(scale>1.001?1:3, e.clientX, e.clientY, true); });
+    // mouse drag to pan (only meaningful when zoomed)
+    let drag=false, lx=0, ly=0;
+    el.addEventListener('pointerdown',(e)=>{ if(e.pointerType==='touch'||scale<=1.001) return; drag=true; lx=e.clientX; ly=e.clientY; try{el.setPointerCapture(e.pointerId);}catch(_){} el.style.cursor='grabbing'; });
+    el.addEventListener('pointermove',(e)=>{ if(!drag) return; tx+=e.clientX-lx; ty+=e.clientY-ly; lx=e.clientX; ly=e.clientY; clamp(); apply(false); });
+    const endDrag=(e)=>{ if(!drag) return; drag=false; try{el.releasePointerCapture(e.pointerId);}catch(_){} el.style.cursor='grab'; };
+    el.addEventListener('pointerup',endDrag); el.addEventListener('pointercancel',endDrag);
+    // touch: two-finger pinch, one-finger pan (when zoomed), double-tap toggle
+    const dist=(a,b)=>Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    let pinch=null, pan=null, lastTap=0;
+    el.addEventListener('touchstart',(e)=>{
+      if(e.touches.length===2){ e.preventDefault(); const [a,b]=e.touches; pinch={d:dist(a,b), s:scale, mx:(a.clientX+b.clientX)/2, my:(a.clientY+b.clientY)/2}; pan=null; }
+      else if(e.touches.length===1 && scale>1.001){ pan={x:e.touches[0].clientX, y:e.touches[0].clientY}; }
+    }, {passive:false});
+    el.addEventListener('touchmove',(e)=>{
+      if(pinch && e.touches.length===2){ e.preventDefault(); const [a,b]=e.touches; setScale(pinch.s*(dist(a,b)/pinch.d), pinch.mx, pinch.my, false); }
+      else if(pan && e.touches.length===1 && scale>1.001){ e.preventDefault(); const t=e.touches[0]; tx+=t.clientX-pan.x; ty+=t.clientY-pan.y; pan={x:t.clientX, y:t.clientY}; clamp(); apply(false); }
+    }, {passive:false});
+    el.addEventListener('touchend',(e)=>{
+      if(e.touches.length===0){ pinch=null; pan=null; }
+      if(e.changedTouches.length===1 && e.touches.length===0){ const now=Date.now();   // double-tap → zoom toward the tapped point
+        if(now-lastTap<300){ e.preventDefault(); const t=e.changedTouches[0]; setScale(scale>1.001?1:3, t.clientX, t.clientY, true); lastTap=0; } else lastTap=now; }
+    }, {passive:false});
+  }
   // Copy an image to the clipboard (Clipboard API needs PNG on most browsers → convert via canvas).
   // In the Capacitor APK the WebView can't do navigator.clipboard.write OR a programmatic <a download>
   // (Android blocks both) — but the native @capacitor/share + @capacitor/filesystem plugins ARE bundled.

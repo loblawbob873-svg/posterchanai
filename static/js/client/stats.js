@@ -147,7 +147,7 @@
       feed.innerHTML = `<div class="st-wrap">
         <div class="st-head">
           <div><h2 class="st-h1">📊 Server Stats</h2>
-            <div class="muted small">What this node is doing right now — public, no account needed.</div></div>
+            <div class="muted small">Activity published to <b>this server</b> — not the wider Nostr network it syncs. Public, no account needed.</div></div>
         </div>
 
         <div class="st-ranges">${RANGES.map(([k,l])=>
@@ -165,19 +165,19 @@
 
         <div class="st-grid">${ORDER.filter(m=>m!=='notes' && (S[m]||[]).some(v=>v>0)).map(m=>card(m, S[m])).join('')}</div>
 
-        <h3 class="st-sec">🌐 Network <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
+        <h3 class="st-sec">🌐 This server <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-tiles">
-          ${tile(`events ${rangeWord()}`, nf(W.events), 'Events this relay accepted in the selected range')}
-          ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published in the selected range')}
+          ${tile(`events ${rangeWord()}`, nf(W.events), 'Events published directly to this server in the selected range (not federated-in)')}
+          ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published to this server in the selected range')}
           ${tile('notes '+rangeWord(), nf(sum(S.notes||[])))}
           ${tile('zaps '+rangeWord(), nf(sum(S.zaps||[])))}
         </div>
         <div class="muted small st-hint">All time:</div>
         <div class="st-tiles">
-          ${tile('events stored', nf(T.events), 'Every event this relay holds')}
+          ${tile('events posted here', nf(T.events), 'Events published directly to this server (origin), not synced from other relays')}
           ${tile('notes', nf(T.notes))}
-          ${tile('profiles known', nf(T.profiles))}
-          ${tile('relay database', bytes(T.db_bytes))}
+          ${tile('profiles here', nf(T.profiles), 'Profiles published directly to this server')}
+          ${tile('relay database', bytes(T.db_bytes), 'On-disk size of the relay database — includes everything it stores and serves, local and federated')}
         </div>
 
         <h3 class="st-sec">🤖 AI &amp; media <span class="st-rangelbl">${enc(rangeWord())}</span></h3>

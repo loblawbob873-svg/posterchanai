@@ -4,6 +4,11 @@ Everything here is READ-ONLY aggregation over data the node already stores — c
 `events` table, which the app shares (same Postgres database, see app/database.py). No new tables and
 no per-request write path: a stats page must never be able to slow down posting.
 
+Scope: the Network-section figures are THIS SERVER's own activity (origin='direct' — see _LOCAL), not
+the federated network the relay syncs. ~96% of `events` is synced content (origin='wot'/'ancestor')
+or our fedi mirror ('bridge'); counting all of it read as "misleading" since the page frames itself
+as "what this node is doing".
+
 Cost discipline (the whole reason this module exists rather than inline queries in the router):
 
 * Every window is bounded by an INTEGER epoch computed in Python. Writing
@@ -123,8 +128,19 @@ async def flush_calls() -> None:
 
 
 
+# "This server", not "the whole network". The relay federates: ~96% of its `events` rows are
+# origin='wot'/'ancestor' (content SYNCED from upstream relays) or 'bridge' (our fedi mirror). Only
+# origin='direct' rows were PUBLISHED here by this node's own clients — that's what "Server Stats"
+# should count, matching the page's own "what this node is doing" framing. This one filter also
+# subsumes the bridge-puppet exclusion (puppet events are origin='bridge', never 'direct').
+# Applied to the Network-section metrics only; Games / AI / media are already local (pcai: d-tags +
+# local counters), and `db_bytes` is genuine on-disk footprint, so those stay as-is.
+_LOCAL = "origin = 'direct'"
+
+
 def _series(db, now: int):
-    """One grouped scan per window → {window: {metric: [counts...]}} aligned to fixed buckets."""
+    """One grouped scan per window → {window: {metric: [counts...]}} aligned to fixed buckets.
+    Counts only locally-published events (origin='direct', see _LOCAL)."""
     from sqlalchemy import text
     out = {}
     for key, span, step in WINDOWS:
@@ -136,9 +152,9 @@ def _series(db, now: int):
         rows = db.execute(text("""
             SELECT (created_at / :step) * :step AS bucket, kind, count(*)
               FROM events
-             WHERE created_at >= :start AND created_at < :now AND kind = ANY(:kinds)
+             WHERE created_at >= :start AND created_at < :now AND kind = ANY(:kinds) AND %s
              GROUP BY 1, 2
-        """), {"step": step, "start": start, "now": now, "kinds": _ALL_KINDS}).fetchall()
+        """ % _LOCAL), {"step": step, "start": start, "now": now, "kinds": _ALL_KINDS}).fetchall()
         for bucket, kind, count in rows:
             i = index.get(int(bucket))
             metric = _KIND_TO_METRIC.get(int(kind))
@@ -148,8 +164,9 @@ def _series(db, now: int):
         # these, Network / Games / AI showed all-time figures that never moved when you switched
         # range, which reads as broken. Measured: 0.01s / 0.08s / 0.50s for the three windows.
         row = db.execute(text("SELECT count(*), count(DISTINCT pubkey) FROM events "
-                              "WHERE created_at >= :s AND created_at <= :n"),
+                              "WHERE created_at >= :s AND created_at <= :n AND " + _LOCAL),
                          {"s": start, "n": now}).first()
+        win_events, win_people = int(row[0] or 0), int(row[1] or 0)
         # Per-GAME breakdown for this window, one grouped query (~0.01-0.04s) rather than six LIKE
         # counts, so the games bars follow the range selector like everything else does.
         gparams = {"s": start}
@@ -169,7 +186,7 @@ def _series(db, now: int):
             if gname in by_game:
                 by_game[gname] = int(cnt or 0)
         out[key] = {"t0": start, "step": step, "n": n, "series": series,
-                    "totals": {"events": int(row[0] or 0), "people": int(row[1] or 0),
+                    "totals": {"events": win_events, "people": win_people,
                                "games": int(sum(by_game.values())), "by_game": by_game}}
     return out
 
@@ -206,14 +223,16 @@ def _totals(db, now: int):
     ai_day = scalar("""SELECT count(*) FROM event_tags t JOIN events e ON e.id = t.event_id
                         WHERE t.tag = 'd' AND t.value LIKE 'pcai:msg:%' AND e.created_at >= :s""",
                     {"s": now - 86400})
+    # Network-section counts are scoped to origin='direct' (see _LOCAL): posted HERE, not synced from
+    # the federated network. `db_bytes` stays the full on-disk footprint (honest storage figure).
     return {
-        "events":        scalar("SELECT count(*) FROM events"),
-        "events_24h":    scalar("SELECT count(*) FROM events WHERE created_at >= :s", {"s": now - 86400}),
-        "notes":         scalar("SELECT count(*) FROM events WHERE kind=1"),
-        "streams":       scalar("SELECT count(*) FROM events WHERE kind=30311"),
-        "pubkeys_24h":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s", {"s": now - 86400}),
-        "pubkeys_30d":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s", {"s": now - 2592000}),
-        "profiles":      scalar("SELECT count(*) FROM events WHERE kind=0"),
+        "events":        scalar("SELECT count(*) FROM events WHERE " + _LOCAL),
+        "events_24h":    scalar("SELECT count(*) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
+        "notes":         scalar("SELECT count(*) FROM events WHERE kind=1 AND " + _LOCAL),
+        "streams":       scalar("SELECT count(*) FROM events WHERE kind=30311 AND " + _LOCAL),
+        "pubkeys_24h":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
+        "pubkeys_30d":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 2592000}),
+        "profiles":      scalar("SELECT count(*) FROM events WHERE kind=0 AND " + _LOCAL),
         "ai_requests":   scalar("""SELECT count(*) FROM event_tags
                                     WHERE tag = 'd' AND value LIKE 'pcai:msg:%'"""),
         "ai_requests_24h": ai_day,
