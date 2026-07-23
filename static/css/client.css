@@ -1254,14 +1254,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */
-/* NO backdrop-filter on the modal scrim OR panel. Root cause of the desktop "reply/new-post box won't take
-   a cursor/click/keystroke for ~5s" bug: the composer opens over the STREAMING timeline, and frosting a
-   region that repaints every frame stalls the webview's input routing — focus() still updates the DOM
-   (activeElement→TEXTAREA) but pointer/keyboard events aren't delivered until the feed stops loading. NO
-   amount of JS focus/pointer-events juggling fixes an input-routing stall; dropping the live blur does.
-   A flat, more opaque scrim/panel reads the same. (See the ~50% GPU note on re-blurring a moving bg.) */
-.modal-bg{position:fixed;inset:0;background:rgba(6,4,16,.9);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
-.modal-bg .modal{backdrop-filter:none !important;-webkit-backdrop-filter:none !important;background:var(--panel2,#141020)}
+.modal-bg{position:fixed;inset:0;background:rgba(4,2,12,.72);backdrop-filter:blur(4px);z-index:100;display:grid;place-items:center;padding:24px 16px;overflow:auto}
 .modal{width:min(720px,96vw);max-height:92vh;overflow:auto;border-radius:18px;padding:22px}
 .modal.cmp-drop{outline:2px dashed var(--neon,#0ff);outline-offset:-8px;background:rgba(0,240,255,.06)}
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:21px}
