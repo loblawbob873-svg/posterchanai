@@ -777,9 +777,11 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .guest-acts .btn{margin:0}
-/* All three guest buttons are the filled primary (btn-neon) now — consistent look. `.guest-src` only
-   needs to drop the <a> underline; it inherits btn-neon's fill (no colour override, or it'd un-fill). */
+/* Three DIFFERENT filled colours: Sign up = orange (btn-neon), Log in = cyan (btn-cyan), Source =
+   violet (here). All filled, all distinct. (0,2,0) beats btn-* so the violet fill wins. */
 .guest-src{text-decoration:none}
+.guest-src.btn{background:linear-gradient(135deg,#8b5cf6,#b794ff);border:none;color:#fff;box-shadow:0 0 14px rgba(139,92,246,.35)}
+.guest-src.btn:hover{filter:brightness(1.08)}
 @media(max-width:820px){ .guest-card{margin:8px 10px 0;padding:15px 12px} .guest-logo{width:48px;height:48px}
   .guest-name{font-size:19px} }
 .tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
@@ -1240,7 +1242,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .act.actz{color:var(--amber)}
 .act.rt{color:var(--green)}
 .act{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;
-  font-size:19px;padding:10px 16px;border-radius:13px;transition:.13s;line-height:1}
+  font-size:19px;padding:11px 15px;border-radius:11px;transition:.13s;line-height:1}   /* radius/padding matched to .nav-item */
 .act:hover,.act.on,.act.rt:hover,.act.rt.on,.act.actz:hover,.act.actz.on,.act.actb.on,.act.actxmr:hover{
   border-color:transparent !important;box-shadow:none !important;transform:none !important}
 .act:hover,.act.actz:hover,.act.rt:hover,.act.actxmr:hover{color:var(--text);background:rgba(var(--accent-rgb),.12)}
