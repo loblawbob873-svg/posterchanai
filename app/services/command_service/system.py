@@ -73,8 +73,18 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
         except Exception:
             pass
     if notify:
+        # A clear TERMINAL banner so the user can always tell the run ended (and how). A dispatched
+        # (nas) run is silent until this single delivery, and a long transcript buries the outcome —
+        # so end with an unmistakable done/stopped/error line ("can't tell if it finished/died").
+        content = "\n\n---\n\n".join(sections)
+        if _stopped():
+            banner = "⏹️ **Agent run cancelled.**"
+        elif any(m in s for s in sections for m in ("**⚠️ Error:**", "**⚠️ Stopped:**")):
+            banner = "⚠️ **Agent run finished with errors** — see the transcript above."
+        else:
+            banner = "✅ **Agent run complete.**"
         try:
-            await notify({"type": "agent_result", "content": "\n\n---\n\n".join(sections)})
+            await notify({"type": "agent_result", "content": f"{content}\n\n{banner}"})
         except Exception as e:
             logger.warning(f"[node] background agent deliver failed: {e}")
 
