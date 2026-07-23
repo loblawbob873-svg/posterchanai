@@ -15,6 +15,12 @@ Status: **Phase 1 (config) DONE** — settings + Admin UI (`node_exec_nostr_*`, 
 - **Claude CI/CD "dangerous" mode** (`--dangerously-skip-permissions`) is double-locked: worker setting
   `node_exec_claude_dangerous` AND the per-request `dangerous:true` flag (UI checkbox). Off by default.
 - The controller side is still gated by `node_exec_users` (who can issue commands from the app).
+- **Whitelisted npubs ONLY** (no open/anon requests) — a request from an npub not on `node_exec_trusted_npubs`
+  is dropped silently.
+- **Serialized execution: ONE request at a time, QUEUED per worker.** The worker pushes accepted jobs onto
+  a FIFO queue and runs them one-by-one (a single-slot `asyncio.Lock`/`Queue`, like the DVM's
+  `GPUResourceLock`) so a burst of requests can't overload the box. Optionally send an interim "queued (N
+  ahead)" result event so the controller can show status. Extra jobs wait, not run in parallel.
 
 ## Wire protocol (both the app-worker AND the standalone agent MUST match this)
 - **Request** kind `5300`, **Result** kind `5300+1000 = 6300` (NIP-90 5xxx range; slot after chat/image/
