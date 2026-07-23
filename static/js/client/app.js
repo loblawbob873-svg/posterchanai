@@ -4049,6 +4049,10 @@
       // only one a desktop/OBS broadcaster ever sees (there's no overlay on that path).
       { const el=document.getElementById('pl-viewers'); if(el) el.textContent='👁 '+n; }
       { const sv=document.getElementById('stream-viewers'); if(sv) sv.textContent=`👁 ${n} watching`; }
+      // The stream DETAIL view's av-by count (#st-viewers) is rendered ONCE from the cached event's
+      // current_participants and never refreshes — so the streamer saw a stale "0 watching" even as the
+      // poll updated the badge. Keep it live off the same poll (n is the real headcount).
+      { const stv=document.getElementById('st-viewers'); if(stv) stv.textContent=` · 👁 ${n} watching`; }
       if(n!==_viewersLast){ _viewersLast=n; _publishViewers(n); }
     };
     tick(); _viewerPoll=setInterval(tick, 20000);
