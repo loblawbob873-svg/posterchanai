@@ -1621,8 +1621,12 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                 _adb.add(_ac)
                                                 _adb.flush()
                                             _ac.updated_at = datetime.utcnow()
-                                            _adb.add(_Msg(conversation_id=_conv, role="assistant", content=_atext))
                                             _adb.commit()
+                                            # Persist the message to the RELAY (chat_store) — the source of truth the
+                                            # client reads in relay-backed mode. A bare SQL `messages` insert shows
+                                            # live over the socket then VANISHES on reload / chat-switch (the bug).
+                                            _uu = _adb.query(User).filter(User.id == _uid).first()
+                                            await chat_history.append(_adb, _uu, _conv, "assistant", _atext)
                                         except Exception as _e:
                                             logger.warning(f"[node] webui agent-result save failed: {_e}")
                                             _adb.rollback()
@@ -1661,8 +1665,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                             _db.add(_c)
                                             _db.flush()
                                         _c.updated_at = datetime.utcnow()
-                                        _db.add(_Msg(conversation_id=_conv, role="assistant", content=_text))
                                         _db.commit()
+                                        # Message → RELAY (chat_store), not the SQL messages table, so it survives
+                                        # a reload/chat-switch in relay-backed mode (matches the agent-result branch).
+                                        _uu2 = _db.query(User).filter(User.id == _uid).first()
+                                        await chat_history.append(_db, _uu2, _conv, "assistant", _text)
                                     except Exception as _e:
                                         logger.warning(f"[node] webui notify save failed: {_e}")
                                         _db.rollback()
