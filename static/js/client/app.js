@@ -8529,7 +8529,14 @@
   // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
   // autosaves on pagehide — so an SW reload never loses in-progress text and needs no (fragile,
   // focus-based, stuck-update-prone) composer guard here.
-  function _swReload(){ if(_swRefreshing) return; _swRefreshing=true; location.reload(); }
+  function _swReload(){
+    if(_swRefreshing) return; _swRefreshing=true;   // _swRefreshing guards within THIS page load
+    // Cross-reload guard: if a worker somehow keeps re-firing controllerchange (node flip-flop, a worker
+    // that won't settle), never reload more than once per ~40s per session — otherwise the app thrashes
+    // ("keeps refreshing"). sessionStorage survives the reload, so the 2nd would-be reload is suppressed.
+    try{ const last=+(sessionStorage.getItem('swReloaded')||0); if(Date.now()-last<40000) return; sessionStorage.setItem('swReloaded', String(Date.now())); }catch(_){}
+    location.reload();
+  }
   function _onSwUpdateReady(worker){
     if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced this session
     _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call for the same worker dedupes above

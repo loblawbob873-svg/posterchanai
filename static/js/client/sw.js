@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v430';
+const CACHE = 'pc-nostr-v431';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -47,12 +47,14 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  // Precache the shell, but DON'T skipWaiting() automatically — a freshly installed worker waits until
-  // the user accepts the in-app "Update available" prompt, which posts SKIP_WAITING (below). This avoids
-  // reloading the page out from under someone; they choose when to update.
   // App is media-only (the bundle serves the shell), and SHELL lists '/client' which 404s in the app —
   // an atomic addAll would reject anyway. So only precache the shell in the web PWA.
   if (IS_APP) return;
+  // Activate IMMEDIATELY rather than sit in a "waiting" state that the page has to coax out by posting
+  // SKIP_WAITING. That message hand-off was unreliable in some Firefox PWAs — the worker never activated,
+  // so "Update available" showed forever. Self-activating here is robust; the client reloads onto the new
+  // build on controllerchange (rate-limited so it can't thrash). Drafts autosave on pagehide → reload is safe.
+  self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{}));
 });
 self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
