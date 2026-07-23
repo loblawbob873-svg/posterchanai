@@ -42,13 +42,18 @@ logger = logging.getLogger(__name__)
 
 # task -> request kind (NIP-90 5xxx range). 5050/6050 are the NIP-90 text-gen kinds; 5100/6100 image;
 # 5201/5202 are cluster-local DVM kinds for music/video (no NIP-90 standard). Result = request + 1000.
-_REQ_KIND = {"chat": 5050, "image": 5100, "music": 5201, "video": 5202}
+_REQ_KIND = {"chat": 5050, "image": 5100, "music": 5201, "video": 5202, "agent": 5300}
 _TASK_BY_REQ = {v: k for k, v in _REQ_KIND.items()}
 DVM_REQ_KINDS = frozenset(_REQ_KIND.values())
 DVM_KINDS = frozenset(list(_REQ_KIND.values()) + [k + 1000 for k in _REQ_KIND.values()])
 
 # Per-task wait budget (seconds) — the coordinator gives up and falls back to local/next after this.
-_JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900}
+_JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900, "agent": 900}
+
+# node/agent tasks (kind 5300) run OS commands / Claude — a bigger grant than GPU offload, so they use a
+# DEDICATED allowlist (node_exec_trusted_npubs) and run ONE-AT-A-TIME (queued, never bounced to a peer:
+# the command must run on the addressed node). Serialized by this lock, created lazily in the loop.
+_agent_lock: "Optional[asyncio.Lock]" = None
 
 
 # ---------------------------------------------------------------- identity
@@ -113,6 +118,41 @@ def is_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
     """A node serves jobs ONLY from peers in its shared cluster — you listed them, so it's a deliberate
     grant, never a side effect of a social follow. No peers → serve no one."""
     return pubkey_hex in peer_pubkeys(settings)
+
+
+# ---- node/agent-over-Nostr trust + config (DEDICATED allowlist, NOT the DVM peer cluster above) ----
+def agent_worker_enabled(settings: Optional[dict] = None) -> bool:
+    """True if THIS node accepts node/agent commands over Nostr (runs them locally for trusted controllers)."""
+    return _truthy(_settings(settings).get("node_exec_nostr_enabled", False))
+
+
+def agent_trusted_pubkeys(settings: Optional[dict] = None) -> list:
+    """Controllers allowed to run commands on THIS node — `node_exec_trusted_npubs`, one npub/hex per line
+    or comma-separated. A bigger grant than GPU offload, so it's a separate list from the DVM peers."""
+    out = []
+    for line in (_settings(settings).get("node_exec_trusted_npubs", "") or "").replace(",", "\n").splitlines():
+        line = line.strip()
+        if line:
+            pk = nostr_service.to_pubkey_hex(line)
+            if pk:
+                out.append(pk)
+    return out
+
+
+def is_agent_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
+    return pubkey_hex in agent_trusted_pubkeys(settings)
+
+
+def agent_node_map(settings: Optional[dict] = None) -> dict:
+    """Controller side: node name -> worker pubkey hex, from `node_exec_node_npubs` (`name npub1…`/line)."""
+    m: dict = {}
+    for line in (_settings(settings).get("node_exec_node_npubs", "") or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            pk = nostr_service.to_pubkey_hex(parts[1])
+            if pk:
+                m[parts[0].strip()] = pk
+    return m
 
 
 def providers(settings: Optional[dict] = None) -> list:
@@ -437,7 +477,11 @@ async def _spawn_job(ev: dict) -> None:
     if not me or not any(len(t) >= 2 and t[0] == "p" and t[1] == me for t in ev.get("tags", [])):
         return   # not addressed to this node
     author = ev.get("pubkey", "")
-    if not is_trusted(author):
+    # Trust: node/agent commands use the DEDICATED allowlist; GPU-offload tasks use the DVM peer cluster.
+    if task == "agent":
+        if not is_agent_trusted(author):
+            return   # not a whitelisted controller — reject before any signature work
+    elif not is_trusted(author):
         return   # not a cluster node — reject before any signature work
     jid = ev.get("id", "")
     if jid in _seen_jobs:
@@ -456,14 +500,65 @@ async def _spawn_job(ev: dict) -> None:
     # (gpu_busy() is held by a local web/Telegram/opencode generation), so a node running a long
     # agentic session sheds distributed jobs to idle peers instead of queueing them behind the agent
     # (where their coordinators would time out).
-    from app.services.locks import gpu_busy
-    if _inflight >= _MAX_INFLIGHT or (_inflight >= 1 and gpu_busy()):
-        logger.info("[dvm] busy (in-flight=%d gpu_busy=%s) → bouncing %s job %s to other nodes",
-                    _inflight, gpu_busy(), task, jid[:12])
-        _track(asyncio.create_task(_publish_result(task, jid, author, {"error": "busy", "busy": True})))
-        return
+    # node/agent tasks are NEVER bounced (the command must run on THIS addressed node) — they QUEUE on
+    # _agent_lock inside _run_local and run one-at-a-time. Only GPU-offload tasks busy-reject to a peer.
+    if task != "agent":
+        from app.services.locks import gpu_busy
+        if _inflight >= _MAX_INFLIGHT or (_inflight >= 1 and gpu_busy()):
+            logger.info("[dvm] busy (in-flight=%d gpu_busy=%s) → bouncing %s job %s to other nodes",
+                        _inflight, gpu_busy(), task, jid[:12])
+            _track(asyncio.create_task(_publish_result(task, jid, author, {"error": "busy", "busy": True})))
+            return
     _inflight += 1
     _track(asyncio.create_task(_handle_job(task, author, jid, ev)))
+
+
+async def _run_claude(s: dict, goal: str, dangerous: bool) -> dict:
+    """Run the Claude Code CLI on this worker. Double-locked: node_exec_claude_enabled must be on, and
+    dangerous (--dangerously-skip-permissions) needs node_exec_claude_dangerous too."""
+    if not _truthy(s.get("node_exec_claude_enabled", False)):
+        return {"error": "Claude Code agent is not enabled on this worker"}
+    argv = (s.get("node_exec_claude_cmd") or "claude").split() + ["-p", goal]
+    if dangerous:
+        if not _truthy(s.get("node_exec_claude_dangerous", False)):
+            return {"error": "CI/CD dangerous mode is not allowed on this worker"}
+        argv.append("--dangerously-skip-permissions")
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=_JOB_TIMEOUT["agent"])
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return {"error": f"claude timed out after {_JOB_TIMEOUT['agent']}s"}
+    text = (out or b"").decode("utf-8", "replace")[-200_000:]
+    return {"status": "done" if proc.returncode == 0 else "error",
+            "summary": text[-1500:] or f"claude exit {proc.returncode}", "output": text, "exit": proc.returncode}
+
+
+async def _exec_agent(db, params: dict) -> dict:
+    """Run a node/agent command LOCALLY on this worker (target 'local'). mode: shell (default) | agent
+    (LLM-driven, uses this node's model) | claude (Claude Code CLI). Serialized by _agent_lock."""
+    from app.services import node_service
+    s = settings_store.all_settings()
+    mode = (params.get("mode") or "shell").lower()
+    dangerous = bool(params.get("dangerous"))
+    if mode == "claude":
+        return await _run_claude(s, params.get("goal") or params.get("command") or "", dangerous)
+    if mode == "agent":
+        from app.models import User
+        u = db.query(User).filter(User.id == 1).first()   # admin owns worker-run jobs
+        summary = await node_service.run_agent(db, u, "local", "local", params.get("goal") or "", None, notify=None)
+        return {"status": "done", "summary": summary, "output": summary, "exit": 0}
+    cmd = params.get("command") or ""
+    if not cmd:
+        return {"error": "empty command"}
+    job = await node_service.run_to_completion(db, "local", "local", cmd, user_id=1)
+    out = (job.output or "").strip()[:200_000]
+    return {"status": "done" if job.exit_code == 0 else "error",
+            "summary": f"exit {job.exit_code}", "output": out, "exit": job.exit_code}
 
 
 async def _run_local(task: str, params: dict) -> dict:
@@ -474,6 +569,15 @@ async def _run_local(task: str, params: dict) -> dict:
     from app.database import SessionLocal
     db = SessionLocal()
     try:
+        if task == "agent":
+            global _agent_lock
+            if _agent_lock is None:
+                _agent_lock = asyncio.Lock()
+            async with _agent_lock:          # ONE agent command at a time on this worker (queue)
+                try:
+                    return await _exec_agent(db, params)
+                except Exception as e:
+                    return {"error": str(e)[:300]}
         if task == "image":
             from app.services.image_factory import generate_image_with_load_balancing
             b64 = await generate_image_with_load_balancing(
@@ -566,7 +670,7 @@ def start_worker() -> None:
     if _worker_task and not _worker_task.done():
         return
     s = settings_store.all_settings()
-    if not is_enabled(s):
+    if not (is_enabled(s) or agent_worker_enabled(s)):   # DVM (GPU offload) OR node/agent-over-Nostr
         return
     me = node_pubkey()
     if not me:

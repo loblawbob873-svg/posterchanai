@@ -301,6 +301,11 @@ def node_state(db: Session = Depends(get_db), current_user: User = Depends(get_c
     if not node_service.is_enabled(db) or not node_service.user_allowed(db, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Node access is not enabled for your account")
     names = list(node_service.get_nodes(db).keys())          # names only — targets (user@host) stay server-side
+    from app.services import nostr_dvm                        # Nostr workers (addressed by npub) — names only
+    if nostr_dvm.agent_worker_enabled():
+        for _nn in nostr_dvm.agent_node_map().keys():
+            if _nn not in names:
+                names.append(_nn)
     if not any(n.lower() == "local" for n in names):
         names.insert(0, "local")                             # synthetic local target, like the node command
     jobs = [

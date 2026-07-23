@@ -83,11 +83,19 @@ class _SystemMixin:
         parts = arg.strip().split(maxsplit=2)
         sub = parts[0].lower() if parts else ""
         nodes = node_service.get_nodes(self.db)
+        if "local" not in nodes:
+            nodes["local"] = "local"   # synthetic 'local' = run on THIS host (matches the panel + logs report)
+        # Nostr transport: nodes addressed by npub (node_exec_node_npubs). When on, a `node <name> …` for an
+        # npub-mapped name is dispatched over Nostr (run_remote) instead of SSH. See docs/NODE_AGENT_NOSTR.md.
+        from app.services import nostr_dvm
+        _npub_nodes = nostr_dvm.agent_node_map() if nostr_dvm.agent_worker_enabled() else {}
 
         def _fmt_nodes() -> str:
-            if not nodes:
-                return "No nodes configured. Add them in Admin → Services → Agentic Node Management (one per line: `name|user@host`)."
+            if not nodes and not _npub_nodes:
+                return "No nodes configured. Add them in Admin → Services → Agentic Node Management (one per line: `name|user@host`, or a Nostr worker `name npub1…`)."
             lines = ["**Configured nodes:**"]
+            for _nn, _pk in _npub_nodes.items():
+                lines.append(f"- `{_nn}` → 🛰️ {nostr_dvm.nostr_service.npub_of(_pk)[:18]}…")
             for name, target in nodes.items():
                 where = "this host" if target == "local" else target
                 lines.append(f"- `{name}` → {where}")
@@ -105,6 +113,26 @@ class _SystemMixin:
                     "content": preview,
                     "files": [{"filename": f"node-{job.node}-job{job.id}.txt", "data": out.encode("utf-8", "replace")}],
                 }
+            return {"type": "text", "content": preview}
+
+        async def _dispatch_nostr(name: str, worker_pk: str, mode: str, text: str, dangerous: bool = False) -> dict:
+            """Send a node/agent command to an npub-addressed worker over Nostr and render its result.
+            No SSH — the worker runs it locally and returns an encrypted result (see docs/NODE_AGENT_NOSTR.md)."""
+            if notify:
+                await notify(f"🛰️ dispatching to `{name}` over Nostr…")
+            params = {"mode": mode, "dangerous": bool(dangerous)}
+            params["command" if mode == "shell" else "goal"] = text
+            out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pk)
+            if not out:
+                return {"type": "text", "content": f"⚠️ No response from `{name}` (offline, not trusting this controller, or timed out)."}
+            if out.get("error"):
+                return {"type": "text", "content": f"⚠️ `{name}`: {out['error']}"}
+            body = (out.get("output") or out.get("summary") or "").strip() or "(no output)"
+            header = f"🛰️ `{name}` ({mode}) — {out.get('status', '?')}" + (f" exit {out.get('exit')}" if out.get("exit") is not None else "")
+            preview = f"{header}\n\n```\n{node_service.tail(body, node_service.INLINE_LIMIT)}\n```"
+            if len(body) > node_service.INLINE_LIMIT:
+                return {"type": "files", "content": preview,
+                        "files": [{"filename": f"node-{name}-nostr.txt", "data": body.encode("utf-8", "replace")}]}
             return {"type": "text", "content": preview}
 
         # --- management subcommands ---
@@ -184,6 +212,11 @@ class _SystemMixin:
                 return {"type": "text", "content": "Usage: `node agent <name> <goal>` (or `node agent all <goal>`)"}
             name, goal = parts[1], parts[2]
 
+            # Nostr-addressed worker → dispatch over Nostr (mode 'agent': the worker runs its own LLM loop
+            # locally). No SSH; awaits the encrypted result. `all` and background streaming stay on the SSH path.
+            if name in _npub_nodes:
+                return await _dispatch_nostr(name, _npub_nodes[name], "agent", goal)
+
             # Resolve the node(s) to run against. `all` fans out over every node (sequentially: LLM
             # inference serializes on the GPU lock, so parallelism wouldn't help and risks interleaved state).
             if name == "all":
@@ -214,10 +247,15 @@ class _SystemMixin:
 
         # --- direct command: node <name> <command...> ---
         name = sub
+        command = arg.strip()[len(parts[0]):].strip()
+        # Nostr-addressed worker → run the shell command over Nostr (no SSH).
+        if name in _npub_nodes:
+            if not command:
+                return {"type": "text", "content": f"Usage: `node {name} <command>`"}
+            return await _dispatch_nostr(name, _npub_nodes[name], "shell", command)
         if name not in nodes:
             return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
         # Everything after the node name is the command (preserve original spacing/casing).
-        command = arg.strip()[len(parts[0]):].strip()
         if not command:
             return {"type": "text", "content": f"Usage: `node {name} <command>`"}
 
