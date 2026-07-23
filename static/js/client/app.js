@@ -10174,7 +10174,7 @@
     if(VIEW!=='ai' || _ai.convId!==id) return;
     if(box){ box.innerHTML='';
       const msgs = (conv && conv.messages) || [];
-      if(!msgs.length) box.innerHTML = _aiWelcomeHtml();   // fresh chat → friendly splash with starter commands
+      if(!msgs.length){ box.innerHTML = _aiWelcomeHtml(); _aiRevealNodeCard(); }   // fresh chat → friendly splash with starter commands
       for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
         if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
@@ -10426,9 +10426,14 @@
     if(cur) cur.remove();                       // already up → move it to the bottom rather than stacking
     box.insertAdjacentHTML('beforeend', _aiWelcomeHtml());
     aiScroll();
-    // Reveal the "Manage a server" card only for node-allowlisted users (access cached per session).
-    { const rev=()=>{ const c=box.querySelector('#aw-nodes'); if(c && _ai.nodeAccess) c.style.display=''; };
-      if(_ai.nodeAccess===undefined) _nodeFetchState().then(rev); else rev(); }
+    _aiRevealNodeCard();
+  }
+  // Reveal the "Manage a server" splash card only for node-allowlisted users (access cached per session).
+  // Shared by BOTH splash render paths (aiShowWelcome + the empty-conversation load), or the card stays hidden.
+  function _aiRevealNodeCard(){
+    const box=$('#ai-msgs'); if(!box) return;
+    const rev=()=>{ const c=box.querySelector('#aw-nodes'); if(c && _ai.nodeAccess) c.style.display=''; };
+    if(_ai.nodeAccess===undefined) _nodeFetchState().then(rev); else rev();
   }
   function _aiWelcomeHtml(){
     return `<div class="ai-welcome">
