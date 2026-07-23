@@ -1154,7 +1154,7 @@
     // GUEST/pubkey guard this fired on page load before login and then claim-admin'd with no key →
     // "setup failed". (startApp() runs for guests too, and schedules this when admin_unclaimed.)
     if(!CFG.admin_unclaimed || IS_ADMIN || !ME || GUEST || !ME.pubkey) return;
-    if(!confirm('This instance has no admin yet.\n\nBecome the admin? You\'ll be able to grant AI/Blossom access to users and manage settings.')) return;
+    if(!await uiConfirm('This instance has no admin yet.\n\nBecome the admin? You\'ll be able to grant AI/Blossom access to users and manage settings.')) return;
     try{
       const auth=await sign(27235,'claim-admin',[['p',ME.pubkey]]);
       const r=await fetch('/client/claim-admin',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1448,7 +1448,7 @@
   async function _deleteAllMyNotes(){
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
     const st=document.getElementById('set-del-notes-status'); const setS=(m)=>{ if(st) st.textContent=m; };
-    if(!confirm('Delete ALL your posts and replies? This asks relays to remove every note you’ve written (NIP-09) and CANNOT be undone.\n\nYour profile, follows, reactions and DMs are NOT affected.')) return;
+    if(!await uiConfirm('Delete ALL your posts and replies? This asks relays to remove every note you’ve written (NIP-09) and CANNOT be undone.\n\nYour profile, follows, reactions and DMs are NOT affected.')) return;
     setS('Finding your notes…');
     const ids=new Set(); let until=Math.floor(Date.now()/1000)+1;
     for(let round=0; round<80; round++){   // cap ~16k notes so a runaway can't loop forever
@@ -1462,7 +1462,7 @@
       until=oldest;   // next page ends just before the oldest note this round
     }
     if(!ids.size){ setS('No notes found to delete.'); return; }
-    if(!confirm(`Found ${ids.size} note(s). Permanently request their deletion now?`)){ setS(''); return; }
+    if(!await uiConfirm(`Found ${ids.size} note(s). Permanently request their deletion now?`)){ setS(''); return; }
     const all=[...ids]; let done=0, failed=0;
     for(let i=0; i<all.length; i+=_DN_BATCH){
       const chunk=all.slice(i, i+_DN_BATCH);
@@ -2855,7 +2855,7 @@
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderArticleEditor(e); };
-        c.querySelector('.da-del').onclick=async()=>{ if(!confirm('Delete this draft?'))return; await _deleteArticleDraft(c.dataset.slug); c.remove(); toast('draft deleted'); };
+        c.querySelector('.da-del').onclick=async()=>{ if(!await uiConfirm('Delete this draft?'))return; await _deleteArticleDraft(c.dataset.slug); c.remove(); toast('draft deleted'); };
       });
     }
     const arts=_dedupAddr(evs).sort((a,b)=>artTime(b)-artTime(a));
@@ -3039,7 +3039,7 @@
   async function deleteArticle(e){
     // NIP-09: a kind-5 deletion referencing the article by event id AND addressable coordinate.
     // It broadcasts to all upstream relays (deletions are broadcastable), so they remove it too.
-    if(!confirm('Delete this article? This asks every relay (NIP-09) to remove it.')) return;
+    if(!await uiConfirm('Delete this article? This asks every relay (NIP-09) to remove it.')) return;
     const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const tags=[['e',e.id]]; if(slug) tags.push(['a',`30023:${e.pubkey}:${slug}`]);
     try{ const r=await publish(5, 'deleted', tags);   // failure toast by publish()
@@ -3101,7 +3101,7 @@
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderListingEditor(e); };
-        c.querySelector('.da-del').onclick=async()=>{ if(!confirm('Delete this draft listing?'))return; try{ await publish(5,'draft deleted',[['a',`30403:${ME.pubkey}:${c.dataset.slug}`]]); }catch(_){} c.remove(); toast('draft deleted'); };
+        c.querySelector('.da-del').onclick=async()=>{ if(!await uiConfirm('Delete this draft listing?'))return; try{ await publish(5,'draft deleted',[['a',`30403:${ME.pubkey}:${c.dataset.slug}`]]); }catch(_){} c.remove(); toast('draft deleted'); };
       });
     }
     const all=_dedupAddr(evs);
@@ -3191,7 +3191,7 @@
     catch(err){ toast('failed: '+(err.message||'')); }
   }
   async function deleteListing(e){
-    if(!confirm('Delete this listing? This asks every relay (NIP-09) to remove it.')) return;
+    if(!await uiConfirm('Delete this listing? This asks every relay (NIP-09) to remove it.')) return;
     const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     const tags=[['e',e.id]]; if(slug) tags.push(['a',`30402:${e.pubkey}:${slug}`]);
     try{ const r=await publish(5,'deleted',tags);   // failure toast by publish()
@@ -3532,7 +3532,7 @@
   // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
   async function _deleteStream(e){
     if(!ME || e.pubkey!==ME.pubkey){ toast('you can only delete your own stream'); return; }
-    if(!confirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
+    if(!await uiConfirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     try{
       const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true});
@@ -4548,8 +4548,8 @@
       </div></article>`;
   }
   async function createChannel(){
-    const name=(prompt('Channel name?')||'').trim(); if(!name) return;
-    const about=(prompt('Description (optional)?')||'').trim();
+    const name=(await uiPrompt('Channel name?')||'').trim(); if(!name) return;
+    const about=(await uiPrompt('Description (optional)?')||'').trim();
     try{ const r=await publish(40, JSON.stringify({ name, about }), []);   // failure toast by publish()
       if(r && r.ok && r.ev){ Store.saveEvent(r.ev); toast('channel created'); openChannel(r.ev); } }
     catch(e){ toast('create failed: '+((e&&e.message)||e)); }
@@ -5267,8 +5267,8 @@
   async function repostWithWarning(id){
     const ev=Store.get(id); if(!ev){ toast('post not loaded'); return; }
     if(ev.pubkey!==ME.pubkey){ toast('you can only do this to your own posts'); return; }
-    if(!confirm('Re-post this with an NSFW warning?\n\nNostr posts can’t be edited, so this DELETES the original and publishes a fresh copy with a content-warning that every client blurs. The new post won’t carry over the original’s likes, replies or zaps.')) return;
-    const reason=(prompt('Content warning reason (optional):')||'').trim();
+    if(!await uiConfirm('Re-post this with an NSFW warning?\n\nNostr posts can’t be edited, so this DELETES the original and publishes a fresh copy with a content-warning that every client blurs. The new post won’t carry over the original’s likes, replies or zaps.')) return;
+    const reason=(await uiPrompt('Content warning reason (optional):')||'').trim();
     try{
       // Re-use the original content + tags (mentions, reply/quote refs, imeta, hashtags), dropping any
       // existing content-warning, and append ours. Keep the same kind so polls/community posts survive.
@@ -5749,12 +5749,12 @@
         amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
         $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); clearTimeout(_t); _t=setTimeout(renderQr,300); });   // one-tap amount
         $('#xmr-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the Monero address:',addr)); }catch(_){ prompt('Copy the Monero address:',addr); } };
-        { const s=$('#xmr-sent',root); if(s) s.onclick=()=>{ const a=amtVal();
+        { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
-          if((txid||proof) && !a && !confirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
+          if((txid||proof) && !a && !await uiConfirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
           if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); }   // remember + sync the amount to Nostr (follows across devices)
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
@@ -5778,7 +5778,7 @@
   function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
   async function doBlock(pk){
     if(!IS_ADMIN) return;
-    if(!confirm('Block this npub on the relay? Their events get rejected and purged.')) return;
+    if(!await uiConfirm('Block this npub on the relay? Their events get rejected and purged.')) return;
     try {
       const auth = await sign(27235, 'block', [['action','block'],['p',pk]]);
       const r = await fetch('/client/block', { method:'POST', headers:{'Content-Type':'application/json'},
@@ -5881,7 +5881,7 @@
     const items=langs.map(n=>[n,'🌐 '+n]).concat([['__other','✏️ Other…']]);
     openMenuPopover(btn, items, async name=>{
       let to=name;
-      if(name==='__other'){ to=(prompt('Translate to which language?')||'').trim(); if(!to) return; }
+      if(name==='__other'){ to=(await uiPrompt('Translate to which language?')||'').trim(); if(!to) return; }
       const old=ta.value; ta.value='translating…'; ta.disabled=true;
       try{
         const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, to }) });
@@ -6419,7 +6419,7 @@
     btn.classList.add('on'); const n=btn.querySelector('.n'); n.textContent=(parseInt(n.textContent||'0')+1); toast('reposted');
   }
   async function doDelete(id,art){
-    if(!confirm('Delete this post? (publishes a NIP-09 deletion request)')) return;
+    if(!await uiConfirm('Delete this post? (publishes a NIP-09 deletion request)')) return;
     const r = await publish(5, 'deleted by author', [['e',id]], {quiet:true});   // we show our own specific message
     // Only drop it from the UI once the relay accepted the tombstone. Otherwise say so, and leave the post in
     // place so the delete can be retried — removing it locally on a failed delete would hide a still-live post.
@@ -6571,7 +6571,7 @@
     host.querySelectorAll('.sched-card').forEach(card=>{
       const b=card.querySelector('[data-act="cancel"]'); if(!b) return;
       const failed=card.classList.contains('sched-failed');
-      b.onclick=async()=>{ if(!confirm(failed?'Dismiss this failed scheduled post?':'Cancel this scheduled post?')) return; b.disabled=true;
+      b.onclick=async()=>{ if(!await uiConfirm(failed?'Dismiss this failed scheduled post?':'Cancel this scheduled post?')) return; b.disabled=true;
         const ok=await Scheduled.cancel(card.dataset.sid);
         if(!ok && !failed) toast('too late — it already posted');
         if(VIEW==='drafts') _renderScheduled(); };
@@ -7805,7 +7805,7 @@
     pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
     $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
-    { const df=$('#bl-delfolder',pane); if(df) df.onclick=()=>{ if(confirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
+    { const df=$('#bl-delfolder',pane); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     if(canUp){
       const fileInput=$('#bl-file',pane), folderInput=$('#bl-folder',pane), drop=$('#bl-drop',pane);
       $('#bl-pick',pane).onclick=()=>fileInput.click();
@@ -8324,7 +8324,7 @@
     $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
   }
   async function delAiFile(sha){
-    if(!confirm('Delete this AI file?')) return;
+    if(!await uiConfirm('Delete this AI file?')) return;
     try{ const auth=await sign(27235,'ai-file-delete',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-file-delete',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:ME.pubkey,sha,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
@@ -8332,7 +8332,7 @@
     }catch(_){ toast('delete failed'); }
   }
   async function delBlob(sha){
-    if(!confirm('Delete this blob?'))return; const server=mediaServer();
+    if(!await uiConfirm('Delete this blob?'))return; const server=mediaServer();
     const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
     // 404 = the blob is already gone from the server, but a stale entry is still in the Files index → still
@@ -9657,7 +9657,7 @@
   // Irreversible; signed like doBlock so the server checks admin.
   async function doPurgeBlossom(pk){
     if(!IS_ADMIN) return;
-    if(!confirm('Purge ALL of this user\'s files from the Blossom server? This permanently deletes the stored bytes and cannot be undone.')) return;
+    if(!await uiConfirm('Purge ALL of this user\'s files from the Blossom server? This permanently deletes the stored bytes and cannot be undone.')) return;
     try {
       const auth = await sign(27235, 'blossom-purge', [['action','purge'],['p',pk]]);
       const r = await fetch('/client/blossom-purge', { method:'POST', headers:{'Content-Type':'application/json'},
@@ -10101,7 +10101,7 @@
           if(files.length){ await aiAddFiles(files); toast(files.length+' file'+(files.length>1?'s':'')+' attached'); }
         });
       } }
-    $('#ai-msgs').addEventListener('click',e=>{
+    $('#ai-msgs').addEventListener('click',async e=>{
       // Guided card → open the studio for that command (no syntax to remember).
       const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); if(gc.dataset.open==='nodes'){ openNodePanel(); } else { openGenStudio(gc.dataset.gen); } return; }
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
@@ -10110,7 +10110,7 @@
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
       const ab=e.target.closest('.ai-addbill'); if(ab){ e.preventDefault();
         const income=ab.dataset.income==='1';
-        const v=prompt(income?'Add income — name and amount, e.g. "Paycheck 2000"':'Add bill — name and amount, e.g. "Rent 1200"');
+        const v=await uiPrompt(income?'Add income — name and amount, e.g. "Paycheck 2000"':'Add bill — name and amount, e.g. "Rent 1200"');
         if(v && v.trim()){ const ta=$('#ai-input'); if(ta){ ta.value='addbill '+v.trim()+(income?' income':''); aiSend(); } } return; }
       const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
@@ -10154,7 +10154,7 @@
   }
   async function aiDeleteConversation(){
     const id=_ai.convId; if(!id) return;
-    if(!confirm('Delete this chat and all its messages?')) return;
+    if(!await uiConfirm('Delete this chat and all its messages?')) return;
     try{
       let r=await fetch('/api/conversations/'+id, { method:'DELETE' });
       // 409 = a command is STILL RUNNING on this chat. A slow one (flashcards can take minutes)
@@ -10162,7 +10162,7 @@
       // that purges it before the answer lands and the reply is lost. Say so, and let them insist.
       if(r.status===409){
         let d={}; try{ d=(await r.json()).detail||{}; }catch(_){ }
-        if(!confirm((d.message||'A command is still running on this chat.')+'\n\nDelete it anyway?')) return;
+        if(!await uiConfirm((d.message||'A command is still running on this chat.')+'\n\nDelete it anyway?')) return;
         r=await fetch('/api/conversations/'+id+'?force=1', { method:'DELETE' });
       }
       if(!r.ok) throw 0;
@@ -11284,7 +11284,7 @@
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
-        if(!confirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
+        if(!await uiConfirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;
         try{ const auth=await sign(27235,'delete-account',[['p',ME.pubkey]]);
           const r=await fetch('/client/delete-account',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
@@ -11306,7 +11306,7 @@
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
-    { const lo=$('#set-logout'); if(lo) lo.onclick=()=>{ if(confirm('Log out of this device?')) logout(); }; }
+    { const lo=$('#set-logout'); if(lo) lo.onclick=async()=>{ if(await uiConfirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';
         try{ const auth=await sign(27235,'sync-posts',[['p',ME.pubkey]]);
@@ -11648,7 +11648,7 @@
             ? `<a class="btn btn-cyan small" href="${enc(d.deep_link)}" target="_blank" rel="noopener">📲 Link Telegram${d.bot_username?(' (@'+enc(d.bot_username)+')'):''}</a><div class="muted small" style="margin-top:6px">or send <code>/start ${enc(d.key)}</code> to the bot manually</div>`
             : `Send this to the bot in Telegram: <code>/start ${enc(d.key)}</code>`);
         }catch(_){ box.textContent='failed'; } }; }
-    { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!confirm('Unlink Telegram?'))return;
+    { const u=$('#us-tg-unlink'); if(u) u.onclick=async()=>{ if(!await uiConfirm('Unlink Telegram?'))return;
         await fetch('/api/telegram/unlink',{method:'POST'}); toast('unlinked'); renderUserSettings(); }; }
     // Wait for an account link to actually land, then re-render.
     //
@@ -11678,21 +11678,21 @@
         const r=await fetch('/api/pleroma/oauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         _awaitLink(s=>!!s.pleroma_has_access_token, st, 'pleroma_connected'); }; }
-    { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
+    { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
     // Misskey MiAuth
     { const c=$('#us-mk-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mk-stat'); const url=$('#us-mk-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='starting MiAuth…';
         const r=await fetch('/api/misskey/miauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         _awaitLink(s=>!!s.misskey_has_api_token, st, 'misskey_connected'); }; }   // NB: has_api_token, not has_access_token
-    { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!confirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
+    { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
     // Finance: remove the stored key
-    { const fc=$('#us-fin-clear'); if(fc) fc.onclick=async()=>{ if(!confirm('Remove your Budget Manager API key?'))return;
+    { const fc=$('#us-fin-clear'); if(fc) fc.onclick=async()=>{ if(!await uiConfirm('Remove your Budget Manager API key?'))return;
         await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({finance_api_key:''})});
         toast('finance key removed'); renderUserSettings(); }; }
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
-      if(d && d.key){ alert('Your new key (shown once):\n\n'+d.key); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };
+      if(d && d.key){ await uiPrompt('Your new API key — copy it now, it is shown ONCE:', {value:d.key, ok:'Done', cancel:'Close'}); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };   // in-app (not native alert — see feedback_no_native_dialogs)
     // Presets are only persisted on Save if the user actually edited them (else an unrelated Save clobbers).
     let _presetsEdited=false;
     { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; }
@@ -11775,7 +11775,7 @@
     wrap.innerHTML=(keys||[]).map(k=>`<div class="us-key"><div><b>${enc(k.name||'Default')}</b> <span class="muted small">${k.is_active?'active':'disabled'}</span></div>
       <div><button class="mini" data-tog="${k.id}">${k.is_active?'Disable':'Enable'}</button><button class="mini" data-del="${k.id}" style="color:var(--danger)">Delete</button></div></div>`).join('')||'<div class="muted small">No keys yet.</div>';
     $$('[data-tog]',wrap).forEach(b=> b.onclick=async()=>{ await fetch('/api/auth/api-keys/'+b.dataset.tog+'/toggle',{method:'PUT'}); usLoadKeys(); });
-    $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!confirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });
+    $$('[data-del]',wrap).forEach(b=> b.onclick=async()=>{ if(!await uiConfirm('Delete this API key?'))return; await fetch('/api/auth/api-keys/'+b.dataset.del,{method:'DELETE'}); usLoadKeys(); });
   }
   function niceImport(){ const p=Store.profile(ME.pubkey)||{}; return p.nip05?String(p.nip05).replace(/^_@/,''):''; }
   function drawRelayRows(){
@@ -12293,6 +12293,28 @@
       document.addEventListener('keydown',onKey,true);
       document.body.appendChild(ov);
       const y=ov.querySelector('[data-uc="1"]'); if(y) setTimeout(()=>{ try{ y.focus(); }catch(_){} },20);
+    });
+  }
+  // In-app prompt — themed replacement for native window.prompt() (which wedges Electron focus, see
+  // uiConfirm). Resolves to the entered string, or null on Cancel/Escape (same shape as native prompt()).
+  function uiPrompt(message, opts={}){
+    const ok=opts.ok||'OK', cancel=opts.cancel||'Cancel', def=opts.value||'', ph=opts.placeholder||'';
+    return new Promise(resolve=>{
+      const ov=document.createElement('div'); ov.className='uiconfirm-bg';
+      ov.innerHTML=`<div class="uiconfirm glass neon-border" role="dialog" aria-modal="true">
+        <div class="uiconfirm-msg">${enc(String(message||''))}</div>
+        <input class="input uiprompt-in" type="text" value="${enc(def)}" placeholder="${enc(ph)}" style="width:100%;margin-bottom:14px">
+        <div class="uiconfirm-btns">
+          <button class="btn btn-ghost small" data-uc="0">${enc(cancel)}</button>
+          <button class="btn btn-neon small" data-uc="1">${enc(ok)}</button>
+        </div></div>`;
+      const inp=ov.querySelector('.uiprompt-in');
+      const done=v=>{ try{ document.removeEventListener('keydown',onKey,true); }catch(_){} ov.remove(); resolve(v); };
+      const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); done(null); } else if(e.key==='Enter'){ e.preventDefault(); done(inp?inp.value:null); } };
+      ov.addEventListener('click',e=>{ if(e.target===ov){ done(null); return; } const b=e.target.closest('[data-uc]'); if(b) done(b.dataset.uc==='1'?(inp?inp.value:''):null); });
+      document.addEventListener('keydown',onKey,true);
+      document.body.appendChild(ov);
+      if(inp) setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(_){} },20);
     });
   }
   // A modal opened ON TOP of another one, closing only ITSELF. modal() stacks layers fine, but
