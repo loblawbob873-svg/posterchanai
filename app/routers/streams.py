@@ -15,6 +15,7 @@ system, per the design decision.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -41,9 +42,10 @@ _TOKEN_SETTING = "stream_token"
 # MediaMTX's /v3/paths/get lists RTSP/RTMP/WebRTC readers, but HLS viewers are NOT path readers — they're
 # clients of one fan-out HLS muxer, and here they're further hidden behind our own HLS proxy, so MediaMTX
 # reports ~0 no matter how many people watch (the "viewer count stuck at 0" bug). We DO see every viewer: each
-# browser carries the per-session `hlsSession` cookie MediaMTX assigns and re-fetches a playlist/segment every
-# few seconds, all through stream_hls_proxy. So count distinct sessions seen recently, per token. Per-process
-# is fine: streaming is single-node, single-worker (same constraint as the in-memory node-job registry).
+# browser re-fetches a playlist/segment every few seconds through stream_hls_proxy. Viewers no longer carry a
+# per-session cookie (the proxy holds MediaMTX's session server-side — see _hls_session_cookie), so we key the
+# headcount on a client fingerprint (IP + UA) instead. Count distinct fingerprints seen recently, per token.
+# Per-process is fine: streaming is single-node, single-worker (same constraint as the in-memory node-job registry).
 _VIEWER_WINDOW = 30.0   # a live viewer re-fetches well within this; drop them this long after their last request
 _hls_viewers: dict[str, dict[str, float]] = {}
 
@@ -65,6 +67,56 @@ def _count_viewers(token: str) -> int:
         _hls_viewers.pop(token, None)
         return 0
     return len(seen)
+
+
+# ---------------------------------------------------------------- HLS session (held server-side)
+# MediaMTX v1.19 gates every HLS variant/segment behind a session it opens on the master playlist: a
+# `?cookieCheck=1` redirect sets a `cookieCheck` cookie, then the master hands back an `hlsSession=<uuid>`
+# cookie that EVERY follow-up request must carry (else 400/401). This fires whenever `authMethod` is set —
+# it is NOT the publish-auth hook, so excluding `read` from auth does not remove it. A third-party player
+# (zap.stream, Amethyst, …) fetches our proxied playlist cross-origin WITHOUT credentials and so never
+# returns that cookie → the variant 401s → black video for everyone but VLC/WebRTC. Fix: prime and hold the
+# session HERE and inject it on the upstream hop, so the browser needs no cookie and we serve plain
+# `ACAO: *`. All upstream requests come from 127.0.0.1 (this proxy), so one session per token serves every
+# viewer. NB: httpx's cookie jar drops the *Secure* hlsSession over our plain-http hop, so we parse it out
+# of Set-Cookie by hand rather than relying on the jar.
+_HLS_SESSION_TTL = 20.0
+_hls_sessions: dict[str, tuple[str, float]] = {}   # token -> ("cookieCheck=1; hlsSession=..", monotonic_ts)
+
+
+async def _hls_session_cookie(hls_port: str, token: str, force: bool = False) -> "str | None":
+    """Upstream Cookie header that authorizes MediaMTX HLS for `token`; primes + caches it, refreshes on demand."""
+    now = time.monotonic()
+    if not force:
+        ent = _hls_sessions.get(token)
+        if ent and (now - ent[1]) < _HLS_SESSION_TTL:
+            return ent[0]
+    import httpx
+    url = f"http://127.0.0.1:{hls_port}/{token}/index.m3u8?cookieCheck=1"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0)) as c:
+            r = await c.get(url, headers={"Cookie": "cookieCheck=1"})
+            if r.status_code != 200:
+                return None
+            hs = None
+            for sc in r.headers.get_list("set-cookie"):
+                sc = sc.strip()
+                if sc.startswith("hlsSession="):
+                    hs = sc.split(";", 1)[0].split("=", 1)[1].strip()
+            cookie = "cookieCheck=1" + (f"; hlsSession={hs}" if hs else "")
+            _hls_sessions[token] = (cookie, now)
+            return cookie
+    except Exception:
+        return None
+
+
+def _client_fingerprint(request: Request) -> str:
+    """Per-viewer headcount key now that viewers carry no per-session cookie. Behind the tunnel the real
+    client IP is the first X-Forwarded-For hop; pair it with the User-Agent."""
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = xff or (request.client.host if request.client else "")
+    ua = request.headers.get("user-agent", "")
+    return hashlib.sha256(f"{ip}|{ua}".encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def _public_origin(request: Request) -> str:
@@ -461,21 +513,30 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         return Response(status_code=200, media_type=ct)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
     upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
-    # Forward ONLY the HLS session cookie upstream (never the app's auth/session cookies), always asserting
-    # cookieCheck. The browser sends back the hlsSession we relayed from the master playlist response.
-    fwd = ["cookieCheck=1"]
-    for c in (request.headers.get("cookie", "") or "").split(";"):
-        c = c.strip()
-        if c.startswith("hlsSession="):
-            fwd.append(c)
-            _mark_viewer(token, c.split("=", 1)[1])   # this session is actively fetching → count it as a viewer
-    up_cookie = "; ".join(fwd)
+    _mark_viewer(token, _client_fingerprint(request))   # headcount by client fingerprint (no per-viewer cookie now)
     import httpx
+
+    async def _open(cook: str):
+        cl = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
+        rq = cl.build_request("GET", upstream, headers={"Cookie": cook})
+        rp = await cl.send(rq, stream=True)
+        return cl, rp
+
+    cookie = await _hls_session_cookie(hls_port, token)
+    if cookie is None:
+        return Response(status_code=502)
     client = None
+    resp = None
     try:
-        client = httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0))
-        req = client.build_request("GET", upstream, headers={"Cookie": up_cookie})
-        resp = await client.send(req, stream=True)
+        client, resp = await _open(cookie)
+        # A rotated/expired MediaMTX session answers the variant/segment with 400/401/403. The browser can't
+        # fix this (it holds no cookie), so re-prime the session HERE and retry once before giving up.
+        if resp.status_code in (400, 401, 403):
+            await resp.aclose(); await client.aclose(); client = resp = None
+            cookie = await _hls_session_cookie(hls_port, token, force=True)
+            if cookie is None:
+                return Response(status_code=502)
+            client, resp = await _open(cookie)
     except Exception:
         if client is not None:
             try:
@@ -488,14 +549,6 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         await resp.aclose(); await client.aclose()
         return Response(status_code=code)
     media_type = resp.headers.get("content-type", "application/octet-stream")
-    # Relay MediaMTX's Set-Cookie(s) (the hlsSession) so the browser carries it on the variant + segments.
-    set_cookies = []
-    try:
-        set_cookies = resp.headers.get_list("set-cookie")
-    except Exception:
-        sc = resp.headers.get("set-cookie")
-        if sc:
-            set_cookies = [sc]
 
     async def _body():
         try:
@@ -505,28 +558,11 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
             await resp.aclose()
             await client.aclose()
 
-    # CORS: the native app plays HLS cross-origin WITH credentials (to carry the session cookie), and a
-    # credentialed request may NOT use `Access-Control-Allow-Origin: *` — echo the caller's Origin instead.
-    origin = request.headers.get("origin")
-    cors = {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"} if origin \
-        else {"Access-Control-Allow-Origin": "*"}
-    response = StreamingResponse(_body(), media_type=media_type,
-                                 headers={"Cache-Control": "no-cache", **cors})
-    # Re-emit MediaMTX's session cookie scoped to this stream's HLS path. SameSite=None; Secure so the
-    # NATIVE app (cross-site https://localhost → our HTTPS origin) also returns it on variant/segment
-    # requests; same-origin PWA works too. (Requires HTTPS, which prod is.)
-    for sc in set_cookies:
-        nv = (sc.split(";", 1)[0] or "").strip()   # "hlsSession=<uuid>"
-        if not nv or "=" not in nv:
-            continue
-        if nv.startswith("hlsSession="):
-            _mark_viewer(token, nv.split("=", 1)[1])   # brand-new viewer: count from their first playlist fetch
-        cookie = f"{nv}; Path=/api/streams/hls/{token}/; HttpOnly; Secure; SameSite=None"
-        try:
-            response.raw_headers.append((b"set-cookie", cookie.encode("latin-1")))
-        except Exception:
-            pass
-    return response
+    # The browser carries NO cookie now (we hold MediaMTX's session server-side), so an uncredentialed
+    # cross-origin fetch works and we can serve the maximally-compatible `Access-Control-Allow-Origin: *`
+    # to every third-party player (zap.stream, Amethyst, …). No Set-Cookie is relayed to the browser.
+    return StreamingResponse(_body(), media_type=media_type,
+                             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
 
 
 # ---------------------------------------------------------------- Past streams (VODs)

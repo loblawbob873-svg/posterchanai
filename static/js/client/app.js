@@ -4948,10 +4948,6 @@
   // `Path=/api/streams/hls/<token>/`, so match the path — NOT the origin. The native app reaches its own
   // server cross-origin (so same-origin would be wrong), and a deployment using a direct `stream_hls_base`
   // subdomain bypasses the proxy entirely and never has that cookie to send.
-  function _ourHls(url){
-    try{ return new URL(url, location.href).pathname.startsWith('/api/streams/hls/'); }
-    catch(_){ return false; }
-  }
   function attachStream(url){
     const v=$('#st-video'); if(!v) return;
     cleanupInlineStream();   // drop any previous inline hls before attaching a new one
@@ -4965,12 +4961,11 @@
     // advisory; MediaSource support is the fact worth branching on — and this is the order hls.js documents.
     loadHls().then(()=>{
       if(window.Hls && window.Hls.isSupported()){
-        // withCredentials ONLY for our own HLS proxy (it authenticates with an hlsSession cookie, and the
-        // native app reaches it cross-origin). Sending credentials to a third-party CDN is FATAL: CORS
-        // forbids `Access-Control-Allow-Origin: *` on a credentialed request, which is exactly what
-        // zap.stream's CloudFront returns.
-        const creds=_ourHls(url);
-        const h=new window.Hls({ maxBufferLength:30, xhrSetup:(xhr)=>{ try{ xhr.withCredentials=creds; }catch(_){} } }); _streamHls=h;
+        // NO credentials. Our HLS proxy now holds MediaMTX's session server-side and injects it upstream,
+        // so playback needs no cookie from the browser — same as any third-party CDN. Sending credentials
+        // would be FATAL: CORS forbids `Access-Control-Allow-Origin: *` on a credentialed request (exactly
+        // what our proxy and zap.stream's CloudFront both return), which is what used to black out viewers.
+        const h=new window.Hls({ maxBufferLength:30 }); _streamHls=h;
         h.loadSource(url); h.attachMedia(v);
         h.on(window.Hls.Events.ERROR,(_e,d)=>{ if(d&&d.fatal) _streamNote('Could not play this stream here — try the \u201cOpen stream URL\u201d link below.'); });
         return;
