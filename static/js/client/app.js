@@ -3809,11 +3809,21 @@
   // erased for every client. That's why `starts` is threaded through, and it's why `image` must be too:
   // set the cover once at go-live and the first viewer-count update would otherwise wipe it.
   function _liveBase(s){
+    // NIP-53 `relays` tag: tells OTHER clients (zap.stream, Amethyst) which relays carry this stream's
+    // kind-1311 chat. We publish/read chat on the local relay + STREAM_RELAYS (see _sendStreamChat /
+    // the chat sub), but without advertising them here an external viewer subscribes to ITS OWN default
+    // relays, finds nothing, and shows an empty chat even though messages are flowing. Must live in
+    // _liveBase (not just the announce) — it's replaceable and re-signed in four places, so any omitter
+    // would erase it for every client (same reason `image`/`starts` are threaded through).
+    const chatRelays = Array.from(new Set(
+      [ (CFG && CFG.relay_url) || '', ...STREAM_RELAYS ].map(u=>String(u||'').trim()).filter(Boolean)
+    ));
     return [
       ['d', s.token], ['title', s.title], ['streaming', s.hls],
       ...(s.image ? [['image', s.image]] : []),
       ...(s.starts ? [['starts', s.starts]] : []),
       ['p', ME.pubkey, '', 'host'],
+      ...(chatRelays.length ? [['relays', ...chatRelays]] : []),
     ];
   }
   async function _publishLive(info, title, image){
