@@ -7003,42 +7003,7 @@
               else st.textContent='schedule failed: '+((err&&err.message)||err); }
           };
         } }
-      // Windows-app focus robustness. Symptom: opening a reply / new post gives a box with NO cursor that
-      // won't accept text for ~5-15s, then works. A synchronous focus right after the modal's innerHTML is
-      // inserted intermittently doesn't stick in the desktop webview (local signer → it's not a signer
-      // prompt stealing focus). Defer to the next frame, then keep a short watchdog that re-grabs focus
-      // ONLY while nothing real holds it (activeElement is body/null) — so it cures the dead box without
-      // fighting a legitimate click on Attach / a tab. If it still can't grab focus it logs what has it and
-      // what sits over the textarea, so a recurrence is diagnosable instead of a mystery. Self-clears when
-      // the modal closes (ta leaves the DOM) — no leak.
-      const _focusTA=()=>{
-        const ae=document.activeElement, md=ta.closest('.modal-bg');
-        if(ae && ae!==ta && ae!==document.body && ae!==document.documentElement && !(md && md.contains(ae))){ try{ ae.blur && ae.blur(); }catch(_){} }  // release the trigger button so the webview lets focus land
-        try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
-      requestAnimationFrame(()=>requestAnimationFrame(_focusTA));
-      let _fwN=0, _fwDiag=false; const _fw=setInterval(()=>{
-        if(!ta.isConnected || document.activeElement===ta){ clearInterval(_fw); return; }
-        const ae=document.activeElement, md=ta.closest('.modal-bg');
-        // Back off ONLY when focus is on another control INSIDE this composer (you tabbed to Attach / a tab).
-        // Focus OUTSIDE the modal is the actual bug: the reply/quote BUTTON you clicked keeps focus and the
-        // webview then swallows our ta.focus(), so the box shows no cursor. The old check treated that trigger
-        // button as "a real control" and bailed — which is exactly why the box only woke on its own after a
-        // few seconds. So: outside-modal focus must NOT stop us; release it and take focus for the textarea.
-        if(ae && ae!==ta && md && md.contains(ae) && ae.matches && ae.matches('input,textarea,select,button,a[href],[contenteditable]')){ clearInterval(_fw); return; }
-        if(ta.disabled) ta.disabled=false;    // disabled → no cursor, unfocusable
-        if(ta.readOnly) ta.readOnly=false;    // readOnly → cursor shows but refuses text
-        // A stray overlay OUTSIDE the modal covering the box eats the click → let clicks fall through.
-        let over=null; try{ const r=ta.getBoundingClientRect(); over=document.elementFromPoint(r.left+r.width/2, r.top+8);
-          if(over && over!==ta && !ta.contains(over) && !(md && md.contains(over))){ try{ over.style.pointerEvents='none'; }catch(_){} }
-        }catch(_){}
-        _focusTA();   // _focusTA blurs an outside-modal focus holder (the trigger button) before focusing
-        if(!_fwDiag && _fwN>=4){ _fwDiag=true;   // only if STILL stuck ~1s in (past the recovery attempts): visible, no DevTools needed
-          const msg='⚠️ compose stuck — over='+((over&&(over.id||over.className||over.tagName))||'-')+' disabled='+ta.disabled+' ro='+ta.readOnly+' ae='+((ae&&(ae.id||ae.tagName))||'-');
-          try{ console.warn(msg,{over,ae}); }catch(_){}
-          try{ toast(msg); }catch(_){}
-        }
-        if(++_fwN>=24){ clearInterval(_fw); }   // ~6s of 250ms retries then give up
-      }, 250);
+      ta.focus();
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
       // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
