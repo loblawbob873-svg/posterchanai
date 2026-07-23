@@ -315,6 +315,16 @@ class SettingsResponse(BaseModel):
     node_exec_agent_model: str = "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"  # agentic-tuned model for `node agent` (falls back to default if absent)
     node_exec_agent_step_timeout: str = "600"  # max seconds per command in `node agent` (0 = use job timeout); bounds long/hung commands so the loop can't deadlock
     node_exec_job_timeout: str = "0"  # per-job timeout in seconds (0 = no timeout)
+    # Nostr transport for node/agent tasks — reuses the DVM (nostr_dvm.py): a command is an encrypted
+    # NIP-90 event p-tagged to a worker node's npub; the worker runs it LOCALLY and returns an encrypted
+    # result. Replaces SSH — nodes are addressed by npub (no keys/ports; NAT-friendly). Trust is a DEDICATED
+    # allowlist (running commands is a bigger grant than GPU-offload, so it is NOT the DVM peer trust).
+    node_exec_nostr_enabled: str = "false"  # dispatch node/agent tasks over Nostr instead of SSH
+    node_exec_node_npubs: str = ""  # node addressing over Nostr: one per line `name npub1…` (name → worker npub)
+    node_exec_trusted_npubs: str = ""  # controllers this WORKER will run commands from: one npub per line (signature-verified)
+    node_exec_claude_enabled: str = "false"  # allow the Claude Code CLI agent (mode:"claude") on this worker
+    node_exec_claude_dangerous: str = "false"  # allow CI/CD mode — Claude Code with --dangerously-skip-permissions (autonomous, no prompts)
+    node_exec_claude_cmd: str = "claude"  # Claude Code CLI invocation on the worker (path/flags prepended by the runner)
     # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
     finance_api_base: str = "http://localhost:5001"
     # Screenshot: hosts allowed to bypass the SSRF private-IP guard (the operator's own
