@@ -8538,12 +8538,20 @@
   // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
   // autosaves on pagehide — so an SW reload never loses in-progress text and needs no (fragile,
   // focus-based, stuck-update-prone) composer guard here.
-  function _swReload(){
-    if(_swRefreshing) return; _swRefreshing=true;   // _swRefreshing guards within THIS page load
+  function _swReload(force){
+    if(_swRefreshing) return;                        // _swRefreshing guards within THIS page load
     // Cross-reload guard: if a worker somehow keeps re-firing controllerchange (node flip-flop, a worker
     // that won't settle), never reload more than once per ~40s per session — otherwise the app thrashes
-    // ("keeps refreshing"). sessionStorage survives the reload, so the 2nd would-be reload is suppressed.
-    try{ const last=+(sessionStorage.getItem('swReloaded')||0); if(Date.now()-last<40000) return; sessionStorage.setItem('swReloaded', String(Date.now())); }catch(_){}
+    // ("keeps refreshing"). BUT an EXPLICIT update (a user tap or the launch auto-apply set _updApplying,
+    // or force=true) MUST reload: this same 40s guard was suppressing the reload that applyUpdate depends
+    // on, stranding the UI at "Updating… applying the new version" until the window elapsed. So the guard
+    // applies ONLY to automatic (unforced, not-applying) reloads. Latch _swRefreshing only when we truly
+    // reload — early-returning with it set would no-op every later legit trigger this page load.
+    if(!force && !_updApplying){
+      try{ const last=+(sessionStorage.getItem('swReloaded')||0); if(Date.now()-last<40000) return; }catch(_){}
+    }
+    _swRefreshing=true;
+    try{ sessionStorage.setItem('swReloaded', String(Date.now())); }catch(_){}
     location.reload();
   }
   function _onSwUpdateReady(worker){
@@ -8572,13 +8580,13 @@
     // PWAs). Activation-DRIVEN → fires only AFTER the worker has taken control, so it can never strand a
     // still-'waiting' worker (unlike a blind timer). Bound to the ACTUAL worker being activated (reg.waiting),
     // not just the one captured at surface time, which a 2nd queued update could have superseded.
-    const arm = x => { try{ if(x && x.addEventListener) x.addEventListener('statechange', ()=>{ if(x.state==='activated') _swReload(); }); }catch(_){} };
+    const arm = x => { try{ if(x && x.addEventListener) x.addEventListener('statechange', ()=>{ if(x.state==='activated') _swReload(true); }); }catch(_){} };
     if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
       navigator.serviceWorker.getRegistration('/client').then(reg=>{ const ww=(reg&&reg.waiting)||w; go(ww); arm(ww); }).catch(()=>{ go(w); arm(w); });
     } else { go(w); arm(w); }
     // True last resort: if nothing reloaded us in 6s (a worker that genuinely won't activate) reload anyway
-    // so the tap always does SOMETHING — network-first means the reload still lands fresh code.
-    setTimeout(_swReload, 6000);
+    // (force — bypass the 40s thrash guard) so the tap always does SOMETHING; network-first lands fresh code.
+    setTimeout(()=>_swReload(true), 6000);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
