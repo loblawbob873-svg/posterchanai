@@ -1958,7 +1958,7 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 #rb-topics .tag-chip .tag-n{flex:0 0 auto}
 .tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
   background:linear-gradient(135deg,rgba(var(--accent-rgb),.12),rgba(var(--accent2-rgb),.07));
-  border:1px solid rgba(var(--accent-rgb),.4);color:var(--cyan);
+  border:1px solid rgba(var(--accent-rgb),.4);color:var(--neon);   /* theme accent, not hardcoded cyan (was teal on Professional etc.) */
   padding:8px 15px;font-family:'Orbitron',sans-serif;font-size:14.5px;font-weight:700;
   letter-spacing:.7px;text-transform:uppercase;transition:.16s;position:relative;
   /* angular clipped corners = cyberpunk tag */
