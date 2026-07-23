@@ -310,6 +310,14 @@ class SettingsResponse(BaseModel):
     # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)
+    # Per-user Debian Docker sandbox: lets NON-admin AI users (can_ai) run agentic tasks confined to
+    # their own throwaway container (admins can opt in too). Needs Docker on the host + the service user
+    # in the `docker` group. Off by default.
+    node_exec_sandbox_enabled: str = "false"
+    node_exec_sandbox_image: str = "debian:stable-slim"  # base image for the per-user container
+    node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
+    node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)
+    node_exec_sandbox_cpus: str = "1"          # per-container CPU cap (docker --cpus)
     node_exec_agent_max_steps: str = "8"  # max LLM iterations in agentic mode
     node_exec_agent_model: str = "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf"  # agentic-tuned model for `node agent` (falls back to default if absent)
     node_exec_agent_step_timeout: str = "600"  # max seconds per command in `node agent` (0 = use job timeout); bounds long/hung commands so the loop can't deadlock

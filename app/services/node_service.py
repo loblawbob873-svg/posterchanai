@@ -95,6 +95,19 @@ def user_allowed(db: Session, user: Optional["User"]) -> bool:
     return me in allowed
 
 
+def has_ai_access(user: Optional["User"]) -> bool:
+    """AI features are gated by admin OR the admin-granted `can_ai` flag (mirrors auth.get_ai_user)."""
+    return bool(user is not None and (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)))
+
+
+def sandbox_allowed(db: Session, user: Optional["User"]) -> bool:
+    """True if this user may run agentic tasks in a per-user Debian sandbox: the feature is enabled AND
+    they have AI access. This is how NON-admin AI users get agentic access (confined to their container),
+    and admins can opt into it too. Docker availability is checked lazily at run time (sandbox_service)."""
+    from app.services import sandbox_service
+    return sandbox_service.enabled() and has_ai_access(user)
+
+
 def tail(text: str, limit: int) -> str:
     """Return the LAST `limit` chars of command output. Command results put the
     meaningful part (final status, errors, summary) at the end, so we show the tail,
@@ -174,19 +187,33 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
     Jobs only ever run on ``local`` now — remote nodes go over Nostr (`run_agent_over_nostr`), where the
     worker runs its own local job. A non-local target here is a routing bug, so fail loudly."""
     try:
-        if job.target != "local":
-            raise RuntimeError(f"node_service jobs are local-only now; remote '{job.target}' must go over Nostr")
         # start_new_session=True puts each job in its OWN process group/session, so on
         # timeout/kill we can signal the whole group (the shell AND its children, e.g. a `sleep`
         # in `cmd && sleep 10`) instead of orphaning grandchildren. Also makes getpgid(pid)==pid,
         # so _terminate's killpg can only ever hit this job's group, never the service.
-        proc = await asyncio.create_subprocess_shell(
-            job.command,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
+        if job.target == "local":
+            proc = await asyncio.create_subprocess_shell(
+                job.command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+        elif job.target.startswith("sandbox:"):
+            # Per-user Debian container — the command runs INSIDE it (docker exec), never on the host.
+            from app.services import sandbox_service
+            _uid = job.target.split(":", 1)[1]
+            await sandbox_service.ensure(_uid)   # lazy create/start on the first command
+            proc = await asyncio.create_subprocess_exec(
+                *sandbox_service.exec_argv(_uid, job.command),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+        else:
+            raise RuntimeError(f"unknown job target '{job.target}' (expect 'local' or 'sandbox:<uid>'; "
+                               "remote nodes go over Nostr)")
         job._proc = proc
 
         async def pump() -> None:

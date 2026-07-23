@@ -191,6 +191,38 @@
             <input type="text" id="node_exec_claude_cmd" name="node_exec_claude_cmd" placeholder="claude">
             <small>Invocation used to launch Claude Code on the worker (path/flags added by the runner). Default: <code>claude</code>.</small>
         </div>
+
+        <hr>
+        <div class="form-group">
+            <small>🐳 <strong>Per-user Debian sandbox.</strong> Lets <strong>non-admin AI users</strong> (and admins who opt in) run agentic tasks confined to their own throwaway Debian container — the agent can do anything <em>inside</em> it without touching the host. One container per user, created on demand, torn down when an agent run finishes, and idle-reaped. Needs Docker on the host + the service user in the <code>docker</code> group.</small>
+            <label for="node_exec_sandbox_enabled">
+                <input type="checkbox" id="node_exec_sandbox_enabled" name="node_exec_sandbox_enabled"> Enable the per-user Debian sandbox
+            </label>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_sandbox_image">Sandbox image</label>
+                <input type="text" id="node_exec_sandbox_image" name="node_exec_sandbox_image" placeholder="debian:stable-slim">
+                <small>Docker image for each user's container. Default: <code>debian:stable-slim</code>.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_sandbox_network">Sandbox network</label>
+                <input type="text" id="node_exec_sandbox_network" name="node_exec_sandbox_network" placeholder="bridge">
+                <small><code>bridge</code> = internet (so the agent can <code>apt install</code> tools); <code>none</code> = fully isolated. The container can't reach the host either way.</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_sandbox_memory">Sandbox memory</label>
+                <input type="text" id="node_exec_sandbox_memory" name="node_exec_sandbox_memory" placeholder="1g">
+                <small>Per-container memory cap (<code>docker --memory</code>). Default: <code>1g</code>.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_sandbox_cpus">Sandbox CPUs</label>
+                <input type="text" id="node_exec_sandbox_cpus" name="node_exec_sandbox_cpus" placeholder="1">
+                <small>Per-container CPU cap (<code>docker --cpus</code>). Default: <code>1</code>.</small>
+            </div>
+        </div>
     </fieldset>
 
     <fieldset>

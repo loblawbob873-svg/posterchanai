@@ -568,6 +568,31 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error starting Blossom cleanup: {e}", exc_info=True)
 
+            try:
+                # Per-user sandbox container reaper. On boot, sweep EVERY pcai-sandbox container left by
+                # a prior run (nothing is tracked yet, so the orphan sweep removes them all) — the fix
+                # for containers dangling across a restart. Then reap idle ones every 5 min so a bare
+                # `node sandbox <cmd>` session (which is NOT torn down like an agent run) can't linger.
+                from app.services import sandbox_service as _sbx
+                async def _sandbox_reaper():
+                    if not await _sbx.available():
+                        return   # no Docker on this host → nothing to reap, don't spin
+                    try:
+                        n = await _sbx.reap_idle(ttl=0)   # boot: 0 = reap all tracked (none) + orphan sweep
+                        if n:
+                            logging.info(f"[sandbox] startup swept {n} orphaned container(s)")
+                    except Exception as _e:
+                        logging.warning(f"[sandbox] startup sweep failed: {_e}")
+                    while True:
+                        await _aio.sleep(300)
+                        try:
+                            await _sbx.reap_idle(ttl=900)   # >15 min idle → reap (+ orphan sweep each pass)
+                        except Exception as _e:
+                            logging.warning(f"[sandbox] idle reap failed: {_e}")
+                _aio.create_task(_sandbox_reaper())
+            except Exception as e:
+                logging.error(f"Error starting sandbox reaper: {e}", exc_info=True)
+
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 

@@ -38,6 +38,15 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
             except Exception as e:
                 logger.error(f"[node] background agent error on {name}: {e}", exc_info=True)
                 sections.append(f"## Agent on `{name}` — goal: {goal}\n\n**⚠️ Error:** {e}")
+            finally:
+                # "Delete the container when the job's done": an agent run in a sandbox tears its
+                # container down afterward (the idle reaper is only a backstop for bare `node sandbox` use).
+                if target.startswith("sandbox:"):
+                    try:
+                        from app.services import sandbox_service
+                        await sandbox_service.reap(target.split(":", 1)[1])
+                    except Exception:
+                        pass
     finally:
         db.close()
     if notify:
@@ -76,8 +85,9 @@ class _SystemMixin:
             return {"type": "text", "content": f"Error generating health report: {str(e)}"}
 
     async def _node_command(self, arg: str, notify: Optional[Callable] = None) -> dict:
-        """Run OS commands on configured nodes (SSH or local) as background jobs, with an
-        optional agentic mode. Gated by admin Settings (enabled + user allowlist).
+        """Run OS commands on nodes (Nostr workers, or `local`) as background jobs, with an optional
+        agentic mode. Full (host + remote) access is gated by the admin allowlist; NON-admin AI users
+        get a per-user Debian **sandbox** instead (admins can opt into it too).
 
         `notify`, when given, is an async callback the caller supplies to deliver a
         finished job's output back to the channel the command came from (web UI
@@ -85,18 +95,27 @@ class _SystemMixin:
         which is closed by the time a long-running job finishes."""
         from app.services import node_service
 
-        if not node_service.user_allowed(self.db, self.user):
+        _full = node_service.user_allowed(self.db, self.user)         # admin/allowlisted → host + remote nodes
+        _sbx = node_service.sandbox_allowed(self.db, self.user)       # AI user + sandbox on → a Debian container
+        if not _full and not _sbx:
             return {"type": "text", "content": "⛔ Agentic node management is disabled or you are not authorized. An admin can enable it in Admin → Services → Agentic Node Management."}
 
         parts = arg.strip().split(maxsplit=2)
         sub = parts[0].lower() if parts else ""
         from app.services import nostr_dvm
-        # Nostr-only registry (SSH removed). `_reg`: name -> "local" (run on THIS host directly) or
+        # The per-user node registry. `_reg`: name -> "local" (run on THIS host directly) /
         # "nostr:<pkhex>" (a worker addressed over an encrypted NIP-90 event — the worker runs it
-        # locally and returns the result; see docs/NODE_AGENT_NOSTR.md). Split into the two shapes the
-        # rest of this method expects: `nodes` (local-run names, value "local") and `_npub_nodes`
-        # (name -> worker pubkey hex). A self-mapped npub lands in `nodes` (no round-trip to self).
-        _reg = node_service.all_nodes(self.db)
+        # locally and returns the result; see docs/NODE_AGENT_NOSTR.md) / "sandbox:<uid>" (a per-user
+        # Debian container via docker exec). Full-access users see every node (+ the sandbox if it's on);
+        # a sandbox-only user sees ONLY their container. Split into the shapes the rest expects: `nodes`
+        # (local-or-sandbox, run via the local job machinery) and `_npub_nodes` (name -> worker pubkey).
+        _sbx_target = f"sandbox:{self.user.id}" if self.user else "sandbox:anon"
+        if _full:
+            _reg = node_service.all_nodes(self.db)
+            if _sbx:                                # sandbox enabled → offer it as a node to admins too
+                _reg["sandbox"] = _sbx_target
+        else:
+            _reg = {"sandbox": _sbx_target}         # sandbox-only user: their container is the only target
         nodes = {n: t for n, t in _reg.items() if not t.startswith("nostr:")}
         _npub_nodes = {n: t[len("nostr:"):] for n, t in _reg.items() if t.startswith("nostr:")}
 
@@ -107,7 +126,8 @@ class _SystemMixin:
             for _nn, _pk in _npub_nodes.items():
                 lines.append(f"- `{_nn}` → 🛰️ {nostr_dvm.nostr_service.npub_of(_pk)[:18]}…")
             for name, target in nodes.items():
-                where = "this host" if target == "local" else target
+                where = ("this host" if target == "local"
+                         else "🐳 your Debian sandbox" if target.startswith("sandbox:") else target)
                 lines.append(f"- `{name}` → {where}")
             return "\n".join(lines)
 
@@ -199,7 +219,7 @@ class _SystemMixin:
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}
             lines = [f"## `{command}` on {len(_reg)} node(s)"]
             # Local nodes → background jobs (await briefly); Nostr workers → encrypted dispatch (await result).
-            jobs = {name: node_service.start_job(self.db, name, "local", command,
+            jobs = {name: node_service.start_job(self.db, name, nodes[name], command,
                                                  user_id=self.user.id if self.user else None)
                     for name in nodes}
             _nostr_results = await asyncio.gather(*(
@@ -253,6 +273,13 @@ class _SystemMixin:
                 except Exception as e:
                     logger.error(f"[node] agent error on {_n}: {e}", exc_info=True)
                     sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n**⚠️ Error:** {e}")
+                finally:
+                    if _t.startswith("sandbox:"):   # tear the container down when the run finishes
+                        try:
+                            from app.services import sandbox_service
+                            await sandbox_service.reap(_t.split(":", 1)[1])
+                        except Exception:
+                            pass
             return {"type": "text", "content": "\n\n---\n\n".join(sections)}
 
         # --- direct command: node <name> <command...> ---
@@ -270,7 +297,7 @@ class _SystemMixin:
             return {"type": "text", "content": f"Usage: `node {name} <command>`"}
 
         job = node_service.start_job(
-            self.db, name, "local", command,
+            self.db, name, nodes[name], command,
             user_id=self.user.id if self.user else None,
         )
         await node_service.await_job(job, wait=8.0)

@@ -9997,6 +9997,10 @@
     const nodes=state.nodes||[]; const jobs=state.jobs||[];
     if(!nodes.length){ toast('No nodes are configured'); return; }
     const nodeOpts=nodes.map(n=>`<option value="${enc(n)}">${enc(n)}</option>`).join('');
+    // With a single target (a sandbox-only user has just their own container) the Node picker is
+    // meaningless — hide it. Nostr changed the transport, not that a multi-node user still picks a box.
+    const soloSandbox = nodes.length===1 && nodes[0]==='sandbox';
+    const oneNode = nodes.length<=1;
     const jobRow=j=>{
       const ic=j.status==='running'?'⚙️':(j.status==='done'?(j.exit_code===0?'✅':'⚠️'):(j.status==='killed'?'⏹️':'❌'));
       const meta=j.status==='running'?'running':(j.exit_code!=null?('exit '+j.exit_code):j.status);
@@ -10010,8 +10014,8 @@
     };
     modal(`<h3>🤖 Agents</h3>
       <div class="node-panel">
-        <p class="muted small np-intro">Run things on your servers — ask in plain English and the agent figures out the commands, or run a raw shell command. Output shows up in the chat below.</p>
-        <div class="np-row">
+        <p class="muted small np-intro">${soloSandbox?'Run agentic tasks in your private 🐳 Debian sandbox — ask in plain English and the agent figures out the commands, or run a raw shell command. It runs isolated from the host; output shows up in the chat below.':'Run things on your servers — ask in plain English and the agent figures out the commands, or run a raw shell command. Output shows up in the chat below.'}</p>
+        <div class="np-row${oneNode?' hidden':''}">
           <label class="np-lbl">Node</label>
           <select class="input" id="np-node">${nodeOpts}</select>
           <label class="np-all"><input type="checkbox" id="np-all"> All nodes</label>

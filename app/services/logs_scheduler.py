@@ -52,6 +52,14 @@ _HEALTH_GOAL = (
     "on this host."
 )
 
+# Fallback for a node that can't run the LLM 'agent' loop (the lightweight standalone agent on
+# router.lan etc. has no local model): a single read-only diagnostic whose raw output IS the report.
+_HEALTH_SHELL = ("echo '== host =='; uname -a; uptime; "
+                 "echo; echo '== disk /=='; df -h / 2>/dev/null; "
+                 "echo; echo '== memory =='; free -h 2>/dev/null; "
+                 "echo; echo '== load =='; cat /proc/loadavg 2>/dev/null; "
+                 "echo; echo '== failed services =='; systemctl --failed --no-legend 2>/dev/null | head -20")
+
 # Deterministic status board — Python owns the emojis + layout so they're identical on every node.
 # The model only supplies a status word + short detail per subsystem (an easy single-shot task);
 # the icons and ordering below are never the model's job.
@@ -220,6 +228,13 @@ async def build_health_report(db, admin: User, notify=None) -> str:
         try:
             if _nostr:
                 summary = await node_service.run_agent_over_nostr(target[6:], _HEALTH_GOAL, mode="agent", report=True)
+                # A lightweight standalone worker (no local LLM) can't run agent mode — fall back to a
+                # raw shell diagnostic and present its output verbatim (no status board to distill).
+                if summary and ("no local LLM" in summary or "shell + claude only" in summary):
+                    raw = await node_service.run_agent_over_nostr(target[6:], _HEALTH_SHELL, mode="shell")
+                    body = f"```\n{(raw or '(no output)').strip()[:2500]}\n```"
+                    sections.append(f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`\n\n{body}")
+                    continue
             else:
                 summary = await node_service.run_agent(
                     db, admin, name, target, _HEALTH_GOAL, chat_service,

@@ -298,11 +298,19 @@ def node_state(db: Session = Depends(get_db), current_user: User = Depends(get_c
     the node_exec allowlist gets 403 and learns nothing about the fleet. All *actions* (run / kill / log)
     go through the already-gated chat command pipeline, so this endpoint mutates nothing."""
     from app.services import node_service
-    if not node_service.is_enabled(db) or not node_service.user_allowed(db, current_user):
+    _full = node_service.user_allowed(db, current_user)       # admin/allowlisted → host + remote nodes
+    _sbx = node_service.sandbox_allowed(db, current_user)     # AI user + sandbox on → a Debian container
+    if not _full and not _sbx:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Node access is not enabled for your account")
-    # Nostr-only registry: synthetic `local` + the npub workers (a self-mapped npub collapses to
-    # local). Single builder, so the dropdown never double-counts a host. Names only — no targets.
-    names = list(node_service.all_nodes(db).keys())
+    # Per-user registry. Full-access users get the Nostr-only fleet (synthetic `local` + npub workers,
+    # a self-mapped npub collapses to local) plus the sandbox if it's on; a sandbox-only user sees just
+    # their container. Names only — the client hides the picker when there's a single target.
+    if _full:
+        names = list(node_service.all_nodes(db).keys())
+        if _sbx:
+            names.append("sandbox")
+    else:
+        names = ["sandbox"]
     jobs = [
         {"id": j.id, "node": j.node, "command": (j.command or "")[:120],
          "status": j.status, "exit_code": j.exit_code,
