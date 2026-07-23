@@ -194,16 +194,6 @@ def _write_config(cfg: dict) -> None:
         "  - action: api",
         "  - action: metrics",
         "  - action: pprof",
-        # Reads (HLS/WebRTC playback) are public anyway — the auth hook returns 200 for every "read"
-        # (see app/routers/streams.py). But leaving reads UNDER authMethod:http makes MediaMTX guard the
-        # HLS session with a `Secure; SameSite=None` cookie: it auths the master playlist, sets the cookie,
-        # and then requires it back on every child playlist + segment. Browser players (hls.js in
-        # zap.stream/shosho/grimoire, ExoPlayer in Amethyst) can't resend that cookie cross-origin — the
-        # request is uncredentialed by default, and our `Access-Control-Allow-Origin: *` is invalid WITH
-        # credentials anyway — so the child playlist 401s and the video goes black. VLC (one cookie jar,
-        # no CORS) and the WebRTC/WHEP path are unaffected, which is why only browsers broke. Excluding
-        # reads from auth entirely drops the cookie gate; publishing stays gated below.
-        "  - action: read",
         "",
         "paths:",
         "  all_others:",
