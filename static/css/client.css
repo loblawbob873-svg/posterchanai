@@ -1235,18 +1235,19 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
-/* Post action buttons (reply/react/zap/quote/boost/bookmark/…) are FLAT like the navbar: hover/active
-   is a subtle tint + colour change only — no coloured border, no outer glow (box-shadow), no hover-lift. */
+/* Post action buttons (reply/react/zap/quote/boost/bookmark/…) match the left navbar's flat pill:
+   a subtle tint + an INSET hairline border (box-shadow:inset …, like .nav-item.active) on hover/engaged —
+   NO coloured border, NO outer glow, NO hover-lift. Same language as the navbar's active item. */
 .act.actm{font-size:20px;background:rgba(var(--accent-rgb),.07)}
-.act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);background:rgba(255,207,43,.14)}
-.act.rt{color:var(--green)} .act.rt:hover{color:var(--green);background:rgba(57,255,139,.14)}
+.act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);background:rgba(255,207,43,.14);box-shadow:inset 0 0 0 1px var(--line)}
+.act.rt{color:var(--green)} .act.rt:hover{color:var(--green);background:rgba(57,255,139,.14);box-shadow:inset 0 0 0 1px var(--line)}
 .act{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;
   font-size:19px;padding:10px 16px;border-radius:13px;transition:.13s;line-height:1}
-.act:hover{color:var(--cyan);background:rgba(33,230,255,.14)}
-.act.on{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
-.act.rt.on{color:var(--green);background:rgba(57,255,139,.12)}
-.act.actz.on{color:var(--amber);background:rgba(255,207,43,.12)}
-.act.actb.on{color:var(--neon2);background:rgba(var(--accent2-rgb),.12)}
+.act:hover{color:var(--cyan);background:rgba(33,230,255,.14);box-shadow:inset 0 0 0 1px var(--line)}
+.act.on{color:var(--neon);background:rgba(var(--accent-rgb),.12);box-shadow:inset 0 0 0 1px var(--line)}
+.act.rt.on{color:var(--green);background:rgba(57,255,139,.12);box-shadow:inset 0 0 0 1px var(--line)}
+.act.actz.on{color:var(--amber);background:rgba(255,207,43,.12);box-shadow:inset 0 0 0 1px var(--line)}
+.act.actb.on{color:var(--neon2);background:rgba(var(--accent2-rgb),.12);box-shadow:inset 0 0 0 1px var(--line)}
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */
@@ -1489,7 +1490,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .ln-addr{background:transparent;border:1px solid var(--line);color:var(--amber);cursor:pointer;border-radius:9px;padding:5px 11px;font-size:13px;margin:6px 0;display:inline-flex;align-items:center;gap:4px;transition:.13s}
 .ln-addr:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.35)}
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */
-.act.actxmr{color:#f60} .act.actxmr:hover{color:#ff8a33;background:rgba(255,102,0,.14)}
+.act.actxmr{color:#f60} .act.actxmr:hover{color:#ff8a33;background:rgba(255,102,0,.14);box-shadow:inset 0 0 0 1px var(--line)}
 .ln-addr.xmr{color:#f60} .ln-addr.xmr:hover{border-color:#f60;box-shadow:0 0 12px rgba(255,102,0,.35)}
 /* Monero tip note badge — shows the amount prominently; when a proof is attached, a one-tap button
    copies a check_tx_proof command so anyone can verify the payment in their own wallet. */
