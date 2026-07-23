@@ -893,8 +893,18 @@
         // only prompt. (applyUpdate posts SKIP_WAITING + reloads on controllerchange, with a 6s fallback.)
         let _swLaunch=true; setTimeout(()=>{ _swLaunch=false; }, 20000);
         const surface = w => { if(!w) return;
-          if(_swLaunch){ _updateReady=w; applyUpdate(); }   // launch: silently activate + reload onto the fresh build
-          else _onSwUpdateReady(w); };                       // mid-session: surface the in-app "Update available" row
+          // Launch: silently activate + reload onto the fresh build — BUT at most once per ~40s per session.
+          // If a new worker fails to take control (a known Firefox-PWA quirk), the auto-apply and its 6s
+          // fallback reload would otherwise fire on EVERY load forever — the "app keeps refreshing" loop.
+          // sessionStorage survives reloads within the tab/app session, so after one try we fall back to the
+          // prompt and the app stays put instead of thrashing.
+          let last=0; try{ last=+(sessionStorage.getItem('swAutoApply')||0); }catch(_){}
+          if(_swLaunch && Date.now()-last>40000){
+            try{ sessionStorage.setItem('swAutoApply', String(Date.now())); }catch(_){}
+            _updateReady=w; applyUpdate(); return;
+          }
+          _onSwUpdateReady(w);   // mid-session, or we already auto-applied this session → just prompt, don't reload
+        };
         // Watch a worker for the installed+waiting state (an UPDATE, not first install → controller exists).
         const track = w => { if(!w) return;
           if(w.state==='installed' && navigator.serviceWorker.controller){ surface(w); return; }
@@ -12414,7 +12424,7 @@
   // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
   // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
   // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=19;   // a sidebar digest, not a second feed
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=7;   // a sidebar digest (matches Follows), not a second feed
   let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
   // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
   async function rankHot(windowSec){
