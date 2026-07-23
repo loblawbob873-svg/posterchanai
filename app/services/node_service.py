@@ -558,15 +558,18 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                                                  "Re-running it will not change anything. Try a DIFFERENT "
                                                  "command, or call finish if you are stuck or done.")})
                     continue
-                # Stream each command as live progress, but DON'T fold the per-step command/
-                # output into the returned transcript — that's the persisted/final message, which
-                # we keep concise (header + the model's ✅ Done summary). The full play-by-play
-                # stays in the live stream and in the node job log (`node log <id>`).
+                # Stream each command live AND fold it into the persisted transcript, so the chat is a
+                # DURABLE record of the run — the user comes back to the full play-by-play, not a vanished
+                # one-liner (the live ⚙️ stream is ephemeral). report_mode stays concise (the health board
+                # distils it) and skips this; full untruncated output is still in the node job log.
                 await _say(f"⚙️ `{cmd}`")
                 # Bounded per-step: an unbounded command would deadlock the agent + caller.
                 job = await run_to_completion(db, node, target, cmd, user_id=user.id,
                                               timeout=_agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
+                if not report_mode:
+                    _ex = "" if job.exit_code == 0 else f" ⚠️ exit {job.exit_code}"
+                    transcript.append(f"\n**⚙️ `{cmd}`**{_ex}\n```\n{tail(out, 700)}\n```")
                 cmds_run.append(cmd)
                 cmd_outputs[cmd] = out
                 repeat_nudges = 0   # made progress with a fresh command; reset the stuck counter
