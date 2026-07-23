@@ -8496,7 +8496,11 @@
     }).length + (_updBadge?1:0);
     // The rail's Alerts tab is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
-    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');}); }
+    $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');});
+    // Keep the rail's Alerts LIST live too, not just its badge: if you're on that tab when a new notification
+    // lands, re-render it now instead of leaving it stale until you re-click the tab. In-memory read (no relay
+    // query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
+    if(_notifReady && _rbTab==='notifs' && _rightbarShown()) loadNotifs(); }
   // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
   // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
   // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
