@@ -11894,6 +11894,9 @@
     return null;
   }
   function openThread(id, relays){
+    // A stray/empty id (e.g. a click that leaked from a closing modal backdrop, or a malformed
+    // route) must NOT navigate to a thread and flash "Post not found on the relay" — just no-op.
+    if(!id || typeof id!=='string' || id.length<10){ return; }
     const hints=(relays||[]).filter(u=>/^wss?:\/\//i.test(u));
     try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
     renderThread(id, hints);
@@ -12312,7 +12315,7 @@
   }
 
   // ---------- modal + toast ----------
-  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
+  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   // In-app confirm — a themed replacement for native window.confirm(). WHY it exists: a native dialog in
   // the Electron desktop shell blurs the renderer and the browser→renderer re-focus handshake goes stale,
