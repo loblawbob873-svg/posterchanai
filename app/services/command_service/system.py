@@ -68,7 +68,7 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             logger.warning(f"[node] background agent deliver failed: {e}")
 
 
-_AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids), so deleting the chat cancels the run
+_AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids, stop_event), so deleting the chat stops the run
 _REAP_TASKS: set = set()       # keep cancel-triggered reap tasks referenced so they aren't GC'd mid-run
 
 
