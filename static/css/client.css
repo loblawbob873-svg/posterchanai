@@ -2296,6 +2296,17 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media (min-width:821px) and (max-width:1920px){ body{ zoom:.77 } .app{ height:calc(100dvh / .77) } .main{ height:100% } }
 @media (min-width:821px) and (max-width:1600px){ body{ zoom:.72 } .app{ height:calc(100dvh / .72) } .main{ height:100% } }
 @media (min-width:821px) and (max-width:1366px){ body{ zoom:.67 } .app{ height:calc(100dvh / .67) } .main{ height:100% } }
+/* Feed post cards are intrinsically sized for a big 4K panel (avatar 52px, body 18.5px), so at laptop
+   widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
+   the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
+@media (min-width:821px) and (max-width:1920px){
+  .note{padding:12px 18px;gap:11px}
+  .note .av{width:46px;height:46px}
+  .note .name,.note .time{font-size:15.5px}
+  .note .handle{font-size:14.5px}
+  .note .txt{font-size:16.5px;line-height:1.55}
+  .quoted .txt{font-size:14.5px}
+}
 
 /* ---- 4chan browser (Discover) — themed to match the note UI, mobile-first ---- */
 .fc-bar,.fc-thread-top{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:18px 12px 10px;position:sticky;top:-8px;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
