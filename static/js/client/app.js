@@ -917,6 +917,13 @@
         if(reg.installing) track(reg.installing);            // an install already in-flight when register() resolved
         reg.addEventListener('updatefound', ()=> track(reg.installing));
         setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only — a mid-session build prompts
+        // Desktop users leave the app open for DAYS — the 15-min timer + a manual reload was the only path to
+        // a new build, so fixes sat unseen (this whole class of "my change never shows on desktop" reports).
+        // Check whenever the app/tab regains focus too, debounced, so switching back to it picks up a fresh
+        // build. surface() still guards auto-apply vs prompt, so this can't thrash.
+        let _swFocusT=0; const _swFocusCheck=()=>{ const n=Date.now(); if(n-_swFocusT<30000) return; _swFocusT=n; try{ reg.update(); }catch(_){} };
+        document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) _swFocusCheck(); });
+        window.addEventListener('focus', _swFocusCheck);
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
