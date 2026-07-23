@@ -98,6 +98,150 @@ def gay_attachments(
         return [], f"❌ {filename}: {e}"
 
 
+def _make_hag_stamp(text_h: int):
+    """Render a distressed red rubber stamp reading "HAG" — identical treatment to the GAY stamp
+    (double border, stamp-red ink, grungy speckle). Pure Pillow; caller rotates + scales it."""
+    import random
+    from PIL import Image, ImageDraw
+
+    text = "HAG"
+    stroke = max(text_h // 16, 2)
+    font = _load_meme_font(text_h)
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    bbox = tmp.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    pad = int(text_h * 0.55)
+    bw = max(int(text_h * 0.11), 4)
+    W, H = tw + pad * 2, th + pad * 2
+    red = (200, 28, 28, 235)
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+    d.rectangle([bw, bw, W - bw, H - bw], outline=red, width=bw)
+    off = int(bw * 2.2)
+    d.rectangle([off, off, W - off, H - off], outline=red, width=max(bw // 2, 2))
+    d.text(((W - tw) / 2 - bbox[0], (H - th) / 2 - bbox[1]), text, font=font,
+           fill=red, stroke_width=stroke, stroke_fill=red)
+
+    px = tile.load()
+    for _ in range(int(W * H * 0.05)):
+        x, y = random.randint(0, W - 1), random.randint(0, H - 1)
+        r, g, b, a = px[x, y]
+        if a > 0:
+            px[x, y] = (r, g, b, int(a * random.uniform(0.0, 0.6)))
+    return tile
+
+
+def _draw_old_lady(h: int):
+    """Render a cute little old lady's face on a transparent square tile (pure Pillow): silver hair
+    with a top bun + side curls, round spectacles, rosy cheeks and a warm smile. Ships no asset;
+    drawn in the same style as _make_barked_dog so `hag` matches the drawn-figure look of `barked`.
+    `h` = tile size px."""
+    from PIL import Image, ImageDraw
+
+    W = H = max(int(h), 48)
+    cx = W / 2.0
+    skin = (255, 222, 194)
+    hair = (210, 210, 216)
+    hair_d = _shade(hair, 0.82)[:3]
+    dark = (70, 60, 62)
+    pink = (243, 158, 168)
+    lw = max(int(W * 0.014), 2)
+
+    tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+
+    # silver hair bun on top
+    d.ellipse([W * 0.37, H * 0.02, W * 0.63, H * 0.27], fill=hair, outline=hair_d, width=lw)
+    # hair mass framing the face
+    d.ellipse([W * 0.12, H * 0.12, W * 0.88, H * 0.94], fill=hair, outline=hair_d, width=lw)
+    # side curls
+    d.ellipse([W * 0.09, H * 0.40, W * 0.30, H * 0.68], fill=hair, outline=hair_d, width=max(lw - 1, 1))
+    d.ellipse([W * 0.70, H * 0.40, W * 0.91, H * 0.68], fill=hair, outline=hair_d, width=max(lw - 1, 1))
+    # face
+    d.ellipse([W * 0.20, H * 0.20, W * 0.80, H * 0.90], fill=skin, outline=_shade(skin, 0.8)[:3], width=max(lw - 1, 1))
+    # rosy cheeks
+    cr = W * 0.075
+    d.ellipse([W * 0.32 - cr, H * 0.63 - cr, W * 0.32 + cr, H * 0.63 + cr], fill=pink)
+    d.ellipse([W * 0.68 - cr, H * 0.63 - cr, W * 0.68 + cr, H * 0.63 + cr], fill=pink)
+    # round spectacles + eyes
+    gr = W * 0.11
+    gy = H * 0.51
+    for ex in (W * 0.38, W * 0.62):
+        d.ellipse([ex - gr, gy - gr, ex + gr, gy + gr], outline=dark, width=lw)
+        er = W * 0.028
+        d.ellipse([ex - er, gy - er, ex + er, gy + er], fill=dark)   # eye
+    d.line([(W * 0.38 + gr, gy), (W * 0.62 - gr, gy)], fill=dark, width=lw)   # bridge
+    # tiny nose
+    d.line([(cx, gy + gr * 0.5), (cx, H * 0.69)], fill=_shade(skin, 0.7)[:3], width=lw)
+    # warm smile
+    d.arc([W * 0.37, H * 0.64, W * 0.63, H * 0.84], start=15, end=165, fill=dark, width=lw)
+    return tile
+
+
+def add_hag(data: bytes, count: int = 0) -> bytes:
+    """Stamp a big rotated red "HAG" (centred, exactly like GAY) and draw a cute little old lady small
+    at the bottom centre. Returns JPEG bytes."""
+    import random
+    from PIL import Image, ImageOps
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
+    with Image.open(io.BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            rgba = img.convert("RGBA")
+            bg.paste(rgba, mask=rgba.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        W, H = img.size
+        img = img.convert("RGBA")
+
+        # HAG stamp — centred (mirrors add_gay)
+        stamp = _make_hag_stamp(max(int(min(W, H) * 0.17), 24))
+        target_w = int(W * 0.66)
+        scale = target_w / stamp.width
+        stamp = stamp.resize((max(int(stamp.width * scale), 1),
+                              max(int(stamp.height * scale), 1)), Image.BICUBIC)
+        stamp = stamp.rotate(random.uniform(15, 22), expand=True, resample=Image.BICUBIC)
+        img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+
+        # cute little old lady — small, bottom centre
+        lady = _draw_old_lady(max(int(min(W, H) * 0.26), 48))
+        img.alpha_composite(lady, ((W - lady.width) // 2, H - lady.height - max(int(H * 0.02), 4)))
+
+        img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=90, optimize=True)
+        return out.getvalue()
+
+
+def hag_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Stamp HAG + draw a little old lady on the first image attachment. Mirrors gay_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_hag(data)
+        out = _alive_or_still(result, stem, "hag")
+        summary = f"## 👵 Hag\n\n👵 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"hag failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
 def _make_blacked(diam: int):
     """Render the blacked.com logo — a BLACK CIRCLE with white "BLACKED" inside.
 
