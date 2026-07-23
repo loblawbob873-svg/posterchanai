@@ -37,6 +37,7 @@ source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
 source "$INSTALL_DIR/turn.sh"
 source "$INSTALL_DIR/stream.sh"
+source "$INSTALL_DIR/sandbox.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -74,6 +75,12 @@ fi
 # Add-on: install the built-in MediaMTX media server for OBS streaming (downloads a prebuilt binary).
 if [ "$1" = "--stream" ]; then
     setup_stream_server
+    exit $?
+fi
+
+# Add-on: set up the per-user Debian Docker sandbox (docker group + base image) for agentic node tasks.
+if [ "$1" = "--sandbox" ]; then
+    setup_sandbox
     exit $?
 fi
 

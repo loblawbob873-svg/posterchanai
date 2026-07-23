@@ -109,6 +109,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #          Liberation face) + Noto color emoji (screenshots/cards)
 #  bt    : system libtorrent (the venv is created with --system-site-packages
 #          so the torrent feature can import it)
+# NOTE: the per-user Debian SANDBOX (Admin → node_exec_sandbox_enabled, OFF by default) shells out to
+# the `docker` CLI (docker-outside-of-docker). It is NOT installed here to keep the image lean — add
+# `docker.io` (or docker-ce-cli) to the list below AND mount /var/run/docker.sock + `group_add` in
+# docker-compose.yml if you want the sandbox inside the container deployment. Bare-metal: ./install.sh --sandbox.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-dev python3-pip \
         build-essential cmake git pkg-config patchelf \
