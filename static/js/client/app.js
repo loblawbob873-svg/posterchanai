@@ -6545,7 +6545,7 @@
     feed.querySelectorAll('.draft-card').forEach(card=>{
       const id=card.dataset.draft;
       card.querySelector('[data-act="edit"]').onclick=()=>{ const d=Drafts.get(id); if(d) compose({reply:d.reply,replyPk:d.replyPk,quote:d.quote,draftId:id,text:d.text,cw:d.cw,cwReason:d.cwReason}); };
-      card.querySelector('[data-act="del"]').onclick=async()=>{ if(await uiConfirm('Delete this draft?',{ok:'Delete',danger:true})){ Drafts.remove(id); renderDrafts(); } };   // in-app confirm, NOT native — a native dialog wedges the Electron renderer's focus and breaks the next composer
+      card.querySelector('[data-act="del"]').onclick=()=>{ if(confirm('Delete this draft?')){ Drafts.remove(id); renderDrafts(); } };
       card.querySelector('[data-act="send"]').onclick=()=>sendDraft(id);
     });
     hydrate(feed);
@@ -9960,81 +9960,9 @@
   let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
-  // ---- Node Control panel: a beginner-friendly launcher for the agentic `node` command --------------
-  // Read-only state (node NAMES + your own jobs) comes from /api/node/state, gated server-side exactly
-  // like the command. Every ACTION here just fills #ai-input with a `node …` command and sends it through
-  // the normal chat pipeline — so the panel adds NO privileged surface; it can't do anything you couldn't
-  // already type. Access is cached per session so the toolbar button only shows for allowlisted users.
-  async function _nodeFetchState(){
-    try{
-      const r=await fetch('/api/node/state', {credentials:'include', headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}});
-      if(!r.ok){ _ai.nodeAccess=false; return null; }
-      _ai.nodeAccess=true; return await r.json();
-    }catch(_){ return null; }
-  }
-  function _nodeRun(cmd){ closeModal(); const ta=$('#ai-input'); if(ta){ ta.value=cmd; aiSend(); } }
-  async function openNodePanel(){
-    const state=await _nodeFetchState();
-    if(_ai.nodeAccess===false){ toast('Node access isn’t enabled for your account'); return; }
-    if(!state){ toast('Couldn’t load node state — try again'); return; }
-    const nodes=state.nodes||[]; const jobs=state.jobs||[];
-    if(!nodes.length){ toast('No nodes are configured'); return; }
-    const nodeOpts=nodes.map(n=>`<option value="${enc(n)}">${enc(n)}</option>`).join('');
-    const jobRow=j=>{
-      const ic=j.status==='running'?'⚙️':(j.status==='done'?(j.exit_code===0?'✅':'⚠️'):(j.status==='killed'?'⏹️':'❌'));
-      const meta=j.status==='running'?'running':(j.exit_code!=null?('exit '+j.exit_code):j.status);
-      return `<div class="node-job">
-        <span class="nj-ic">${ic}</span><span class="nj-id">#${enc(String(j.id))}</span>
-        <span class="nj-node">${enc(j.node||'')}</span>
-        <code class="nj-cmd" title="${enc(j.command||'')}">${enc(j.command||'')}</code>
-        <span class="nj-status ${j.status==='running'?'run':''}">${enc(meta)}</span>
-        <span class="nj-acts">${j.status==='running'?`<button class="btn btn-ghost small nj-kill" data-id="${enc(String(j.id))}">⏹ Kill</button>`:''}<button class="btn btn-ghost small nj-log" data-id="${enc(String(j.id))}">📄 Log</button></span>
-      </div>`;
-    };
-    modal(`<h3>🤖 Agents</h3>
-      <div class="node-panel">
-        <p class="muted small np-intro">Run things on your servers — ask in plain English and the agent figures out the commands, or run a raw shell command. Output shows up in the chat below.</p>
-        <div class="np-row">
-          <label class="np-lbl">Node</label>
-          <select class="input" id="np-node">${nodeOpts}</select>
-          <label class="np-all"><input type="checkbox" id="np-all"> All nodes</label>
-        </div>
-        <div class="np-modes">
-          <label class="np-mode active"><input type="radio" name="np-mode" value="agent" checked> 🤖 Ask the agent</label>
-          <label class="np-mode"><input type="radio" name="np-mode" value="cmd"> ⌨️ Run a command</label>
-        </div>
-        <textarea class="input" id="np-input" rows="2"></textarea>
-        <div class="np-egs" id="np-egs"></div>
-        <div class="np-run"><span class="muted small np-hint">Ctrl+Enter to run</span><button class="btn btn-neon" id="np-go">▶ Run</button></div>
-        ${jobs.length?`<div class="np-jobs-h">Recent jobs</div><div class="node-jobs">${jobs.map(jobRow).join('')}</div>`:''}
-      </div>`, root=>{
-      const inp=$('#np-input',root), nodeSel=$('#np-node',root), allCb=$('#np-all',root), egBox=$('#np-egs',root);
-      const AGENT_EGS=['check disk space and memory use','why is the app slow right now?','show the last 40 lines of the service log','is anything eating CPU?'];
-      const CMD_EGS=['df -h','uptime','systemctl status posterchanai','free -m'];
-      const mode=()=> ((root.querySelector('input[name="np-mode"]:checked')||{}).value)||'agent';
-      const paint=()=>{ const m=mode();
-        inp.placeholder = m==='agent' ? 'Describe what you want — e.g. why is disk usage high on /var?' : 'Shell command — e.g. df -h';
-        egBox.innerHTML = (m==='agent'?AGENT_EGS:CMD_EGS).map(e=>`<button class="np-eg">${enc(e)}</button>`).join('');
-      };
-      paint();
-      $$('.np-mode',root).forEach(l=> l.addEventListener('change',()=>{ $$('.np-mode',root).forEach(x=>x.classList.toggle('active',x.querySelector('input').checked)); paint(); }));
-      egBox.addEventListener('click',e=>{ const b=e.target.closest('.np-eg'); if(b){ inp.value=b.textContent; inp.focus(); } });
-      const run=()=>{ const text=inp.value.trim(); if(!text){ inp.focus(); return; }
-        const all=allCb.checked, tgt=all?'all':nodeSel.value;
-        const cmd = mode()==='agent' ? `node agent ${tgt} ${text}` : (all?`node all ${text}`:`node ${tgt} ${text}`);
-        _nodeRun(cmd);
-      };
-      $('#np-go',root).onclick=run;
-      inp.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); run(); } });
-      root.querySelectorAll('.nj-kill').forEach(b=> b.onclick=()=>_nodeRun('node kill '+b.dataset.id));
-      root.querySelectorAll('.nj-log').forEach(b=> b.onclick=()=>_nodeRun('node log '+b.dataset.id));
-      setTimeout(()=>{ try{ inp.focus(); }catch(_){} }, 30);
-    });
-  }
-
   async function aiMount(feed){
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none">🤖</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
@@ -10048,10 +9976,6 @@
     _ai.attach=[];
     $('#ai-new').onclick=()=>aiNewConversation();
     $('#ai-home').onclick=()=>aiShowWelcome();
-    // Node Control button — revealed only for users on the node_exec allowlist (access checked once/session).
-    { const nb=$('#ai-nodes'); if(nb){ nb.onclick=openNodePanel;
-        if(_ai.nodeAccess===true) nb.style.display='';
-        else if(_ai.nodeAccess===undefined) _nodeFetchState().then(()=>{ if(_ai.nodeAccess){ const b=$('#ai-nodes'); if(b) b.style.display=''; } }); } }
     // The splash only exists on an empty chat, but people want to make things mid-conversation too.
     $('#ai-make').onclick=()=>openGenPicker();
     $('#ai-del').onclick=()=>aiDeleteConversation();
@@ -10094,7 +10018,7 @@
       } }
     $('#ai-msgs').addEventListener('click',e=>{
       // Guided card → open the studio for that command (no syntax to remember).
-      const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); if(gc.dataset.open==='nodes'){ openNodePanel(); } else { openGenStudio(gc.dataset.gen); } return; }
+      const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); openGenStudio(gc.dataset.gen); return; }
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const bno=e.target.closest('.ai-billno'); if(bno){ e.preventDefault();
         const row=bno.closest('.ai-budget-btns'); if(row) row.innerHTML='<span class="muted small">Not added.</span>'; return; }
@@ -10174,7 +10098,7 @@
     if(VIEW!=='ai' || _ai.convId!==id) return;
     if(box){ box.innerHTML='';
       const msgs = (conv && conv.messages) || [];
-      if(!msgs.length){ box.innerHTML = _aiWelcomeHtml(); _aiRevealNodeCard(); }   // fresh chat → friendly splash with starter commands
+      if(!msgs.length) box.innerHTML = _aiWelcomeHtml();   // fresh chat → friendly splash with starter commands
       for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
         if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
@@ -10426,14 +10350,6 @@
     if(cur) cur.remove();                       // already up → move it to the bottom rather than stacking
     box.insertAdjacentHTML('beforeend', _aiWelcomeHtml());
     aiScroll();
-    _aiRevealNodeCard();
-  }
-  // Reveal the "Manage a server" splash card only for node-allowlisted users (access cached per session).
-  // Shared by BOTH splash render paths (aiShowWelcome + the empty-conversation load), or the card stays hidden.
-  function _aiRevealNodeCard(){
-    const box=$('#ai-msgs'); if(!box) return;
-    const rev=()=>{ const c=box.querySelector('#aw-nodes'); if(c && _ai.nodeAccess) c.style.display=''; };
-    if(_ai.nodeAccess===undefined) _nodeFetchState().then(rev); else rev();
   }
   function _aiWelcomeHtml(){
     return `<div class="ai-welcome">
@@ -10443,7 +10359,6 @@
       <div class="aw-make">
         <button class="aw-card" data-gen="image"><span class="awc-ic">🎨</span><b>Make an image</b><span>describe it, pick a style</span></button>
         <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
-        <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🤖</span><b>Agents</b><span>run tasks on your servers</span></button>
         <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
       </div>
       <p class="muted small aw-or">…or grab something from the web:</p>
@@ -12260,32 +12175,6 @@
   // ---------- modal + toast ----------
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg) closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
-  // In-app confirm — a themed replacement for native window.confirm(). WHY it exists: a native dialog in
-  // the Electron desktop shell blurs the renderer and the browser→renderer re-focus handshake goes stale,
-  // so after you dismiss it document.hasFocus() stays FALSE — which leaves the NEXT thing you open (a reply
-  // composer) unable to take a cursor/keystroke until a real OS focus event (alt-tab) re-syncs it. That was
-  // the true root cause of the "reply box won't accept text" bug (deterministic repro started with the
-  // "Delete this draft?" confirm). Using an HTML overlay means no native dialog is ever shown, so focus
-  // never wedges. Uses its OWN overlay (not #modal-root) so it's safe stacked over an open composer.
-  // Returns a Promise<boolean>.
-  function uiConfirm(message, opts={}){
-    const ok=opts.ok||'OK', cancel=opts.cancel||'Cancel', danger=!!opts.danger;
-    return new Promise(resolve=>{
-      const ov=document.createElement('div'); ov.className='uiconfirm-bg';
-      ov.innerHTML=`<div class="uiconfirm glass neon-border" role="dialog" aria-modal="true">
-        <div class="uiconfirm-msg">${enc(String(message||''))}</div>
-        <div class="uiconfirm-btns">
-          <button class="btn btn-ghost small" data-uc="0">${enc(cancel)}</button>
-          <button class="btn ${danger?'btn-danger':'btn-neon'} small" data-uc="1">${enc(ok)}</button>
-        </div></div>`;
-      const done=v=>{ try{ document.removeEventListener('keydown',onKey,true); }catch(_){} ov.remove(); resolve(v); };
-      const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); done(false); } else if(e.key==='Enter'){ e.preventDefault(); done(true); } };
-      ov.addEventListener('click',e=>{ if(e.target===ov){ done(false); return; } const b=e.target.closest('[data-uc]'); if(b) done(b.dataset.uc==='1'); });
-      document.addEventListener('keydown',onKey,true);
-      document.body.appendChild(ov);
-      const y=ov.querySelector('[data-uc="1"]'); if(y) setTimeout(()=>{ try{ y.focus(); }catch(_){} },20);
-    });
-  }
   // A modal opened ON TOP of another one, closing only ITSELF. modal() stacks layers fine, but
   // closeModal() empties the whole #modal-root — so a picker opened from inside a sheet took the
   // sheet down with it when you picked something (Go Live vanished the moment you chose a cover).
