@@ -550,7 +550,9 @@ async def _exec_agent(db, params: dict) -> dict:
     if mode == "agent":
         from app.models import User
         u = db.query(User).filter(User.id == 1).first()   # admin owns worker-run jobs
-        summary = await node_service.run_agent(db, u, "local", "local", params.get("goal") or "", None, notify=None)
+        # report=True → the model's final summary only (no ## header) — used by the health report.
+        summary = await node_service.run_agent(db, u, "local", "local", params.get("goal") or "", None,
+                                               notify=None, report_mode=bool(params.get("report")))
         return {"status": "done", "summary": summary, "output": summary, "exit": 0}
     cmd = params.get("command") or ""
     if not cmd:

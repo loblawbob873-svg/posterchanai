@@ -585,3 +585,19 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         return "⏹️ reached the step limit before finishing the health check."
     transcript.append(f"\n**⏹️ Stopped:** reached step limit ({max_steps}).{_footer()}")
     return "\n".join(transcript)
+
+
+async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent",
+                               report: bool = False, dangerous: bool = False) -> str:
+    """Dispatch an agent/shell/claude task to a Nostr WORKER (by pubkey) and return a summary string —
+    the Nostr drop-in for a local run_agent. Shared by _node_command and the health report so a node
+    migrated to the npub transport behaves the same everywhere. NIP-44 encrypted end to end (nostr_dvm)."""
+    from app.services import nostr_dvm
+    params = {"mode": mode, "dangerous": bool(dangerous), "report": bool(report)}
+    params["command" if mode == "shell" else "goal"] = text
+    out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pubkey)
+    if not out:
+        return "⚠️ no response over Nostr (worker offline, not trusting this controller, or timed out)"
+    if out.get("error"):
+        return f"⚠️ {out['error']}"
+    return (out.get("summary") or out.get("output") or "").strip()

@@ -104,11 +104,14 @@ async def _node_uptime(db, admin, name: str, target: str) -> str:
     Read-only + DETERMINISTIC (run directly, not via the agent) so it's always present and accurate.
     Returns '' on any failure so the header just omits it."""
     try:
-        job = await node_service.run_to_completion(
-            db, name, target, "uptime -p 2>/dev/null || uptime", user_id=admin.id, timeout=20)
-        out = (job.output or "").strip().splitlines()
+        cmd = "uptime -p 2>/dev/null || uptime"
+        if target.startswith("nostr:"):
+            out = (await node_service.run_agent_over_nostr(target[6:], cmd, mode="shell")).strip().splitlines()
+        else:
+            job = await node_service.run_to_completion(db, name, target, cmd, user_id=admin.id, timeout=20)
+            out = (job.output or "").strip().splitlines()
         line = out[0].strip() if out else ""
-        return line[:80] if line else ""
+        return line[:80] if line and not line.startswith("⚠️") else ""
     except Exception as e:
         logger.warning(f"uptime fetch failed for {name}: {e}")
         return ""
@@ -153,6 +156,12 @@ def selected_nodes(db) -> dict:
         name: ("local" if node_service.is_local_target(target) else target)
         for name, target in node_service.get_nodes(db).items()
     }
+    # Nostr-addressed workers (node_exec_node_npubs) go through the Nostr transport — mark them so the
+    # loop dispatches over Nostr instead of SSH. Their run_agent/uptime rides the same encrypted channel.
+    from app.services import nostr_dvm
+    if nostr_dvm.agent_worker_enabled():
+        for _nn, _pk in nostr_dvm.agent_node_map().items():
+            available.setdefault(_nn, f"nostr:{_pk}")
     chosen = get_logs_settings(db)["nodes"]
     if not chosen:
         return available
@@ -209,17 +218,21 @@ async def build_health_report(db, admin: User, notify=None) -> str:
     chat_service = ChatService(db, admin)
     sections = []
     for name, target in nodes.items():
-        where = "this host" if target == "local" else target
+        _nostr = target.startswith("nostr:")
+        where = "this host" if target == "local" else (f"🛰️ nostr:{target[6:18]}…" if _nostr else target)
         if notify:
             try:
                 await notify(f"🔍 Checking *{name}* ({where})…")
             except Exception:
                 pass
         try:
-            summary = await node_service.run_agent(
-                db, admin, name, target, _HEALTH_GOAL, chat_service,
-                notify=notify, report_mode=True,
-            )
+            if _nostr:
+                summary = await node_service.run_agent_over_nostr(target[6:], _HEALTH_GOAL, mode="agent", report=True)
+            else:
+                summary = await node_service.run_agent(
+                    db, admin, name, target, _HEALTH_GOAL, chat_service,
+                    notify=notify, report_mode=True,
+                )
             # Presentation is deterministic (Python owns emojis/layout) so the agent model's
             # formatting drift never reaches the report.
             body = await _to_status_board(chat_service, summary or "")
