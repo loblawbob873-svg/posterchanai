@@ -7003,20 +7003,31 @@
               else st.textContent='schedule failed: '+((err&&err.message)||err); }
           };
         } }
-      // The reply/quote/New-post BUTTON that opened this modal keeps focus, and the mount-time focus()
-      // loses the race to it (worst while the feed is streaming), so the box shows no cursor for the 5-20s
-      // it takes focus to settle — the "reply won't take text" bug. Calling focus() a moment LATER wins
-      // (confirmed: it moves activeElement to the textarea), so blur the trigger and re-assert focus,
-      // deferred past the click event and retried briefly. Stops once the box has focus or you tab to a
-      // control INSIDE the composer. Self-clears when the modal closes (ta detaches).
-      const _grab=()=>{ const ae=document.activeElement, md=ta.closest('.modal-bg');
-        if(ae && ae!==ta && !(md && md.contains(ae))){ try{ ae.blur && ae.blur(); }catch(_){} }   // release the trigger button
+      // "Reply/new-post box shows no cursor for ~5s, and a CLICK on it doesn't register either, until the
+      // feed finishes streaming." Two things overlap while the timeline loads behind the modal: (1) the
+      // trigger button keeps focus and the mount-time focus() loses the race to it; (2) a page element sits
+      // OVER the box eating the click (programmatic focus() works — confirmed activeElement→TEXTAREA — because
+      // focus bypasses pointer hit-testing, but a real click doesn't). So make the composer bulletproof for
+      // the few seconds it matters: keep it above everything, guarantee the box takes pointer events, punch
+      // pointer-events off anything covering it that ISN'T part of this modal, blur the trigger, and hold
+      // focus. Silent self-heal; backs off once focus is stable in the box or you tab to a control inside the
+      // composer; self-clears when the modal closes (ta detaches). No debug output.
+      const _heal=()=>{ const ae=document.activeElement, md=ta.closest('.modal-bg');
+        if(md) md.style.zIndex='1000';                          // above any sticky FAB / streamed feed chrome
+        ta.style.pointerEvents='auto';
+        try{ const r=ta.getBoundingClientRect(); const over=document.elementFromPoint(r.left+r.width/2, r.top+10);
+          if(over && over!==ta && !ta.contains(over) && !(md && md.contains(over))){ try{ over.style.pointerEvents='none'; }catch(_){} }
+        }catch(_){}
+        if(ae && ae!==ta && !(md && md.contains(ae))){ try{ ae.blur && ae.blur(); }catch(_){} }
         try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
-      _grab(); requestAnimationFrame(()=>requestAnimationFrame(_grab));
-      let _gn=0; const _gt=setInterval(()=>{
+      _heal(); requestAnimationFrame(()=>requestAnimationFrame(_heal));
+      let _hn=0, _hStable=0; const _ht=setInterval(()=>{
         const ae=document.activeElement, md=ta.closest('.modal-bg');
-        if(!ta.isConnected || ae===ta || (md && md.contains(ae) && ae!==ta)){ clearInterval(_gt); return; }
-        _grab(); if(++_gn>=10) clearInterval(_gt);   // ~1.2s of insurance retries, then stop
+        if(!ta.isConnected){ clearInterval(_ht); return; }
+        if(md && md.contains(ae) && ae!==ta){ clearInterval(_ht); return; }   // you tabbed to Attach / a tab → leave it
+        if(ae===ta){ if(++_hStable>=3) clearInterval(_ht); return; }          // focused & stable → done, stop fighting
+        _hStable=0; _heal();
+        if(++_hn>=45) clearInterval(_ht);                                     // ~5.4s ceiling, matching the worst hang
       }, 120);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
