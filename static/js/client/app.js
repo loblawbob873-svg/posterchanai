@@ -9982,6 +9982,14 @@
     if(fresh || !_ai.convId){ try{ await aiNewConversation(); }catch(_){} }
     const ta=$('#ai-input'); if(ta){ ta.value=cmd; aiSend(); }
   }
+  // Saved agent tasks — a per-user list you can re-run with one click. Stored client-side
+  // (ClientSettings/localStorage); each is {name, mode:'agent'|'cmd', node, all, text}.
+  function _agentSavedGet(){ try{ return ClientSettings.get('agentSavedTasks', [])||[]; }catch(_){ return []; } }
+  function _agentSavedSet(list){ try{ ClientSettings.set('agentSavedTasks', list||[]); }catch(_){} }
+  function _agentTaskCmd(t){
+    const tgt = t.all ? 'all' : (t.node||'local');
+    return t.mode==='agent' ? `node agent ${tgt} ${t.text}` : (t.all?`node all ${t.text}`:`node ${tgt} ${t.text}`);
+  }
   async function openNodePanel(){
     const state=await _nodeFetchState();
     if(_ai.nodeAccess===false){ toast('Node access isn’t enabled for your account'); return; }
@@ -10014,8 +10022,15 @@
         </div>
         <textarea class="input" id="np-input" rows="2"></textarea>
         <div class="np-egs" id="np-egs"></div>
-        <div class="np-run"><span class="muted small np-hint">Ctrl+Enter to run</span><button class="btn btn-neon" id="np-go">▶ Run</button></div>
-        ${jobs.length?`<div class="np-jobs-h">Recent jobs</div><div class="node-jobs">${jobs.map(jobRow).join('')}</div>`:''}
+        <div class="np-run"><span class="muted small np-hint">Ctrl+Enter to run</span><button class="btn btn-ghost small" id="np-save-cur" title="Save this task to run again later">⭐ Save task</button><button class="btn btn-neon" id="np-go">▶ Run</button></div>
+        <div class="np-tabs">
+          <button class="np-tab active" data-tab="recent">🕘 Recent jobs</button>
+          <button class="np-tab" data-tab="saved">⭐ Saved</button>
+        </div>
+        <div class="np-tabpanel" data-panel="recent">
+          ${jobs.length?`<div class="node-jobs">${jobs.map(jobRow).join('')}</div>`:'<p class="muted small">No jobs yet — run something above.</p>'}
+        </div>
+        <div class="np-tabpanel hidden" data-panel="saved"><div class="np-saved" id="np-saved"></div></div>
       </div>`, root=>{
       const inp=$('#np-input',root), nodeSel=$('#np-node',root), allCb=$('#np-all',root), egBox=$('#np-egs',root);
       const AGENT_EGS=['check disk space and memory use','why is the app slow right now?','show the last 40 lines of the service log','is anything eating CPU?'];
@@ -10037,6 +10052,32 @@
       inp.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); run(); } });
       root.querySelectorAll('.nj-kill').forEach(b=> b.onclick=()=>_nodeRun('node kill '+b.dataset.id));
       root.querySelectorAll('.nj-log').forEach(b=> b.onclick=()=>_nodeRun('node log '+b.dataset.id));
+      // --- tabs: Recent jobs / Saved tasks ---
+      $$('.np-tab',root).forEach(t=> t.onclick=()=>{
+        $$('.np-tab',root).forEach(x=>x.classList.toggle('active',x===t));
+        $$('.np-tabpanel',root).forEach(p=>p.classList.toggle('hidden', p.dataset.panel!==t.dataset.tab));
+      });
+      // --- saved tasks: render, run, delete ---
+      const savedBox=$('#np-saved',root);
+      const renderSaved=()=>{ const list=_agentSavedGet();
+        if(!list.length){ savedBox.innerHTML='<p class="muted small">No saved tasks yet. Set up a task above and hit ⭐ Save task.</p>'; return; }
+        savedBox.innerHTML=list.map((t,i)=>`<div class="np-saved-row">
+          <span class="nj-ic">${t.mode==='agent'?'🤖':'⌨️'}</span>
+          <span class="np-saved-name" title="${enc(_agentTaskCmd(t))}">${enc(t.name||t.text)}</span>
+          <span class="np-saved-tgt muted small">${enc(t.all?'all':(t.node||'local'))}</span>
+          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-ghost small nps-del" data-i="${i}">🗑</button></span>
+        </div>`).join('');
+        savedBox.querySelectorAll('.nps-run').forEach(b=> b.onclick=()=>{ const t=_agentSavedGet()[+b.dataset.i]; if(t) _nodeRun(_agentTaskCmd(t), true); });
+        savedBox.querySelectorAll('.nps-del').forEach(b=> b.onclick=async()=>{ const list=_agentSavedGet(); const t=list[+b.dataset.i]; if(t&&await uiConfirm(`Delete saved task “${t.name||t.text}”?`)){ list.splice(+b.dataset.i,1); _agentSavedSet(list); renderSaved(); } });
+      };
+      renderSaved();
+      $('#np-save-cur',root).onclick=async()=>{ const text=inp.value.trim(); if(!text){ inp.focus(); toast('Fill in the task first, then save it'); return; }
+        const name=await uiPrompt('Name this task', {value:text.slice(0,40), placeholder:'e.g. Nightly disk check'}); if(name===null) return;
+        const list=_agentSavedGet(); list.unshift({name:(name||text).trim(), mode:mode(), node:nodeSel.value, all:allCb.checked, text});
+        _agentSavedSet(list); renderSaved();
+        $$('.np-tab',root).forEach(x=>x.classList.toggle('active',x.dataset.tab==='saved')); $$('.np-tabpanel',root).forEach(p=>p.classList.toggle('hidden',p.dataset.panel!=='saved'));
+        toast('⭐ Task saved');
+      };
       setTimeout(()=>{ try{ inp.focus(); }catch(_){} }, 30);
     });
   }
