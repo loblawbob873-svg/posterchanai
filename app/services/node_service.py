@@ -186,8 +186,9 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
 
     Jobs only ever run on ``local`` now — remote nodes go over Nostr (`run_agent_over_nostr`), where the
     worker runs its own local job. A non-local target here is a routing bug, so fail loudly."""
-    _sbx_uid = None   # set for sandbox jobs → refcount the container so the reaper can't pull it mid-exec
-    try:
+    _sbx_uid = None       # set for sandbox jobs → refcount the container so the reaper can't pull it mid-exec
+    _sbx_acquired = False  # True only AFTER acquire() incremented — so a cancel DURING acquire doesn't make
+    try:                   # the finally decrement a CONCURRENT same-user run's hold (§4)
         # start_new_session=True puts each job in its OWN process group/session, so on
         # timeout/kill we can signal the whole group (the shell AND its children, e.g. a `sleep`
         # in `cmd && sleep 10`) instead of orphaning grandchildren. Also makes getpgid(pid)==pid,
@@ -205,6 +206,7 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
             from app.services import sandbox_service
             _sbx_uid = job.target.split(":", 1)[1]
             await sandbox_service.acquire(_sbx_uid)   # ensure + refcount (released in finally) so the
+            _sbx_acquired = True                      # increment happened → the finally release is now paired
             proc = await asyncio.create_subprocess_exec(   # idle reaper / a concurrent run can't pull it out
                 *sandbox_service.exec_argv(_sbx_uid, job.command),
                 stdin=asyncio.subprocess.DEVNULL,
@@ -253,7 +255,7 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
         job.status = "failed"
         job.output += f"\n[error launching command: {e}]"
     finally:
-        if _sbx_uid is not None:   # drop the container hold this exec took (no-op if acquire never incremented)
+        if _sbx_uid is not None and _sbx_acquired:   # release ONLY the hold this exec actually took (§4)
             try:
                 from app.services import sandbox_service
                 await sandbox_service.release(_sbx_uid)
@@ -438,7 +440,7 @@ _NODE_TOOLS = [
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
                     chat_service: "ChatService", notify: Optional[Callable] = None,
-                    report_mode: bool = False) -> str:
+                    report_mode: bool = False, should_stop: Optional[Callable] = None) -> str:
     """Drive commands on `node` toward `goal` via native tool-calling. Returns a concise summary
     (header + the model's ✅ Done line); the per-command play-by-play is streamed live via `notify`
     and recorded in the node job log, not folded into the returned/persisted message.
@@ -500,6 +502,14 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         return f"\nRan {len(cmds_run)} command(s): {cmds}.{tail_ref}"
 
     for step in range(1, max_steps + 1):
+        # Cooperative cancel: a delete/kill sets this. Checked between steps so the run ALWAYS ends even
+        # when task.cancel() is swallowed by run_to_completion's shield (§3) — the current command finishes,
+        # then the loop bails here instead of grinding on for the GPU/step budget.
+        if should_stop and should_stop():
+            if report_mode:
+                return "⏹️ cancelled"
+            transcript.append(f"\n**⏹️ Stopped:** cancelled.{_footer()}")
+            return "\n".join(transcript)
         try:
             result = await service.chat_completion(
                 messages=messages, model=model,

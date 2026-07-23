@@ -11,20 +11,24 @@ from ._common import Callable, Optional, logger
 _AGENT_BG_TASKS: set = set()
 
 
-async def _agent_bg(targets, goal, uid, chat_service, notify):
+async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     """Run the agent over one-or-more (name, target) nodes on a FRESH session, then deliver the combined
     summary via notify({'type':'agent_result', ...}) — chat.py persists + pushes it (queued if offline).
     Each target is "local" (LLM loop runs HERE) or "nostr:<pkhex>" (the worker runs its own loop and
-    returns an encrypted summary) — SSH is gone."""
+    returns an encrypted summary) — SSH is gone. `stop` is an asyncio.Event a delete/kill sets to end the
+    run cooperatively (reliable even when task.cancel() is swallowed by run_to_completion's shield, §3)."""
     from app.database import SessionLocal
     from app.models import User as _User
     from app.services import node_service
     db = SessionLocal()
     sections = []
     multi = len(targets) > 1
+    _stopped = (lambda: bool(stop and stop.is_set()))
     try:
         u = db.query(_User).filter(_User.id == uid).first() if uid else None
         for name, target in targets:
+            if _stopped():
+                break
             # Prefix live step-progress with the node name only when fanning out (matches the old `all` path).
             nfy = (lambda txt, _p=name: notify(f"[{_p}] {txt}")) if (notify and multi) else notify
             try:
@@ -34,7 +38,8 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
                     body = await node_service.run_agent_over_nostr(target[len("nostr:"):], goal, mode="agent")
                     sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
                 else:
-                    sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service, notify=nfy))
+                    sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service,
+                                                                 notify=nfy, should_stop=_stopped))
             except Exception as e:
                 logger.error(f"[node] background agent error on {name}: {e}", exc_info=True)
                 sections.append(f"## Agent on `{name}` — goal: {goal}\n\n**⚠️ Error:** {e}")
@@ -81,15 +86,16 @@ async def _reap_after_cancel(uid) -> None:
 
 
 def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
-    t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify))
+    stop = asyncio.Event()   # a delete of the launch chat sets this → the run ends cooperatively (§3)
+    t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify, stop=stop))
     _AGENT_BG_TASKS.add(t)
     # The chat.py notify closure carries the launch conversation id (set as an attribute), so a delete
-    # of that chat can find and cancel THIS run. Store the sandbox uids alongside the task so the cancel
-    # can reap the container DIRECTLY — not relying on the cancelled task's finally completing its await.
+    # of that chat can find + stop THIS run. Store the stop Event + sandbox uids alongside the task so the
+    # cancel can end the loop and reap the container without relying on the cancelled task's own finally.
     _conv = getattr(notify, "conv_id", None)
     _sbx_uids = [tg.split(":", 1)[1] for _n, tg in targets if str(tg).startswith("sandbox:")]
     if _conv is not None:
-        _AGENT_BG_BY_CONV[_conv] = (t, _sbx_uids)
+        _AGENT_BG_BY_CONV[_conv] = (t, _sbx_uids, stop)
 
     def _done(_t):
         _AGENT_BG_TASKS.discard(_t)
@@ -111,8 +117,10 @@ def cancel_agent_for_conv(conv_id) -> bool:
     ent = _AGENT_BG_BY_CONV.pop(conv_id, None)
     if not ent:
         return False
-    t, sbx_uids = ent
+    t, sbx_uids, stop = ent
     live = t is not None and not t.done()
+    if stop is not None:
+        stop.set()          # cooperative stop — reliable even if the cancel below is swallowed by a shield (§3)
     if live:
         t.cancel()
     for _u in (sbx_uids or []):
