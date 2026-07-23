@@ -8515,7 +8515,11 @@
       const ts=_notifTs(e);
       if(ts<=seenNotif.last) return false;
       return e.kind===3 ? ts>_notifEpoch : true;
-    }).length + (_updBadge?1:0);
+    // Count the update toward the badge from the SAME condition renderNotifications() draws the row from
+    // (_updateReady || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
+    // showing +1 with no matching row in Alerts ("a number with no notification"). Now they can't disagree:
+    // the badge shows the update iff the row is there, and it clears when you actually apply the update.
+    }).length + ((_updateReady||_apkUpdate)?1:0);
     // The rail's Alerts tab is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');});

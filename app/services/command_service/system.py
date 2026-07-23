@@ -70,27 +70,44 @@ def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
     t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify))
     _AGENT_BG_TASKS.add(t)
     # The chat.py notify closure carries the launch conversation id (set as an attribute), so a delete
-    # of that chat can find and cancel THIS run instead of leaving it churning + resurrecting the chat.
+    # of that chat can find and cancel THIS run. Store the sandbox uids alongside the task so the cancel
+    # can reap the container DIRECTLY — not relying on the cancelled task's finally completing its await.
     _conv = getattr(notify, "conv_id", None)
+    _sbx_uids = [tg.split(":", 1)[1] for _n, tg in targets if str(tg).startswith("sandbox:")]
     if _conv is not None:
-        _AGENT_BG_BY_CONV[_conv] = t
+        _AGENT_BG_BY_CONV[_conv] = (t, _sbx_uids)
 
     def _done(_t):
         _AGENT_BG_TASKS.discard(_t)
-        if _conv is not None and _AGENT_BG_BY_CONV.get(_conv) is _t:
-            _AGENT_BG_BY_CONV.pop(_conv, None)
+        if _conv is not None:
+            cur = _AGENT_BG_BY_CONV.get(_conv)
+            if cur and cur[0] is _t:
+                _AGENT_BG_BY_CONV.pop(_conv, None)
     t.add_done_callback(_done)
 
 
 def cancel_agent_for_conv(conv_id) -> bool:
-    """Cancel a background agent tied to this conversation (called when the chat is deleted). The task's
-    per-target `finally` still reaps any sandbox container; the cancel skips result delivery, so a
-    deliberately-deleted chat is NOT resurrected. Returns True if a live run was cancelled."""
-    t = _AGENT_BG_BY_CONV.pop(conv_id, None)
-    if t is not None and not t.done():
+    """Cancel a background agent tied to this conversation (called when the chat is deleted):
+      * task.cancel() stops the agent loop and ABANDONS the in-flight LLM request — the inference
+        backend aborts that generation when the client disconnects (GPU stop is best-effort, backend-dependent);
+      * we ALSO reap any sandbox container DIRECTLY here (a fresh task), so the container is removed even
+        if the cancelled task's own finally can't finish its await;
+      * delivery is skipped, so a deliberately-deleted chat is NOT resurrected.
+    Returns True if a live run was cancelled."""
+    ent = _AGENT_BG_BY_CONV.pop(conv_id, None)
+    if not ent:
+        return False
+    t, sbx_uids = ent
+    live = t is not None and not t.done()
+    if live:
         t.cancel()
-        return True
-    return False
+    for _u in (sbx_uids or []):
+        try:
+            from app.services import sandbox_service
+            asyncio.create_task(sandbox_service.reap(_u))   # remove the container regardless of the task's fate
+        except Exception:
+            pass
+    return live
 
 
 class _SystemMixin:
