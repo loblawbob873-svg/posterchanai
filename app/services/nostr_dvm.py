@@ -144,7 +144,7 @@ def is_agent_trusted(pubkey_hex: str, settings: Optional[dict] = None) -> bool:
 
 
 def agent_node_map(settings: Optional[dict] = None) -> dict:
-    """Controller side: node name -> worker pubkey hex, from `node_exec_node_npubs` (`name npub1…`/line)."""
+    """Controller side: node name -> worker pubkey hex, from `node_exec_node_npubs` (`name npub1… [relay]`)."""
     m: dict = {}
     for line in (_settings(settings).get("node_exec_node_npubs", "") or "").splitlines():
         parts = line.split()
@@ -153,6 +153,19 @@ def agent_node_map(settings: Optional[dict] = None) -> dict:
             if pk:
                 m[parts[0].strip()] = pk
     return m
+
+
+def agent_node_relay(pubkey_hex: str, settings: Optional[dict] = None) -> Optional[str]:
+    """Controller side: the relay a WORKER listens on — the OPTIONAL 3rd field of a `node_exec_node_npubs`
+    line (`name npub1… ws://host:3052/relay`). A full node subscribes ONLY to its own local relay, so the
+    controller must publish the job event THERE (not to its own relay — the two relays don't cross-deliver
+    a `nofederate` cluster event). Returns None when no relay is given: a relay-less STANDALONE agent
+    connects out to the controllers' relays, so the default local relay reaches it."""
+    for line in (_settings(settings).get("node_exec_node_npubs", "") or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and nostr_service.to_pubkey_hex(parts[1]) == pubkey_hex and parts[2].strip():
+            return parts[2].strip()
+    return None
 
 
 def providers(settings: Optional[dict] = None) -> list:
@@ -336,7 +349,11 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
     sk = node_seckey()
     if not sk:
         return None
-    relay = relay or relay_url(s)   # the PROVIDER's relay on the consumer path, else this node's local
+    # Where to publish + await: for a node-agent job, the WORKER's own relay (full nodes subscribe only
+    # to their local relay, so the controller must publish THERE) — falls back to this node's local relay,
+    # which reaches a relay-less standalone agent (it connects to the controllers' relays). GPU-offload
+    # jobs pass the provider's relay explicitly, so the caller-supplied `relay` still wins.
+    relay = relay or (agent_node_relay(worker_pubkey, s) if task == "agent" else None) or relay_url(s)
     budget = float(timeout or _JOB_TIMEOUT.get(task, 300))
     try:
         enc = await _pack_content(worker_pubkey, params, s)   # inline, or Blossom-spilled if oversized
