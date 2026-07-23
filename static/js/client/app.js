@@ -10106,7 +10106,7 @@
           <span class="nj-ic">${t.mode==='agent'?'🤖':'⌨️'}</span>
           <span class="np-saved-name" title="${enc(_agentTaskCmd(t))}">${enc(t.name||t.text)}</span>
           <span class="np-saved-tgt muted small">${enc(t.all?'all':(t.node||'local'))}</span>
-          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-ghost small nps-del" data-i="${i}">🗑</button></span>
+          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-red small nps-del" data-i="${i}">🗑</button></span>
         </div>`).join('');
         savedBox.querySelectorAll('.nps-run').forEach(b=> b.onclick=()=>{ const t=_agentSavedGet()[+b.dataset.i]; if(t) _nodeRun(_agentTaskCmd(t), true); });
         savedBox.querySelectorAll('.nps-del').forEach(b=> b.onclick=async()=>{ const list=_agentSavedGet(); const t=list[+b.dataset.i]; if(t&&await uiConfirm(`Delete saved task “${t.name||t.text}”?`)){ list.splice(+b.dataset.i,1); _agentSavedSet(list); renderSaved(); } });
