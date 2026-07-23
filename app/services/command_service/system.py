@@ -48,7 +48,14 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
                     except Exception:
                         pass
     finally:
-        db.close()
+        # A multi-minute agent run holds this session idle → Postgres closes the connection, and then
+        # db.close() itself raises OperationalError. Left unguarded that propagates from the `finally`
+        # and SKIPS the delivery below, so the whole run's output is lost. Swallow it — the delivery
+        # (node_notify → chat_history.append) opens its OWN fresh session, so it's unaffected.
+        try:
+            db.close()
+        except Exception:
+            pass
     if notify:
         try:
             await notify({"type": "agent_result", "content": "\n\n---\n\n".join(sections)})

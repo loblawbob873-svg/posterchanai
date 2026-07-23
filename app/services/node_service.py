@@ -456,8 +456,18 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
              or _get(db, "node_exec_agent_model", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf").strip()) or None
     service = get_inference_service(db)
 
+    _sys = _AGENT_SYSTEM.format(node=node)
+    if str(target).startswith("sandbox:"):
+        # The agent is inside a fresh disposable Debian container (root). Steer it past the two things
+        # that trip up package tasks here: Debian's PEP-668 externally-managed pip, and guessed package names.
+        _sys += ("\n\nENVIRONMENT: this host is a FRESH, disposable Debian container and you are root, so "
+                 "install freely — but a bare `pip install` FAILS with 'externally-managed-environment'. "
+                 "Either use a venv (`apt-get install -y python3-venv && python3 -m venv /venv && "
+                 "/venv/bin/pip install <pkg>`) or `pip install --break-system-packages <pkg>`. VERIFY a "
+                 "package actually exists (e.g. `pip index versions <pkg>`) before depending on it — do not "
+                 "guess PyPI names. `apt-get update` once before installing system packages.")
     messages = [
-        {"role": "system", "content": _AGENT_SYSTEM.format(node=node)},
+        {"role": "system", "content": _sys},
         {"role": "user", "content": f"Goal: {goal}"},
     ]
     transcript = [] if report_mode else [f"## Agent on `{node}` — goal: {goal}\n"]
