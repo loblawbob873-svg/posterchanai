@@ -9991,7 +9991,7 @@
         <span class="nj-acts">${j.status==='running'?`<button class="btn btn-ghost small nj-kill" data-id="${enc(String(j.id))}">⏹ Kill</button>`:''}<button class="btn btn-ghost small nj-log" data-id="${enc(String(j.id))}">📄 Log</button></span>
       </div>`;
     };
-    modal(`<h3>🖥 Node Control</h3>
+    modal(`<h3>🤖 Agents</h3>
       <div class="node-panel">
         <p class="muted small np-intro">Run things on your servers — ask in plain English and the agent figures out the commands, or run a raw shell command. Output shows up in the chat below.</p>
         <div class="np-row">
@@ -10034,7 +10034,7 @@
 
   async function aiMount(feed){
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Node control — run things on your servers" style="display:none">🖥</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none">🤖</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
@@ -10443,7 +10443,7 @@
       <div class="aw-make">
         <button class="aw-card" data-gen="image"><span class="awc-ic">🎨</span><b>Make an image</b><span>describe it, pick a style</span></button>
         <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
-        <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🖥</span><b>Manage a server</b><span>ask an agent or run commands</span></button>
+        <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🤖</span><b>Agents</b><span>run tasks on your servers</span></button>
         <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
       </div>
       <p class="muted small aw-or">…or grab something from the web:</p>

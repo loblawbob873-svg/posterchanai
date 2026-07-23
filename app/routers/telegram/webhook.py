@@ -15,12 +15,27 @@ def _make_tg_node_notify(telegram_service, chat_id):
     """Build an async callback that DMs a finished `node` job's output to this chat.
     Used so long-running node jobs started from Telegram report back here when done."""
     async def _notify(job):
-        # Agent step-streaming passes a plain string (e.g. "⚙️ `cmd`"); job-completion passes a Job.
+        # Agent step-streaming passes a plain string (e.g. "⚙️ `cmd`"); a finished background AGENT passes
+        # a {"type":"agent_result", ...} dict; job-completion passes a Job.
         if isinstance(job, str):
             try:
                 await telegram_service.send_message(str(chat_id), job)
             except Exception as e:
                 logger.warning(f"[node] telegram step notify failed: {e}")
+            return
+        if isinstance(job, dict) and job.get("type") == "agent_result":
+            # `node agent …` now runs in the background; deliver its summary here when it's done, so the
+            # user can fire it off and walk away (and a long run won't stall the webhook). Long summaries
+            # go as a .txt so we never trip Telegram's 4096-char message limit.
+            atext = (job.get("content") or "").strip() or "(the agent produced no summary)"
+            try:
+                if len(atext) > 3800:
+                    await telegram_service.send_message(str(chat_id), atext[:3800] + "\n\n…(full summary attached)")
+                    await telegram_service.send_document_bytes(str(chat_id), atext.encode("utf-8", "replace"), "node-agent-summary.txt")
+                else:
+                    await telegram_service.send_message(str(chat_id), atext)
+            except Exception as e:
+                logger.warning(f"[node] telegram agent-result send failed: {e}")
             return
         from app.services.node_service import tail, INLINE_LIMIT
         icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
