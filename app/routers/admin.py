@@ -532,21 +532,6 @@ def update_settings(
                 cache_settings_changed = True
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
-        # DVM / node-agent worker: (re)start it LIVE when shared-compute or the Nostr node-agent transport
-        # is toggled, so enabling doesn't need an app restart (start_worker is idempotent; the worker reads
-        # trust/map fresh per event, so only the on/off flags need a reconcile). stop when both are off.
-        if changed_keys & {"nostr_dvm_enabled", "node_exec_nostr_enabled"}:
-            try:
-                from app.services import nostr_dvm
-                if nostr_dvm.is_enabled() or nostr_dvm.agent_worker_enabled():
-                    nostr_dvm.start_worker()
-                    logger.info("[Admin] DVM/node-agent worker started (live)")
-                else:
-                    await nostr_dvm.stop_worker()
-                    logger.info("[Admin] DVM/node-agent worker stopped (live)")
-            except Exception as e:
-                logger.warning(f"[Admin] DVM worker reconcile failed: {e}")
-
         # Relay TASK-TOPOLOGY keys force a full subprocess restart (see the restart block below).
         # Computed up front so the LIVE-reload blocks (upstream / store-config) can SKIP themselves
         # when a restart is already going to happen in the same save — otherwise a combined save
