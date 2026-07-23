@@ -2298,6 +2298,7 @@
   // and in the media-grid branch too, or toggling ▦ would strand the user with no way back.
   // Inline composer text, held OUTSIDE the DOM so it survives a Home⇄Nostrverse switch (which resets #feed).
   let _tlCmpText='';
+  let _tlAutoId=null;   // id of the inline composer's rolling auto-draft (src:'tl'); survives reload via the Draft itself
   // AI helpers, module-level so BOTH composers use one implementation. They were private to compose()'s
   // closure, which is why the timeline composer previously had to open the modal just to reach them.
   let _aiLastTags='';   // the exact hashtag block we last appended — only strip THIS on re-run
@@ -2397,6 +2398,16 @@
     const box=$('#tl-cmp',feed); if(!box) return;
     const ta=$('#tl-cmp-ta',box), st=$('#tl-cmp-status',box), post=$('#tl-cmp-post',box);
     attachMentionAutocomplete(ta);
+    // Auto-draft parity with the modal composer: the inline box used to keep text only in a module var
+    // (_tlCmpText), lost on reload/crash. Persist what you type as ONE rolling Draft (marked src:'tl' so
+    // mount can find it again), debounced; dropped once the post/schedule lands (in reset()).
+    const _tlCw=()=>{ const r=$('#tl-cmp-cwrow',box), rr=$('#tl-cmp-cwreason',box);
+      return (r && !r.classList.contains('hidden')) ? {cw:true, cwReason:((rr&&rr.value)||'').trim()} : {}; };
+    const _tlSaveDraft=()=>{ const t=(ta.value||'').trim(); if(!t) return;
+      try{ _tlAutoId = Drafts.save({id:_tlAutoId, text:t, src:'tl', ..._tlCw()}) || _tlAutoId; }catch(_){} };
+    const _tlDropDraft=()=>{ clearTimeout(_tlAutoT); if(_tlAutoId){ try{ Drafts.remove(_tlAutoId); }catch(_){} _tlAutoId=null; } };
+    let _tlAutoT=null;
+    const _tlAutosave=()=>{ clearTimeout(_tlAutoT); _tlAutoT=setTimeout(()=>{ if((ta.value||'').trim()) _tlSaveDraft(); else _tlDropDraft(); }, 1200); };
     // Always open, like ditto — a one-line box that only unfolds on focus read as a search field and hid
     // the attach/post controls behind an extra interaction. It just grows with the text from here.
     const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),320)+'px'; };
@@ -2405,7 +2416,7 @@
     let _tlBg=null, _tlBgClear=()=>{};
     // Clear the PANELS too, not just the text — a posted poll leaving its options behind would silently
     // attach them to the next thing you wrote.
-    const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; _aiLastTags='';
+    const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; _aiLastTags=''; _tlDropDraft();
       const pb=$('#tl-cmp-pollbox',box), cw=$('#tl-cmp-cwrow',box);
       if(pb){ pb.classList.add('hidden');
         const w=$('#tl-cmp-poll-opts',box);
@@ -2417,12 +2428,14 @@
       $$('.tl-cmp-btn.on',box).forEach(b=>b.classList.remove('on'));
       grow(); };
     if(_tlCmpText) ta.value=_tlCmpText;   // restore text carried across a tab switch
+    else { try{ const d=Drafts.all().filter(x=>x && x.src==='tl' && !x.del && (x.text||'').trim()).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
+      if(d){ ta.value=d.text; _tlCmpText=d.text; _tlAutoId=d.id; } }catch(_){} }   // restore the rolling inline draft across a reload
     grow();
-    ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); });
+    ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); _tlAutosave(); });
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
-        try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; _tlCmpText=ta.value; grow(); }
+        try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; _tlCmpText=ta.value; grow(); _tlAutosave(); }
         catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
           else st.textContent='upload failed: '+((err&&err.message)||err); return; } }
       st.textContent=''; };
@@ -2445,7 +2458,7 @@
     { const rb=$('#tl-cmp-react',box); if(rb) rb.onclick=e=>{ e.stopPropagation();
         const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
         openMenuPopover(rb, items, a=>{
-          if(a==='emoji') openEmojiPopover(rb, em=>{ _insertAt(ta, em); _tlCmpText=ta.value; grow(); });
+          if(a==='emoji') openEmojiPopover(rb, em=>{ _insertAt(ta, em); _tlCmpText=ta.value; grow(); _tlAutosave(); });
           else if(a==='gif') gifPicker(ta); }); }; }
     // 📊 poll builder — inline. Its options are read at publish time, so there's no state to sync.
     const pollBox=$('#tl-cmp-pollbox',box), cwRow=$('#tl-cmp-cwrow',box);
@@ -6983,7 +6996,25 @@
               else st.textContent='schedule failed: '+((err&&err.message)||err); }
           };
         } }
-      ta.focus();
+      // Windows-app focus robustness. Symptom: opening a reply / new post gives a box with NO cursor that
+      // won't accept text for ~5-15s, then works. A synchronous focus right after the modal's innerHTML is
+      // inserted intermittently doesn't stick in the desktop webview (local signer → it's not a signer
+      // prompt stealing focus). Defer to the next frame, then keep a short watchdog that re-grabs focus
+      // ONLY while nothing real holds it (activeElement is body/null) — so it cures the dead box without
+      // fighting a legitimate click on Attach / a tab. If it still can't grab focus it logs what has it and
+      // what sits over the textarea, so a recurrence is diagnosable instead of a mystery. Self-clears when
+      // the modal closes (ta leaves the DOM) — no leak.
+      const _focusTA=()=>{ try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
+      requestAnimationFrame(()=>requestAnimationFrame(_focusTA));
+      let _fwN=0; const _fw=setInterval(()=>{
+        if(!ta.isConnected || document.activeElement===ta){ clearInterval(_fw); return; }
+        const ae=document.activeElement;
+        if(ae && ae!==document.body && ae!==document.documentElement && ae.matches && ae.matches('input,textarea,select,button,a[href],[contenteditable]')){ clearInterval(_fw); return; }  // a real control has focus → leave it
+        _focusTA();
+        if(_fwN===4){ try{ const r=ta.getBoundingClientRect(); const over=document.elementFromPoint(r.left+r.width/2, r.top+8);
+          console.warn('[compose] textarea not focusing — activeElement=',ae,' over=',over,' disabled=',ta.disabled,' readOnly=',ta.readOnly,' pe=',getComputedStyle(ta).pointerEvents); }catch(_){} }
+        if(++_fwN>=24){ clearInterval(_fw); }   // ~6s of 250ms retries then give up
+      }, 250);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
       // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
