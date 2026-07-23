@@ -1,0 +1,21 @@
+[Unit]
+Description=PosterChan node agent (Nostr worker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Filled in by install-agent.sh (User, WorkingDirectory, ExecStart, Environment).
+User=__USER__
+WorkingDirectory=__DIR__
+Environment=PCNODE_RELAY=__RELAY__
+Environment=PCNODE_TRUST=__TRUST__
+Environment=PCNODE_DATA=__DATA__
+ExecStart=__PY__ __DIR__/pcnode_agent.py
+Restart=always
+RestartSec=5
+# Hardening (loosen if the agent must write outside its data dir for your tasks).
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target
