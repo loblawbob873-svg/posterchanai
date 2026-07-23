@@ -1091,9 +1091,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .chat-reacts{gap:8px}
   .chat-react{font-size:14px;padding:4px 10px}
 }
-.act.actq{color:var(--cyan)}
-.act.actq:hover{color:var(--neon)}
-.act.actq .q-ico{width:22px;height:22px}
+.act.actq .q-ico{width:22px;height:22px}   /* quote: no idle colour — uniform --muted like every .act / .nav-item */
 .act .rp-ico{width:20px;height:20px}
 /* No visible scrollbar on the timeline: a 14px magenta bar down the side of the feed read as chrome
    from a different app. Scrolling itself is untouched — only the painted track/thumb is gone
@@ -1234,21 +1232,24 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
-/* Post action buttons look like a LEFT-NAVBAR item: hover fills with the ACCENT tint and brightens the
-   text (exactly like .nav-item:hover), engaged is a slightly stronger accent fill. UNIFORM accent — not
-   per-type cyan/green/amber — is what actually makes them read as the navbar. Borderless + no glow + no
-   lift (box-shadow/border/transform forced off) = clean. Themed modes use neutral panels, like the navbar. */
-.act.actm{font-size:20px;background:rgba(var(--accent-rgb),.07)}
-.act.actz{color:var(--amber)}
-.act.rt{color:var(--green)}
-.act{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;
-  font-size:19px;padding:11px 15px;border-radius:11px;transition:.13s;line-height:1}   /* radius/padding matched to .nav-item */
-.act:hover,.act.on,.act.rt:hover,.act.rt.on,.act.actz:hover,.act.actz.on,.act.actb.on,.act.actxmr:hover{
-  border-color:transparent !important;box-shadow:none !important;transform:none !important}
-.act:hover,.act.actz:hover,.act.rt:hover,.act.actxmr:hover{color:var(--text);background:rgba(var(--accent-rgb),.12)}
-.act.on,.act.rt.on,.act.actz.on,.act.actb.on{color:#fff;background:rgba(var(--accent-rgb),.18)}
-:root[data-theme] .act:hover,:root[data-theme] .act.actz:hover,:root[data-theme] .act.rt:hover,:root[data-theme] .act.actxmr:hover{background:var(--panel);color:var(--text)}
-:root[data-theme] .act.on,:root[data-theme] .act.rt.on,:root[data-theme] .act.actz.on,:root[data-theme] .act.actb.on{background:var(--panel2);color:var(--text)}
+/* Post action buttons ARE left-navbar items — the SAME declarations as .nav-item, not an approximation.
+   Idle = uniform var(--muted) (NO per-type amber/green/cyan — uniform colour is what makes a row read as
+   the navbar). Hover = .nav-item:hover verbatim. Engaged (.on) = .nav-item.active verbatim + the left
+   accent bar. Themed modes fall back to neutral panels, exactly like the navbar's :root[data-theme]
+   overrides. Keep this block in lockstep with .nav-item / .nav-item:hover / .nav-item.active above. */
+.act.actm{font-size:20px}
+.act{display:flex;align-items:center;gap:7px;background:transparent;border:none;color:var(--muted);cursor:pointer;
+  font-size:19px;padding:11px 15px;border-radius:11px;transition:.15s;line-height:1;position:relative}   /* geometry + idle colour = .nav-item */
+/* hover — verbatim .nav-item:hover */
+.act:hover{color:var(--text);background:rgba(var(--accent-rgb),.12);text-shadow:0 0 6px rgba(var(--accent-rgb),.35);transform:none}
+/* engaged — verbatim .nav-item.active + the left accent bar */
+.act.on{color:#fff;background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent2-rgb),.14));
+  box-shadow:inset 0 0 0 1px var(--line);text-shadow:0 0 8px rgba(var(--accent-rgb),.6)}
+.act.on::before{content:"";position:absolute;left:0;top:18%;height:64%;width:3px;border-radius:3px;background:var(--neon);box-shadow:var(--glow)}
+/* themed modes — neutral panels, exactly like :root[data-theme] .nav-item */
+:root[data-theme] .act:hover{background:var(--panel);color:var(--text);text-shadow:none}
+:root[data-theme] .act.on{background:var(--panel2);color:var(--text);box-shadow:inset 0 0 0 1px var(--line);text-shadow:none}
+:root[data-theme] .act.on::before{box-shadow:none}
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */
