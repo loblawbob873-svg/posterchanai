@@ -7006,13 +7006,25 @@
       // the modal closes (ta leaves the DOM) — no leak.
       const _focusTA=()=>{ try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
       requestAnimationFrame(()=>requestAnimationFrame(_focusTA));
-      let _fwN=0; const _fw=setInterval(()=>{
+      let _fwN=0, _fwDiag=false; const _fw=setInterval(()=>{
         if(!ta.isConnected || document.activeElement===ta){ clearInterval(_fw); return; }
         const ae=document.activeElement;
         if(ae && ae!==document.body && ae!==document.documentElement && ae.matches && ae.matches('input,textarea,select,button,a[href],[contenteditable]')){ clearInterval(_fw); return; }  // a real control has focus → leave it
+        // ACTIVE recovery for the states a bare .focus() can't beat:
+        if(ta.disabled) ta.disabled=false;    // disabled → no cursor, unfocusable
+        if(ta.readOnly) ta.readOnly=false;    // readOnly → cursor shows but refuses text
+        // An element sitting ON TOP of the box eats the click → no focus. If the cover is NOT part of this
+        // modal (a stale/stray overlay — the usual desktop-webview cause), let clicks fall through to the box.
+        let over=null; try{ const r=ta.getBoundingClientRect(); over=document.elementFromPoint(r.left+r.width/2, r.top+8);
+          const md=ta.closest('.modal-bg');
+          if(over && over!==ta && !ta.contains(over) && !(md && md.contains(over))){ try{ over.style.pointerEvents='none'; }catch(_){} }
+        }catch(_){}
         _focusTA();
-        if(_fwN===4){ try{ const r=ta.getBoundingClientRect(); const over=document.elementFromPoint(r.left+r.width/2, r.top+8);
-          console.warn('[compose] textarea not focusing — activeElement=',ae,' over=',over,' disabled=',ta.disabled,' readOnly=',ta.readOnly,' pe=',getComputedStyle(ta).pointerEvents); }catch(_){} }
+        if(!_fwDiag && _fwN>=2){ _fwDiag=true;   // once, ~0.5s in: VISIBLE so it's diagnosable without DevTools
+          const msg='⚠️ compose stuck — over='+((over&&(over.id||over.className||over.tagName))||'-')+' disabled='+ta.disabled+' ro='+ta.readOnly+' ae='+((ae&&(ae.id||ae.tagName))||'-');
+          try{ console.warn(msg,{over,ae}); }catch(_){}
+          try{ toast(msg); }catch(_){}
+        }
         if(++_fwN>=24){ clearInterval(_fw); }   // ~6s of 250ms retries then give up
       }, 250);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
