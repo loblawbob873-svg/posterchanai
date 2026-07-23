@@ -1909,12 +1909,13 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 }
 
 /* ===== floating mini stream player (desktop only) ===== */
-.mini-player{position:fixed;right:18px;bottom:18px;width:330px;max-width:34vw;z-index:350;background:#000;
+.mini-player{position:fixed;right:18px;bottom:18px;width:330px;z-index:350;background:#000;
   border:1px solid var(--neon);border-radius:14px;overflow:hidden;display:none;animation:fade .2s;
+  resize:both;min-width:220px;min-height:150px;max-width:92vw;max-height:88vh;   /* drag the bar, resize the corner */
   box-shadow:0 0 0 1px rgba(var(--accent-rgb),.35),0 0 34px rgba(var(--accent2-rgb),.4)}
-.mini-player.on{display:block}
-.mini-player video{width:100%;display:block;background:#000;max-height:50vh}
-.mini-bar{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;background:linear-gradient(90deg,rgba(var(--accent2-rgb),.28),var(--panel2))}
+.mini-player.on{display:flex;flex-direction:column}
+.mini-player video{flex:1;width:100%;min-height:0;height:auto;display:block;background:#000;object-fit:contain}
+.mini-bar{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;flex:none;cursor:move;touch-action:none;background:linear-gradient(90deg,rgba(var(--accent2-rgb),.28),var(--panel2))}
 .mini-title{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);letter-spacing:.3px}
 .mini-x{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 7px;line-height:1;transition:.13s}
 .mini-x:hover{color:var(--neon);text-shadow:0 0 8px rgba(var(--accent-rgb),.6)}

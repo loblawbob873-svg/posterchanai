@@ -4935,8 +4935,31 @@
     _miniEv=ev; mp.classList.add('on');
     $('#mini-close').onclick=()=>closeMini(true);
     $('#mini-open').onclick=()=>{ const e2=_miniEv; closeMini(); if(e2) openStream(e2); };
+    _makeMiniDraggable(mp);   // drag by the bar; the corner resizes (CSS resize:both)
     v.play().catch(()=>{});
-    toast('stream popped out — keeps playing while you browse');
+    toast('stream popped out — drag the title bar to move, drag the corner to resize');
+  }
+  // Make the pop-out player moveable (drag its title bar) — it also resizes via CSS `resize:both` on the
+  // bottom-right corner. Pin it to left/top from its rendered rect first so both drag and resize behave.
+  function _makeMiniDraggable(mp){
+    const bar=mp.querySelector('.mini-bar'); if(!bar) return;
+    const pin=()=>{ const r=mp.getBoundingClientRect(); mp.style.left=r.left+'px'; mp.style.top=r.top+'px'; mp.style.right='auto'; mp.style.bottom='auto'; };
+    let sx=0, sy=0, ox=0, oy=0, drag=false;
+    bar.addEventListener('pointerdown', e=>{
+      if(e.target.closest('.mini-x')) return;   // the ⤢/✕ buttons aren't drag handles
+      pin(); drag=true; sx=e.clientX; sy=e.clientY;
+      const r=mp.getBoundingClientRect(); ox=r.left; oy=r.top;
+      try{ bar.setPointerCapture(e.pointerId); }catch(_){}
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', e=>{ if(!drag) return;
+      const w=mp.offsetWidth, h=mp.offsetHeight;
+      let nx=Math.max(4, Math.min(ox+(e.clientX-sx), window.innerWidth - w - 4));
+      let ny=Math.max(4, Math.min(oy+(e.clientY-sy), window.innerHeight - h - 4));
+      mp.style.left=nx+'px'; mp.style.top=ny+'px';
+    });
+    const end=e=>{ drag=false; try{ bar.releasePointerCapture(e.pointerId); }catch(_){} };
+    bar.addEventListener('pointerup', end); bar.addEventListener('pointercancel', end);
   }
   // `restore` is opt-in (the ✕ button) — popOutStream and ⤢ do their own thing and must NOT re-render.
   // popOutStream MOVES the live <video> out of the stream view and strips its id, so a bare teardown left
