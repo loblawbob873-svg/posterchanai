@@ -149,6 +149,27 @@ async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: s
 _inflight: dict = {}
 _INFLIGHT_TTL = 20 * 60
 
+# Conversations the user DELETED — so a background agent that finishes mid-delete (its cancel raced the
+# delivery) doesn't RESURRECT the chat the user just removed. TTL'd; the id is stamped in delete_conversation
+# and checked in node_notify before it recreates a missing conversation.
+_deleted_convs: dict = {}
+_DELETED_TTL = 20 * 60
+
+
+def _mark_deleted(conv_id: int) -> None:
+    try:
+        now = time.time()
+        _deleted_convs[int(conv_id)] = now
+        for k, ts in list(_deleted_convs.items()):
+            if now - ts > _DELETED_TTL:
+                _deleted_convs.pop(k, None)
+    except Exception:
+        pass
+
+
+def _was_deleted(conv_id: int) -> bool:
+    return int(conv_id) in _deleted_convs
+
 
 def _mark_busy(conv_id: int) -> None:
     try:
@@ -407,6 +428,7 @@ async def delete_conversation(
     # Cancel any background agent launched from this chat — otherwise deleting the chat leaves the run
     # churning and its result would RESURRECT the chat you just deleted. Cancel reaps its sandbox
     # container (the task's finally) and skips delivery.
+    _mark_deleted(conversation_id)   # so a mid-delete agent delivery can't resurrect this chat (see node_notify)
     try:
         from app.services.command_service.system import cancel_agent_for_conv
         if cancel_agent_for_conv(conversation_id):
@@ -1612,6 +1634,10 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         except Exception as _e:
                                             logger.warning(f"[node] webui step notify failed: {_e}")
                                         return
+                                    # The user DELETED this chat (its agent was cancelled, but a finish can race the
+                                    # delete). Drop the result rather than RESURRECT the conversation they just removed.
+                                    if _was_deleted(_conv):
+                                        return
                                     # Background AGENT finished — persist its summary to the conversation and
                                     # push it (queued if the socket is gone), so a run the user walked away
                                     # from still lands here when it's done. Same delivery shape as a job.
@@ -1652,7 +1678,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         # have "no idea when it finished or failed". Broadcast a completion signal to ALL
                                         # the user's sockets (conn_id=None) so the client toasts it whatever they're viewing.
                                         try:
-                                            _ok = not any(_m in _atext for _m in ("⚠️", "❌", "⏹️", "Stopped", "Error"))
+                                            # Base success on run_agent's EXACT end-of-run markers, not loose
+                                            # substrings like "Error"/"Stopped" (a fine summary that says "no
+                                            # errors" or "Stopped the service" would otherwise toast as failed).
+                                            _ok = not any(_m in _atext for _m in
+                                                          ("**⏹️ Stopped:**", "**⚠️ Stopped:**", "**⚠️ Error:**"))
                                             await manager.send_json(_uid, {"type": "agent_done", "ok": _ok, "conv": _conv})
                                         except Exception:
                                             pass

@@ -569,26 +569,27 @@ async def startup():
                 logging.error(f"Error starting Blossom cleanup: {e}", exc_info=True)
 
             try:
-                # Per-user sandbox container reaper. On boot, sweep EVERY pcai-sandbox container left by
-                # a prior run (nothing is tracked yet, so the orphan sweep removes them all) — the fix
-                # for containers dangling across a restart. Then reap idle ones every 5 min so a bare
-                # `node sandbox <cmd>` session (which is NOT torn down like an agent run) can't linger.
+                # Per-user sandbox container reaper. ONCE, as soon as Docker is reachable, sweep EVERY
+                # pcai-sandbox container left by a PRIOR process (reap_all — safe: a fresh process has no
+                # active runs). Then every 5 min reap only TRACKED containers idle >15 min and not in use
+                # (reap_idle — NO orphan sweep, which would race an in-flight run). Retry availability
+                # quickly until the first sweep so a slow-booting daemon doesn't disable the reaper.
                 from app.services import sandbox_service as _sbx
                 async def _sandbox_reaper():
-                    if not await _sbx.available():
-                        return   # no Docker on this host → nothing to reap, don't spin
-                    try:
-                        n = await _sbx.reap_idle(ttl=0)   # boot: 0 = reap all tracked (none) + orphan sweep
-                        if n:
-                            logging.info(f"[sandbox] startup swept {n} orphaned container(s)")
-                    except Exception as _e:
-                        logging.warning(f"[sandbox] startup sweep failed: {_e}")
+                    swept = False
                     while True:
-                        await _aio.sleep(300)
                         try:
-                            await _sbx.reap_idle(ttl=900)   # >15 min idle → reap (+ orphan sweep each pass)
+                            if await _sbx.available():
+                                if not swept:
+                                    n = await _sbx.reap_all()
+                                    swept = True
+                                    if n:
+                                        logging.info(f"[sandbox] startup swept {n} leftover container(s)")
+                                else:
+                                    await _sbx.reap_idle(ttl=900)
                         except Exception as _e:
-                            logging.warning(f"[sandbox] idle reap failed: {_e}")
+                            logging.warning(f"[sandbox] reaper pass failed: {_e}")
+                        await _aio.sleep(300 if swept else 20)
                 _aio.create_task(_sandbox_reaper())
             except Exception as e:
                 logging.error(f"Error starting sandbox reaper: {e}", exc_info=True)

@@ -44,7 +44,7 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
                 if target.startswith("sandbox:"):
                     try:
                         from app.services import sandbox_service
-                        await sandbox_service.reap(target.split(":", 1)[1])
+                        await sandbox_service.reap(target.split(":", 1)[1], force=False)  # polite: skip if another run holds it
                     except Exception:
                         pass
     finally:
@@ -63,7 +63,8 @@ async def _agent_bg(targets, goal, uid, chat_service, notify):
             logger.warning(f"[node] background agent deliver failed: {e}")
 
 
-_AGENT_BG_BY_CONV: dict = {}   # conversation_id -> task, so deleting the chat cancels the run
+_AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids), so deleting the chat cancels the run
+_REAP_TASKS: set = set()       # keep cancel-triggered reap tasks referenced so they aren't GC'd mid-run
 
 
 def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
@@ -104,7 +105,12 @@ def cancel_agent_for_conv(conv_id) -> bool:
     for _u in (sbx_uids or []):
         try:
             from app.services import sandbox_service
-            asyncio.create_task(sandbox_service.reap(_u))   # remove the container regardless of the task's fate
+            # Force-remove THIS run's container promptly (the user deliberately deleted the chat). The
+            # cancelled task's own finally reap is force=False + await-during-cancel-fragile, so don't
+            # rely on it. Keep a reference so the reap task isn't garbage-collected before it finishes (L3).
+            _rt = asyncio.create_task(sandbox_service.reap(_u, force=True))
+            _REAP_TASKS.add(_rt)
+            _rt.add_done_callback(_REAP_TASKS.discard)
         except Exception:
             pass
     return live
@@ -325,7 +331,7 @@ class _SystemMixin:
                     if _t.startswith("sandbox:"):   # tear the container down when the run finishes
                         try:
                             from app.services import sandbox_service
-                            await sandbox_service.reap(_t.split(":", 1)[1])
+                            await sandbox_service.reap(_t.split(":", 1)[1], force=False)  # polite: skip if another run holds it
                         except Exception:
                             pass
             return {"type": "text", "content": "\n\n---\n\n".join(sections)}

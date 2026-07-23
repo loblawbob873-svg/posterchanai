@@ -186,6 +186,7 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
 
     Jobs only ever run on ``local`` now — remote nodes go over Nostr (`run_agent_over_nostr`), where the
     worker runs its own local job. A non-local target here is a routing bug, so fail loudly."""
+    _sbx_uid = None   # set for sandbox jobs → refcount the container so the reaper can't pull it mid-exec
     try:
         # start_new_session=True puts each job in its OWN process group/session, so on
         # timeout/kill we can signal the whole group (the shell AND its children, e.g. a `sleep`
@@ -202,10 +203,10 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
         elif job.target.startswith("sandbox:"):
             # Per-user Debian container — the command runs INSIDE it (docker exec), never on the host.
             from app.services import sandbox_service
-            _uid = job.target.split(":", 1)[1]
-            await sandbox_service.ensure(_uid)   # lazy create/start on the first command
-            proc = await asyncio.create_subprocess_exec(
-                *sandbox_service.exec_argv(_uid, job.command),
+            _sbx_uid = job.target.split(":", 1)[1]
+            await sandbox_service.acquire(_sbx_uid)   # ensure + refcount (released in finally) so the
+            proc = await asyncio.create_subprocess_exec(   # idle reaper / a concurrent run can't pull it out
+                *sandbox_service.exec_argv(_sbx_uid, job.command),
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -252,6 +253,12 @@ async def _run(job: Job, timeout: Optional[float]) -> None:
         job.status = "failed"
         job.output += f"\n[error launching command: {e}]"
     finally:
+        if _sbx_uid is not None:   # drop the container hold this exec took (no-op if acquire never incremented)
+            try:
+                from app.services import sandbox_service
+                await sandbox_service.release(_sbx_uid)
+            except Exception:
+                pass
         if job.finished_at is None:
             job.finished_at = time.time()
         logger.info(f"[node] job #{job.id} {job.node!r} cmd={job.command!r} -> {job.status} (exit={job.exit_code})")

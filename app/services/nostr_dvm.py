@@ -377,7 +377,10 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
             [{"kinds": [req_kind + 1000], "#e": [ev["id"]], "authors": [worker_pubkey]}],
             timeout=budget, direct=True)
         if not res:
-            logger.warning("[dvm] %s job %s timed out (%ss)", task, ev["id"][:12], int(budget))
+            _hint = ("" if task != "agent" else
+                     " — if this worker is a FULL node, list its relay in node_exec_node_npubs "
+                     "(`name npub ws://host:3052/relay`); a full node only listens on its own relay")
+            logger.warning("[dvm] %s job %s timed out (%ss)%s", task, ev["id"][:12], int(budget), _hint)
             return None
         if not nostr_event.verify_event(res):
             logger.warning("[dvm] %s result failed signature verify", task)
