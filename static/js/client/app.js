@@ -7003,7 +7003,21 @@
               else st.textContent='schedule failed: '+((err&&err.message)||err); }
           };
         } }
-      ta.focus();
+      // The reply/quote/New-post BUTTON that opened this modal keeps focus, and the mount-time focus()
+      // loses the race to it (worst while the feed is streaming), so the box shows no cursor for the 5-20s
+      // it takes focus to settle — the "reply won't take text" bug. Calling focus() a moment LATER wins
+      // (confirmed: it moves activeElement to the textarea), so blur the trigger and re-assert focus,
+      // deferred past the click event and retried briefly. Stops once the box has focus or you tab to a
+      // control INSIDE the composer. Self-clears when the modal closes (ta detaches).
+      const _grab=()=>{ const ae=document.activeElement, md=ta.closest('.modal-bg');
+        if(ae && ae!==ta && !(md && md.contains(ae))){ try{ ae.blur && ae.blur(); }catch(_){} }   // release the trigger button
+        try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
+      _grab(); requestAnimationFrame(()=>requestAnimationFrame(_grab));
+      let _gn=0; const _gt=setInterval(()=>{
+        const ae=document.activeElement, md=ta.closest('.modal-bg');
+        if(!ta.isConnected || ae===ta || (md && md.contains(ae) && ae!==ta)){ clearInterval(_gt); return; }
+        _grab(); if(++_gn>=10) clearInterval(_gt);   // ~1.2s of insurance retries, then stop
+      }, 120);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
       // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
