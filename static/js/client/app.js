@@ -878,21 +878,31 @@
       }
       // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
       // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
-      // 15 min; when a new build finishes installing, _onSwUpdateReady surfaces an "Update available"
-      // entry in the Notifications menu instead of reloading automatically.
+      // 15 min. A build found AT LAUNCH is applied SILENTLY (skipWaiting + one reload onto the fresh code)
+      // so nobody sits on stale JS/CSS — that's the recurring "had to clear the browser cache to get the
+      // update" problem. A build that lands LATER, mid-session, still just surfaces the "Update available"
+      // row (no yank while you're reading/typing). Drafts autosave on pagehide, so even the launch reload
+      // is loss-free.
       navigator.serviceWorker.register(_isApp?'/sw.js':'/client/sw.js',{scope:_isApp?'/':'/client',updateViaCache:'none'}).then(reg=>{
         // App: registered purely for media caching. The APK updates itself, so skip ALL the web
         // update-prompt/reload wiring — a new media-only SW just activates silently on the next cold start.
         if(_isApp) return;
         try{ reg.update(); }catch(_){}
+        // Launch window: a waiting/just-installed worker seen in the first ~20s is the "you just opened the
+        // app on an old build" case → apply it now. After that we assume you're actively using the tab and
+        // only prompt. (applyUpdate posts SKIP_WAITING + reloads on controllerchange, with a 6s fallback.)
+        let _swLaunch=true; setTimeout(()=>{ _swLaunch=false; }, 20000);
+        const surface = w => { if(!w) return;
+          if(_swLaunch){ _updateReady=w; applyUpdate(); }   // launch: silently activate + reload onto the fresh build
+          else _onSwUpdateReady(w); };                       // mid-session: surface the in-app "Update available" row
         // Watch a worker for the installed+waiting state (an UPDATE, not first install → controller exists).
         const track = w => { if(!w) return;
-          if(w.state==='installed' && navigator.serviceWorker.controller){ _onSwUpdateReady(w); return; }
-          w.addEventListener('statechange', ()=>{ if(w.state==='installed' && navigator.serviceWorker.controller) _onSwUpdateReady(w); }); };
-        if(reg.waiting && navigator.serviceWorker.controller) _onSwUpdateReady(reg.waiting);
+          if(w.state==='installed' && navigator.serviceWorker.controller){ surface(w); return; }
+          w.addEventListener('statechange', ()=>{ if(w.state==='installed' && navigator.serviceWorker.controller) surface(w); }); };
+        if(reg.waiting && navigator.serviceWorker.controller) surface(reg.waiting);
         if(reg.installing) track(reg.installing);            // an install already in-flight when register() resolved
         reg.addEventListener('updatefound', ()=> track(reg.installing));
-        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only (no reload) — prompt appears if a build lands
+        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only — a mid-session build prompts
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
