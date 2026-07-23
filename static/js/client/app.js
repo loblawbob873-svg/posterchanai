@@ -2361,7 +2361,7 @@
     return (canPost?`<div class="tl-cmp" id="tl-cmp">
         <img class="tl-cmp-av" src="${enc(av)}" onerror="this.src='${LOGO}'" alt="">
         <div class="tl-cmp-body">
-          <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="What’s Good Cuh?"></textarea>
+          <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="How was your weekend?"></textarea>
           <div class="tl-cmp-tools">
             <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file">📎</button>
             <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF">😀</button>
@@ -7004,6 +7004,14 @@
           };
         } }
       ta.focus();
+      // Desktop-webview quirk: while the Nostrverse feed streams behind the modal, the browser's DEFAULT
+      // "focus this field on click" action doesn't fire for the textarea — a click lands on the box (confirmed:
+      // elementFromPoint returns the textarea, nothing covers it, nothing in JS disables it) yet it stays
+      // unfocused until the feed settles ~5-20s later. But JS click events DO reach handlers (the Preview tab
+      // works mid-hang) and programmatic focus() DOES work (verified) — so bridge the gap: focus the box
+      // explicitly from its own pointer handler. A click now takes immediately instead of after the feed loads.
+      ['pointerdown','mousedown','touchstart','click'].forEach(evn=>
+        ta.addEventListener(evn, ()=>{ if(document.activeElement!==ta){ try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } } }, true));
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
       // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
