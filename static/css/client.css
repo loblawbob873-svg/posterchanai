@@ -777,14 +777,9 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
 .guest-acts .btn{margin:0}
-/* Three buttons, three weights: Sign up is the filled primary (btn-neon), Log in the accent outline
-   (btn-ghost), and Source a muted tertiary — same size and shape, clearly not competing with the two
-   actions that matter. `.guest-src.btn` (0,2,0) is what beats .btn-ghost's own colours. */
+/* All three guest buttons are the filled primary (btn-neon) now — consistent look. `.guest-src` only
+   needs to drop the <a> underline; it inherits btn-neon's fill (no colour override, or it'd un-fill). */
 .guest-src{text-decoration:none}
-/* Source was color:var(--muted) on a dark panel — dead + unreadable. Give it the accent colour + a
-   tinted border so it reads clearly, while staying an outline (tertiary) button, not a filled CTA. */
-.guest-src.btn{background:var(--panel2);border-color:color-mix(in srgb, var(--cyan) 45%, var(--line));color:var(--cyan)}
-.guest-src.btn:hover{border-color:var(--cyan);color:var(--cyan);background:color-mix(in srgb, var(--cyan) 12%, var(--panel2))}
 @media(max-width:820px){ .guest-card{margin:8px 10px 0;padding:15px 12px} .guest-logo{width:48px;height:48px}
   .guest-name{font-size:19px} }
 .tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
@@ -1237,21 +1232,21 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
 .acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
-/* Post action buttons (reply/react/zap/quote/boost/bookmark/…) match the navbar's HOVER state: a flat
-   tint + colour change only. NO border (not even the inset hairline), NO outer glow, NO hover-lift.
-   `box-shadow:none !important` on hover/engaged kills any leftover ring so no border can show. */
+/* Post action buttons look like a LEFT-NAVBAR item: hover fills with the ACCENT tint and brightens the
+   text (exactly like .nav-item:hover), engaged is a slightly stronger accent fill. UNIFORM accent — not
+   per-type cyan/green/amber — is what actually makes them read as the navbar. Borderless + no glow + no
+   lift (box-shadow/border/transform forced off) = clean. Themed modes use neutral panels, like the navbar. */
 .act.actm{font-size:20px;background:rgba(var(--accent-rgb),.07)}
-.act.actz{color:var(--amber)} .act.actz:hover{color:var(--amber);background:rgba(255,207,43,.14)}
-.act.rt{color:var(--green)} .act.rt:hover{color:var(--green);background:rgba(57,255,139,.14)}
+.act.actz{color:var(--amber)}
+.act.rt{color:var(--green)}
 .act{display:flex;align-items:center;gap:7px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer;
   font-size:19px;padding:10px 16px;border-radius:13px;transition:.13s;line-height:1}
 .act:hover,.act.on,.act.rt:hover,.act.rt.on,.act.actz:hover,.act.actz.on,.act.actb.on,.act.actxmr:hover{
   border-color:transparent !important;box-shadow:none !important;transform:none !important}
-.act:hover{color:var(--cyan);background:rgba(33,230,255,.14)}
-.act.on{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
-.act.rt.on{color:var(--green);background:rgba(57,255,139,.12)}
-.act.actz.on{color:var(--amber);background:rgba(255,207,43,.12)}
-.act.actb.on{color:var(--neon2);background:rgba(var(--accent2-rgb),.12)}
+.act:hover,.act.actz:hover,.act.rt:hover,.act.actxmr:hover{color:var(--text);background:rgba(var(--accent-rgb),.12)}
+.act.on,.act.rt.on,.act.actz.on,.act.actb.on{color:#fff;background:rgba(var(--accent-rgb),.18)}
+:root[data-theme] .act:hover,:root[data-theme] .act.actz:hover,:root[data-theme] .act.rt:hover,:root[data-theme] .act.actxmr:hover{background:var(--panel);color:var(--text)}
+:root[data-theme] .act.on,:root[data-theme] .act.rt.on,:root[data-theme] .act.actz.on,:root[data-theme] .act.actb.on{background:var(--panel2);color:var(--text)}
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
 /* compose / modal */

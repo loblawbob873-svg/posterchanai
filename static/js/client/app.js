@@ -2338,8 +2338,8 @@
       <div class="guest-name">${enc(name)}</div>
       <div class="guest-acts">
         <button class="btn btn-neon" id="guest-signup">Sign up</button>
-        <button class="btn btn-ghost" id="guest-login2">Log in</button>
-        <a class="btn btn-ghost guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
+        <button class="btn btn-neon" id="guest-login2">Log in</button>
+        <a class="btn btn-neon guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
       </div>
     </div>`;
   }
