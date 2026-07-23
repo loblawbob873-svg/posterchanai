@@ -7004,6 +7004,20 @@
           };
         } }
       ta.focus();
+      // ROOT CAUSE (confirmed by the user): alt-tabbing OUT of the app and back un-sticks the box. During the
+      // heavy feed render the Electron webview's DOCUMENT-focus wedges — document.hasFocus() goes false, so
+      // activeElement can be set but keystrokes/clicks aren't delivered — and a real window focus event
+      // re-syncs it. No web JS touches focus here; it's a webview bug. Mimic the alt-tab: re-request WINDOW
+      // focus (re-runs Chromium's focus controller) then the textarea, retried until the document is actually
+      // focused AND the box has it. Stops on success / modal close; ~3s ceiling. (If window.focus() turns out
+      // to be a no-op in this Electron build, the fix moves to the shell's webContents.focus() over IPC.)
+      const _resync=()=>{ try{ window.focus(); }catch(_){} try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
+      _resync(); requestAnimationFrame(()=>requestAnimationFrame(_resync));
+      let _rn=0; const _rt=setInterval(()=>{
+        if(!ta.isConnected){ clearInterval(_rt); return; }
+        if(document.hasFocus() && document.activeElement===ta){ clearInterval(_rt); return; }
+        _resync(); if(++_rn>=20) clearInterval(_rt);   // ~3s
+      }, 150);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
       // Clicking the real control reuses its existing handler, so there's no second implementation to
       // keep in sync — and no-op if that button isn't present for this composer variant (reply, quote…).
