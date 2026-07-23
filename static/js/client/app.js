@@ -1251,8 +1251,6 @@
     if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
       rb.addEventListener('click', e=>{
         const tab=e.target.closest('.rb-tab'); if(tab){ setRbTab(tab.dataset.rbtab); return; }   // Hot / From-follows toggle
-        const fb=e.target.closest('.wtf-follow'); if(fb){ _wtfFollow(fb); return; }              // Follow, before the row handler
-        const wr=e.target.closest('.wtf-row'); if(wr){ renderProfileView(wr.dataset.pk); return; }
         // Alerts tab: react/reply inline, then the row itself. The feed's .act delegate is bound to
         // #feed, so these buttons need their own handling here — they can't ride on it.
         const q=e.target.closest('.rbq');
@@ -1950,7 +1948,7 @@
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
-    $$('.rb-item[data-pk],.wtf-row[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
+    $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
       const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
     }});
@@ -12310,7 +12308,6 @@
     if(!_rightbarShown()) return;   // display:none on mobile OR body.rb-off → skip; but build in a backgrounded desktop tab (no document.hidden gate)
     _rbLoaded=true;                 // only once it's genuinely visible — _syncRightbar retries otherwise
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
-    loadWhoToFollow();              // friend-of-friend suggestions (once per session — see below)
     syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
     bumpNotif();                    // ...and its unread count: bumpNotif only fires on ARRIVING events,
                                     // so a rail built afterwards would show a bare "Alerts" despite unread
@@ -12334,75 +12331,6 @@
   const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
                          ['nostr','🟣'], ['art','🎨'], ['news','📰'], ['memes','😂']];
   const TOPIC_TRENDING=10, TOPIC_MAX=14;
-  // ---- Who to follow: friend-of-friend ------------------------------------------------------
-  // Pull the contact lists (kind 3) of people you already follow and rank the pubkeys THEY follow
-  // that you don't. No server endpoint and no global "top accounts" chart — the suggestions come out
-  // of your own graph. Deliberately NOT on the 150s refresh: contact lists are big events and this is
-  // the heaviest query in the column, so it runs once per session and then only after you act on it.
-  const WTF_AUTHORS=40, WTF_MAX=4, WTF_MIN_MUTUAL=2;
-  // The node admin to promote, so a self-hosted instance pins ITS OWN owner (never a pubkey baked into
-  // the client). CFG.operator_npub is the designated operator; fall back to the first admin account
-  // (CFG.admin_npubs) when the operator hasn't set a nostr_npub — the admin still gets pinned either way.
-  function _npubToHex(np){ try{ const d=NT().nip19.decode(np); return (d && d.type==='npub') ? d.data : ''; }catch(_){ return ''; } }
-  function _operatorPk(){
-    if(!CFG) return '';
-    if(CFG.operator_npub){ const h=_npubToHex(CFG.operator_npub); if(h) return h; }
-    const admins = Array.isArray(CFG.admin_npubs) ? CFG.admin_npubs : [];
-    for(const np of admins){ const h=_npubToHex(np); if(h) return h; }
-    return '';
-  }
-  async function loadWhoToFollow(){
-    const el=document.getElementById('rb-wtf'); if(!el) return;
-    if(typeof ME==='undefined' || !ME || !ME.pubkey){ el.innerHTML='<div class="muted small">Sign in to get suggestions.</div>'; return; }
-    const picks=[];   // [pubkey, mutualCount, isOperator]
-    // Operator first, and BEFORE the follow-count gate below: a brand-new account follows nobody, which
-    // is exactly the moment it most needs somewhere to start — and whoever runs the instance is the one
-    // suggestion that doesn't depend on already having a graph.
-    const op=_operatorPk();
-    if(op && op!==ME.pubkey && !FOLLOWS.has(op) && !MUTED.has(op)) picks.push([op, 0, true]);
-    // Cap the author list: a kind-3 REQ for every single follow is a genuinely heavy ask of the relay,
-    // and 40 contact lists is already thousands of candidate pubkeys to rank.
-    const authors=[...FOLLOWS].filter(p=>p&&p!==ME.pubkey).slice(0,WTF_AUTHORS);
-    if(authors.length>=2){
-      let evs=[]; try{ evs=await Relay.query([{ kinds:[3], authors, limit:authors.length }]); }catch(_){}
-      // Keep only the NEWEST contact list per author — kind 3 is replaceable, but a relay can still hand
-      // back older copies, and counting both would double-weight whoever that author follows.
-      const newest=new Map();
-      for(const e of evs){ const p=newest.get(e.pubkey); if(!p || e.created_at>p.created_at) newest.set(e.pubkey,e); }
-      const tally=new Map();
-      for(const e of newest.values()) for(const t of (e.tags||[])){
-        const pk = t[0]==='p' ? t[1] : null;
-        if(!pk || pk===ME.pubkey || pk===op || FOLLOWS.has(pk) || MUTED.has(pk)) continue;   // pk===op: already pinned above
-        tally.set(pk, (tally.get(pk)||0)+1);
-      }
-      for(const [pk,c] of [...tally.entries()].filter(([,c])=>c>=WTF_MIN_MUTUAL).sort((a,b)=>b[1]-a[1])){
-        if(picks.length>=WTF_MAX) break;
-        picks.push([pk,c,false]);
-      }
-    }
-    if(!picks.length){ el.innerHTML=`<div class="muted small">${authors.length<2?'Follow a few people and suggestions will show up here.':'No suggestions right now.'}</div>`; return; }
-    picks.forEach(([pk])=>needProfile(pk));   // names/avatars fill in via decorateProfiles when kind-0 lands
-    el.innerHTML=picks.map(([pk,c,isOp])=>{
-      const p=profOf(pk), nm=p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…');
-      const sub=isOp ? 'runs this instance' : `followed by ${c} you follow`;
-      return `<div class="wtf-row${isOp?' wtf-op':''}" data-pk="${pk}">
-        <img class="rb-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-        <div class="wtf-main"><b>${enc(nm)}</b><span class="wtf-sub">${sub}</span></div>
-        <button class="wtf-follow" data-follow="${pk}">Follow</button></div>`;
-    }).join('');
-    decorateProfiles();
-  }
-  // Follow from a suggestion row. toggleFollow() returns false when the relay didn't store the kind-3,
-  // so the row only disappears on a follow that actually landed — no ghost follows.
-  async function _wtfFollow(btn){
-    const pk=btn.dataset.follow; if(!pk || btn.disabled) return;
-    btn.disabled=true; btn.textContent='…';
-    const ok=await toggleFollow(pk);
-    if(!ok){ btn.disabled=false; btn.textContent='Follow'; return; }
-    const row=btn.closest('.wtf-row'); if(row) row.remove();
-    const el=document.getElementById('rb-wtf');
-    if(el && !el.querySelector('.wtf-row')) loadWhoToFollow();   // emptied the list → refill, your graph just grew
-  }
   // ONE topics cloud = trending hashtags (tallied over the last 24h from explicit `t` tags AND inline
   // #hashtags in recent notes, ranked by how many distinct posts used each) followed by whatever
   // curated tags aren't already trending. Both render a clickable chip → a #tag feed. This replaces
@@ -12477,7 +12405,7 @@
   // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
   // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
   // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=6, HOT_MAX=18;   // a sidebar digest, not a second feed
+  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=19;   // a sidebar digest, not a second feed
   let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
   // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
   async function rankHot(windowSec){
@@ -12517,7 +12445,7 @@
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
   // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
   // the in-memory notification store, so unlike Hot/Follows it costs no relay query.
-  const RB_NOTIF_ROWS=5;
+  const RB_NOTIF_ROWS=6;
   function loadNotifs(){
     const el=rbListEl('notifs'); if(!el) return;
     const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
@@ -12537,7 +12465,7 @@
     all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     decorateProfiles();
   }
-  const FOLLOWS_ROWS=6;
+  const FOLLOWS_ROWS=7;
   async function loadFollows(){
     let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane
     const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }

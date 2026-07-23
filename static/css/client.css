@@ -730,18 +730,6 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap}
 .rb-item .rb-txt{color:var(--muted);font-size:14.5px;line-height:1.5;margin-top:5px;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-/* Who to follow — a row, not a card: avatar + name/handle + one Follow button. Deliberately lighter
-   than .rb-item so the column reads as "suggestions" rather than a third post list. */
-.wtf-row{display:flex;align-items:center;gap:9px;padding:7px 2px;cursor:pointer}
-.wtf-row .rb-av{width:34px;height:34px}
-.wtf-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
-.wtf-row b{font-size:14.5px;font-weight:650;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wtf-sub{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wtf-op .wtf-sub{color:var(--neon)}   /* the instance operator — accent the reason, not the whole row */
-.wtf-follow{flex:0 0 auto;padding:6px 13px;border-radius:999px;border:1px solid var(--line);cursor:pointer;
-  background:rgba(var(--accent-rgb),.14);color:var(--neon);font-family:inherit;font-size:12.5px;font-weight:700;transition:.15s}
-.wtf-follow:hover:not(:disabled){background:rgba(var(--accent-rgb),.26);border-color:var(--neon)}
-.wtf-follow:disabled{opacity:.55;cursor:default}
 /* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
    takes the margin-top:auto now, so the pair sits together at the foot of the column). */
 .rb-apps{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}

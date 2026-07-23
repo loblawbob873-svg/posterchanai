@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import secrets
+import time
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Request
@@ -35,6 +36,35 @@ router = APIRouter(prefix="/api/streams", tags=["streams"])
 
 _OBS_KEY_NAME = "OBS Stream"
 _TOKEN_SETTING = "stream_token"
+
+# ---------------------------------------------------------------- Live viewer counting
+# MediaMTX's /v3/paths/get lists RTSP/RTMP/WebRTC readers, but HLS viewers are NOT path readers — they're
+# clients of one fan-out HLS muxer, and here they're further hidden behind our own HLS proxy, so MediaMTX
+# reports ~0 no matter how many people watch (the "viewer count stuck at 0" bug). We DO see every viewer: each
+# browser carries the per-session `hlsSession` cookie MediaMTX assigns and re-fetches a playlist/segment every
+# few seconds, all through stream_hls_proxy. So count distinct sessions seen recently, per token. Per-process
+# is fine: streaming is single-node, single-worker (same constraint as the in-memory node-job registry).
+_VIEWER_WINDOW = 30.0   # a live viewer re-fetches well within this; drop them this long after their last request
+_hls_viewers: dict[str, dict[str, float]] = {}
+
+
+def _mark_viewer(token: str, session_id: str) -> None:
+    if not token or not session_id:
+        return
+    _hls_viewers.setdefault(token, {})[session_id] = time.monotonic()
+
+
+def _count_viewers(token: str) -> int:
+    seen = _hls_viewers.get(token)
+    if not seen:
+        return 0
+    cutoff = time.monotonic() - _VIEWER_WINDOW
+    for sid in [s for s, t in seen.items() if t < cutoff]:
+        del seen[sid]
+    if not seen:
+        _hls_viewers.pop(token, None)
+        return 0
+    return len(seen)
 
 
 def _public_origin(request: Request) -> str:
@@ -386,18 +416,20 @@ async def stream_viewers(token: str):
         return {"live": False, "viewers": 0}
     if not token.isalnum():
         return JSONResponse({"error": "bad token"}, status_code=400)
+    # HLS viewers counted from the proxy (the real headcount); MediaMTX readers only catch RTSP/RTMP/WebRTC.
+    pc = _count_viewers(token)
     api_port = (settings_store.get("stream_api_port", "9997") or "9997").strip()
     import httpx
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(4.0, connect=2.0)) as client:
             r = await client.get(f"http://127.0.0.1:{api_port}/v3/paths/get/{token}")
         if r.status_code != 200:
-            return {"live": False, "viewers": 0}
+            return {"live": pc > 0, "viewers": pc}
         data = r.json()
     except Exception:
-        return {"live": False, "viewers": 0}
+        return {"live": pc > 0, "viewers": pc}
     readers = [x for x in (data.get("readers") or []) if isinstance(x, dict)]
-    return {"live": bool(data.get("ready")), "viewers": len(readers)}
+    return {"live": bool(data.get("ready")), "viewers": max(len(readers), pc)}
 
 
 @router.api_route("/hls/{token}/{path:path}", methods=["GET", "HEAD"])
@@ -436,6 +468,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         c = c.strip()
         if c.startswith("hlsSession="):
             fwd.append(c)
+            _mark_viewer(token, c.split("=", 1)[1])   # this session is actively fetching → count it as a viewer
     up_cookie = "; ".join(fwd)
     import httpx
     client = None
@@ -486,6 +519,8 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         nv = (sc.split(";", 1)[0] or "").strip()   # "hlsSession=<uuid>"
         if not nv or "=" not in nv:
             continue
+        if nv.startswith("hlsSession="):
+            _mark_viewer(token, nv.split("=", 1)[1])   # brand-new viewer: count from their first playlist fetch
         cookie = f"{nv}; Path=/api/streams/hls/{token}/; HttpOnly; Secure; SameSite=None"
         try:
             response.raw_headers.append((b"set-cookie", cookie.encode("latin-1")))
