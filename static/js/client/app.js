@@ -7013,6 +7013,9 @@
       // focus. Silent self-heal; backs off once focus is stable in the box or you tab to a control inside the
       // composer; self-clears when the modal closes (ta detaches). No debug output.
       const _heal=()=>{ const ae=document.activeElement, md=ta.closest('.modal-bg');
+        if(ta.disabled) ta.disabled=false;                      // disabled → no cursor, unfocusable
+        if(ta.readOnly) ta.readOnly=false;                      // readOnly → focuses & shows a cursor but REFUSES typed text (the "focus() works but I still can't type" signature)
+        ta.removeAttribute('inert');                            // inert → same effect, silently
         if(md) md.style.zIndex='1000';                          // above any sticky FAB / streamed feed chrome
         ta.style.pointerEvents='auto';
         try{ const r=ta.getBoundingClientRect(); const over=document.elementFromPoint(r.left+r.width/2, r.top+10);
@@ -7022,11 +7025,13 @@
         try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} } };
       _heal(); requestAnimationFrame(()=>requestAnimationFrame(_heal));
       let _hn=0, _hStable=0; const _ht=setInterval(()=>{
-        const ae=document.activeElement, md=ta.closest('.modal-bg');
+        const md=ta.closest('.modal-bg'), ae=document.activeElement;
         if(!ta.isConnected){ clearInterval(_ht); return; }
         if(md && md.contains(ae) && ae!==ta){ clearInterval(_ht); return; }   // you tabbed to Attach / a tab → leave it
-        if(ae===ta){ if(++_hStable>=3) clearInterval(_ht); return; }          // focused & stable → done, stop fighting
-        _hStable=0; _heal();
+        _heal();                                                              // idempotent every tick: clears readOnly/disabled, holds focus, punches overlays
+        // Done only when the box is genuinely USABLE — focused AND writable — and has stayed so a few ticks.
+        if(document.activeElement===ta && !ta.readOnly && !ta.disabled){ if(++_hStable>=3) clearInterval(_ht); }
+        else _hStable=0;
         if(++_hn>=45) clearInterval(_ht);                                     // ~5.4s ceiling, matching the worst hang
       }, 120);
       // Auto-open a tool when the caller asked for one (the timeline composer's 📊 / 🤖 / 😀 buttons).
