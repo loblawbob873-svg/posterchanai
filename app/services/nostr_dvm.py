@@ -581,9 +581,20 @@ async def _exec_agent(db, params: dict) -> dict:
         from app.models import User
         u = db.query(User).filter(User.id == 1).first()   # admin owns worker-run jobs
         # report=True → the model's final summary only (no ## header) — used by the health report.
-        summary = await node_service.run_agent(db, u, _node, _target, params.get("goal") or "", None,
-                                               notify=None, report_mode=bool(params.get("report")))
-        return {"status": "done", "summary": summary, "output": summary, "exit": 0}
+        try:
+            summary = await node_service.run_agent(db, u, _node, _target, params.get("goal") or "", None,
+                                                   notify=None, report_mode=bool(params.get("report")))
+            return {"status": "done", "summary": summary, "output": summary, "exit": 0}
+        finally:
+            # A PLACED agent run tears down its container here, matching the local panel's immediate reap
+            # (bug #5). NB: the controller deleting the chat can't stop THIS remote run — it runs to its
+            # step limit and this reap fires then; the idle reaper is the backstop (bug #4, gated).
+            if _sbx_uid:
+                try:
+                    from app.services import sandbox_service
+                    await sandbox_service.reap(_sbx_uid, force=False)
+                except Exception:
+                    pass
     cmd = params.get("command") or ""
     if not cmd:
         return {"error": "empty command"}

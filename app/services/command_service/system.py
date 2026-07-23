@@ -30,7 +30,12 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             if _stopped():
                 break
             # Prefix live step-progress with the node name only when fanning out (matches the old `all` path).
-            nfy = (lambda txt, _p=name: notify(f"[{_p}] {txt}")) if (notify and multi) else notify
+            # ONLY prefix STRING progress — the agent_progress DICT must pass through untouched, else the
+            # fan-out f-string turns it into a stringified dict that node_notify persists as junk (bug #3).
+            nfy = notify
+            if notify and multi:
+                def nfy(payload, _p=name):
+                    return notify(f"[{_p}] {payload}" if isinstance(payload, str) else payload)
             try:
                 if target.startswith("nostr:"):
                     if nfy:
@@ -75,17 +80,22 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
 
 
 def _sandbox_capable(db):
-    """Unique sandbox-CAPABLE hosts (Docker + a local LLM): this host (`local`) + FULL npub nodes — those
-    with their own relay in `node_exec_node_npubs`. A relay-less standalone agent (router.lan) has no
-    Docker/LLM, so it's excluded. Returns {name: "local" | "nostr:<pkhex>"} with one entry per physical host."""
+    """Sandbox-CAPABLE hosts keyed by their STABLE host PUBKEY, so every controller computes the IDENTICAL
+    set and a user's placement is consistent no matter which controller took the request (bug #1: keying on
+    the controller-relative label "local" made placement diverge across nodes). Self is keyed by THIS node's
+    own pubkey (target "local"); FULL npub nodes — Docker + LLM, i.e. those with their own relay — by theirs.
+    A relay-less standalone agent (router.lan) has no Docker/LLM, so it's excluded. Returns {pkhex: target}."""
     from app.services import nostr_dvm
     me = (nostr_dvm.node_pubkey() or "").lower()
-    cap = {"local": "local"}
-    for name, pk in nostr_dvm.agent_node_map().items():
-        if pk and pk.lower() == me:
-            continue                          # this host — already represented by "local"
+    cap = {}
+    if me:
+        cap[me] = "local"
+    for _name, pk in nostr_dvm.agent_node_map().items():
+        pk = (pk or "").lower()
+        if not pk or pk == me:
+            continue
         if nostr_dvm.agent_node_relay(pk):    # a full node (has its own relay) can host a container + LLM
-            cap[name] = f"nostr:{pk}"
+            cap[pk] = f"nostr:{pk}"
     return cap
 
 
@@ -211,11 +221,15 @@ class _SystemMixin:
         if _sbx and self.user:
             from app.services import sandbox_service as _sbxsvc
             if _sbxsvc.lb_enabled():
-                _cap = _sandbox_capable(self.db)
-                _placed = _sbxsvc.placement_node(self.user.id, list(_cap))
-                _pt = _cap.get(_placed)
+                _cap = _sandbox_capable(self.db)                       # {host_pk: target}
+                _placed_pk = _sbxsvc.placement_node(self.user.id, list(_cap.keys()))   # hash over STABLE pubkeys
+                _pt = _cap.get(_placed_pk)
                 if _pt and _pt.startswith("nostr:"):
-                    _sbx_target = f"sandboxnostr:{_pt[len('nostr:'):]}:{self.user.id}"
+                    # Namespace the WORKER's container by THIS controller's pubkey (bug #2): each node has its
+                    # own Postgres/id space, so a bare uid could collide two different controllers' users on the
+                    # same worker. `<ctrl_pk8>-<uid>` keeps tenants isolated (pcai-sbx-<ctrl_pk8>-<uid>).
+                    _myid = (nostr_dvm.node_pubkey() or "anon")[:8]
+                    _sbx_target = f"sandboxnostr:{_pt[len('nostr:'):]}:{_myid}-{self.user.id}"
         if _full:
             _reg = node_service.all_nodes(self.db)
             if _sbx:                                # sandbox enabled → offer it as a node to admins too
