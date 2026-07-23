@@ -139,21 +139,24 @@ def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
 
 def cancel_agent_for_conv(conv_id) -> bool:
     """Cancel a background agent tied to this conversation (called when the chat is deleted):
-      * task.cancel() stops the agent loop and ABANDONS the in-flight LLM request — the inference
-        backend aborts that generation when the client disconnects (GPU stop is best-effort, backend-dependent);
-      * we ALSO reap any sandbox container DIRECTLY here (a fresh task), so the container is removed even
-        if the cancelled task's own finally can't finish its await;
-      * delivery is skipped, so a deliberately-deleted chat is NOT resurrected.
-    Returns True if a live run was cancelled."""
+      * we set the cooperative `stop` Event ONLY — the run exits between steps after its current LLM
+        step finishes natively. We must NEVER hard-cancel (`task.cancel()`) a live agent: on the Arc
+        SYCL llama.cpp stack, injecting CancelledError abandons the in-flight native generation while
+        its executor thread is still inside libggml, and the ensuing teardown corrupts the glibc heap
+        ("corrupted double-linked list" → SIGABRT core-dump that took the WHOLE process + live stream
+        down, 2026-07-23). Cooperative stop costs at most one extra step (~seconds) and never crashes;
+      * we reap any sandbox container DIRECTLY here (a fresh task), so the container is removed even
+        if the run's own finally can't finish its await;
+      * delivery is skipped for the deleted chat (the `_was_deleted` guard in chat.py), so it is NOT
+        resurrected.
+    Returns True if a live run was signalled to stop."""
     ent = _AGENT_BG_BY_CONV.pop(conv_id, None)
     if not ent:
         return False
     t, sbx_uids, stop = ent
     live = t is not None and not t.done()
     if stop is not None:
-        stop.set()          # cooperative stop — reliable even if the cancel below is swallowed by a shield (§3)
-    if live:
-        t.cancel()
+        stop.set()          # cooperative stop — the ONLY safe way to end a GPU-inference agent run
     for _u in (sbx_uids or []):
         try:
             # Refcount-aware reap with grace (B1) — don't rely on the cancelled task's own await-during-
