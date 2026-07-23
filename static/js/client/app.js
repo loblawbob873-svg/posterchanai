@@ -9402,7 +9402,13 @@
     try{ _navUrl('/'+NT().nip19.npubEncode(pk)); }catch(_){}   // shareable URL: poster.place/<npub>
     if(VIEW!=='profile'){ VIEW='profile'; $$('.nav-item[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view==='profile')); $('#view-title').textContent='Profile'; _syncRightbar(); }
     const myGen = ++_profGen;   // this render's token — every async step below bails if a newer profile opened
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed');
+    // The profile is a NORMAL scrolling view, but the chat/DM/AI/translate views set an overflow:hidden
+    // modifier class on #feed (full-height inner-scroll layout). Those are only toggled in the timeline
+    // render path, so opening a profile straight from AI chat inherited feed-ai → the page couldn't
+    // scroll ("stuck"). Clear them here so #feed scrolls again.
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');
+    feed.innerHTML='<div class="spinner"></div>';
     // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
     // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
     // rendered as "anon" and the notes retry loop below burned all 3 attempts against a dead socket.
@@ -11916,7 +11922,9 @@
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed');
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable view — clear chat/AI overflow:hidden (opened from a chat → would be stuck)
+    feed.innerHTML='<div class="spinner"></div>';
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
     // rendered whatever partial set came back: the "only 1 reply, correct after refresh" bug. Waiting for a
@@ -12693,7 +12701,9 @@
     tag=String(tag||'').toLowerCase().replace(/^#/,''); if(!tag) return;
     VIEW='hashtag'; _hidePill(); _clearNav(); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed');
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable view — clear chat/AI overflow:hidden
+    feed.innerHTML='<div class="spinner"></div>';
     // The relay's #t filter is case-SENSITIVE, but trending lowercases tags AND counts inline #hashtags —
     // so a post tagged "LillyPhillips" (or one that only writes #LillyPhillips in its text) trended yet the
     // exact-lowercase #t query returned nothing. Also pull a content SEARCH, then keep only posts that
