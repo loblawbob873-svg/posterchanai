@@ -510,6 +510,13 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 return "⏹️ cancelled"
             transcript.append(f"\n**⏹️ Stopped:** cancelled.{_footer()}")
             return "\n".join(transcript)
+        # Live progress ping (not persisted) so a long run shows "working… step N/M" instead of looking dead
+        # during the model-load gaps. report_mode (health board) has its own delivery, so skip it there.
+        if notify and not report_mode:
+            try:
+                await notify({"type": "agent_progress", "node": node, "step": step, "max": max_steps})
+            except Exception:
+                pass
         try:
             result = await service.chat_completion(
                 messages=messages, model=model,
@@ -608,13 +615,18 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
 
 
 async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent",
-                               report: bool = False, dangerous: bool = False) -> str:
+                               report: bool = False, dangerous: bool = False,
+                               sandbox_uid: Optional[str] = None) -> str:
     """Dispatch an agent/shell/claude task to a Nostr WORKER (by pubkey) and return a summary string —
     the Nostr drop-in for a local run_agent. Shared by _node_command and the health report so a node
-    migrated to the npub transport behaves the same everywhere. NIP-44 encrypted end to end (nostr_dvm)."""
+    migrated to the npub transport behaves the same everywhere. NIP-44 encrypted end to end (nostr_dvm).
+    `sandbox_uid` (sandbox load-balancing): the worker runs the task INSIDE that user's Debian container
+    (`pcai-sbx-<uid>`) on its host, so a user's sandbox can live on a placed node, not just the controller."""
     from app.services import nostr_dvm
     params = {"mode": mode, "dangerous": bool(dangerous), "report": bool(report)}
     params["command" if mode == "shell" else "goal"] = text
+    if sandbox_uid:
+        params["sandbox_uid"] = str(sandbox_uid)
     out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pubkey)
     if not out:
         return "⚠️ no response over Nostr (worker offline, not trusting this controller, or timed out)"

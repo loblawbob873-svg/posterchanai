@@ -1648,6 +1648,15 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         except Exception as _e:
                                             logger.warning(f"[node] webui step notify failed: {_e}")
                                         return
+                                    # Live "working… step N/M" heartbeat (ephemeral — a single updating pill, never
+                                    # persisted) so a slow multi-minute run never looks dead between model-load gaps.
+                                    if isinstance(job, dict) and job.get("type") == "agent_progress":
+                                        try:
+                                            await manager.send_json(_uid, {"type": "agent_progress", "step": job.get("step"),
+                                                                            "max": job.get("max"), "node": job.get("node")}, _conn, _conv)
+                                        except Exception:
+                                            pass
+                                        return
                                     # The user DELETED this chat (its agent was cancelled, but a finish can race the
                                     # delete). Drop the result rather than RESURRECT the conversation they just removed.
                                     if _was_deleted(_conv):

@@ -1607,6 +1607,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .find-input.nofind{border-color:var(--danger,#d61f4e);color:var(--danger,#d61f4e)}
 .find-btn{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:5px 8px;border-radius:6px;line-height:1}
 .find-btn:hover{color:#fff;background:rgba(var(--accent-rgb),.16)}
+/* Background-agent live progress pill (updates in place with the step count) */
+.agent-prog{display:flex;align-items:center;gap:8px;margin:6px 0;padding:8px 12px;border:1px solid var(--line);border-left:3px solid var(--neon);border-radius:10px;background:rgba(var(--accent-rgb),.07);color:var(--muted);font-size:13px}
+.agent-prog code{color:var(--cyan);font-family:'Courier New',monospace}
+.ap-spin{width:13px;height:13px;border:2px solid rgba(var(--accent-rgb),.3);border-top-color:var(--neon);border-radius:50%;display:inline-block;animation:apspin .8s linear infinite;flex:none}
+@keyframes apspin{to{transform:rotate(360deg)}}
 /* pointer-events:auto — #toast-root is click-through (so plain toasts don't block the compose button), but
    the notification toast IS interactive (tap → open Notifications), so it must opt back into pointer events. */
 .notif-toast{display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 14px;pointer-events:auto}

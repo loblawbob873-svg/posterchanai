@@ -37,6 +37,12 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
                         await nfy(f"🛰️ dispatching to `{name}` over Nostr…")
                     body = await node_service.run_agent_over_nostr(target[len("nostr:"):], goal, mode="agent")
                     sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
+                elif target.startswith("sandboxnostr:"):
+                    _, _pk, _u = target.split(":", 2)   # placed sandbox → the worker runs container + agent
+                    if nfy:
+                        await nfy("🛰️ running your sandbox on its placed node…")
+                    body = await node_service.run_agent_over_nostr(_pk, goal, mode="agent", sandbox_uid=_u)
+                    sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
                 else:
                     sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service,
                                                                  notify=nfy, should_stop=_stopped))
@@ -66,6 +72,21 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             await notify({"type": "agent_result", "content": "\n\n---\n\n".join(sections)})
         except Exception as e:
             logger.warning(f"[node] background agent deliver failed: {e}")
+
+
+def _sandbox_capable(db):
+    """Unique sandbox-CAPABLE hosts (Docker + a local LLM): this host (`local`) + FULL npub nodes — those
+    with their own relay in `node_exec_node_npubs`. A relay-less standalone agent (router.lan) has no
+    Docker/LLM, so it's excluded. Returns {name: "local" | "nostr:<pkhex>"} with one entry per physical host."""
+    from app.services import nostr_dvm
+    me = (nostr_dvm.node_pubkey() or "").lower()
+    cap = {"local": "local"}
+    for name, pk in nostr_dvm.agent_node_map().items():
+        if pk and pk.lower() == me:
+            continue                          # this host — already represented by "local"
+        if nostr_dvm.agent_node_relay(pk):    # a full node (has its own relay) can host a container + LLM
+            cap[name] = f"nostr:{pk}"
+    return cap
 
 
 _AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids, stop_event), so deleting the chat stops the run
@@ -183,12 +204,26 @@ class _SystemMixin:
         # a sandbox-only user sees ONLY their container. Split into the shapes the rest expects: `nodes`
         # (local-or-sandbox, run via the local job machinery) and `_npub_nodes` (name -> worker pubkey).
         _sbx_target = f"sandbox:{self.user.id}" if self.user else "sandbox:anon"
+        # Sandbox load-balancing (off by default): place a user's container on a sandbox-capable node by
+        # DETERMINISTIC hash — sticky (same user → same node → same container) and spread across users. If
+        # the placement isn't THIS host, the sandbox target becomes "sandboxnostr:<pk>:<uid>" and the whole
+        # run (container + agent loop) is dispatched to that node's worker over Nostr.
+        if _sbx and self.user:
+            from app.services import sandbox_service as _sbxsvc
+            if _sbxsvc.lb_enabled():
+                _cap = _sandbox_capable(self.db)
+                _placed = _sbxsvc.placement_node(self.user.id, list(_cap))
+                _pt = _cap.get(_placed)
+                if _pt and _pt.startswith("nostr:"):
+                    _sbx_target = f"sandboxnostr:{_pt[len('nostr:'):]}:{self.user.id}"
         if _full:
             _reg = node_service.all_nodes(self.db)
             if _sbx:                                # sandbox enabled → offer it as a node to admins too
                 _reg["sandbox"] = _sbx_target
         else:
             _reg = {"sandbox": _sbx_target}         # sandbox-only user: their container is the only target
+        # "sandboxnostr:…" is a placed-sandbox target: it rides the local job path's shape (in `nodes`) but
+        # the agent/shell branches route it over Nostr with the sandbox uid (never a bare local job).
         nodes = {n: t for n, t in _reg.items() if not t.startswith("nostr:")}
         _npub_nodes = {n: t[len("nostr:"):] for n, t in _reg.items() if t.startswith("nostr:")}
 
@@ -200,7 +235,9 @@ class _SystemMixin:
                 lines.append(f"- `{_nn}` → 🛰️ {nostr_dvm.nostr_service.npub_of(_pk)[:18]}…")
             for name, target in nodes.items():
                 where = ("this host" if target == "local"
-                         else "🐳 your Debian sandbox" if target.startswith("sandbox:") else target)
+                         else "🐳 your Debian sandbox" if target.startswith("sandbox:")
+                         else "🐳 your Debian sandbox (placed on another node)" if target.startswith("sandboxnostr:")
+                         else target)
                 lines.append(f"- `{name}` → {where}")
             return "\n".join(lines)
 
@@ -218,13 +255,18 @@ class _SystemMixin:
                 }
             return {"type": "text", "content": preview}
 
-        async def _dispatch_nostr(name: str, worker_pk: str, mode: str, text: str, dangerous: bool = False) -> dict:
+        async def _dispatch_nostr(name: str, worker_pk: str, mode: str, text: str, dangerous: bool = False,
+                                  sandbox_uid: str = None) -> dict:
             """Send a node/agent command to an npub-addressed worker over Nostr and render its result.
-            No SSH — the worker runs it locally and returns an encrypted result (see docs/NODE_AGENT_NOSTR.md)."""
+            No SSH — the worker runs it locally and returns an encrypted result (see docs/NODE_AGENT_NOSTR.md).
+            `sandbox_uid` → the worker runs it inside that user's container (placed-sandbox load balancing)."""
             if notify:
-                await notify(f"🛰️ dispatching to `{name}` over Nostr…")
+                await notify(f"🛰️ dispatching to `{name}` over Nostr…" if not sandbox_uid
+                             else "🛰️ running your sandbox on its placed node…")
             params = {"mode": mode, "dangerous": bool(dangerous)}
             params["command" if mode == "shell" else "goal"] = text
+            if sandbox_uid:
+                params["sandbox_uid"] = str(sandbox_uid)
             out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pk)
             if not out:
                 return {"type": "text", "content": f"⚠️ No response from `{name}` (offline, not trusting this controller, or timed out)."}
@@ -291,13 +333,16 @@ class _SystemMixin:
                 return {"type": "text", "content": _fmt_nodes()}
             icon = {"done": "✅", "failed": "❌", "killed": "🛑"}
             lines = [f"## `{command}` on {len(_reg)} node(s)"]
-            # Local nodes → background jobs (await briefly); Nostr workers → encrypted dispatch (await result).
+            # Local nodes → background jobs; a placed sandbox → its worker over Nostr; npub workers → dispatch.
+            _local_names = [n for n in nodes if not nodes[n].startswith("sandboxnostr:")]
+            _placed = [(n, nodes[n].split(":", 2)) for n in nodes if nodes[n].startswith("sandboxnostr:")]
             jobs = {name: node_service.start_job(self.db, name, nodes[name], command,
                                                  user_id=self.user.id if self.user else None)
-                    for name in nodes}
+                    for name in _local_names}
             _nostr_results = await asyncio.gather(*(
-                _dispatch_nostr(name, pk, "shell", command) for name, pk in _npub_nodes.items()
-            )) if _npub_nodes else []
+                [_dispatch_nostr(name, pk, "shell", command) for name, pk in _npub_nodes.items()] +
+                [_dispatch_nostr(n, p[1], "shell", command, sandbox_uid=p[2]) for n, p in _placed]
+            )) if (_npub_nodes or _placed) else []
             await asyncio.gather(*(node_service.await_job(j, wait=10.0) for j in jobs.values()))
             for name, j in jobs.items():
                 if j.done:
@@ -306,7 +351,7 @@ class _SystemMixin:
                 else:
                     node_service.notify_on_done(j, notify)   # still running — deliver when it finishes
                     lines.append(f"\n**⏳ {name}** — still running (job #{j.id}, `node log {j.id}`)")
-            for name, res in zip(_npub_nodes.keys(), _nostr_results):
+            for name, res in zip(list(_npub_nodes.keys()) + [n for n, _ in _placed], _nostr_results):
                 lines.append(f"\n**🛰️ {name}**\n{(res.get('content') or '').strip()}")
             return {"type": "text", "content": "\n".join(lines)}
 
@@ -341,6 +386,10 @@ class _SystemMixin:
                     if _t.startswith("nostr:"):
                         body = await node_service.run_agent_over_nostr(_t[len("nostr:"):], goal, mode="agent")
                         sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n{body}")
+                    elif _t.startswith("sandboxnostr:"):
+                        _, _pk, _u = _t.split(":", 2)
+                        body = await node_service.run_agent_over_nostr(_pk, goal, mode="agent", sandbox_uid=_u)
+                        sections.append(f"## Agent on `{_n}` — goal: {goal}\n\n{body}")
                     else:
                         sections.append(await node_service.run_agent(self.db, self.user, _n, _t, goal, self.chat_service, notify=None))
                 except Exception as e:
@@ -368,6 +417,11 @@ class _SystemMixin:
         # Everything after the node name is the command (preserve original spacing/casing).
         if not command:
             return {"type": "text", "content": f"Usage: `node {name} <command>`"}
+
+        # Placed sandbox → run the shell command inside the user's container on its placed node over Nostr.
+        if nodes[name].startswith("sandboxnostr:"):
+            _, _pk, _u = nodes[name].split(":", 2)
+            return await _dispatch_nostr(name, _pk, "shell", command, sandbox_uid=_u)
 
         job = node_service.start_job(
             self.db, name, nodes[name], command,

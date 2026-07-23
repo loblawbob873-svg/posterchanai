@@ -567,17 +567,27 @@ async def _exec_agent(db, params: dict) -> dict:
     dangerous = bool(params.get("dangerous"))
     if mode == "claude":
         return await _run_claude(s, params.get("goal") or params.get("command") or "", dangerous)
+    # Sandbox load-balancing: a `sandbox_uid` means the CONTROLLER placed this user's container on THIS
+    # node — run the task inside `pcai-sbx-<uid>` here, not on the host. Requires the sandbox enabled +
+    # Docker reachable on this worker; otherwise the container ops fail and we report a clear error.
+    _sbx_uid = params.get("sandbox_uid")
+    if _sbx_uid:
+        from app.services import sandbox_service
+        if not (sandbox_service.enabled() and await sandbox_service.available()):
+            return {"error": "sandbox not available on this worker (enable it + install Docker)"}
+    _node = "sandbox" if _sbx_uid else "local"
+    _target = f"sandbox:{_sbx_uid}" if _sbx_uid else "local"
     if mode == "agent":
         from app.models import User
         u = db.query(User).filter(User.id == 1).first()   # admin owns worker-run jobs
         # report=True → the model's final summary only (no ## header) — used by the health report.
-        summary = await node_service.run_agent(db, u, "local", "local", params.get("goal") or "", None,
+        summary = await node_service.run_agent(db, u, _node, _target, params.get("goal") or "", None,
                                                notify=None, report_mode=bool(params.get("report")))
         return {"status": "done", "summary": summary, "output": summary, "exit": 0}
     cmd = params.get("command") or ""
     if not cmd:
         return {"error": "empty command"}
-    job = await node_service.run_to_completion(db, "local", "local", cmd, user_id=1)
+    job = await node_service.run_to_completion(db, _node, _target, cmd, user_id=1)
     out = (job.output or "").strip()[:200_000]
     return {"status": "done" if job.exit_code == 0 else "error",
             "summary": f"exit {job.exit_code}", "output": out, "exit": job.exit_code}

@@ -198,6 +198,10 @@
             <label for="node_exec_sandbox_enabled">
                 <input type="checkbox" id="node_exec_sandbox_enabled" name="node_exec_sandbox_enabled"> Enable the per-user Debian sandbox
             </label>
+            <label for="node_exec_sandbox_lb">
+                <input type="checkbox" id="node_exec_sandbox_lb" name="node_exec_sandbox_lb"> Load-balance sandbox containers across nodes
+            </label>
+            <small>When on, each user's container is placed on a sandbox-capable node (this host + full nodes with Docker + a local LLM) by a deterministic sticky hash — the same user always lands on the same node (so their container persists), while users spread across nodes. The whole run (container + agent) executes on the placed node over the Nostr transport. Off = every sandbox runs on this host.</small>
         </div>
         <div class="form-row">
             <div class="form-group">

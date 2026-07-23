@@ -51,6 +51,26 @@ def enabled() -> bool:
     return _s("node_exec_sandbox_enabled", "false").strip().lower() == "true"
 
 
+def lb_enabled() -> bool:
+    """Spread sandbox containers across the sandbox-capable nodes (off by default → run on THIS host).
+    When on, a user's run is placed on a node by `placement_node`; the container + its agent loop run
+    together on that node (dispatched over the Nostr transport when it isn't this host)."""
+    return _s("node_exec_sandbox_lb", "false").strip().lower() == "true"
+
+
+def placement_node(uid, node_names: list) -> Optional[str]:
+    """DETERMINISTIC sticky placement: a given user's sandbox ALWAYS resolves to the same node (so their
+    container + state persist there across runs), while different users spread across the node set — load
+    balancing BY USER with no coordination or shared store, since every controller computes the identical
+    map from the same sorted node list. Returns None if the set is empty."""
+    names = sorted(set(n for n in (node_names or []) if n))
+    if not names:
+        return None
+    import hashlib
+    h = int(hashlib.sha256(str(uid).encode()).hexdigest(), 16)
+    return names[h % len(names)]
+
+
 def _image() -> str:
     return _s("node_exec_sandbox_image", "debian:stable-slim").strip() or "debian:stable-slim"
 

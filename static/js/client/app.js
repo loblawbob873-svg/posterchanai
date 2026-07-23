@@ -10936,9 +10936,24 @@
       _ai.streamEl=null; _ai.streamBuf=''; _ai.awaiting=false;
     } else if(d.type==='reminder'){
       reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder');   // fired reminder → popup + sound
+    } else if(d.type==='agent_progress'){
+      _agentProgress(d.step, d.max, d.node);   // live "working… step N/M" pill for a long run
     } else if(d.type==='agent_done'){
+      { const e=$('#ai-agent-prog'); if(e) e.remove(); clearTimeout(_agentProgTO); }   // run over → drop the pill
       _agentDoneNotify(!!d.ok, d.conv);   // background agent finished — tell the user wherever they are
     }
+  }
+  // Live progress pill for a running background agent: a single element that updates in place with the
+  // step count, so a slow multi-step run (the model reloads onto the shared GPU each step) never looks
+  // dead in the silent gaps. Ephemeral — self-clears on agent_done or after 3 min of no updates.
+  let _agentProgTO=null;
+  function _agentProgress(step, max, node){
+    const msgs=$('#ai-msgs'); if(!msgs) return;
+    let el=$('#ai-agent-prog');
+    if(!el){ el=document.createElement('div'); el.id='ai-agent-prog'; el.className='agent-prog'; msgs.appendChild(el); }
+    el.innerHTML=`<span class="ap-spin"></span> 🤖 working… step ${enc(String(step||'?'))}/${enc(String(max||'?'))}${(node&&node!=='local')?` on <code>${enc(node)}</code>`:''}`;
+    try{ aiScroll(); }catch(_){}
+    clearTimeout(_agentProgTO); _agentProgTO=setTimeout(()=>{ const e=$('#ai-agent-prog'); if(e) e.remove(); }, 180000);
   }
   // A background agent run finished (success or failure). The result was persisted to its launch
   // conversation, but the user has usually navigated away — so surface a longer-lived, CLICKABLE toast
