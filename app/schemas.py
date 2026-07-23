@@ -314,7 +314,7 @@ class SettingsResponse(BaseModel):
     # their own throwaway container (admins can opt in too). Needs Docker on the host + the service user
     # in the `docker` group. Off by default.
     node_exec_sandbox_enabled: str = "false"
-    node_exec_sandbox_lb: str = "false"  # spread sandbox containers across sandbox-capable nodes (deterministic sticky placement); off = run on this host
+    node_exec_agent_node: str = ""  # pin ALL sandbox/agentic runs to ONE node (a node name from Agentic Node Management); empty = run on this host. Funnels agentic GPU work through a single worker, serialized by its 1-at-a-time agent lock.
     node_exec_sandbox_image: str = "debian:stable-slim"  # base image for the per-user container
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
     node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)

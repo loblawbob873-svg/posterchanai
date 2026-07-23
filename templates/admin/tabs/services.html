@@ -198,10 +198,9 @@
             <label for="node_exec_sandbox_enabled">
                 <input type="checkbox" id="node_exec_sandbox_enabled" name="node_exec_sandbox_enabled"> Enable the per-user Debian sandbox
             </label>
-            <label for="node_exec_sandbox_lb">
-                <input type="checkbox" id="node_exec_sandbox_lb" name="node_exec_sandbox_lb"> Load-balance sandbox containers across nodes
-            </label>
-            <small>When on, each user's container is placed on a sandbox-capable node (this host + full nodes with Docker + a local LLM) by a deterministic sticky hash — the same user always lands on the same node (so their container persists), while users spread across nodes. The whole run (container + agent) executes on the placed node over the Nostr transport. Off = every sandbox runs on this host.</small>
+            <label for="node_exec_agent_node">Agent node</label>
+            <input type="text" id="node_exec_agent_node" name="node_exec_agent_node" placeholder="(this host)">
+            <small>Pin <strong>all sandbox/agentic runs to ONE node</strong> so agentic GPU work funnels through a single worker instead of competing across the fleet. Enter a node name from Agentic Node Management above (e.g. <code>nas.lan</code>); leave blank to run every sandbox on <strong>this host</strong>. When set to a full peer node, the whole run (container + agent loop) is dispatched there over the Nostr transport, and that worker's own 1-at-a-time agent lock <strong>queues</strong> concurrent runs. (Replaces the old deterministic container load-balancer.)</small>
         </div>
         <div class="form-row">
             <div class="form-group">

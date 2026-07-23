@@ -79,26 +79,6 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             logger.warning(f"[node] background agent deliver failed: {e}")
 
 
-def _sandbox_capable(db):
-    """Sandbox-CAPABLE hosts keyed by their STABLE host PUBKEY, so every controller computes the IDENTICAL
-    set and a user's placement is consistent no matter which controller took the request (bug #1: keying on
-    the controller-relative label "local" made placement diverge across nodes). Self is keyed by THIS node's
-    own pubkey (target "local"); FULL npub nodes — Docker + LLM, i.e. those with their own relay — by theirs.
-    A relay-less standalone agent (router.lan) has no Docker/LLM, so it's excluded. Returns {pkhex: target}."""
-    from app.services import nostr_dvm
-    me = (nostr_dvm.node_pubkey() or "").lower()
-    cap = {}
-    if me:
-        cap[me] = "local"
-    for _name, pk in nostr_dvm.agent_node_map().items():
-        pk = (pk or "").lower()
-        if not pk or pk == me:
-            continue
-        if nostr_dvm.agent_node_relay(pk):    # a full node (has its own relay) can host a container + LLM
-            cap[pk] = f"nostr:{pk}"
-    return cap
-
-
 _AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids, stop_event), so deleting the chat stops the run
 _REAP_TASKS: set = set()       # keep cancel-triggered reap tasks referenced so they aren't GC'd mid-run
 
@@ -217,22 +197,24 @@ class _SystemMixin:
         # a sandbox-only user sees ONLY their container. Split into the shapes the rest expects: `nodes`
         # (local-or-sandbox, run via the local job machinery) and `_npub_nodes` (name -> worker pubkey).
         _sbx_target = f"sandbox:{self.user.id}" if self.user else "sandbox:anon"
-        # Sandbox load-balancing (off by default): place a user's container on a sandbox-capable node by
-        # DETERMINISTIC hash — sticky (same user → same node → same container) and spread across users. If
-        # the placement isn't THIS host, the sandbox target becomes "sandboxnostr:<pk>:<uid>" and the whole
-        # run (container + agent loop) is dispatched to that node's worker over Nostr.
+        # Global agent node (Admin → Services → 'Agent node', empty = this host): pin every sandbox run to
+        # ONE node so all agentic GPU work funnels through a single worker, serialized by that worker's
+        # existing 1-at-a-time agent lock (the queue). When it names a full peer node, the sandbox target
+        # becomes "sandboxnostr:<pk>:<uid>" and the whole run (container + agent loop) is dispatched to that
+        # worker over Nostr. (Replaced the old deterministic sha256(uid)%nodes container LB.)
         if _sbx and self.user:
             from app.services import sandbox_service as _sbxsvc
-            if _sbxsvc.lb_enabled():
-                _cap = _sandbox_capable(self.db)                       # {host_pk: target}
-                _placed_pk = _sbxsvc.placement_node(self.user.id, list(_cap.keys()))   # hash over STABLE pubkeys
-                _pt = _cap.get(_placed_pk)
-                if _pt and _pt.startswith("nostr:"):
-                    # Namespace the WORKER's container by THIS controller's pubkey (bug #2): each node has its
-                    # own Postgres/id space, so a bare uid could collide two different controllers' users on the
+            _an = _sbxsvc.agent_node_name()                            # configured node NAME, or "" = this host
+            if _an:
+                _me = (nostr_dvm.node_pubkey() or "").lower()
+                _an_pk = (nostr_dvm.agent_node_map().get(_an, "") or "").lower()
+                if _an_pk and _an_pk != _me and nostr_dvm.agent_node_relay(_an_pk):
+                    # Namespace the WORKER's container by THIS controller's pubkey: each node has its own
+                    # Postgres/id space, so a bare uid could collide two different controllers' users on the
                     # same worker. `<ctrl_pk8>-<uid>` keeps tenants isolated (pcai-sbx-<ctrl_pk8>-<uid>).
                     _myid = (nostr_dvm.node_pubkey() or "anon")[:8]
-                    _sbx_target = f"sandboxnostr:{_pt[len('nostr:'):]}:{_myid}-{self.user.id}"
+                    _sbx_target = f"sandboxnostr:{_an_pk}:{_myid}-{self.user.id}"
+                # else: 'Agent node' names THIS host (or an unknown/relay-less node) → local sandbox (default)
         if _full:
             _reg = node_service.all_nodes(self.db)
             if _sbx:                                # sandbox enabled → offer it as a node to admins too
