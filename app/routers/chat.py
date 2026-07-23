@@ -2168,4 +2168,10 @@ Please analyze the above text objectively and thoroughly. Provide a comprehensiv
                 manager.disconnect(user.id, conversation_id, conn_id, websocket)
     finally:
         if db:
-            db.close()
+            # The WS holds this session for the whole connection; a long idle stretch (e.g. a background
+            # agent the user is waiting on) lets Postgres close it, and then db.close() → rollback raises
+            # OperationalError, spamming a scary traceback on every such disconnect. Swallow it.
+            try:
+                db.close()
+            except Exception:
+                pass
