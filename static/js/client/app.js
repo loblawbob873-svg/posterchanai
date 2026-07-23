@@ -12328,8 +12328,7 @@
   // Curated hashtag shortcuts — friendly entry points into popular communities. They now PAD the one
   // Topics cloud rather than owning a section of their own: on a quiet relay the live tally can come
   // back with two chips, and these keep the block from looking broken.
-  const DISCOVER_TAGS = [['foodstr','🍔'], ['asknostr','💬'], ['AI','🤖'], ['Bitcoin','₿'],
-                         ['nostr','🟣'], ['art','🎨'], ['news','📰'], ['memes','😂']];
+  const DISCOVER_TAGS = ['foodstr', 'asknostr', 'AI', 'Bitcoin', 'nostr', 'art', 'news', 'memes'];
   const TOPIC_TRENDING=10, TOPIC_MAX=14;
   // ONE topics cloud = trending hashtags (tallied over the last 24h from explicit `t` tags AND inline
   // #hashtags in recent notes, ranked by how many distinct posts used each) followed by whatever
@@ -12352,10 +12351,10 @@
     // The label is its OWN span so it can ellipsize inside the fixed grid cell (see #rb-topics CSS) —
     // a bare text node can't, and one long tag was enough to leave half a row empty.
     const chips=top.map(([g,c])=>`<button class="tag-chip" data-tag="${enc(g)}" title="#${enc(g)}"><span class="tg">#${enc(g)}</span><span class="tag-n">${c}</span></button>`);
-    for(const [t,ic] of DISCOVER_TAGS){
+    for(const t of DISCOVER_TAGS){
       if(chips.length>=TOPIC_MAX) break;
       const g=t.toLowerCase(); if(live.has(g)) continue;   // never show a tag twice, once ranked and once curated
-      chips.push(`<button class="tag-chip disc" data-tag="${enc(g)}" title="#${enc(t)}"><span class="disc-ic">${ic}</span><span class="tg">#${enc(t)}</span></button>`);
+      chips.push(`<button class="tag-chip disc" data-tag="${enc(g)}" title="#${enc(t)}"><span class="tg">#${enc(t)}</span></button>`);
     }
     el.innerHTML=`<div class="tag-cloud">${chips.join('')}</div>`;
     el.querySelectorAll('.tag-chip').forEach(b=> b.onclick=()=>renderHashtag(b.dataset.tag));

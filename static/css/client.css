@@ -1952,7 +1952,6 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 #rb-topics .tag-chip:hover{transform:none}   /* a lift reads as jitter in a dense grid */
 #rb-topics .tag-chip .tg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #rb-topics .tag-chip .tag-n{flex:0 0 auto}
-#rb-topics .tag-chip .disc-ic{flex:0 0 auto}
 .tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
   background:linear-gradient(135deg,rgba(var(--accent-rgb),.12),rgba(var(--accent2-rgb),.07));
   border:1px solid rgba(var(--accent-rgb),.4);color:var(--cyan);
@@ -2119,7 +2118,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* curated "Discover" hashtag chips (rightbar, for newcomers) */
 .tag-chip.disc{background:linear-gradient(135deg,rgba(var(--accent-rgb),.10),rgba(var(--accent2-rgb),.08));border-color:var(--line)}
 .tag-chip.disc:hover{border-color:var(--neon2);color:#fff}
-.tag-chip.disc .disc-ic{margin-right:2px}
 .ai-magnet{display:inline-block;margin:4px 6px 4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
 .ai-cmd{display:inline-block;margin:4px 6px 4px 0;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
 /* 🎬 Effects studio chips — bigger tap targets (mobile-friendly), prefill (don't auto-send) */
