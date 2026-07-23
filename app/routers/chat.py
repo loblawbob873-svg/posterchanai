@@ -1618,17 +1618,31 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # later, so it must use its own DB session.
                             node_notify = None
                             if command in ("node", "logs"):
-                                _uid, _conn, _conv, _uname = user.id, conn_id, conversation_id, user.username
+                                _uid, _conn, _conv, _uname, _cmd = user.id, conn_id, conversation_id, user.username, command
 
                                 async def node_notify(job):
                                     from urllib.parse import quote as _q
                                     from app.database import SessionLocal
                                     from app.models import Message as _Msg, Conversation as _Conv
                                     from app.services.node_service import tail as _tail, INLINE_LIMIT as _IL
-                                    # Agent step-streaming passes a plain string; stream it as live
-                                    # progress over the websocket only (the final transcript that
-                                    # execute_command returns is what gets persisted).
+                                    # Agent step-streaming passes a plain string. Push it live AND — for a node-agent
+                                    # run — PERSIST it to the relay as its own chat message (like a DM), so leaving
+                                    # mid-run and returning shows the play-by-play instead of a vanished log. (The
+                                    # `logs` health report streams here too but delivers its own board, so skip it.)
                                     if isinstance(job, str):
+                                        if _cmd == "node" and not _was_deleted(_conv):
+                                            _pdb = SessionLocal()
+                                            try:
+                                                # Only persist to an EXISTING conversation — a progress line must never
+                                                # resurrect a deleted/never-made chat (that's the final-result's job).
+                                                if _pdb.query(_Conv).filter(_Conv.id == _conv).first():
+                                                    _pu = _pdb.query(User).filter(User.id == _uid).first()
+                                                    await chat_history.append(_pdb, _pu, _conv, "assistant", job)
+                                            except Exception as _e:
+                                                logger.warning(f"[node] webui step persist failed: {_e}")
+                                                _pdb.rollback()
+                                            finally:
+                                                _pdb.close()
                                         try:
                                             await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": job}}, _conn, _conv)
                                         except Exception as _e:

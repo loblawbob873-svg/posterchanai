@@ -575,18 +575,19 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                                                  "Re-running it will not change anything. Try a DIFFERENT "
                                                  "command, or call finish if you are stuck or done.")})
                     continue
-                # Stream each command live AND fold it into the persisted transcript, so the chat is a
-                # DURABLE record of the run — the user comes back to the full play-by-play, not a vanished
-                # one-liner (the live ⚙️ stream is ephemeral). report_mode stays concise (the health board
-                # distils it) and skips this; full untruncated output is still in the node job log.
-                await _say(f"⚙️ `{cmd}`")
                 # Bounded per-step: an unbounded command would deadlock the agent + caller.
                 job = await run_to_completion(db, node, target, cmd, user_id=user.id,
                                               timeout=_agent_step_timeout(db))
                 out = job.output.strip() or "(no output)"
-                if not report_mode:
+                # Emit each COMPLETED step (command + output) via `notify`. For a node-agent run the web
+                # notify PERSISTS each of these to the relay as its own chat message (like a DM), so leaving
+                # mid-run and returning shows the full play-by-play instead of a vanished log. report_mode
+                # (health board) stays a brief, non-persisted progress ping; full output is in the job log.
+                if report_mode:
+                    await _say(f"⚙️ `{cmd}`")
+                else:
                     _ex = "" if job.exit_code == 0 else f" ⚠️ exit {job.exit_code}"
-                    transcript.append(f"\n**⚙️ `{cmd}`**{_ex}\n```\n{tail(out, 700)}\n```")
+                    await _say(f"**⚙️ `{cmd}`**{_ex}\n```\n{tail(out, 700)}\n```")
                 cmds_run.append(cmd)
                 cmd_outputs[cmd] = out
                 repeat_nudges = 0   # made progress with a fresh command; reset the stuck counter
