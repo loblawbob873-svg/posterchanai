@@ -25,8 +25,21 @@ logger = logging.getLogger(__name__)
 _PREFIX = "pcai-sbx-"
 _last_use: dict = {}          # uid(str) -> last-use epoch, for the idle reaper
 _active: dict = {}            # uid(str) -> count of in-flight execs/runs; a container in use is never reaped
-_lock = asyncio.Lock()        # guards _last_use/_active + the create/start decision (per-process; single worker)
+_locks: dict = {}             # uid(str) -> asyncio.Lock, serializing create/start/reap for THAT uid only —
+                              # so one user's container build can't head-of-line-block another user (B3).
 _docker_ok: Optional[bool] = None
+# NB: _last_use / _active are mutated with single, await-free statements, which are atomic under asyncio's
+# single-threaded loop — so they need no lock; the per-uid lock only serializes the docker create/reap
+# (which have awaits). reap_idle snapshots them atomically, then reap() re-checks the refcount under the lock.
+
+
+def _lock_for(uid) -> asyncio.Lock:
+    key = str(uid)
+    lk = _locks.get(key)
+    if lk is None:
+        lk = asyncio.Lock()
+        _locks[key] = lk
+    return lk
 
 
 def _s(key: str, default: str = "") -> str:
@@ -106,13 +119,13 @@ async def _exists(name: str) -> bool:
 
 async def ensure(uid) -> str:
     """Create + start this user's container if it isn't already running; return its name. Called lazily
-    by the first command. `_last_use` is stamped INSIDE the lock BEFORE `docker run` so the container is
-    'tracked' the instant creation begins — the periodic reaper only touches tracked+idle containers now,
-    but this also keeps a just-created box from ever looking idle (H2)."""
+    by the first command. `_last_use` is stamped BEFORE `docker run` so the container is 'tracked' the
+    instant creation begins (H2). The per-uid lock serializes concurrent creates for the SAME uid without
+    blocking other users."""
     key = str(uid)
     name = container_name(uid)
-    async with _lock:
-        _last_use[key] = time.time()
+    _last_use[key] = time.time()          # atomic; track immediately so the reaper/orphan-sweep never grabs it
+    async with _lock_for(uid):
         if not await _running(name):
             if await _exists(name):
                 await _docker("start", name, timeout=30)
@@ -133,22 +146,20 @@ async def ensure(uid) -> str:
 
 async def acquire(uid) -> None:
     """Mark the container in-use (ensure + refcount++). A container with a non-zero refcount is NEVER
-    reaped by the idle reaper or a polite (force=False) reap — so a long command, a slow model-thinking
-    gap, or a second concurrent run for the same user can't have the box pulled out from under it (H1/M1)."""
+    reaped by the idle reaper or a polite (force=False) reap — so a long command, or a second concurrent
+    run for the same user, can't have the box pulled out from under it (H1/M1)."""
     await ensure(uid)
     key = str(uid)
-    async with _lock:
-        _active[key] = _active.get(key, 0) + 1
-        _last_use[key] = time.time()
+    _active[key] = _active.get(key, 0) + 1   # atomic (no await between get + set)
+    _last_use[key] = time.time()
 
 
 async def release(uid) -> None:
     """Drop one in-use hold (refcount--) and refresh idle time (so the TTL starts from when work ENDED)."""
     key = str(uid)
-    async with _lock:
-        if _active.get(key, 0) > 0:
-            _active[key] -= 1
-        _last_use[key] = time.time()
+    if _active.get(key, 0) > 0:
+        _active[key] -= 1                    # atomic
+    _last_use[key] = time.time()
 
 
 def exec_argv(uid, command: str) -> list:
@@ -158,16 +169,17 @@ def exec_argv(uid, command: str) -> list:
 
 
 async def reap(uid, force: bool = True) -> bool:
-    """Remove this user's container. force=True (delete/cancel) removes unconditionally; force=False (end
-    of an agent run, idle sweep) removes ONLY when nothing else holds it (refcount 0) — so it can't kill a
-    container a concurrent run is still using (H1). Returns True if it removed the container."""
+    """Remove this user's container. force=True (explicit delete of the LAST/only run) removes it even at a
+    non-zero refcount; force=False (end of an agent run, idle sweep, delete of ONE of several concurrent
+    same-user runs) removes ONLY when nothing else holds it (refcount 0) — so it can't kill a container a
+    concurrent run is still using (H1/B1). Returns True if it removed the container."""
     key = str(uid)
-    async with _lock:
+    async with _lock_for(uid):
         if not force and _active.get(key, 0) > 0:
             return False              # still in use by another exec/run
         _last_use.pop(key, None)
         _active.pop(key, None)
-    rc, out = await _docker("rm", "-f", container_name(uid), timeout=30)
+        rc, out = await _docker("rm", "-f", container_name(uid), timeout=30)
     if rc == 0:
         logger.info("[sandbox] reaped container for uid=%s", uid)
     return rc == 0
@@ -175,29 +187,27 @@ async def reap(uid, force: bool = True) -> bool:
 
 async def reap_idle(ttl: float = 900) -> int:
     """Reap TRACKED containers idle > ttl and NOT in use. No orphan sweep here — sweeping untracked
-    containers races an in-flight `ensure`/run (a just-created or restart-survivor box mid-run looks
-    'untracked'); leftovers from a PRIOR process are cleared once by `reap_all()` at startup instead."""
+    containers races an in-flight `ensure`/run; leftovers from a PRIOR process are cleared once by
+    `reap_all()` at startup instead."""
     now = time.time()
-    async with _lock:
-        due = [u for u, ts in list(_last_use.items()) if now - ts > ttl and _active.get(u, 0) == 0]
+    due = [u for u, ts in list(_last_use.items()) if now - ts > ttl and _active.get(u, 0) == 0]  # atomic snapshot
     reaped = 0
     for u in due:
-        if await reap(u, force=False):   # re-checks refcount under the lock
+        if await reap(u, force=False):   # re-checks refcount under the per-uid lock
             reaped += 1
     return reaped
 
 
 async def reap_all() -> int:
-    """Startup-only: remove EVERY pcai-sandbox container left by a PRIOR process. Safe because a fresh
-    process has no active runs, so nothing can be reaped mid-use."""
+    """Startup: remove pcai-sandbox containers left by a PRIOR process — but ONLY UNTRACKED ones, so a
+    sandbox command that arrives during the startup window (its `ensure` already tracked in _last_use) is
+    never removed, and its bookkeeping is never wiped (B2). No `.clear()`: a fresh process starts empty."""
     rc, out = await _docker("ps", "-a", "--filter", "label=pcai-sandbox=1", "--format", "{{.Names}}", timeout=10)
     reaped = 0
     if rc == 0:
+        tracked = {container_name(u) for u in (set(_last_use) | set(_active))}
         for nm in out.split():
-            if nm.startswith(_PREFIX):
+            if nm.startswith(_PREFIX) and nm not in tracked:
                 await _docker("rm", "-f", nm, timeout=30)
                 reaped += 1
-    async with _lock:
-        _last_use.clear()
-        _active.clear()
     return reaped

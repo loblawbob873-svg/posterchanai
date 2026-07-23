@@ -67,6 +67,19 @@ _AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids), so del
 _REAP_TASKS: set = set()       # keep cancel-triggered reap tasks referenced so they aren't GC'd mid-run
 
 
+async def _reap_after_cancel(uid) -> None:
+    """Reap a cancelled run's sandbox container refcount-aware, with a short grace period. The cancelled
+    task's exec releases its container hold asynchronously (as CancelledError unwinds), so we retry a
+    polite (force=False) reap for a few seconds: for a single run the hold drops and it's removed
+    promptly; if ANOTHER concurrent same-user run still holds it, we leave it (that run reaps on finish) —
+    so deleting one chat never pulls the shared container out from under another (B1)."""
+    from app.services import sandbox_service
+    for _ in range(8):                       # ~4s of grace
+        if await sandbox_service.reap(uid, force=False):
+            return
+        await asyncio.sleep(0.5)
+
+
 def _spawn_agent_bg(targets, goal, uid, chat_service, notify):
     t = asyncio.create_task(_agent_bg(targets, goal, uid, chat_service, notify))
     _AGENT_BG_TASKS.add(t)
@@ -104,11 +117,9 @@ def cancel_agent_for_conv(conv_id) -> bool:
         t.cancel()
     for _u in (sbx_uids or []):
         try:
-            from app.services import sandbox_service
-            # Force-remove THIS run's container promptly (the user deliberately deleted the chat). The
-            # cancelled task's own finally reap is force=False + await-during-cancel-fragile, so don't
-            # rely on it. Keep a reference so the reap task isn't garbage-collected before it finishes (L3).
-            _rt = asyncio.create_task(sandbox_service.reap(_u, force=True))
+            # Refcount-aware reap with grace (B1) — don't rely on the cancelled task's own await-during-
+            # cancel-fragile finally. Referenced in _REAP_TASKS so it isn't garbage-collected mid-run (L3).
+            _rt = asyncio.create_task(_reap_after_cancel(_u))
             _REAP_TASKS.add(_rt)
             _rt.add_done_callback(_REAP_TASKS.discard)
         except Exception:
