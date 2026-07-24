@@ -175,7 +175,9 @@
     const s = l.id===sel ? ' sel' : '';
     const pos = `left:${(l.x/P.w*100).toFixed(3)}%;top:${(l.y/P.h*100).toFixed(3)}%;`;
     if(l.type==='text'){
-      return `<div class="mb-item mb-text${s}" data-id="${l.id}" style="${pos}font-size:${(l.size/P.h*100).toFixed(2)}cqh;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
+      // Centred captions span the full width and centre their text, mirroring drawtext's (w-text_w)/2.
+      const cpos = l.align==='center' ? `left:0;width:100%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;
+      return `<div class="mb-item mb-text${l.align==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.h*100).toFixed(2)}cqh;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
@@ -543,7 +545,7 @@
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, mute:!!l.mute, volume:+l.volume||1,
-          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain' })) };
+          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:l.align||'' })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
@@ -602,12 +604,11 @@
     // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
     // Measure the preview element (it now hugs its text) and convert screen px -> project px.
     on('mb-center','click',()=>{
-      const el=document.querySelector('.mb-item[data-id="'+l.id+'"]');
-      const stage=document.getElementById('mb-stage');
-      if(!el||!stage){ toast('open the preview first'); return; }
-      const tw = el.getBoundingClientRect().width * (P.w / stage.getBoundingClientRect().width);
-      l.x = Math.round(Math.max(0, (P.w - tw)/2));
-      save(); render();
+      // Flag it and let ffmpeg centre with (w-text_w)/2. Measuring the preview and computing a pixel x was
+      // wrong: the browser wraps the caption at 92% and uses a different font, so the measured width (and
+      // therefore x) did not match the single unwrapped line drawtext actually draws.
+      l.align = (l.align==='center') ? '' : 'center';
+      save(); render(); toast(l.align==='center' ? 'caption centred' : 'caption free-positioned');
     });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     num('mb-f-size','size',8,400);

@@ -104,6 +104,11 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     stroke = _ff_colour(layer.get("stroke"), "black")
     x = int(_num(layer.get("x"), -MAX_DIM, MAX_DIM, 0))
     y = int(_num(layer.get("y"), -MAX_DIM, MAX_DIM, 0))
+    # Centring must be done by ffmpeg, not by the client guessing a pixel x. The browser and ffmpeg lay text
+    # out with different fonts AND the preview wraps at 92% while drawtext never wraps at all — so a caption
+    # the client measured as centred rendered as one long line starting near the left edge. `(w-text_w)/2`
+    # uses drawtext's OWN measurement of the text it is about to draw, so it is centred by construction.
+    x_expr = f"(w-text_w)/2" if str(layer.get("align") or "").lower() == "center" else str(x)
     start = _num(layer.get("start"), 0, MAX_DURATION, 0)
     dur = _num(layer.get("dur"), 0.05, MAX_DURATION, 3)
     # Same font resolver the `meme` command and caption_video use, so a caption here looks identical to
@@ -112,7 +117,7 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     font = _meme_font_path()
     fontfile = f"fontfile='{font}':" if font else ""
     return (f"drawtext={fontfile}textfile='{{TEXTFILE}}':fontsize={size}:fontcolor={colour}:"
-            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x}:y={y}:"
+            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y}:"
             f"enable='between(t,{start:.3f},{start+dur:.3f})'")
 
 
