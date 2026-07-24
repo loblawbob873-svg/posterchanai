@@ -637,3 +637,18 @@ class _Effects1Mixin:
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
+
+    async def _shrug_command(self, attachments: Optional[list]) -> dict:
+        """Rabbi shrugs "Whaddya gonna do?" on an attached image: `shrug`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `shrug`."}
+
+        import asyncio
+        from app.services.effects_service import shrug_attachments
+
+        outputs, summary = await asyncio.to_thread(shrug_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
