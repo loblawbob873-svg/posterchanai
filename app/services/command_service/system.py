@@ -286,7 +286,9 @@ class _SystemMixin:
             params["command" if mode == "shell" else "goal"] = text
             if sandbox_uid:
                 params["sandbox_uid"] = str(sandbox_uid)
-            out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pk)
+            # on_progress=notify → the worker's per-step play-by-play lands in THIS chat live, the same
+            # as a local run. Without it a placed run showed nothing at all until it finished.
+            out = await nostr_dvm.run_remote("agent", params, worker_pubkey=worker_pk, on_progress=notify)
             if not out:
                 return {"type": "text", "content": f"⚠️ No response from `{name}` (offline, not trusting this controller, or timed out)."}
             if out.get("error"):

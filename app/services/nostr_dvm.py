@@ -22,6 +22,7 @@ Design (deliberately simple — "listen for events from a trusted npub, process,
 import asyncio
 import base64
 import collections
+import contextlib
 import hashlib
 import json
 import logging
@@ -45,7 +46,12 @@ logger = logging.getLogger(__name__)
 _REQ_KIND = {"chat": 5050, "image": 5100, "music": 5201, "video": 5202, "agent": 5300}
 _TASK_BY_REQ = {v: k for k, v in _REQ_KIND.items()}
 DVM_REQ_KINDS = frozenset(_REQ_KIND.values())
-DVM_KINDS = frozenset(list(_REQ_KIND.values()) + [k + 1000 for k in _REQ_KIND.values()])
+# Request + 2000 = PROGRESS: zero-or-more live updates published while a job runs, before the single
+# result. A distinct kind (not request+1000) matters — the coordinator's result wait is an await_one on
+# request+1000, so progress can never be mistaken for the final result and end the job early.
+_PROGRESS_OFFSET = 2000
+DVM_KINDS = frozenset(list(_REQ_KIND.values()) + [k + 1000 for k in _REQ_KIND.values()]
+                      + [k + _PROGRESS_OFFSET for k in _REQ_KIND.values()])
 
 # Per-task wait budget (seconds) — the coordinator gives up and falls back to local/next after this.
 _JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900, "agent": 900}
@@ -333,11 +339,17 @@ def _pick_peer(pk_list: list) -> Optional[str]:
 async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
                      worker_pubkey: Optional[str] = None,
                      timeout: Optional[float] = None,
-                     relay: Optional[str] = None) -> Optional[dict]:
+                     relay: Optional[str] = None,
+                     on_progress: Optional[callable] = None) -> Optional[dict]:
     """Dispatch a job to a peer worker over Nostr and return the decrypted result dict, or None on
     failure/timeout (the caller then falls back to local or the next candidate). The result shape
     mirrors the worker's `_run_local` return: {"image":b64} / {"audio":b64,"format":ext} /
-    {"video":b64} / {"completion": <openai-response>}."""
+    {"video":b64} / {"completion": <openai-response>}.
+
+    `on_progress`, when given, is awaited with each live update the worker publishes while the job runs
+    (see _publish_progress) — for an agent job that's the same per-step payloads a LOCAL run feeds its
+    `notify`, so passing the caller's own notify makes a remote run stream identically to a local one.
+    Purely additive: the watcher is a side subscription, and the result wait below is unchanged."""
     s = _settings(settings)
     req_kind = _REQ_KIND.get(task)
     if req_kind is None:
@@ -372,10 +384,40 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
             return None
         logger.info("[dvm] dispatched %s job %s → %s", task, ev["id"][:12],
                     nostr_service.npub_of(worker_pubkey)[:16])
-        res = await nostr_relay.await_one(
-            relay,
-            [{"kinds": [req_kind + 1000], "#e": [ev["id"]], "authors": [worker_pubkey]}],
-            timeout=budget, direct=True)
+        # Side subscription for live progress, torn down in the finally below whatever happens. Kept
+        # separate from the result wait so a progress event can never satisfy it (different kind), and
+        # so any failure in here is contained — progress is cosmetic, the result is not.
+        _stop, _watcher = None, None
+        if on_progress:
+            _stop = asyncio.Event()
+            _seen_progress: set = set()
+
+            async def _on_ev(pev: dict) -> None:
+                if pev.get("id") in _seen_progress:
+                    return          # relays can redeliver; a duplicated step in the chat looks like a loop
+                _seen_progress.add(pev["id"])
+                try:
+                    if not nostr_event.verify_event(pev):
+                        return      # unsigned/forged progress must never reach the user's chat
+                    obj = await _unpack_content(worker_pubkey, pev.get("content", ""), s)
+                    if "progress" in obj:
+                        await on_progress(obj["progress"])
+                except Exception:
+                    pass
+            _watcher = asyncio.create_task(nostr_relay.subscribe(
+                relay, [{"kinds": [req_kind + _PROGRESS_OFFSET], "#e": [ev["id"]],
+                         "authors": [worker_pubkey]}], _on_ev, _stop, direct=True))
+        try:
+            res = await nostr_relay.await_one(
+                relay,
+                [{"kinds": [req_kind + 1000], "#e": [ev["id"]], "authors": [worker_pubkey]}],
+                timeout=budget, direct=True)
+        finally:
+            if _stop is not None:
+                _stop.set()
+                _watcher.cancel()
+                with contextlib.suppress(Exception):
+                    await _watcher
         if not res:
             _hint = ("" if task != "agent" else
                      " — if this worker is a FULL node, list its relay in node_exec_node_npubs "
@@ -472,6 +514,35 @@ async def _publish_result(task: str, jid: str, author: str, result: dict) -> Non
     await nostr_relay.publish(relay_url(), res_ev, direct=True)
 
 
+async def _publish_progress(task: str, jid: str, author: str, payload) -> None:
+    """Publish ONE live progress update for an in-flight job (kind request+2000, NIP-44 to the
+    coordinator). Best-effort and deliberately silent on failure: progress is cosmetic, so a dropped
+    update must never disturb a job that is otherwise running fine.
+
+    Why this exists: a remote agent run used to be completely silent until its single result event —
+    the requesting chat showed NOTHING for the minutes the run took, which reads as a hung feature.
+    `payload` is whatever run_agent hands its `notify` (a markdown string, or an {"type": ...} dict),
+    replayed verbatim into the coordinator's own notify so a remote run renders exactly like a local one.
+
+    Oversized step output is DROPPED rather than Blossom-spilled (unlike results): a spill costs an
+    upload + fetch round-trip per step, and a truncated-away progress line is worth less than the
+    latency it would add to every step of every run."""
+    sk = node_seckey()
+    if not sk:
+        return
+    try:
+        body = json.dumps({"progress": payload})
+        if len(body) > 60_000:
+            return
+        enc = nip44.encrypt_to(sk, bytes.fromhex(author), body)
+        ev = nostr_event.build_event(sk, _REQ_KIND[task] + _PROGRESS_OFFSET, enc,
+            [["e", jid], ["p", author], ["t", task], ["nofederate"],
+             ["expiration", str(int(time.time()) + 3600)]])
+        await nostr_relay.publish(relay_url(), ev, direct=True)
+    except Exception as e:
+        logger.debug("[dvm] progress publish failed for %s job %s: %s", task, jid[:12], e)
+
+
 def _track(t: "asyncio.Task") -> None:
     _running_jobs.add(t)
     t.add_done_callback(_running_jobs.discard)
@@ -558,7 +629,7 @@ async def _run_claude(s: dict, goal: str, dangerous: bool) -> dict:
             "summary": text[-1500:] or f"claude exit {proc.returncode}", "output": text, "exit": proc.returncode}
 
 
-async def _exec_agent(db, params: dict) -> dict:
+async def _exec_agent(db, params: dict, ctx: Optional[dict] = None) -> dict:
     """Run a node/agent command LOCALLY on this worker (target 'local'). mode: shell (default) | agent
     (LLM-driven, uses this node's model) | claude (Claude Code CLI). Serialized by _agent_lock."""
     from app.services import node_service
@@ -591,9 +662,17 @@ async def _exec_agent(db, params: dict) -> dict:
             db.expunge(u)
         db.rollback()
         # report=True → the model's final summary only (no ## header) — used by the health report.
+        _report = bool(params.get("report"))
+        # Stream each step back to the coordinator so a REMOTE run shows the same live play-by-play as a
+        # local one (it used to be silent for its whole multi-minute run — see _publish_progress). Skipped
+        # for report_mode (the health board composes its own document and nobody is watching a chat).
+        _notify = None
+        if ctx and not _report:
+            async def _notify(payload):    # noqa: F811 — deliberate: None when there's no one to notify
+                await _publish_progress(ctx["task"], ctx["jid"], ctx["author"], payload)
         try:
             summary = await node_service.run_agent(db, u, _node, _target, params.get("goal") or "", None,
-                                                   notify=None, report_mode=bool(params.get("report")))
+                                                   notify=_notify, report_mode=_report)
             return {"status": "done", "summary": summary, "output": summary, "exit": 0}
         finally:
             # A PLACED agent run tears down its container here, matching the local panel's immediate reap
@@ -614,7 +693,7 @@ async def _exec_agent(db, params: dict) -> dict:
             "summary": f"exit {job.exit_code}", "output": out, "exit": job.exit_code}
 
 
-async def _run_local(task: str, params: dict) -> dict:
+async def _run_local(task: str, params: dict, ctx: Optional[dict] = None) -> dict:
     """Serve a job by handing it to THIS node's own IP load balancer (chat_server_urls) + local GPU —
     `dvm_offload=False` so it spreads across this node's cluster (e.g. server1 + nas) WITHOUT
     re-dispatching back out over Nostr (no loop). The peer that picks up an HTTP-forwarded request sees
@@ -628,7 +707,7 @@ async def _run_local(task: str, params: dict) -> dict:
                 _agent_lock = asyncio.Lock()
             async with _agent_lock:          # ONE agent command at a time on this worker (queue)
                 try:
-                    return await _exec_agent(db, params)
+                    return await _exec_agent(db, params, ctx)
                 except Exception as e:
                     return {"error": str(e)[:300]}
         if task == "image":
@@ -704,7 +783,7 @@ async def _handle_job(task: str, author: str, jid: str, ev: dict) -> None:
             params = await _unpack_content(author, ev.get("content", ""), None)
             logger.info("[dvm] running %s job %s from %s (%d in flight)", task, jid[:12],
                         nostr_service.npub_of(author)[:16], _inflight)
-            result = await _run_local(task, params)
+            result = await _run_local(task, params, {"task": task, "jid": jid, "author": author})
         except Exception as e:
             logger.warning("[dvm] %s job %s failed: %s", task, jid[:12], e)
             result = {"error": str(e)[:300]}
