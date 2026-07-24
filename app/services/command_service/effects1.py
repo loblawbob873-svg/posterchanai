@@ -622,3 +622,18 @@ class _Effects1Mixin:
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
+
+    async def _would_command(self, attachments: Optional[list]) -> dict:
+        """Old man points up saying WOULD on an attached image: `would`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `would`."}
+
+        import asyncio
+        from app.services.effects_service import would_attachments
+
+        outputs, summary = await asyncio.to_thread(would_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}

@@ -461,8 +461,10 @@ _CHARACTERS = {
     # Drop-in slot for the `theraped` pointing-up pose. Kept SEPARATE from animegirl so
     # replacing it can never change what `char animegirl` overlays.
     "theraped": "theraped.png", "pointup": "theraped.png", "pointing": "theraped.png",
+    # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
+    "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
 }
-CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped"]
+CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped", "would"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",

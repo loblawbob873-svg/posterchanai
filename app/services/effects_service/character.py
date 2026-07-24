@@ -80,7 +80,11 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.3
     gutter beside her is wider, clear of the art."""
     from PIL import Image as _Img
     W, H = base.size
-    ch = max(2, int(H * height_frac))
+    # Size by height BUT cap against width. Height-only 38% made her 729px wide on a 1080x1920 phone
+    # photo: she swallowed BOTH gutters (111px each vs the 194px minimum), so the caption had nowhere to
+    # sit beside her and fell back to a banner above her head — which reads as "the text is far from the
+    # character". Landscape test images never hit it, which is why it survived several rounds of review.
+    ch = max(2, min(int(H * height_frac), int(W * height_frac)))
     char = _character_still(char_path)
     cw = max(1, int(char.width * ch / char.height))
     char = char.resize((cw, ch), _Img.LANCZOS)
@@ -145,24 +149,35 @@ def _draw_point_arrow(draw, W, char_top, caption_bottom, H):
 
 
 def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
-    """`theraped` — the imageboard pointing-up format: the character stands bottom-centre pointing at
-    the image above, with the caption BESIDE her (whichever side has more room) rather than above, so
-    she stays the focal point and the text reads as a label on her, not a meme banner.
+    """`theraped` — the imageboard pointing-up format (see _add_pointing_meme)."""
+    return _add_pointing_meme(data, "theraped", caption, fallback="animegirl")
+
+
+def add_would(data: bytes, caption: str = "WOULD") -> bytes:
+    """`would` — the same pointing-up format with the old man. Same renderer, different art + caption,
+    so the two can never drift apart in layout."""
+    return _add_pointing_meme(data, "would", caption, fallback="theraped")
+
+
+def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
+    """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
+    with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
+    stays the focal point and the text reads as dialogue rather than a meme banner.
 
     Reuses the proven meme font/wrap/stroke helpers rather than reimplementing text layout, and takes
-    the art from the _CHARACTERS registry — drop a pointing pose at assets/characters/theraped.png and
-    it is used automatically, with animegirl as the fallback.
+    the art from the _CHARACTERS registry — drop a pointing pose at assets/characters/<key>.png and it
+    is used automatically.
     """
     from PIL import Image as _Img, ImageDraw as _Draw, ImageOps as _Ops
     from io import BytesIO as _BIO
     from ._common import _load_meme_font, _wrap_text_to_width
 
-    cp = _character_path("theraped") or _character_path("animegirl")
+    cp = _character_path(char_key) or _character_path(fallback)
     if not cp:
-        raise ValueError("theraped: no character asset found (theraped.png or animegirl)")
-    has_pose = bool(_character_path("theraped"))   # dedicated art already points; don't draw a 2nd arrow
+        raise ValueError(f"{char_key}: no character asset found ({char_key}.png or {fallback})")
+    has_pose = bool(_character_path(char_key))   # dedicated art already points; don't draw a 2nd arrow
 
-    text = (caption or "The Raped").strip().upper()
+    text = (caption or char_key).strip().upper()
     with _Img.open(_BIO(data)) as im:
         im = _Ops.exif_transpose(im)
         base = im.convert("RGBA")
@@ -234,19 +249,27 @@ def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
     return buf.getvalue()
 
 
-def theraped_attachments(attachments):
-    """Apply `theraped` to the first image attachment. Mirrors gay_attachments/blood_attachments."""
+def _pointing_attachments(attachments, key: str, title: str, fn):
+    """Apply a pointing-up meme to the first image attachment. Mirrors gay_attachments/blood_attachments."""
     from ._common import _alive_or_still, _human_size, is_image
-    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    images = [(f, d, ct) for f, d, ct in (attachments or []) if is_image(f, ct)]
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_theraped(data)
-        out = _alive_or_still(result, stem, "theraped")
-        summary = f"## 👉 The Raped\n\n👉 {filename}: {_human_size(len(result))}"
+        result = fn(data)
+        out = _alive_or_still(result, stem, key)
+        summary = f"## 👉 {title}\n\n👉 {filename}: {_human_size(len(result))}"
         return [out], summary
     except Exception as e:
-        logger.error(f"theraped failed for {filename}: {e}", exc_info=True)
-        return [], f"Could not apply theraped to {filename}: {e}"
+        logger.error(f"{key} failed for {filename}: {e}", exc_info=True)
+        return [], f"Could not apply {key} to {filename}: {e}"
+
+
+def theraped_attachments(attachments):
+    return _pointing_attachments(attachments, "theraped", "The Raped", add_theraped)
+
+
+def would_attachments(attachments):
+    return _pointing_attachments(attachments, "would", "Would", add_would)
