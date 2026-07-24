@@ -86,6 +86,17 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.3
     # character". Landscape test images never hit it, which is why it survived several rounds of review.
     ch = max(2, min(int(H * height_frac), int(W * height_frac)))
     char = _character_still(char_path)
+    # CROP to the opaque silhouette first. The assets are 460x460 canvases with the figure inset —
+    # would.png carries 114px of empty pixels to the RIGHT of the old man. Without this the returned
+    # right_x is the canvas edge, ~100px clear of his actual body, so the speech bubble hugged nothing
+    # and looked shoved off to the right. Cropping also means height_frac sizes the FIGURE rather than
+    # the padding, so he renders at the intended size instead of slightly small.
+    try:
+        _bb = char.getbbox()
+        if _bb:
+            char = char.crop(_bb)
+    except Exception:
+        pass
     cw = max(1, int(char.width * ch / char.height))
     char = char.resize((cw, ch), _Img.LANCZOS)
     y = max(0, H - ch)
