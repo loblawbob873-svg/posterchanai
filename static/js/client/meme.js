@@ -334,6 +334,19 @@
   function selectLayer(id){
     sel = id;
     document.querySelectorAll('.mb-item,.mb-track').forEach(e=>e.classList.toggle('sel', e.dataset.id===id));
+    // Jump the playhead to where this layer actually appears. Selecting a clip whose slot is elsewhere on
+    // the timeline used to leave the preview parked at the old time — showing a DIFFERENT clip (or nothing),
+    // so you were positioning/trimming something you couldn't see. Skip while playing: yanking the playhead
+    // mid-playback would fight the user. Land just INSIDE the clip so it's visible, not on its exact edge.
+    if(!_playT){
+      const l = P.layers.find(x=>x.id===id);
+      if(l){
+        const t = Math.min((+l.start||0) + Math.min(0.05, (+l.dur||0)/2), Math.max(0, projEnd()));
+        const s = document.getElementById('mb-scrub');
+        if(s) s.value = t.toFixed(2);
+        seek(t);
+      }
+    }
     repaint('inspector');
   }
 
