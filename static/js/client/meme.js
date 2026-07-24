@@ -26,7 +26,9 @@
     ({ toast, uploadBlob, selfProof, uiConfirm } = PC);
     window.PCMeme = {
       render(){ ME = PC.ME; P = load(); render(); },
-      unmount(){ if(_playT){ clearInterval(_playT); _playT=null; } },
+      // Persist on the way OUT too. Every edit already saves, but leaving the view is exactly when a
+      // missed save becomes 'my project came back different', so make it unconditional.
+      unmount(){ if(_playT){ clearInterval(_playT); _playT=null; } try{ if(P) save(); }catch(_){ } },
       reset(){ P = blank(); sel=null; save(); render(); },
     };
   }

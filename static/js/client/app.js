@@ -10866,7 +10866,6 @@
         <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
         <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🤖</span><b>Agents</b><span>run tasks on your servers</span></button>
         <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
-        <button class="aw-card" data-view-open="meme"><span class="awc-ic">🎞️</span><b>Meme Builder</b><span>layers + timeline → MP4</span></button>
       </div>
       <p class="muted small aw-or">…or grab something from the web:</p>
       <div class="aw-make">
