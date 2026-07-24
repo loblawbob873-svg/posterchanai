@@ -3343,6 +3343,11 @@ body.modal-open .mobilenav{display:none}
 .mb-tthumb{width:52px;height:34px;object-fit:cover;border-radius:7px;border:1px solid var(--line);background:var(--panel2);flex:0 0 auto}
 .mb-tvid{position:absolute;left:19px;font-style:normal;font-size:11px;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
 .mb-ttxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* z-order right beside the thumbnail — where you're looking when you decide what sits on top. */
+.mb-zbtns{display:flex;flex-direction:column;gap:2px;margin-left:auto;flex:0 0 auto}
+.mb-z{width:22px;height:16px;line-height:1;padding:0;font-size:11px;cursor:pointer;
+  border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--muted)}
+.mb-z:hover{color:var(--fg);border-color:var(--neon)}
 .mb-lane{position:relative;flex:1 1 auto;height:34px;border-radius:9px;background:var(--panel2);min-width:0}
 .mb-clip{position:absolute;top:3px;bottom:3px;display:flex;align-items:center;justify-content:center;
   border-radius:7px;background:linear-gradient(135deg,rgba(var(--accent-rgb),.45),rgba(var(--accent2-rgb),.35));

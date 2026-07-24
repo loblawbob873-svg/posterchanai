@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 MAX_LAYERS = 24
 MAX_DURATION = 120.0
 MAX_DIM = 2160
+# Per-encoder-attempt wall clock. Was 600s, which meant a wedged ffmpeg held the user's single render slot
+# for TEN MINUTES with no output and no way to start another — the "it says a render is already running but
+# nothing is" symptom. A real render of a short meme is seconds; anything past this is stuck, so fail fast,
+# free the slot, and tell the user what to change.
+_RENDER_TIMEOUT_S = 150
 DEFAULT_W, DEFAULT_H, DEFAULT_FPS = 720, 1280, 30
 
 # Per-layer effects expressed directly in the filtergraph. Each entry is a callable taking the layer's
@@ -229,9 +234,11 @@ def render(edit: dict, sources: dict) -> bytes:
                 full += ["-crf", "20", "-preset", "veryfast"]
             full.append(out)
             try:
-                p = subprocess.run(full, capture_output=True, timeout=600)
+                p = subprocess.run(full, capture_output=True, timeout=_RENDER_TIMEOUT_S)
             except subprocess.TimeoutExpired:
-                raise RuntimeError("render timed out (over 10 minutes)")
+                # subprocess.run KILLS the child on timeout, so a wedged ffmpeg can't linger past this.
+                raise RuntimeError(f"render timed out after {_RENDER_TIMEOUT_S}s — try fewer layers, a "
+                                   f"shorter clip, or turn off per-frame effects (pulse/zoom/shake/spin)")
             if p.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
                 with open(out, "rb") as fh:
                     data = fh.read()

@@ -177,7 +177,12 @@
           ? `<video class="mb-tthumb" src="${enc(l.src)}" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
           : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
     return `<div class="mb-track${l.id===sel?' sel':''}" data-id="${l.id}">
-      <div class="mb-trackname" title="${enc(label)}">${thumb}</div>
+      <div class="mb-trackname" title="${enc(label)}">${thumb}
+        <span class="mb-zbtns">
+          <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front">⬆︎</button>
+          <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back">⬇︎</button>
+        </span>
+      </div>
       <div class="mb-lane">
         <div class="mb-clip" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%">
           <i class="mb-grip mb-grip-l" data-grip="l"></i>
@@ -365,7 +370,20 @@
 
   function bindTimeline(root){
     const tl = root.querySelector('#mb-timeline'); if(!tl) return;
+    // z-order right on the layer row, next to its thumbnail — that's where you're already looking when you
+    // decide what should sit on top. Bound on the timeline (not the inspector) so it works without selecting
+    // the layer first. stopPropagation: these live inside the row, which is also the drag surface.
+    tl.addEventListener('click', (e)=>{
+      const zb = e.target.closest('.mb-z'); if(!zb) return;
+      e.preventDefault(); e.stopPropagation();
+      const l = P.layers.find(x=>x.id===zb.dataset.id); if(!l) return;
+      const i = P.layers.indexOf(l); if(i<0) return;
+      P.layers.splice(i,1);
+      if(zb.dataset.z==='front') P.layers.push(l); else P.layers.unshift(l);
+      save(); render();
+    });
     tl.addEventListener('pointerdown', (e)=>{
+      if(e.target.closest('.mb-z')) return;   // a z-order tap is not the start of a drag
       const clip = e.target.closest('.mb-clip'); if(!clip) return;
       const l = P.layers.find(x=>x.id===clip.dataset.id); if(!l) return;
       selectLayer(l.id);

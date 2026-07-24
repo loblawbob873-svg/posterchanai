@@ -2363,6 +2363,20 @@ class MemeRenderReq(BaseModel):
 # (each slower than the last) and leave the UI stuck on "rendering…". Per-process is correct here: the
 # renders run on this single port-3051 worker.
 _meme_rendering: set = set()
+# ...and a QUEUE across all users: ffmpeg render is CPU-heavy, so let a couple run and make the rest WAIT
+# their turn rather than starting N at once and starving the box (and every other request on this single
+# worker). Waiters are bounded by _MEME_QUEUE_WAIT_S so a request can't hang forever behind a stuck render.
+_MEME_MAX_CONCURRENT = 2
+_MEME_QUEUE_WAIT_S = 180
+_meme_slots: asyncio.Semaphore | None = None
+
+
+def _meme_semaphore() -> asyncio.Semaphore:
+    """Created lazily so it binds to the running event loop, not import time."""
+    global _meme_slots
+    if _meme_slots is None:
+        _meme_slots = asyncio.Semaphore(_MEME_MAX_CONCURRENT)
+    return _meme_slots
 # Layer sources are URLs the client already has (Blossom blobs it uploaded, or media already on the
 # timeline), which is why this only ever FETCHES — it never accepts uploaded bytes, so there is no new
 # upload surface. Every fetch goes through the rss_service SSRF guard, the same one the fediverse bridge
@@ -2431,8 +2445,18 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
                 sources[u] = p
         try:
             # Blocking ffmpeg → a thread, or it stalls the whole event loop (every other request on this
-            # single-worker process) for the length of the render.
-            out = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
+            # single-worker process) for the length of the render. Take a QUEUE slot first so only
+            # _MEME_MAX_CONCURRENT renders run at once — the rest wait here instead of all piling onto the
+            # CPU together. Bounded, so a wedged render can't leave this request hanging indefinitely.
+            try:
+                await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=503,
+                                    detail="the render queue is busy — try again in a moment")
+            try:
+                out = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
+            finally:
+                _meme_semaphore().release()
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except RuntimeError as e:
