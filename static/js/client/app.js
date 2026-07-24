@@ -1869,6 +1869,8 @@
     return r.height>0 && r.bottom>0 && r.top<vh;
   }
   function _celebSweep(){
+    // Effects disabled mid-flight (user just toggled off): tear down everything and stop for good.
+    if(!_postEffectsOn()){ _stopCelebrations(); return; }
     const els=$$('.note[data-celebrate]');
     // Nothing celebratory rendered any more (view switched, feed re-rendered) → stop entirely. hydrate()
     // starts it again the moment such a post appears, so there is no idle timer in the common case.
@@ -1883,7 +1885,14 @@
       if(!el._celebNext || now>=el._celebNext){ _playCelebration(el); el._celebNext=now+period; }
     }
   }
+  // Tear down every celebration overlay on screen, drop the data-celebrate flags, and stop the sweep —
+  // the catch-all so a note that already had data-celebrate can't keep firing regardless of how it got it.
+  function _stopCelebrations(){
+    try{ $$('.note[data-celebrate]').forEach(el=>{ const b=el.querySelector(':scope > .celeb'); if(b) b.remove(); delete el.dataset.celebrate; el._celebNext=0; }); }catch(_){}
+    if(_celebTick){ clearInterval(_celebTick); _celebTick=null; }
+  }
   function _playCelebration(el){
+    if(!_postEffectsOn()){ try{ delete el.dataset.celebrate; }catch(_){} return; }   // defensive: never paint when off
     const kind=el.dataset.celebrate;
     // One burst at a time per post — the previous overlay goes before the next starts, so repeats can't
     // stack up into a denser and denser cloud the longer you sit on a post.
@@ -7307,6 +7316,7 @@
       if(!_prefTouched.has('xmrPresets') && pr.xmrPresets!=null) ClientSettings.set('xmrPresets', String(pr.xmrPresets));
       if(!_prefTouched.has('postEffects') && typeof pr.postEffects==='boolean' && pr.postEffects!==_postEffectsOn()){
         ClientSettings.set('postEffects', pr.postEffects);       // celebratory note effects follow across devices
+        if(!pr.postEffects) _stopCelebrations();                 // synced to OFF → tear down anything already firing
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
     }catch(_){}
@@ -11772,6 +11782,7 @@
     { const pe=$('#set-post-effects'); if(pe) pe.onchange=()=>{
         const on = pe.checked; ClientSettings.set('postEffects', on); _prefTouched.add('postEffects'); saveClientPrefsNostr({ postEffects: on });
         toast(on?'post effects on':'post effects off');
+        if(!on) _stopCelebrations();                       // instant teardown — don't wait for the next sweep tick
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
     // Media cache size (per-device): persist + push the new byte budget to the service worker.
