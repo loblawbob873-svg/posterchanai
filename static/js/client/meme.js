@@ -85,6 +85,9 @@
       <div class="mb-bar">
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
+        <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
+        <button class="btn btn-ghost small" id="mb-save">💾 Save</button>
+        <button class="btn btn-ghost small" id="mb-open">📂 Open</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
         </select>
@@ -185,6 +188,82 @@
 
   const srcName = (u) => { try{ return decodeURIComponent(String(u).split('/').pop()).slice(0,18) || 'clip'; }catch(_){ return 'clip'; } };
   function enc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+
+  // ---------- Blossom ----------
+  // Your drive, as a source for layers. Media already on Blossom needs no upload and no re-encode — the
+  // render service fetches the same URL — so picking from here is both faster and cheaper than re-adding
+  // a file you already own.
+  async function listBlobs(){
+    const server = PC.mediaServer && PC.mediaServer();
+    if(!server) throw new Error('no Blossom server configured');
+    const r = await fetch(server + '/list/' + PC.ME.pubkey);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  }
+  const blobUrl = (b) => b.url || ((PC.mediaServer && PC.mediaServer()) + '/' + b.sha256);
+
+  async function pickBlossom(){
+    let list = [];
+    try{ list = await listBlobs(); }
+    catch(err){ toast("couldn't read your Blossom drive: " + ((err&&err.message)||err)); return; }
+    const media = list.filter(b => /^(image|video)\//.test(b.type||''));
+    if(!media.length){ toast('no images or videos on your Blossom drive yet'); return; }
+    const cell = (b) => {
+      const u = blobUrl(b), v = /^video\//.test(b.type||'');
+      return `<button class="mb-pick" data-u="${enc(u)}" data-v="${v?1:0}" title="${enc(b.type||'')}">`
+        + (v ? `<video src="${enc(u)}" muted preload="metadata"></video><i class="mb-pickv">▶︎</i>`
+             : `<img src="${enc(u)}" alt="" loading="lazy">`) + `</button>`;
+    };
+    PC.modal('<h3>🌸 Add from Blossom</h3><div class="mb-picker">' + media.slice(0,200).map(cell).join('') + '</div>', root=>{
+      root.querySelectorAll('.mb-pick').forEach(b => b.onclick = () => {
+        PC.closeModal();
+        addLayer(b.dataset.v === '1' ? 'video' : 'image', b.dataset.u);
+        render();
+      });
+    });
+  }
+
+  // Projects live on Blossom as a small JSON blob, so a build survives clearing this browser AND opens on
+  // your other devices — localStorage alone is per-device and one "clear site data" from losing the lot.
+  const PROJ_MARK = 'pcmeme-project';
+  async function saveProject(){
+    try{
+      const doc = JSON.stringify(Object.assign({ [PROJ_MARK]: 1, savedAt: Math.floor(Date.now()/1000) }, P));
+      const f = new File([doc], 'meme-project.json', { type: 'application/json' });
+      const url = await uploadBlob(f);
+      toast('project saved to Blossom');
+      return url;
+    }catch(err){ toast('save failed: ' + ((err&&err.message)||err)); }
+  }
+  async function openProject(){
+    let list = [];
+    try{ list = await listBlobs(); }
+    catch(err){ toast("couldn't read your Blossom drive: " + ((err&&err.message)||err)); return; }
+    // Blossom stores blobs by hash and does not preserve filenames, so identify projects by content:
+    // JSON blobs are small, fetch the candidates and keep the ones carrying our marker.
+    const cands = list.filter(b => /json/.test(b.type||'') && (b.size||0) < 400000).slice(0, 40);
+    const found = [];
+    for(const b of cands){
+      try{
+        const j = await fetch(blobUrl(b)).then(r=>r.json());
+        if(j && j[PROJ_MARK] && Array.isArray(j.layers)) found.push({ b, j });
+      }catch(_){ }
+    }
+    if(!found.length){ toast('no saved projects found on Blossom'); return; }
+    found.sort((x,y)=>(y.j.savedAt||0)-(x.j.savedAt||0));
+    const row = (f,i) => `<button class="btn btn-ghost full mb-projrow" data-i="${i}">`
+      + `${f.j.layers.length} layer${f.j.layers.length===1?'':'s'} · ${f.j.w}×${f.j.h}`
+      + (f.j.savedAt ? ' · ' + new Date(f.j.savedAt*1000).toLocaleString() : '') + '</button>';
+    PC.modal('<h3>📂 Open a saved project</h3>' + found.map(row).join(''), root=>{
+      root.querySelectorAll('.mb-projrow').forEach(btn => btn.onclick = async () => {
+        const f = found[+btn.dataset.i];
+        PC.closeModal();
+        if(P.layers.length && !await uiConfirm('Replace the project you are working on?')) return;
+        P = f.j; delete P[PROJ_MARK]; sel = null; save(); render();
+      });
+    });
+  }
 
   // ---------- interaction ----------
   function repaint(what){
@@ -414,6 +493,9 @@
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
+    on('mb-add-blossom','click',pickBlossom);
+    on('mb-save','click',saveProject);
+    on('mb-open','click',openProject);
     on('mb-render','click',doRender);
     on('mb-play','click',togglePlay);
     on('mb-scrub','input',(e)=>seek(+e.target.value));

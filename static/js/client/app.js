@@ -13786,6 +13786,9 @@
     // that stores media or calls a /client endpoint (meme.js). uiConfirm specifically: a sub-module must
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.
     uploadBlob, selfProof, uiConfirm,
+    // Blossom base + the app's modal, so a sub-module can browse your drive and open a picker without
+    // reimplementing either (meme.js: add-media-from-Blossom, save/load project).
+    mediaServer, modal, closeModal,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 
