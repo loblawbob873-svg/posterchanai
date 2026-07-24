@@ -414,8 +414,12 @@
       e.preventDefault(); e.stopPropagation();
       const l = P.layers.find(x=>x.id===zb.dataset.id); if(!l) return;
       const i = P.layers.indexOf(l); if(i<0) return;
-      P.layers.splice(i,1);
-      if(zb.dataset.z==='front') P.layers.push(l); else P.layers.unshift(l);
+      // ONE step, not all the way to the extreme. Jumping straight to front/back meant putting a layer
+      // just under the one above it took two moves (down to the very bottom, then back up) — swap with the
+      // neighbour instead, which is what "move it under that one" actually means.
+      const j = zb.dataset.z==='front' ? i+1 : i-1;
+      if(j<0 || j>=P.layers.length) return;                 // already at the top/bottom
+      P.layers[i]=P.layers[j]; P.layers[j]=l;
       save(); render();
     });
     tl.addEventListener('pointerdown', (e)=>{
@@ -427,8 +431,10 @@
       const total = Math.max(projEnd(), 1), perPx = total/rect.width;
       const grip = e.target.closest('.mb-grip'), side = grip && grip.dataset.grip;
       const sx=e.clientX, ost=l.start, odur=l.dur;
+      let moved=false;   // a CLICK must never reshuffle the timeline — only an actual drag does
       e.preventDefault();
       drag(e, (ev)=>{
+        if(Math.abs(ev.clientX-sx) > 3) moved=true;
         const d=(ev.clientX-sx)*perPx;
         if(side==='l'){ const ns=clamp(ost+d, 0, ost+odur-0.2); l.dur=+(odur+(ost-ns)).toFixed(2); l.start=+ns.toFixed(2); }
         else if(side==='r'){ l.dur=+clamp(odur+d, 0.2, 120).toFixed(2); }
@@ -441,6 +447,10 @@
         // where you dropped it and everything reflows back-to-back); a trim just closes the gap it left. Text
         // overlays keep the free position they were dragged to.
         if(l.type!=='text'){
+          if(!moved){                 // a plain click: select + seek only, never touch the order
+            l.start=ost; l.dur=odur;  // undo any sub-pixel drift so the clip cannot creep
+            repaint('timeline'); repaint('inspector'); syncScrub(); return;
+          }
           if(side) resequence();
           else {
             const others = mediaSeq().filter(x=>x!==l);
