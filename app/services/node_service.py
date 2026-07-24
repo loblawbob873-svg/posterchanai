@@ -62,15 +62,24 @@ def is_enabled(db: Session) -> bool:
 def all_nodes(db: Session) -> dict[str, str]:
     """The Nostr-only node registry: ``name -> target`` where target is ``"local"`` (run directly on
     THIS host) or ``"nostr:<pkhex>"`` (a worker addressed over Nostr). Sourced from
-    `node_exec_node_npubs`; a synthetic ``local`` is always present, and any mapped npub equal to THIS
-    host's own worker key collapses to ``local`` (run here — no encrypted round-trip to self). This is
-    the single builder shared by the `node` command, `/api/node/state`, and the health report, so the
-    node list can never drift or double-count a host."""
+    `node_exec_node_npubs`; any mapped npub equal to THIS host's own worker key becomes ``local`` (run
+    here — no encrypted round-trip to self). The synthetic ``local`` is added ONLY when no NAMED node is
+    already this host — otherwise the box was double-counted (once as ``local`` AND once as e.g.
+    ``server1``), which ran the health-report agent on the same GPU twice. This is the single builder
+    shared by the `node` command, `/api/node/state`, and the health report, so the node list can never
+    drift or double-count a host."""
     from app.services import nostr_dvm
-    out: dict[str, str] = {"local": "local"}
     me = (nostr_dvm.node_pubkey() or "").lower()
+    out: dict[str, str] = {}
+    have_self = False
     for name, pk in nostr_dvm.agent_node_map().items():
-        out[name] = "local" if (pk and pk.lower() == me) else f"nostr:{pk}"
+        if pk and pk.lower() == me:
+            out[name] = "local"          # this host, addressed by its own name → run directly
+            have_self = True
+        else:
+            out[name] = f"nostr:{pk}"
+    if not have_self:
+        out = {"local": "local", **out}  # nothing named IS this host → the synthetic entry represents it
     return out
 
 
