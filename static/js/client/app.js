@@ -11613,7 +11613,10 @@
     await restoreMediaServer();
     const srv=ClientSettings.get('mediaServer','');
     if(srv){ const mi=$('#set-media'); if(mi && !mi.value) mi.value=srv;
-      const on=$('#set-blossom-on'); if(on){ on.checked=true; const body=$('#set-blossom-body'); if(body) body.classList.remove('disabled'); } }
+      const on=$('#set-blossom-on'); if(on){ on.checked=true; const body=$('#set-blossom-body'); if(body) body.classList.remove('disabled'); }
+      // Refresh the "uploads currently go to…" line now that the restored server is reflected (async, so
+      // it can land after the pane's initial render); the input listener recomputes it.
+      if(mi) mi.dispatchEvent(new Event('input')); }
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link,
@@ -11762,17 +11765,22 @@
           <div class="set-actions"><button class="btn btn-neon small" id="set-relays-save">Save &amp; reload</button></div>
         </div>
         <div class="us-pane" data-pane="media">
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Use my own Blossom server<label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Where your uploaded images &amp; files are stored. Turn this on to use your own Blossom server instead of the built-in one.</div>
+          <label class="fld">📦 Where your uploads are stored</label>
+          <div class="muted small">Photos, videos and files you attach to a post get uploaded to a media server, and its link goes into your note. Out of the box this uses <b>this instance's built-in server</b> — nothing to set up.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;gap:12px;margin-top:14px">
+            <span>Use a custom media server instead<span class="muted small" style="display:block;font-weight:400;margin-top:2px">Send uploads to your own Blossom or NIP-96 server rather than the built-in one.</span></span>
+            <label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label>
+          </label>
           <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
-            <input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}">
+            <label class="fld">Your server URL<input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}"></label>
             <div class="media-presets"><span class="muted small">Quick pick:</span>
               <button type="button" class="btn btn-ghost small mp-preset" data-url="https://nostr.build">nostr.build</button>
               <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.primal.net">Primal</button>
               <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.band">blossom.band</button>
             </div>
-            <div class="muted small">Must be an <code>https://</code> server that allows cross-origin (CORS) uploads. Default built-in: <code>${enc(CFG.blossom_url||'none')}</code></div>
+            <div class="muted small">Must be an <code>https://</code> Blossom or NIP-96 server that allows cross-origin (CORS) uploads.</div>
           </div>
+          <div class="muted small" id="set-media-current" style="margin-top:12px"></div>
           <div class="set-actions"><button class="btn btn-neon small" id="set-media-save">Save &amp; reload</button></div>
         </div>
         <div class="us-pane" data-pane="zaps">
@@ -11813,11 +11821,21 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays=$$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
     { const t=$('#set-relays-on'); if(t) t.onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked); }
-    { const t=$('#set-blossom-on'); if(t) t.onchange=e=>$('#set-blossom-body').classList.toggle('disabled', !e.target.checked); }
+    // Live "you're currently uploading to X" line so it's never ambiguous where files go — built-in
+    // (public url from CFG) vs the custom server the user typed. Reflects the UNSAVED form state.
+    const _updMediaCurrent=()=>{ const el=$('#set-media-current'); if(!el) return;
+      const on=$('#set-blossom-on')&&$('#set-blossom-on').checked;
+      const url=(($('#set-media')||{}).value||'').trim();
+      el.innerHTML = (on&&url)
+        ? `Uploads currently go to your server: <code>${enc(url)}</code>`
+        : `Uploads currently go to the built-in server${CFG.blossom_url?` (<code>${enc(CFG.blossom_url)}</code>)`:''}.`; };
+    { const t=$('#set-blossom-on'); if(t) t.onchange=e=>{ $('#set-blossom-body').classList.toggle('disabled', !e.target.checked); _updMediaCurrent(); }; }
+    { const mi=$('#set-media'); if(mi) mi.addEventListener('input', _updMediaCurrent); }
+    _updMediaCurrent();
     // Media-server quick-pick presets (nostr.build / Primal / blossom.band): fill the field + turn the
     // override on so the user can Save. They still need to tap Save & reload to apply.
     $$('.mp-preset').forEach(b=> b.onclick=()=>{ const mi=$('#set-media'); if(mi) mi.value=b.dataset.url;
-      const on=$('#set-blossom-on'); if(on){ on.checked=true; } $('#set-blossom-body').classList.remove('disabled'); });
+      const on=$('#set-blossom-on'); if(on){ on.checked=true; } $('#set-blossom-body').classList.remove('disabled'); _updMediaCurrent(); });
     { const b=$('#set-relay-add'); if(b) b.onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); }; }
     { const b=$('#set-relay-ext'); if(b) b.onclick=async()=>{ syncRelays(); await importExtensionRelays(); }; }
     { const b=$('#set-relay-nip05'); if(b) b.onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); }; }
