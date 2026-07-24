@@ -77,12 +77,22 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
         # (nas) run is silent until this single delivery, and a long transcript buries the outcome —
         # so end with an unmistakable done/stopped/error line ("can't tell if it finished/died").
         content = "\n\n---\n\n".join(sections)
+        # Derive the banner from the run's actual terminal marker (run_agent emits exactly one):
+        #   ✅ Done  = the model CALLED finish → the goal was completed
+        #   ⏹️ Stopped = reached step limit / stuck / cancelled → did NOT finish
+        #   ⚠️ Error/Stopped = exception / inference error
+        # "complete" must mean ✅ Done, NOT merely "no ⚠️" — else a step-limit stop (different emoji)
+        # is mislabelled as complete, which is exactly what happened.
         if _stopped():
             banner = "⏹️ **Agent run cancelled.**"
-        elif any(m in s for s in sections for m in ("**⚠️ Error:**", "**⚠️ Stopped:**")):
-            banner = "⚠️ **Agent run finished with errors** — see the transcript above."
-        else:
+        elif any("⚠️ Error:" in s or "⚠️ Stopped:" in s for s in sections):
+            banner = "⚠️ **Agent run ended with an error** — see the transcript above."
+        elif any("✅ Done:" in s for s in sections):
             banner = "✅ **Agent run complete.**"
+        elif any("⏹️ Stopped:" in s for s in sections):
+            banner = "⏹️ **Agent stopped before finishing** (step limit or stuck) — see the transcript above."
+        else:
+            banner = "☑️ **Agent run ended.**"
         try:
             await notify({"type": "agent_result", "content": f"{content}\n\n{banner}"})
         except Exception as e:
