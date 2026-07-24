@@ -3309,7 +3309,11 @@ body.modal-open .mobilenav{display:none}
 .mb-item{position:absolute;cursor:grab;touch-action:none}   /* touch-action:none → we own the gesture */
 .mb-item.sel{outline:2px solid var(--neon);outline-offset:1px}
 .mb-item img,.mb-item video{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
-.mb-text{font-weight:800;line-height:1.1;white-space:pre-wrap;max-width:92%;text-align:center}
+/* width:max-content — the box HUGS the text. It used to be a full 92%-wide box with the text centred
+   inside it, so the preview showed the caption centred while ffmpeg's drawtext anchors the text's LEFT
+   EDGE at the same x — the caption you placed centre-bottom rendered hard against the left edge. Hugging
+   the content makes the layer's x the real left edge in BOTH, so preview == render. */
+.mb-text{font-weight:800;line-height:1.1;white-space:pre-wrap;width:max-content;max-width:92%;text-align:center}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}

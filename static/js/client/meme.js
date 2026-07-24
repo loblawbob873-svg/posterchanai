@@ -221,7 +221,8 @@
         <div class="mb-frow">
           <label class="mb-f"><span>Colour</span><input type="color" id="mb-f-color" value="${enc(l.color)}"></label>
           <label class="mb-f"><span>Outline</span><input type="color" id="mb-f-stroke" value="${enc(l.stroke)}"></label>
-        </div>` : `
+        </div>
+        <button class="btn btn-cyan small full" id="mb-center">⇔ Centre horizontally</button>` : `
         <div class="mb-frow">
           <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
@@ -568,6 +569,16 @@
     // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
     // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
     on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; save(); render(); });
+    // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
+    // Measure the preview element (it now hugs its text) and convert screen px -> project px.
+    on('mb-center','click',()=>{
+      const el=document.querySelector('.mb-item[data-id="'+l.id+'"]');
+      const stage=document.getElementById('mb-stage');
+      if(!el||!stage){ toast('open the preview first'); return; }
+      const tw = el.getBoundingClientRect().width * (P.w / stage.getBoundingClientRect().width);
+      l.x = Math.round(Math.max(0, (P.w - tw)/2));
+      save(); render();
+    });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     num('mb-f-size','size',8,400);
     on('mb-f-text','input',(e)=>{ l.text=e.target.value; save();
