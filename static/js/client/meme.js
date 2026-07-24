@@ -318,9 +318,10 @@
 
 
   // ---------- Blossom ----------
-  // Your drive, as a source for layers. Media already on Blossom needs no upload and no re-encode — the
-  // render service fetches the same URL — so picking from here is both faster and cheaper than re-adding
-  // a file you already own.
+  // Your drive, as a source for layers AND as where saved projects live. Media already on Blossom needs
+  // no upload and no re-encode — the render service fetches the same URL — so picking from here is both
+  // faster and cheaper than re-adding a file you already own. (Media picking goes through the app's
+  // shared picker below; this raw listing is what the project save/open scan needs.)
   async function listBlobs(){
     const server = PC.mediaServer && PC.mediaServer();
     if(!server) throw new Error('no Blossom server configured');
@@ -330,24 +331,18 @@
   }
   const blobUrl = (b) => b.url || ((PC.mediaServer && PC.mediaServer()) + '/' + b.sha256);
 
-  async function pickBlossom(){
-    let list = [];
-    try{ list = await listBlobs(); }
-    catch(err){ toast("couldn't read your Blossom drive: " + ((err&&err.message)||err)); return; }
-    const media = list.filter(b => /^(image|video)\//.test(b.type||''));
-    if(!media.length){ toast('no images or videos on your Blossom drive yet'); return; }
-    const cell = (b) => {
-      const u = blobUrl(b), v = /^video\//.test(b.type||'');
-      return `<button class="mb-pick" data-u="${enc(u)}" data-v="${v?1:0}" title="${enc(b.type||'')}">`
-        + (v ? `<video src="${enc(u)}" muted preload="metadata"></video><i class="mb-pickv">▶︎</i>`
-             : `<img src="${enc(u)}" alt="" loading="lazy">`) + `</button>`;
-    };
-    PC.modal('<h3>🌸 Add from Blossom</h3><div class="mb-picker">' + media.slice(0,200).map(cell).join('') + '</div>', root=>{
-      root.querySelectorAll('.mb-pick').forEach(b => b.onclick = () => {
-        PC.closeModal();
-        addLayer(b.dataset.v === '1' ? 'video' : 'image', b.dataset.u);
-        render();
-      });
+  // The app's own file picker, narrowed to media. It used to be a private grid here, which meant the
+  // Meme Builder showed a FLAT drive while every other picker in the client showed your folders — and
+  // a drive with a few hundred blobs is unusable flat. Reusing blossomPicker also inherits the folder
+  // bar, the encrypted-blob hygiene and the server-side video thumbnails for free.
+  function pickBlossom(){
+    PC.blossomPicker(null, ({ url, type }) => {
+      addLayer(/^video\//.test(type||'') ? 'video' : 'image', url);
+      render();
+    }, {
+      title: '🌸 Add from Blossom',
+      filter: b => /^(image|video)\//.test(b.type||''),
+      empty: 'No images or videos on your Blossom drive yet — upload some in the Files tab.',
     });
   }
 

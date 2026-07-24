@@ -7757,11 +7757,15 @@
   // `ta` mode (default): tapping a file appends its media URL to the textarea (post/DM composer).
   // `onPick` mode: instead of pasting a link, call onPick({url,type,ext}) with the chosen blob — used
   // by AI chat, which fetches the bytes into a real attachment rather than a URL in the message text.
-  function blossomPicker(ta, onPick){
+  // `opts.filter(blob)` narrows what's offered (Meme Builder: images/videos only) and `opts.title`
+  // renames the header. Callers that only want a SUBSET must come through here rather than rolling
+  // their own grid — the folder bar, the encrypted-blob hygiene and the thumbnails all live here, and
+  // a private copy silently ships a flat, folderless drive (which is exactly what the meme picker did).
+  function blossomPicker(ta, onPick, opts={}){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal">
-      <div class="bp-head"><h3>🌸 Blossom Files</h3>
+      <div class="bp-head"><h3>${enc(opts.title||'🌸 Blossom Files')}</h3>
         <div id="bp-folders" class="bp-folders"></div></div>
       <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
@@ -7780,6 +7784,7 @@
         if(m && m.enc) return false;                               // encrypted ciphertext — not publicly viewable
         if(!m && /octet-stream/.test(b.type||'')) return false;    // stale index blobs / unnamed binaries
         if(FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256))) return false;   // ditto for a whole encrypted folder
+        if(opts.filter && !opts.filter(b)) return false;            // caller's own narrowing (e.g. media only)
         return true;
       });
       const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders');
@@ -7792,7 +7797,7 @@
         const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
         grid.innerHTML = shown.length ? shown.map(b=>
           `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`).join('')
-          : `<div class="empty">${cur?'Nothing in this folder.':'No files yet — upload some in the Files tab.'}</div>`;
+          : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
           bg.remove();
@@ -13839,8 +13844,10 @@
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.
     uploadBlob, selfProof, uiConfirm,
     // Blossom base + the app's modal, so a sub-module can browse your drive and open a picker without
-    // reimplementing either (meme.js: add-media-from-Blossom, save/load project).
-    mediaServer, modal, closeModal,
+    // reimplementing either (meme.js: add-media-from-Blossom, save/load project). blossomPicker is THE
+    // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it
+    // rather than listing /list/<pubkey> into a grid of their own.
+    mediaServer, modal, closeModal, blossomPicker,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 
