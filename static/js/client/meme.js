@@ -73,12 +73,16 @@
   // hard against the frame edge. Pull any off-canvas caption back into view once, so an old project stops
   // rendering wrong through no fault of the user.
   function _healLayers(proj){
+    if(proj._healed) return;            // ONCE per project — never touch a position again after this
+    proj._healed = 1;
     const W=+proj.w||720, H=+proj.h||1280;
     (proj.layers||[]).forEach(l=>{
       if(l.type!=='text') return;
-      const x=+l.x||0, y=+l.y||0;
-      if(x < 0 || x > W - 8) l.x = Math.round(W*0.08);
-      if(y < 0 || y > H - 8) l.y = Math.round(H*0.08);
+      // ONLY rescue a caption that is genuinely off the canvas (the old negative-x bug). Anything merely
+      // NEAR an edge is a deliberate placement — the first version of this snapped those too, so a caption
+      // saved at the bottom or right came back somewhere else entirely.
+      if((+l.x||0) <= -8) l.x = Math.round(W*0.08);
+      if((+l.y||0) <= -8) l.y = Math.round(H*0.08);
     });
   }
 
