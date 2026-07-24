@@ -3334,6 +3334,7 @@ body.modal-open .mobilenav{display:none}
 .mb-timeline{display:flex;flex-direction:column;gap:6px;padding:10px;
   border:1px solid var(--line);border-radius:var(--r)}
 .mb-empty{padding:6px 2px}
+.mb-tlhint{margin:8px 2px 4px}
 .mb-track{display:flex;align-items:center;gap:10px;min-width:0}
 .mb-track.sel .mb-clip{box-shadow:inset 0 0 0 2px var(--neon)}
 .mb-trackname{flex:0 0 132px;font-size:12.5px;color:var(--muted);overflow:hidden;

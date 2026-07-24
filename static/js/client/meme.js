@@ -70,6 +70,21 @@
   const clamp = (v,lo,hi) => Math.max(lo, Math.min(hi, Number(v)||0));
   const projEnd = () => P.layers.reduce((m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || P.duration;
 
+  // ---------- the MASTER TIMELINE ----------
+  // Media clips (image/video) form ONE ordered sequence that plays back-to-back — the way every video editor
+  // works. Their `start` is DERIVED from that order, never hand-typed: drop a clip anywhere on the timeline
+  // and the rest reflow around it (no gaps, no accidental overlaps). TEXT is excluded on purpose — a caption
+  // is an overlay pinned ON the footage, so it keeps its own free start/duration.
+  const mediaSeq = () => P.layers.filter(l=>l.type!=='text')
+    .sort((a,b)=>((+a.start||0)-(+b.start||0)) || (P.layers.indexOf(a)-P.layers.indexOf(b)));
+  function resequence(seq){ let t=0; (seq||mediaSeq()).forEach(l=>{ l.start=+t.toFixed(2); t+=(+l.dur||0); }); }
+  // Where a clip dragged to `center` (seconds, its midpoint) belongs in the sequence of the OTHERS.
+  function dropIndex(others, center){
+    let idx=0, acc=0;
+    for(const o of others){ const w=+o.dur||0; if(center > acc + w/2) idx++; acc+=w; }
+    return Math.min(idx, others.length);
+  }
+
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
     // APPEND to the end of the timeline, do not stack at t=0. Defaulting every new layer to start:0 made
@@ -86,7 +101,9 @@
     }, extra||{});
     if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
-    P.layers.push(l); sel = l.id; save(); return l;
+    P.layers.push(l); sel = l.id;
+    if(type!=='text') resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
+    save(); return l;
   }
 
   // ---------- rendering the UI ----------
@@ -97,8 +114,8 @@
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
-        <button class="btn btn-ghost small" id="mb-save">💾 Save</button>
-        <button class="btn btn-ghost small" id="mb-open">📂 Open</button>
+        <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
+        <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
         </select>
@@ -124,6 +141,7 @@
         </div>
       </div>
 
+      ${P.layers.some(l=>l.type!=='text') ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to reorder it — the rest reflow back-to-back. Drag its edges to trim.</div>' : ''}
       <div class="mb-timeline" id="mb-timeline">
         ${P.layers.length ? P.layers.map(trackEl).join('') : '<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'}
       </div>
@@ -354,7 +372,22 @@
         clip.style.left=(l.start/total*100).toFixed(3)+'%';
         clip.style.width=Math.max(3, l.dur/total*100).toFixed(3)+'%';
         const sp=clip.querySelector('span'); if(sp) sp.textContent=l.dur.toFixed(1)+'s';
-      }, ()=>{ save(); repaint('inspector'); syncScrub(); });
+      }, ()=>{
+        // Drop = commit to the MASTER TIMELINE. A media clip dragged anywhere REORDERS the sequence (it lands
+        // where you dropped it and everything reflows back-to-back); a trim just closes the gap it left. Text
+        // overlays keep the free position they were dragged to.
+        if(l.type!=='text'){
+          if(side) resequence();
+          else {
+            const others = mediaSeq().filter(x=>x!==l);
+            const seq = others.slice();
+            seq.splice(dropIndex(others, (+l.start||0) + (+l.dur||0)/2), 0, l);
+            resequence(seq);
+          }
+          save(); render(); syncScrub(); return;   // full redraw so the reflowed clips paint in their new order
+        }
+        save(); repaint('inspector'); syncScrub();
+      });
     });
   }
 
