@@ -113,9 +113,14 @@ public class Nip55Plugin extends Plugin {
             return;
         }
         JSObject ret = new JSObject();
-        // The NIP puts every scalar answer in "signature": the npub for get_public_key, the hex signature
-        // for sign_event, the ciphertext/plaintext for the nip04/nip44 verbs.
-        ret.put("result", data.getStringExtra("signature"));
+        // The scalar answer — npub for get_public_key, signature for sign_event, plaintext/ciphertext for
+        // the nip04/nip44 verbs — comes back in "result" (NIP-55: `result.data?.getStringExtra("result")`).
+        // "signature" is what OLD signers used, and Amber still sets it for get_public_key and sign_event
+        // but NOT for the crypt verbs — so reading it first looked fine at login and then returned null for
+        // every DM. Read the spec name first, keep the legacy one as a fallback for older signers.
+        String scalar = data.getStringExtra("result");
+        if (scalar == null) scalar = data.getStringExtra("signature");
+        ret.put("result", scalar);
         ret.put("event", data.getStringExtra("event"));   // signed event JSON — present for sign_event
         ret.put("id", data.getStringExtra("id"));
         ret.put("package", data.getStringExtra("package"));
