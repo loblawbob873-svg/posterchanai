@@ -1318,6 +1318,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .draft-body{white-space:pre-wrap;word-break:break-word;width:100%;font-size:16.5px;line-height:1.5;max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 74%,transparent);mask-image:linear-gradient(180deg,#000 74%,transparent)}
 .draft-body img,.draft-body video{max-height:130px;max-width:100%;width:auto;border-radius:8px;object-fit:cover}
 .draft-foot{display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap}
+/* Keep Edit/Delete/Send together on one line: the buttons are a non-shrinking group, and the "saved …"
+   meta shrinks with an ellipsis instead of shoving Send onto a second line on a narrow phone. */
+.draft-actions{display:flex;gap:8px;flex:0 0 auto;flex-wrap:nowrap}
+.draft-foot .df-meta{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ⏰ Schedule composer row — wraps cleanly on narrow/mobile/app widths */
 .cmp-sched-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin:8px 0 2px}
 .cmp-sched-row.hidden{display:none}

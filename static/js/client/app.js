@@ -6631,11 +6631,13 @@
     const draftsHtml = list.length ? list.map(d=>{
       const ctx = d.reply?'<span class="muted small">↩ reply</span>' : d.quote?'<span class="muted small">❝ quote</span>' : '';
       return `<div class="note draft-card" data-draft="${d.id}"><div class="draft-body">${linkify(d.text||'')}</div>
-        <div class="draft-foot"><span class="muted small">${ctx} saved ${timeAgo(d.ts)}</span>
+        <div class="draft-foot"><span class="muted small df-meta">${ctx} saved ${timeAgo(d.ts)}</span>
           <span class="spacer"></span>
-          <button class="btn btn-cyan small" data-act="edit">✏ Edit</button>
-          <button class="btn btn-red small" data-act="del">🗑 Delete</button>
-          <button class="btn btn-cyan small" data-act="send">Send ▶</button></div></div>`;
+          <div class="draft-actions">
+            <button class="btn btn-cyan small" data-act="edit">✏ Edit</button>
+            <button class="btn btn-red small" data-act="del">🗑 Delete</button>
+            <button class="btn btn-cyan small" data-act="send">Send ▶</button>
+          </div></div></div>`;
     }).join('') : '<div id="drafts-empty" class="empty">No drafts. Write a post and tap 💾 Draft to save it for later.</div>';
     feed.innerHTML = `<div id="sched-section"></div>` + draftsHtml;
     feed.querySelectorAll('.draft-card').forEach(card=>{
