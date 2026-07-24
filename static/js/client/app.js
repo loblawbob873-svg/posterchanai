@@ -7308,14 +7308,17 @@
     try{ const r=await fetch(base+'/.well-known/nostr/nip96.json'); if(r.ok && await r.json().catch(()=>null)) return 'nip96'; }catch(_){}
     return /(^|\.)nostr\.build$/i.test((()=>{try{return new URL(base).hostname;}catch(_){return '';}})())?'nip96':'blossom';
   }
-  // Query whether ME has built-in Blossom upload permission (whitelist). Sets _blossomOK so uploadTarget
-  // can fall back to nostr.build for users who don't. Cheap, cached; called on login.
+  // Query whether ME can actually upload to the built-in Blossom server. Sets _blossomOK so uploadTarget
+  // can fall back to nostr.build ONLY for users who genuinely can't. Cheap, cached; called on login.
   async function checkBlossomAccess(){
     try{
       if(!ME||!ME.pubkey){ _blossomOK=null; return; }
       if(!CFG.blossom_enabled){ _blossomOK=false; return; }   // built-in server off → nobody can use it
       const r=await fetch('/client/blossom-access?pubkey='+encodeURIComponent(ME.pubkey)).then(r=>r.json());
-      _blossomOK=!!(r&&r.whitelisted);
+      // Prefer `allowed` (the REAL upload gate: whitelist OR admin/can_blossom OR operator key) — an admin
+      // who isn't explicitly whitelisted must NOT be diverted to nostr.build. Fall back to `whitelisted`
+      // for older backends that don't send `allowed`.
+      _blossomOK = !!(r && (r.allowed!==undefined ? r.allowed : r.whitelisted));
     }catch(_){ _blossomOK=null; }   // unknown → keep built-in default (don't wrongly divert to nostr.build)
   }
   // Boot-time RESTORE of the synced media server (kind-10063 Blossom / kind-10096 NIP-96) so a fresh

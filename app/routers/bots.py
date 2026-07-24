@@ -200,14 +200,11 @@ async def provision_nostr_identity(payload: ProvisionPayload, request: Request,
     port = int(settings_store.get("nostr_relay_port", "3052") or "3052")
     local = [f"ws://127.0.0.1:{port}"]
 
-    # 1) Blossom upload access (so its board/avatar uploads are accepted by the built-in server)
-    try:
-        wl = [x for x in (settings_store.get("blossom_whitelist", "") or "").split() if x]
-        if npub not in wl:
-            wl.append(npub)
-            settings_store.put("blossom_whitelist", "\n".join(wl))
-    except Exception as e:
-        logger.warning("[provision] blossom grant failed: %s", e)
+    # 1) Blossom upload access: a bot's key is already an OPERATOR key (blossom_service._operator_pubkeys
+    #    scans every Bot row), so is_pubkey_allowed() accepts its uploads WITHOUT a whitelist entry.
+    #    Adding it here was redundant — and worse, it read-modify-wrote the SHARED blossom_whitelist from
+    #    a possibly-empty/stale in-process cache (pre-hydration or clobbered by another node), silently
+    #    dropping human grants (e.g. the admin) from the list. Don't touch the whitelist for bots.
 
     # 2) resolve the nip05 (local part → name@thishost) — the actual registration happens on Save
     host = request.url.hostname or ""
@@ -380,17 +377,14 @@ def _cleanup_nostr_identity(db: Session, bot: Bot):
             return
         sk = nostr_service.decode_seckey(nsec)
         pub = nostr_service.derive_pubkey(sk)
-        npub = nostr_service.npub_of(pub)
     except Exception as e:
         logger.warning("[bot-delete] could not derive identity: %s", e)
         return
-    from app.services import settings_store, blossom_service
-    # 1) revoke Blossom upload access
-    try:
-        wl = [x for x in (settings_store.get("blossom_whitelist", "") or "").split() if x and x != npub]
-        settings_store.put("blossom_whitelist", "\n".join(wl))
-    except Exception as e:
-        logger.warning("[bot-delete] whitelist revoke failed: %s", e)
+    from app.services import blossom_service
+    # 1) Blossom access needs no revoke: the bot was allowed as an OPERATOR key (a live Bot row), not via
+    #    the whitelist, so deleting the Bot row already ends its upload access once _operator_pubkeys
+    #    re-scans. We deliberately DON'T rewrite the shared blossom_whitelist here — that read-modify-write
+    #    from a possibly-empty/stale cache was silently dropping human grants (e.g. the admin).
     # 1b) remove its NIP-05 name from the relay's served list
     _nip05_remove_pubkey(pub)
     # 2) purge its Blossom blobs (bytes + index rows)

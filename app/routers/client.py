@@ -1461,11 +1461,23 @@ def _whitelist_hex(db: Session) -> set:
 
 @router.get("/blossom-access")
 async def blossom_access_status(pubkey: str, db: Session = Depends(get_db)):
-    """Is this pubkey on the Blossom upload whitelist? Lets the client show Grant vs Revoke."""
+    """Blossom upload status for a pubkey.
+      * `allowed`     — can it ACTUALLY upload to the built-in server? Mirrors the real gate
+                        (blossom_service.is_pubkey_allowed: whitelist OR admin/can_blossom OR
+                        operator/bot/DVM keys). The client uses this to decide built-in vs the
+                        nostr.build fallback — so an admin who was never explicitly whitelisted is
+                        no longer wrongly diverted to nostr.build.
+      * `whitelisted` — raw membership of the `blossom_whitelist` setting, for the admin Grant/Revoke
+                        toggle (which manages that list specifically)."""
     h = nostr_service.to_pubkey_hex(pubkey)
     if not h:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    return JSONResponse({"ok": True, "whitelisted": h in _whitelist_hex(db)})
+    from app.services import blossom_service
+    return JSONResponse({
+        "ok": True,
+        "whitelisted": h in _whitelist_hex(db),
+        "allowed": blossom_service.is_pubkey_allowed(db, h),
+    })
 
 
 @router.post("/blossom-access")
