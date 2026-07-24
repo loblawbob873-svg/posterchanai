@@ -12954,8 +12954,8 @@
     const render=()=>{
       const it=items[idx]; const isImg = it.kind!=='video' && it.kind!=='audio';
       let el;
-      if(it.kind==='video'){ el=document.createElement('video'); el.src=it.src; el.controls=true; el.autoplay=true; el.playsInline=true; el.setAttribute('playsinline',''); }
-      else if(it.kind==='audio'){ el=document.createElement('audio'); el.src=it.src; el.controls=true; el.autoplay=true; }
+      if(it.kind==='video'){ el=document.createElement('video'); el.src=it.src; el.controls=true; el.playsInline=true; el.setAttribute('playsinline',''); el.preload='metadata'; }   // NO autoplay — opening media must never start playing on its own
+      else if(it.kind==='audio'){ el=document.createElement('audio'); el.src=it.src; el.controls=true; el.preload='metadata'; }   // NO autoplay
       else { el=document.createElement('img'); el.src=it.src;
         el.onclick=(e)=>{ e.stopPropagation(); };   // don't let a tap on the image reach the backdrop-close
         _lbZoom(bg, el);   // continuous pinch/wheel zoom + pan (magnifies even low-res posts, unlike the old fit↔natural toggle)
