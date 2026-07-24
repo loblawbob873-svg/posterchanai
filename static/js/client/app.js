@@ -6139,7 +6139,7 @@
       try{ await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
-        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-ghost small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-ghost small" id="ss-close">Close</button></div>`,
+        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
           // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
@@ -11181,7 +11181,7 @@
   // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
   function _aiFileActions(u){
     if(!/^\//.test(u)) return '';
-    const copy=`<button class="btn btn-ghost small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
+    const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
     return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
@@ -11228,7 +11228,7 @@
     if(!b64) return '';
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
     _ai.fxMedia[mid]={ b64, mime, ext };
-    const copy=`<button class="btn btn-ghost small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
+    const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
     return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
