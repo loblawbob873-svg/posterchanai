@@ -170,6 +170,12 @@ def add_would(data: bytes, caption: str = "WOULD") -> bytes:
     return _add_pointing_meme(data, "would", caption, fallback="theraped")
 
 
+def add_shrug(data: bytes, caption: str = "Whaddya gonna do?") -> bytes:
+    """`shrug` — resigned rabbi, palms up, saying "Whaddya gonna do?". Same character+dialogue renderer;
+    the shrug.png pose means no pointing arrow is drawn (has_pose)."""
+    return _add_pointing_meme(data, "shrug", caption, fallback="would")
+
+
 def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
     """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
     with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
@@ -305,3 +311,7 @@ def theraped_attachments(attachments):
 
 def would_attachments(attachments):
     return _pointing_attachments(attachments, "would", "Would", add_would)
+
+
+def shrug_attachments(attachments):
+    return _pointing_attachments(attachments, "shrug", "Whaddya gonna do?", add_shrug)

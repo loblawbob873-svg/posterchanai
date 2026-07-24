@@ -463,8 +463,9 @@ _CHARACTERS = {
     "theraped": "theraped.png", "pointup": "theraped.png", "pointing": "theraped.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
     "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
+    "shrug": "shrug.png", "rabbi": "shrug.png", "whaddya": "shrug.png",
 }
-CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped", "would"]
+CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped", "would", "shrug"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
