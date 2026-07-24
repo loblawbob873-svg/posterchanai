@@ -12341,8 +12341,14 @@
     decorateCounts();
   }, 450); }
   function decorateCounts(){
+    // hydrateCounts() pulls reactions with a direct Relay.query and saves them straight to Store, so they
+    // never pass through onEvent/applySobLive — the ❤ number updated while scrolling but data-celebrate
+    // was only ever set at note-RENDER time. That is why 😭 only worked on opening a post or reacting
+    // live. This runs on every count refresh over every rendered note, so it catches the scroll case too.
+    let _newSob=false;
     $$('.note[data-id]').forEach(n=>{
       const id=n.dataset.id, c=countsFor(id), mr=myReaction(id);
+      if(c.sob && !n.dataset.celebrate){ n.dataset.celebrate='sob'; n._celebNext=0; _newSob=true; }
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
       setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
       const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
@@ -12350,6 +12356,7 @@
       const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
       const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));
     });
+    if(_newSob) observeCelebrations();   // a 😭 that arrived via the count fetch must start the sweep
   }
   function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
   // ---------- link preview cards (OpenGraph via /client/preview, lazy on scroll) ----------
