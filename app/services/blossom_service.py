@@ -321,6 +321,13 @@ _operator_cache = {"ts": 0.0, "set": frozenset()}
 _OPERATOR_TTL = 60.0
 
 
+def invalidate_operator_cache() -> None:
+    """Force the next is_pubkey_allowed() to rescan users+bots. Call right after a bot row is
+    created/deleted so a fresh bot can upload immediately (and a deleted one loses access at once)
+    instead of waiting up to _OPERATOR_TTL — bots are authorized via this set, not the whitelist."""
+    _operator_cache["ts"] = 0.0
+
+
 def _operator_pubkeys(db: Session) -> frozenset:
     """The node's OWN Nostr identities — every linked user's and bot's key (same set the relay
     trusts as operators). These may always upload (it's how the bots post effect media). Cached

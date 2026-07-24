@@ -304,6 +304,14 @@ def create_bot(payload: BotPayload, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(status_code=400, detail=f"A bot named '{payload.name}' already exists")
     db.refresh(bot)
+    # Bot operator key may be new/changed → refresh the Blossom operator auth set so its uploads are
+    # accepted immediately (bots are authorized via the operator set, not the whitelist), rather than
+    # waiting up to the operator-cache TTL.
+    try:
+        from app.services import blossom_service
+        blossom_service.invalidate_operator_cache()
+    except Exception:
+        pass
     from app.services import bots_store
     bots_store.sync_bot_blocking(db, bot)
     bot_manager_service.reconcile_now()
@@ -338,6 +346,14 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(status_code=400, detail="Bot name must be unique")
     db.refresh(bot)
+    # Bot operator key may be new/changed → refresh the Blossom operator auth set so its uploads are
+    # accepted immediately (bots are authorized via the operator set, not the whitelist), rather than
+    # waiting up to the operator-cache TTL.
+    try:
+        from app.services import blossom_service
+        blossom_service.invalidate_operator_cache()
+    except Exception:
+        pass
     from app.services import bots_store
     if old_name != bot.name:
         bots_store.delete_bot_blocking(db, old_name)   # drop the stale relay doc on rename
@@ -360,6 +376,12 @@ def delete_bot(bot_id: int, db: Session = Depends(get_db),
     _cleanup_nostr_identity(db, bot)   # remove its account data BEFORE the row is gone
     db.delete(bot)
     db.commit()
+    # Deleted operator key → drop it from the Blossom operator auth set now, not up to a TTL later.
+    try:
+        from app.services import blossom_service
+        blossom_service.invalidate_operator_cache()
+    except Exception:
+        pass
     from app.services import bots_store
     bots_store.delete_bot_blocking(db, name)
     bot_manager_service.reconcile_now()  # manager stops the now-absent child
