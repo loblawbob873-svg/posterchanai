@@ -3313,7 +3313,11 @@ body.modal-open .mobilenav{display:none}
    inside it, so the preview showed the caption centred while ffmpeg's drawtext anchors the text's LEFT
    EDGE at the same x — the caption you placed centre-bottom rendered hard against the left edge. Hugging
    the content makes the layer's x the real left edge in BOTH, so preview == render. */
-.mb-text{font-weight:800;line-height:1;white-space:pre-wrap;width:max-content;max-width:92%;text-align:center;
+/* Must match ffmpeg's drawtext EXACTLY, or the caption lands somewhere else in the export than where you
+   put it: drawtext never wraps, draws from the layer's x, and left-aligns its lines. So: white-space:pre
+   (no wrapping), no max-width (nothing to wrap against), text-align:left, line-height:1 so the box hugs
+   the glyphs. With these, the preview's top-left IS the rendered text's top-left. */
+.mb-text{font-weight:800;line-height:1;white-space:pre;width:max-content;max-width:none;text-align:left;
   padding:0;margin:0}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;

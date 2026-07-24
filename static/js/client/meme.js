@@ -100,7 +100,7 @@
   // the wrong place': a hand-set x can never survive the browser/ffmpeg font difference, whereas ffmpeg
   // centring with (w-text_w)/2 is exact by construction. `undefined` (a layer made before this existed)
   // counts as centred too, so old projects fix themselves; an explicit '' means the user turned it off.
-  const _alignOf = (l) => (l.align === undefined ? 'center' : l.align);
+  const _alignOf = (l) => (l.align || '');   // '' = obey the x you dragged it to; 'center' = let ffmpeg centre it
 
   const _stageOrder = () => P.layers.filter(l=>l.type!=='text').concat(P.layers.filter(l=>l.type==='text'));
 
@@ -117,7 +117,7 @@
       x: 0, y: 0, w: type==='text' ? 0 : P.w, h: type==='text' ? 0 : Math.round(P.h/2),
       opacity: 1, effect: 'none', volume: 1, mute: false,
       text: type==='text' ? 'top text' : '', size: 64, color:'#ffffff', stroke:'#000000',
-      align: type==='text' ? 'center' : '',
+      align: '',
     }, extra||{});
     if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
