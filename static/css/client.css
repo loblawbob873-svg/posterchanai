@@ -135,6 +135,11 @@
 /* deep-violet hardcoded fills → theme panels (otherwise dark patches hide themed-dark text) */
 :root[data-theme] .input,
 :root[data-theme] textarea{ background:var(--panel2); color:var(--text); }
+/* …except the timeline composer's textarea. It is not a form field sitting on a page, it is the first
+   row of the feed, so it must stay unpainted like the row around it. `.tl-cmp-ta{background:transparent}`
+   further down is only (0,1,0) and lost to the (0,2,0) selector above — which is why every themed palette
+   drew a white/panel2 pill across the top of the timeline while bare-:root cyberpunk looked correct. */
+:root[data-theme] .tl-cmp-ta{ background:transparent; }
 :root[data-theme] .note .av{ background:var(--panel2); }
 :root[data-theme] .note .txt img,
 :root[data-theme] .note .txt video,
@@ -793,7 +798,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    two actions plus a source link. Same box geometry as .tl-cmp so the timeline doesn't shift when you
    sign in and the composer takes its place. */
 .guest-card{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;
-  margin:12px 14px 0;padding:18px 16px;background:transparent;border:0;box-shadow:none}
+  margin:0;padding:18px 20px;background:transparent;border:0;box-shadow:none}
 .guest-logo{width:56px;height:56px;border-radius:14px;object-fit:cover}
 .guest-name{font-size:21px;font-weight:800;letter-spacing:.3px;color:var(--text)}
 .guest-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center}
@@ -803,11 +808,17 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .guest-src{text-decoration:none}
 .guest-src.btn{background:linear-gradient(135deg,#8b5cf6,#b794ff);border:none;color:#fff;box-shadow:0 0 14px rgba(139,92,246,.35)}
 .guest-src.btn:hover{filter:brightness(1.08)}
-@media(max-width:820px){ .guest-card{margin:8px 10px 0;padding:15px 12px} .guest-logo{width:48px;height:48px}
+@media(max-width:820px){ .guest-card{margin:0;padding:15px 14px} .guest-logo{width:48px;height:48px}
   .guest-name{font-size:19px} }
-.tl-cmp{display:flex;gap:11px;align-items:flex-start;margin:12px 14px 0;padding:12px 14px;
-  border:0;border-radius:16px;background:var(--panel)}
-.tl-cmp-av{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
+/* The composer is the FIRST ROW OF THE TIMELINE, not a widget parked above it. It used to be an inset
+   var(--panel) card with rounded corners, which made it the one floating box left on the page (10/255
+   lighter than the canvas on Professional, 12 on Dark) — the seam the rails no longer have. So: no fill,
+   no radius, full-bleed, and the SAME padding/gap/avatar as .note, which puts its textarea on the exact
+   x as every note's text. The responsive padding/gap/avatar values are shared with .note in the
+   breakpoint rules further down rather than duplicated, so the two can't drift apart. */
+.tl-cmp{display:flex;gap:12px;align-items:flex-start;margin:0;padding:15px 20px;
+  border:0;border-radius:0;background:transparent}
+.tl-cmp-av{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 .tl-cmp-body{flex:1;min-width:0}
 .tl-cmp-ta{width:100%;min-height:54px;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);
   resize:none;overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
@@ -893,8 +904,6 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    search field is the only one at that width. */
 @media(min-width:821px){ body.tl-view .topbar{display:none} }
 @media(max-width:820px){
-  .tl-cmp{margin:8px 10px 0;padding:10px 12px;gap:9px}
-  .tl-cmp-av{width:32px;height:32px}
   .tl-cmp-ta{font-size:16px}   /* keep >=16px or iOS Safari zooms the page on focus */
   /* Five icons + Post on ONE row at 360px (the common phone width). Enlarging the buttons earlier pushed
      this to ~294px against 279px available, which silently wrapped Post onto a second row. */
@@ -1752,9 +1761,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .topbar{padding:calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left));gap:8px;background:var(--bg)}
   .topbar h2{font-size:16px;flex-shrink:0}
   .searchbox{margin:0 4px}
-  .note{padding:13px 14px;gap:10px}
+  .note,.tl-cmp{padding:13px 14px;gap:10px}
   .reply-ctx{padding:12px 14px 0}   /* align reply context with the note body on mobile */
-  .note .av{width:40px;height:40px}
+  .note .av,.tl-cmp-av{width:40px;height:40px}
   .acts{max-width:none}
   .prof .phead{padding:0 14px}.prof .pbody{padding:12px 14px}
   /* Phone: the action buttons wrap as one right-aligned group under the avatar and stay compact so
@@ -1781,8 +1790,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Tiny phones (≤359px: SE, Fold cover screen): buy the action row ~16px by tightening the card so a
    post with four big counts still shows them in full instead of eliding to "2…". */
 @media(max-width:359px){
-  .note{padding:12px 10px;gap:8px}
-  .note .av{width:34px;height:34px}
+  .note,.tl-cmp{padding:12px 10px;gap:8px}
+  .note .av,.tl-cmp-av{width:34px;height:34px}
 }
 
 /* ===== More sheet (mobile overflow) — flat icon tiles =====
@@ -2375,8 +2384,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
    the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
 @media (min-width:821px) and (max-width:1920px){
-  .note{padding:12px 18px;gap:11px}
-  .note .av{width:46px;height:46px}
+  .note,.tl-cmp{padding:12px 18px;gap:11px}
+  .note .av,.tl-cmp-av{width:46px;height:46px}
   .note .name,.note .time{font-size:15.5px}
   .note .handle{font-size:14.5px}
   .note .txt{font-size:16.5px;line-height:1.55}
