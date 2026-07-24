@@ -807,6 +807,15 @@ async def client_effects():
     })
 
 
+@router.get("/meme/sounds")
+async def meme_sounds():
+    """Sound effects selectable per LAYER in the Meme Builder — the same catalogue the AI chat uses
+    (curb, fahh, sopranos…), filtered to the ones whose audio file actually exists on this node."""
+    from app.services import meme_builder_service as mb
+    names = [n for n in mb.sound_names() if mb._sound_path(n)]
+    return JSONResponse({"sounds": names})
+
+
 @router.get("/proxy-image")
 async def client_proxy_image(url: str = Query(...)):
     """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's

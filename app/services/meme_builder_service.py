@@ -143,6 +143,46 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
             f"enable='between(t,{start:.3f},{end:.3f})'")
 
 
+
+def sound_names() -> list:
+    """Names of the AI-chat SOUND effects (`curb`, `fahh`, `sopranos`, …), discovered from the
+    effects_service `_<name>_audio_path()` helpers so this list can never drift from what actually
+    resolves to a file."""
+    import re as _re, importlib, pkgutil
+    import app.services.effects_service as _pkg
+    out = []
+    # Scan the SUBMODULES: `from .audio2 import *` does not re-export underscore-prefixed names, so the
+    # helpers are not attributes of the package itself.
+    for mod in pkgutil.iter_modules(_pkg.__path__):
+        try:
+            m = importlib.import_module(f"app.services.effects_service.{mod.name}")
+        except Exception:
+            continue
+        for attr in dir(m):
+            hit = _re.fullmatch(r"_([a-z0-9]+)_audio_path", attr)
+            if hit:
+                out.append(hit.group(1))
+    return sorted(set(out))
+
+
+def _sound_path(name: str) -> str:
+    """Absolute path to a named sound effect's audio file, or "" if it isn't installed."""
+    name = (name or "").strip().lower()
+    if not name or not name.isalnum():
+        return ""
+    try:
+        import importlib, pkgutil
+        import app.services.effects_service as _pkg
+        for mod in pkgutil.iter_modules(_pkg.__path__):
+            m = importlib.import_module(f"app.services.effects_service.{mod.name}")
+            fn = getattr(m, f"_{name}_audio_path", None)
+            if callable(fn):
+                return fn() or ""
+        return ""
+    except Exception:
+        return ""
+
+
 def render(edit: dict, sources: dict) -> bytes:
     """Render the edit list. `sources` maps a layer's `src` key -> local file path (the caller resolves
     and fetches URLs/Blossom hashes, so this stays a pure renderer with no network of its own).
@@ -247,6 +287,17 @@ def render(edit: dict, sources: dict) -> bytes:
                 audio_parts.append(f"[{idx}:a]adelay={int(start*1000)}|{int(start*1000)},"
                                    f"volume={vol:.2f}[a{n}]")
             idx += 1
+
+            # Per-layer SOUND effect (the AI-chat catalogue: curb, fahh, sopranos…). Added as its own input,
+            # trimmed to the layer's window and delayed to its start, then mixed with everything else — so a
+            # different sound can land on each layer instead of one soundtrack for the whole meme.
+            snd = _sound_path(layer.get("sound"))
+            if snd:
+                cmd += ["-t", f"{dur:.3f}", "-i", snd]
+                svol = _num(layer.get("soundVolume"), 0, 4, 1.0)
+                audio_parts.append(f"[{idx}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+                                   f"adelay={int(start*1000)}|{int(start*1000)},volume={svol:.2f}[s{n}]")
+                idx += 1
 
         # Text last so captions sit above every visual layer.
         for tag, filt in textfiles:

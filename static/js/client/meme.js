@@ -42,6 +42,10 @@
   // effects expressible on drawtext itself apply. Offering the rest was a lie — you could pick Blur or
   // Spin on a caption and nothing happened at all.
   const TEXT_FX = new Set(['none','fade']);
+  // Sound effects available per layer (AI-chat catalogue). Fetched once; empty until it resolves, so the
+  // dropdown simply shows 'None' on a node with no sound assets rather than breaking.
+  let SOUNDS = [];
+  fetch('/client/meme/sounds').then(r=>r.json()).then(j=>{ SOUNDS=(j&&j.sounds)||[]; if(document.getElementById('mb-inspector')) repaint('inspector'); }).catch(()=>{});
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -295,6 +299,10 @@
       <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
         ${(l.type==='text' ? FX.filter(([v])=>TEXT_FX.has(v)) : FX)
             .map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
+      </select></label>
+      <label class="mb-f"><span>Meme effect (sound)</span><select class="input" id="mb-f-snd">
+        <option value="">None</option>
+        ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
       </select></label>
       <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
       <div class="mb-order">
@@ -588,7 +596,7 @@
       const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
-          opacity:+l.opacity, effect:l.effect, mute:!!l.mute, volume:+l.volume||1,
+          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', mute:!!l.mute, volume:+l.volume||1,
           text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -666,6 +674,7 @@
     on('mb-f-color','input',(e)=>{ l.color=e.target.value; save(); repaint(); });
     on('mb-f-stroke','input',(e)=>{ l.stroke=e.target.value; save(); repaint(); });
     on('mb-f-fx','change',(e)=>{ l.effect=e.target.value; save(); });
+    on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); toast(l.sound?('sound: '+l.sound):'sound removed'); });
     on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
     on('mb-f-op','input',(e)=>{ l.opacity=clamp(e.target.value,0.05,1); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });
