@@ -239,7 +239,7 @@
           <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
         </div>
-        <button class="btn btn-cyan small full" id="mb-fill">⛶ Fill the canvas</button>
+        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fill" title="Fill the frame — crops the edges to leave no bars">⛶ Fill (crop)</button><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo — may leave bars">⤢ Fit whole</button></div>
         ${l.type==='video' ? `<label class="mb-f"><span>Trim from (s)</span><input class="input" type="number" id="mb-f-trim" min="0" step="0.1" value="${l.trim}"></label>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
       <div class="mb-frow">
@@ -599,8 +599,12 @@
     num('mb-f-w','w',16,4320); num('mb-f-h','h',16,4320);
     // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
     // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
-    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='cover';   // cover, not letterbox
-      save(); render(); toast('layer fills the canvas'); });
+    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='cover';
+      save(); render(); toast('fills the frame — edges cropped'); });
+    // The whole photo, scaled to fit inside the canvas. Can't do both: filling a different aspect ratio
+    // always crops, and showing everything always leaves bars — so make it an explicit choice.
+    on('mb-fit','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='contain';
+      save(); render(); toast('whole photo — bars where the aspect differs'); });
     // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
     // Measure the preview element (it now hugs its text) and convert screen px -> project px.
     on('mb-center','click',()=>{
