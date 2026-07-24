@@ -416,7 +416,12 @@ async def run_remote(task: str, params: dict, settings: Optional[dict] = None,
             if _stop is not None:
                 _stop.set()
                 _watcher.cancel()
-                with contextlib.suppress(Exception):
+                # CancelledError derives from BaseException, NOT Exception — suppress(Exception) let it
+                # escape this finally, past run_remote's own `except Exception` and past _agent_bg's
+                # per-target handler, killing the task before it could deliver the result. The run then
+                # ended with progress streamed, the worker's result received, no timeout and no error
+                # logged, yet nothing persisted. Suppress it explicitly.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await _watcher
         if not res:
             _hint = ("" if task != "agent" else
