@@ -96,6 +96,12 @@
   // order cannot change that. The preview used to draw in raw layer order, so it could show an image
   // covering a caption that the render would put underneath — you'd restack layers forever trying to fix
   // something that was only wrong on screen. Draw media first, then text, so the preview matches the export.
+  // Captions default to CENTRED. Horizontal position was the single biggest source of 'the text is in
+  // the wrong place': a hand-set x can never survive the browser/ffmpeg font difference, whereas ffmpeg
+  // centring with (w-text_w)/2 is exact by construction. `undefined` (a layer made before this existed)
+  // counts as centred too, so old projects fix themselves; an explicit '' means the user turned it off.
+  const _alignOf = (l) => (l.align === undefined ? 'center' : l.align);
+
   const _stageOrder = () => P.layers.filter(l=>l.type!=='text').concat(P.layers.filter(l=>l.type==='text'));
 
   function addLayer(type, src, extra){
@@ -111,6 +117,7 @@
       x: 0, y: 0, w: type==='text' ? 0 : P.w, h: type==='text' ? 0 : Math.round(P.h/2),
       opacity: 1, effect: 'none', volume: 1, mute: false,
       text: type==='text' ? 'top text' : '', size: 64, color:'#ffffff', stroke:'#000000',
+      align: type==='text' ? 'center' : '',
     }, extra||{});
     if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
@@ -176,8 +183,8 @@
     const pos = `left:${(l.x/P.w*100).toFixed(3)}%;top:${(l.y/P.h*100).toFixed(3)}%;`;
     if(l.type==='text'){
       // Centred captions span the full width and centre their text, mirroring drawtext's (w-text_w)/2.
-      const cpos = l.align==='center' ? `left:0;width:100%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;
-      return `<div class="mb-item mb-text${l.align==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.h*100).toFixed(2)}cqh;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
+      const cpos = _alignOf(l)==='center' ? `left:0;width:100%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;
+      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.h*100).toFixed(2)}cqh;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
@@ -545,7 +552,7 @@
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, mute:!!l.mute, volume:+l.volume||1,
-          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:l.align||'' })) };
+          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
@@ -611,8 +618,8 @@
       // Flag it and let ffmpeg centre with (w-text_w)/2. Measuring the preview and computing a pixel x was
       // wrong: the browser wraps the caption at 92% and uses a different font, so the measured width (and
       // therefore x) did not match the single unwrapped line drawtext actually draws.
-      l.align = (l.align==='center') ? '' : 'center';
-      save(); render(); toast(l.align==='center' ? 'caption centred' : 'caption free-positioned');
+      l.align = (_alignOf(l)==='center') ? '' : 'center';
+      save(); render(); toast(_alignOf(l)==='center' ? 'caption centred' : 'caption free-positioned');
     });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     num('mb-f-size','size',8,400);
