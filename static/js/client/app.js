@@ -5725,7 +5725,7 @@
   }
   // User-defined amount presets (Settings → Zaps & tips), stored in the per-user Nostr client-prefs so they
   // follow you across devices. Comma/space separated, positive numbers, capped; fall back to sane defaults.
-  const _ZAP_DEFAULTS=[21,100,500,1000,5000], _XMR_DEFAULTS=[0.001,0.01,0.1,1];
+  const _ZAP_DEFAULTS=[21,100,500,1000,5000], _XMR_DEFAULTS=[0.001,0.01,0.1,1], _BCH_DEFAULTS=[0.001,0.01,0.05,0.1];
   // Parse a preset list. `int` → round to whole sats ≥1 (zaps are integer msats; a 0.5 button would be
   // rejected by _runZap). Empty/garbage → the defaults. Capped so a huge paste can't wall the modal.
   function _parsePresets(s, dflt, int){
@@ -5735,6 +5735,7 @@
   }
   function zapPresets(){ return _parsePresets(ClientSettings.get('zapPresets',''), _ZAP_DEFAULTS, true); }
   function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
+  function bchPresets(){ return _parsePresets(ClientSettings.get('bchPresets',''), _BCH_DEFAULTS); }
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
@@ -5872,7 +5873,7 @@
     modal(`<h3>🟢 Tip ${name} · Bitcoin Cash</h3>
       <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay. Non-custodial: nothing touches this server.</p>
       <div class="row" style="gap:8px;margin:8px 0;align-items:center"><input class="input" id="bch-amt" type="number" min="0" step="0.0001" style="flex:1 1 auto;min-width:0;margin:0" value="${enc(ClientSettings.get('bchLastAmt','')||'')}" placeholder="amount (BCH) — fills your wallet"><a class="btn btn-neon small" id="bch-open" style="flex:0 0 auto;white-space:nowrap" href="${uri('')}">📲 Open wallet</a></div>
-      <div class="xmr-presets" id="bch-presets">${['0.001','0.01','0.05','0.1'].map(a=>`<button class="xmr-preset bch-preset" data-amt="${a}">🟢 ${a}</button>`).join('')}</div>
+      <div class="xmr-presets" id="bch-presets">${bchPresets().map(a=>`<button class="xmr-preset bch-preset" data-amt="${a}">🟢 ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="bch-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="bch-addr">${enc(addr)}</code></div>
       ${GUEST?'':`<details class="xmr-proof"><summary>🔗 Attach the transaction id (optional)</summary>
@@ -5896,7 +5897,7 @@
         { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
-          if(a){ ClientSettings.set('bchLastAmt', a); }
+          if(a){ ClientSettings.set('bchLastAmt', a); _prefTouched.add('bchTip'); saveClientPrefsNostr({ bchTip: a }); }   // remember + sync across devices
           closeModal(); _postBchTipNote(pk, a, addr, txid); }; }
       });
   }
@@ -7364,8 +7365,10 @@
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
+      if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
       if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
       if(!_prefTouched.has('xmrPresets') && pr.xmrPresets!=null) ClientSettings.set('xmrPresets', String(pr.xmrPresets));
+      if(!_prefTouched.has('bchPresets') && pr.bchPresets!=null) ClientSettings.set('bchPresets', String(pr.bchPresets));
       if(!_prefTouched.has('postEffects') && typeof pr.postEffects==='boolean' && pr.postEffects!==_postEffectsOn()){
         ClientSettings.set('postEffects', pr.postEffects);       // celebratory note effects follow across devices
         if(!pr.postEffects) _stopCelebrations();                 // synced to OFF → tear down anything already firing
@@ -11765,6 +11768,7 @@
           <div class="muted small" id="set-nwc-status">${Nwc.configured()?'✓ NWC wallet connected — zaps pay instantly':''}</div>
           <label class="fld">⚡ Zap amounts <span class="muted small">(sats — your one-tap presets)</span><input class="input" id="us-zap-presets" value="${enc(ClientSettings.get('zapPresets','')||_ZAP_DEFAULTS.join(', '))}" placeholder="21, 100, 500, 1000, 5000"></label>
           <label class="fld">ɱ Monero tip amounts <span class="muted small">(XMR — your one-tap presets)</span><input class="input" id="us-xmr-presets" value="${enc(ClientSettings.get('xmrPresets','')||_XMR_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.1, 1"></label>
+          <label class="fld">🟢 Bitcoin Cash tip amounts <span class="muted small">(BCH — your one-tap presets)</span><input class="input" id="us-bch-presets" value="${enc(ClientSettings.get('bchPresets','')||_BCH_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.05, 0.1"></label>
           <div class="muted small">Your one-tap amounts in the ⚡ zap / ɱ Monero tip dialogs. Comma-separated; synced to your other devices.</div>
         </div>
         <div class="us-pane" data-pane="muted">
@@ -11966,7 +11970,7 @@
       if(d && d.key){ await uiPrompt('Your new API key — copy it now, it is shown ONCE:', {value:d.key, ok:'Done', cancel:'Close'}); $('#us-key-name').value=''; usLoadKeys(); } else toast('create failed'); };   // in-app (not native alert — see feedback_no_native_dialogs)
     // Presets are only persisted on Save if the user actually edited them (else an unrelated Save clobbers).
     let _presetsEdited=false;
-    { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; }
+    { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'), bi=$('#us-bch-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; if(bi) bi.oninput=()=>_presetsEdited=true; }
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
       // Amount presets are CLIENT prefs (not account columns): only touch them if the user actually EDITED
@@ -11977,11 +11981,13 @@
       if(_presetsEdited){
         const zp=_parsePresets(($('#us-zap-presets')||{}).value, _ZAP_DEFAULTS, true);
         const xp=_parsePresets(($('#us-xmr-presets')||{}).value, _XMR_DEFAULTS);
+        const bp=_parsePresets(($('#us-bch-presets')||{}).value, _BCH_DEFAULTS);
         const zpStr = zp.join(',')===_ZAP_DEFAULTS.join(',') ? '' : zp.join(', ');
         const xpStr = xp.join(',')===_XMR_DEFAULTS.join(',') ? '' : xp.join(', ');
-        ClientSettings.set('zapPresets', zpStr); ClientSettings.set('xmrPresets', xpStr);
-        _prefTouched.add('zapPresets'); _prefTouched.add('xmrPresets');
-        await saveClientPrefsNostr({ zapPresets: zpStr, xmrPresets: xpStr });
+        const bpStr = bp.join(',')===_BCH_DEFAULTS.join(',') ? '' : bp.join(', ');
+        ClientSettings.set('zapPresets', zpStr); ClientSettings.set('xmrPresets', xpStr); ClientSettings.set('bchPresets', bpStr);
+        _prefTouched.add('zapPresets'); _prefTouched.add('xmrPresets'); _prefTouched.add('bchPresets');
+        await saveClientPrefsNostr({ zapPresets: zpStr, xmrPresets: xpStr, bchPresets: bpStr });
       }
       const body={ notification_email:$('#us-email').value.trim(), news_sources:$('#us-news-src').value,
         telegram_notifications:$('#us-tg-notif').value.trim(), social_notif_enabled:$('#us-social-notif').checked,
