@@ -137,6 +137,7 @@
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
+        <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
         </select>
@@ -458,14 +459,10 @@
             l.start=ost; l.dur=odur;  // undo any sub-pixel drift so the clip cannot creep
             repaint('timeline'); repaint('inspector'); syncScrub(); return;
           }
-          if(side) resequence();
-          else {
-            const others = mediaSeq().filter(x=>x!==l);
-            const seq = others.slice();
-            seq.splice(dropIndex(others, (+l.start||0) + (+l.dur||0)/2), 0, l);
-            resequence(seq);
-          }
-          save(); render(); syncScrub(); return;   // full redraw so the reflowed clips paint in their new order
+          // Move ONLY the clip you dragged. Auto-resequencing every other clip on each drop meant nudging
+          // one layer silently rewrote the timing of everything after it — you could never adjust a single
+          // clip without disturbing the rest. Laying clips back-to-back is now an explicit action (⇄ Arrange).
+          save(); repaint('timeline'); repaint('inspector'); syncScrub(); return;
         }
         save(); repaint('inspector'); syncScrub();
       });
@@ -640,6 +637,9 @@
     on('mb-add-blossom','click',pickBlossom);
     on('mb-save','click',saveProject);
     on('mb-open','click',openProject);
+    // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
+    // automatically on every drop, which made adjusting one clip rewrite the whole timeline.
+    on('mb-arrange','click',()=>{ resequence(); save(); render(); toast('clips laid back-to-back'); });
     on('mb-render','click',doRender);
     on('mb-play','click',togglePlay);
     on('mb-scrub','input',(e)=>seek(+e.target.value));
