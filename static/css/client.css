@@ -3313,7 +3313,8 @@ body.modal-open .mobilenav{display:none}
    inside it, so the preview showed the caption centred while ffmpeg's drawtext anchors the text's LEFT
    EDGE at the same x — the caption you placed centre-bottom rendered hard against the left edge. Hugging
    the content makes the layer's x the real left edge in BOTH, so preview == render. */
-.mb-text{font-weight:800;line-height:1.1;white-space:pre-wrap;width:max-content;max-width:92%;text-align:center}
+.mb-text{font-weight:800;line-height:1;white-space:pre-wrap;width:max-content;max-width:92%;text-align:center;
+  padding:0;margin:0}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}
