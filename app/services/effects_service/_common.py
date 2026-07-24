@@ -458,8 +458,11 @@ _CHARACTERS = {
     "cow": "cow.png", "moo": "cow.png",
     "boobs": "boobs.png", "boob": "boobs.png", "tits": "boobs.png",
     "panties": "panties.png", "panty": "panties.png",
+    # Drop-in slot for the `theraped` pointing-up pose. Kept SEPARATE from animegirl so
+    # replacing it can never change what `char animegirl` overlays.
+    "theraped": "theraped.png", "pointup": "theraped.png", "pointing": "theraped.png",
 }
-CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties"]
+CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
