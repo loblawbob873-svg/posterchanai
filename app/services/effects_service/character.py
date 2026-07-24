@@ -200,9 +200,16 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     top_size = max(int(H / (11 if beside else 10)), 13)
     band_h = (H - char_top) if beside else min(max(int(H * 0.10), char_top - margin), int(H * 0.30))
 
+    # A caption must never be broken MID-WORD. _wrap_text_to_width hard-breaks a word that cannot fit,
+    # so in a narrow gutter "WOULD" came out as "WOUL"/"D" — and the size loop accepted it, because the
+    # broken result does technically fit. Require every WORD to fit on its own line and keep shrinking
+    # until one does; wrapping between words is still fine for longer captions.
+    words = text.split() or [text]
     chosen = None
     for size in range(top_size, 10, -1):
         font = _load_meme_font(size)
+        if max(draw.textlength(w, font=font) for w in words) > max_width:
+            continue                                   # some word would be hyphen-less chopped — go smaller
         lines = _wrap_text_to_width(draw, text, font, max_width)
         stroke = max(1, size // 14)
         bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font,
