@@ -3407,7 +3407,17 @@ body.modal-open .mobilenav{display:none}
   /* The lane keeps a usable width and the ROW scrolls, instead of clip bars collapsing to slivers. */
   .mb-timeline{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .mb-track{min-width:520px}
-  .mb-trackname{flex-basis:96px;font-size:12px}
+  /* The name column now carries a THUMBNAIL plus the z-order buttons, which do not fit the old 96px.
+     Give it a little more room and shrink both, so the row still reads at a glance on a phone. */
+  .mb-trackname{flex-basis:104px;font-size:12px;gap:4px}
+  .mb-tthumb{width:42px;height:30px;border-radius:6px}
+  .mb-tvid{left:15px;font-size:10px}
+  .mb-z{width:20px;height:14px;font-size:10px}
+  /* Inspector: full-width controls and finger-sized rows rather than desktop two-ups squeezed to slivers. */
+  .mb-frow{flex-wrap:wrap}
+  .mb-frow .btn{flex:1 1 46%}
+  .mb-f input[type=range]{height:28px}
+  .mb-dbg{word-break:break-word}
   .mb-lane{height:40px}                           /* taller = easier to grab with a thumb */
   .mb-grip{width:18px}
   .mb-h{width:22px;height:22px;right:-11px;bottom:-11px}
