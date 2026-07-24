@@ -709,4 +709,13 @@ async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent
         return "⚠️ no response over Nostr (worker offline, not trusting this controller, or timed out)"
     if out.get("error"):
         return f"⚠️ {out['error']}"
+    # Field order is MODE-dependent. For agent/claude the worker's `summary` IS the report, so it wins.
+    # For `shell` the summary is only the status line (`exit 0`) and the command's text lives in `output`
+    # — taking summary first there returned a bare "exit 0" and silently dropped the whole result (the
+    # health board and the uptime header of every shell-only worker showed nothing else).
+    if mode == "shell":
+        body = (out.get("output") or "").strip()
+        code = out.get("exit")
+        if body:
+            return body if code in (0, None) else f"{body}\n[exit {code}]"
     return (out.get("summary") or out.get("output") or "").strip()

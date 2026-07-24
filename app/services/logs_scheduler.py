@@ -11,6 +11,7 @@ All command execution, SSH, per-command timeouts, job logging and live streaming
 Agentic Node Management config (Admin → Services); ``logs_nodes`` optionally narrows it.
 """
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -119,7 +120,11 @@ async def _node_uptime(db, admin, name: str, target: str) -> str:
             job = await node_service.run_to_completion(db, name, target, cmd, user_id=admin.id, timeout=20)
             out = (job.output or "").strip().splitlines()
         line = out[0].strip() if out else ""
-        return line[:80] if line and not line.startswith("⚠️") else ""
+        # "⚠️ …" (transport failure) and a bare "exit N" (command produced no output) are status, not an
+        # uptime — showing either as the header's ⏱️ line is worse than omitting it.
+        if not line or line.startswith("⚠️") or re.fullmatch(r"exit -?\d+", line):
+            return ""
+        return line[:80]
     except Exception as e:
         logger.warning(f"uptime fetch failed for {name}: {e}")
         return ""
