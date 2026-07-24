@@ -21,9 +21,13 @@ setup_sandbox() {
     echo -e "${BOLD:-}🐳 Setting up the per-user Debian sandbox (Docker)${NC:-}"
     echo ""
 
-    local svc_user image
+    local svc_user image repo_root dockerfile
     svc_user="${SUDO_USER:-$(whoami)}"
-    image="${SANDBOX_IMAGE:-python:3.12-slim}"
+    # Default is the locally-BUILT image (Dockerfile.sandbox). Override with SANDBOX_IMAGE=<registry image>
+    # to skip the build and just pull a plain image instead.
+    image="${SANDBOX_IMAGE:-posterchanai-sandbox:1}"
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    dockerfile="$repo_root/Dockerfile.sandbox"
 
     # 1) Docker present?
     if ! command -v docker >/dev/null 2>&1; then
@@ -59,12 +63,24 @@ setup_sandbox() {
         print_warning "No 'docker' group found — is Docker fully installed?"
     fi
 
-    # 4) Base image
-    echo "   Pulling the sandbox base image ($image)…"
-    if sudo docker pull "$image" >/dev/null 2>&1 || docker pull "$image" >/dev/null 2>&1; then
-        print_success "Pulled $image"
+    # 4) Sandbox image. The default is BUILT from Dockerfile.sandbox (adds bech32 etc.); a custom
+    # SANDBOX_IMAGE that is a registry reference is pulled instead. `docker` may need sudo until the
+    # group membership from step 3 takes effect on the next login, so try both.
+    _dock() { sudo docker "$@" 2>&1 || docker "$@" 2>&1; }
+    if [ "$image" = "posterchanai-sandbox:1" ] && [ -f "$dockerfile" ]; then
+        echo "   Building the sandbox image ($image) from Dockerfile.sandbox…"
+        if _dock build -t "$image" -f "$dockerfile" "$repo_root" >/dev/null; then
+            print_success "Built $image"
+        else
+            print_warning "Build failed now — the app self-builds it on first sandbox use, or run: docker build -t $image -f $dockerfile $repo_root"
+        fi
     else
-        print_warning "Could not pull $image now — it will be pulled lazily on first use if the daemon can reach a registry"
+        echo "   Pulling the sandbox image ($image)…"
+        if _dock pull "$image" >/dev/null; then
+            print_success "Pulled $image"
+        else
+            print_warning "Could not pull $image now — it will be pulled lazily on first use if the daemon can reach a registry"
+        fi
     fi
 
     echo ""

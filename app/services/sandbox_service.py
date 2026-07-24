@@ -15,6 +15,7 @@ process argv differs (`docker exec` vs a host shell), so streaming / timeout / k
 """
 import asyncio
 import logging
+import os
 import time
 from typing import Optional
 
@@ -61,8 +62,56 @@ def agent_node_name() -> str:
     return _s("node_exec_agent_node", "").strip()
 
 
+# The default sandbox image is now BUILT from Dockerfile.sandbox (python:3.12-slim + bech32/coincurve/
+# websockets/requests), not a bare registry image. Bump this tag whenever Dockerfile.sandbox changes so a
+# node rebuilds instead of reusing a stale layer. A registry image name in the setting still works — this
+# is only the default.
+_DEFAULT_IMAGE = "posterchanai-sandbox:1"
+
+
 def _image() -> str:
-    return _s("node_exec_sandbox_image", "python:3.12-slim").strip() or "python:3.12-slim"
+    return _s("node_exec_sandbox_image", _DEFAULT_IMAGE).strip() or _DEFAULT_IMAGE
+
+
+def _is_builtin_image(name: str) -> bool:
+    """Our locally-BUILT image (vs a registry image the daemon can pull). Only this one is auto-built."""
+    return name.split(":", 1)[0] == _DEFAULT_IMAGE.split(":", 1)[0]
+
+
+def _dockerfile_path() -> str:
+    # sandbox_service.py -> app/services/ -> app/ -> repo root, where Dockerfile.sandbox ships.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root, "Dockerfile.sandbox")
+
+
+async def _image_present(name: str) -> bool:
+    rc, _ = await _docker("image", "inspect", name, timeout=15)
+    return rc == 0
+
+
+async def _ensure_image() -> None:
+    """Build the built-in sandbox image from Dockerfile.sandbox if it isn't present yet. Unlike a
+    registry image, a locally-built one can't be lazily PULLED — so without this a node that skipped the
+    installer's build step would hard-fail every sandbox run. A registry image (custom setting) is left
+    to `docker run` to pull. Serialized so two concurrent first-runs don't build twice."""
+    name = _image()
+    if not _is_builtin_image(name) or await _image_present(name):
+        return
+    dockerfile = _dockerfile_path()
+    if not os.path.exists(dockerfile):
+        logger.warning("[sandbox] %s missing and Dockerfile.sandbox not found at %s — sandbox will fail",
+                       name, dockerfile)
+        return
+    async with _lock_for("__image_build__"):
+        if await _image_present(name):          # another task built it while we waited on the lock
+            return
+        logger.info("[sandbox] building %s from %s (first use)…", name, dockerfile)
+        rc, out = await _docker("build", "-t", name, "-f", dockerfile,
+                                os.path.dirname(dockerfile), timeout=600)
+        if rc != 0:
+            logger.warning("[sandbox] build of %s failed: %s", name, out.strip()[:400])
+        else:
+            logger.info("[sandbox] built %s", name)
 
 
 def _network() -> str:
@@ -140,6 +189,7 @@ async def ensure(uid) -> str:
             if await _exists(name):
                 await _docker("start", name, timeout=30)
             else:
+                await _ensure_image()   # build the built-in image on first use if a node lacks it
                 rc, out = await _docker(
                     "run", "-d", "--name", name, "--hostname", "sandbox",
                     "--memory", _mem(), "--cpus", _cpus(), "--pids-limit", "256",

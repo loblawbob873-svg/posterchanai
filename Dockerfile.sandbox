@@ -1,0 +1,21 @@
+# Per-user agent sandbox image (app/services/sandbox_service.py).
+#
+# Plain python:3.12-slim PLUS the handful of packages agent runs kept installing by hand every time —
+# most importantly `bech32`, whose ABSENCE was the recurring failure: the model correctly diagnosed that
+# an nsec is Bech32-encoded but kept feeding it straight to a hex parser instead of running
+# `pip install bech32` itself. Pre-installing it puts the decode library in front of the model.
+#
+# Kept deliberately lean — Debian underneath, so `apt-get`/`pip install` still work for anything else a
+# task needs at runtime. To add a package: add it here and bump the tag in sandbox_service._image().
+FROM python:3.12-slim
+
+# --no-cache-dir keeps the image small; one layer so a rebuild is a single cached step.
+RUN pip install --no-cache-dir \
+        bech32 \
+        coincurve \
+        websockets \
+        requests
+
+# The app runs `docker run <image> sleep infinity` then `docker exec ... bash -lc`, so bash must exist
+# (python:3.12-slim ships it) and the default command is irrelevant — the container is kept alive by the
+# app, not by this. Left as the base image's default.

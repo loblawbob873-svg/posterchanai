@@ -315,11 +315,11 @@ class SettingsResponse(BaseModel):
     # in the `docker` group. Off by default.
     node_exec_sandbox_enabled: str = "false"
     node_exec_agent_node: str = ""  # pin ALL sandbox/agentic runs to ONE node (a node name from Agentic Node Management); empty = run on this host. Funnels agentic GPU work through a single worker, serialized by its 1-at-a-time agent lock.
-    # python:3.12-slim, not debian:stable-slim: the agent spent its first TWO steps on
-    # `apt-get update && apt-get install python3 python3-pip` on every single run before it could
-    # start the actual task. Shipping an interpreter reclaims those steps (and the apt mirror
-    # round-trip) for real work. Still Debian underneath, so apt-get is there when it is needed.
-    node_exec_sandbox_image: str = "python:3.12-slim"  # base image for the per-user container
+    # posterchanai-sandbox:1 is BUILT from Dockerfile.sandbox (python:3.12-slim + bech32/coincurve/
+    # websockets/requests). python:3.12-slim already saved the apt-get-python steps; baking in bech32
+    # then removed the recurring nsec-decode failure — the model diagnosed it needed bech32 but would not
+    # `pip install` it. Built by install.sh --sandbox and self-built on first use (sandbox_service).
+    node_exec_sandbox_image: str = "posterchanai-sandbox:1"  # per-user container image (built locally)
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
     node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)
     node_exec_sandbox_cpus: str = "1"          # per-container CPU cap (docker --cpus)
