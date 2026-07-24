@@ -128,9 +128,19 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     from app.services.effects_service._common import _meme_font_path
     font = _meme_font_path()
     fontfile = f"fontfile='{font}':" if font else ""
+    end = start + dur
+    # Effects on a TEXT layer used to be silently dropped: text is drawn with drawtext onto the composite,
+    # so it never passes through _fx_chain the way media streams do — you could choose "Fade" on a caption
+    # and nothing happened. Fade IS expressible as drawtext's own alpha ramp, so honour it here.
+    alpha = ""
+    if (layer.get("effect") or "").strip().lower() == "fade":
+        f = min(0.5, max(0.15, dur / 6))
+        alpha = (f":alpha='if(lt(t,{start:.3f}),0,"
+                 f"if(lt(t,{start + f:.3f}),(t-{start:.3f})/{f:.3f},"
+                 f"if(lt(t,{end - f:.3f}),1,max(0,({end:.3f}-t)/{f:.3f}))))'")
     return (f"drawtext={fontfile}textfile='{{TEXTFILE}}':fontsize={size}:fontcolor={colour}:"
-            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y}:"
-            f"enable='between(t,{start:.3f},{start+dur:.3f})'")
+            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y}{alpha}:"
+            f"enable='between(t,{start:.3f},{end:.3f})'")
 
 
 def render(edit: dict, sources: dict) -> bytes:

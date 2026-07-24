@@ -38,6 +38,10 @@
     ['pulse','Pulse'], ['spin','Spin'], ['glow','Glow'], ['blur','Blur'],
     ['grayscale','Grayscale'], ['sepia','Sepia'], ['invert','Invert'], ['flip','Mirror'],
   ];
+  // Captions are drawn with drawtext straight onto the composite, not as their own video stream, so only
+  // effects expressible on drawtext itself apply. Offering the rest was a lie — you could pick Blur or
+  // Spin on a caption and nothing happened at all.
+  const TEXT_FX = new Set(['none','fade']);
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -289,7 +293,8 @@
         <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
       </div>
       <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
-        ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
+        ${(l.type==='text' ? FX.filter(([v])=>TEXT_FX.has(v)) : FX)
+            .map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
       </select></label>
       <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
       <div class="mb-order">
