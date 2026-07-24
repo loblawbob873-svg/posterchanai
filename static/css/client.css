@@ -1112,7 +1112,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note .time:hover{color:var(--cyan)}
 .note .pin-badge{font-size:14px;filter:drop-shadow(0 0 5px rgba(0,240,255,.6))}   /* marks YOUR pinned posts */
 .note .txt{margin:6px 0;line-height:1.62;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:18.5px;
-  color:#eceefb;font-weight:500;letter-spacing:.2px}
+  color:#eceefb;font-weight:500;letter-spacing:.2px;
+  /* Zalgo guard: stacked combining marks overflow the line box vertically and, without this, bleed OUT
+   * of the note to corrupt the posts above/below it in the feed. Clip paint to the text box (a small
+   * margin keeps legit descenders/emoji) so a zalgo bomb stays inside its own note. */
+  overflow:clip;overflow-clip-margin:.5em}
 /* Wall-of-text guard: clamp long posts (noteCard adds .clamp) and fade the bottom; the "Show more"
  * button toggles .clamp off to reveal the rest. Keeps the feed scannable when people post essays. */
 .note .txt.clamp{max-height:15em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 72%,transparent);mask-image:linear-gradient(180deg,#000 72%,transparent)}
@@ -1194,7 +1198,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .quoted .qav{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:none;border:1px solid var(--line)}
 .quoted .hd .name{font-weight:700;color:var(--text)}
 .quoted .hd .handle,.quoted .hd .time{color:var(--muted);font-size:13px}
-.quoted .txt{font-size:16px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}   /* was missing both: newlines collapsed and a long npub/URL blew out the card */
+.quoted .txt{font-size:16px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:clip;overflow-clip-margin:.5em}   /* was missing both: newlines collapsed and a long npub/URL blew out the card; overflow:clip = zalgo guard (see .note .txt) */
 .quoted .txt img,.quoted .txt video{max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}
 .modal .quoted{max-height:46vh;overflow:auto}
