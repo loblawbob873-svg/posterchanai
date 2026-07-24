@@ -7600,6 +7600,29 @@
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ const x=(tags.find(t=>t[0]==='x')||[])[1]; _MEDIA_META.set(url,{ m:t, x:x||undefined, dim:await _mediaDim(file) }); } }catch(_){}
     return url;
   }
+  // ONE signature for a whole multi-file upload. Every Blossom upload needs a signed kind-24242 auth, and
+  // with an external signer (Amber/NIP-55, or an extension) each signature is an interactive prompt — so
+  // dropping 6 clips meant 6 prompts and felt like "uploading is super slow". BUD-01 lets one auth commit to
+  // MANY blobs via repeated `x` tags, and our server checks membership (`sha256 in xs`), so we can pre-hash
+  // the batch and sign once. Set for the duration of a batch, always cleared in a finally.
+  let _uploadBatchAuth = null;   // { ev, hashes:Set<string> }
+  async function _signUploadBatch(files){
+    try{
+      const hashes=[];
+      const prepped=[];
+      for(const f of files){
+        const c=await compressImage(f);            // hash what we will ACTUALLY send
+        const buf=await c.arrayBuffer();
+        hashes.push(await sha256hex(buf)); prepped.push(c);
+      }
+      if(hashes.length<2) return null;             // a single file gains nothing — skip the extra work
+      const tags=[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]];
+      hashes.forEach(h=>tags.push(['x',h]));
+      const ev=await sign(24242,'Upload '+hashes.length+' files',tags);
+      _uploadBatchAuth={ ev, hashes:new Set(hashes) };
+      return prepped;                              // upload the SAME bytes we hashed
+    }catch(_){ _uploadBatchAuth=null; return null; }
+  }
   async function uploadBlob(file, opts){
     // Resolve built-in Blossom permission before routing, so a brand-new user's FIRST upload (right
     // after login, before the async check resolves) still diverts to nostr.build instead of 403ing
@@ -7613,7 +7636,13 @@
     file=await compressImage(file);   // auto-compress images (no-op for video/gif/already-small)
     if(tgt.proto==='nip96') return await uploadNip96(file, server);
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
-    const auth=await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+    // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
+    // and the server checks membership). That turns "sign once per file" into ONE signature for the whole
+    // batch — the difference between one Amber prompt and one per clip. If the hash isn't covered (e.g.
+    // compressImage changed the bytes after the batch was signed) we fall back to signing this file alone,
+    // so a mismatch costs an extra prompt instead of failing the upload.
+    const auth=(_uploadBatchAuth && _uploadBatchAuth.hashes.has(hash)) ? _uploadBatchAuth.ev
+      : await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
     if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
     let res;
@@ -8301,6 +8330,12 @@
     if(q) q.innerHTML = big ? `<div class="up-summary" id="up-sum">Preparing ${files.length} files…</div>`
       : files.map((f,i)=>`<div class="up-item"><span class="up-name">${enc(f.name)}</span><span class="up-stat" id="up-stat-${i}">queued</span></div>`).join('');
     FilesIdx.beginBatch();   // collapse the index save (a 2000-file import must NOT re-save the index per file)
+    // Pre-sign the whole batch: ONE signer prompt instead of one per file (see _signUploadBatch). Encrypted
+    // folders are skipped — their bytes are produced per file during the upload, so their hashes aren't
+    // knowable up front. Best-effort: on any failure we simply fall back to per-file signing.
+    let _batchPrepped=null;
+    if(!encFolder && files.length>1){ try{ _batchPrepped=await _signUploadBatch(files); }catch(_){ _batchPrepped=null; } }
+    if(_batchPrepped && _batchPrepped.length===files.length) files=_batchPrepped;   // upload the exact bytes we hashed
     let done=0, ok=0, skip=0, fail=0;
     for(let i=0;i<files.length;i++){
       if(_uploadCancel) break;
@@ -8328,6 +8363,7 @@
       if(big){ const s=$('#up-sum'); if(s) s.textContent='Uploading… '+prog; }
     }
     await FilesIdx.endBatch();
+    _uploadBatchAuth=null;   // the batch auth never outlives its batch (it commits only to THESE hashes)
     const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`;
     _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
     if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=summary; }
