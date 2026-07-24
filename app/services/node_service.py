@@ -18,6 +18,7 @@ Config lives in admin Settings:
 import asyncio
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -137,6 +138,32 @@ def _max_steps(db: Session) -> int:
 # Small models degenerate into re-running the same failing command; re-executing wastes steps and
 # feeds back the same output it's already looping on, so we nudge instead and bail if it persists.
 _MAX_REPEAT_NUDGES = 5
+
+# Same-ACTION (not same-string) loop control. The exact-match breaker above only fires on a byte-identical
+# command, so it is blind to the way models actually spin: rewriting the same file, or re-running the same
+# one-liner, with the body tweaked each time. A real run burned 20 steps re-writing one script through
+# coincurve -> nostr_sdk -> manual bech32 without the breaker ever firing, because no two attempts were
+# byte-identical. Raising _MAX_REPEAT_NUDGES could never have caught that — the counter was never
+# incrementing. So we compare a SIGNATURE (the command with quoted/heredoc bodies stripped) instead.
+_SIG_WARN = 3    # nth attempt at the same action → tell the model plainly that it is going in circles
+_SIG_MAX = 6     # nth → stop; it is not converging and the remaining steps are wasted GPU
+
+
+def _cmd_signature(cmd: str) -> str:
+    """Collapse a command to the ACTION it performs, dropping the payload that varies between attempts.
+
+    `cat > /app/x.py << 'EOF' <200 lines>`  ->  `cat > /app/x.py`
+    `cd /v && python3 -c "<any code>"`      ->  `cd /v && python3 -c ""`
+
+    so N rewrites of the same file, or N runs of the same inline script, share one signature while
+    genuinely different commands keep distinct ones."""
+    s = (cmd or "").strip()
+    cut = s.find("<<")                      # heredoc: everything from the operator on is the body
+    if cut > 0:
+        s = s[:cut]
+    s = re.sub(r'"(?:[^"\\]|\\.)*"', '""', s)     # quoted payloads -> empty, keeping the flag shape
+    s = re.sub(r"'(?:[^'\\]|\\.)*'", "''", s)
+    return re.sub(r"\s+", " ", s).strip()[:160]
 
 
 # Sentinel: start_job/run_to_completion fall back to the global job timeout when no override given.
@@ -483,6 +510,8 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
     cmd_outputs: dict[str, str] = {}   # command -> its last output, to detect/short-circuit repeats
     repeat_nudges = 0          # consecutive "you already ran this" nudges (reset by a fresh command)
+    sig_counts: dict = {}      # command signature -> times attempted (see _cmd_signature): catches a model
+                               # re-doing the same ACTION with a tweaked body, which repeat_nudges misses
     last_job_id = None
 
     async def _say(text: str):
@@ -582,6 +611,19 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                                                  "Re-running it will not change anything. Try a DIFFERENT "
                                                  "command, or call finish if you are stuck or done.")})
                     continue
+                # Same-ACTION loop breaker. Counted BEFORE running: at _SIG_MAX the model has had several
+                # explicit warnings and is still circling, so the remaining steps would just burn GPU on
+                # an approach that is not converging.
+                _sig = _cmd_signature(cmd)
+                sig_counts[_sig] = sig_counts.get(_sig, 0) + 1
+                _tries = sig_counts[_sig]
+                if _tries >= _SIG_MAX:
+                    _msg = (f"the agent kept retrying the same approach (`{_sig}`) {_tries}× "
+                            "without converging.")
+                    if report_mode:
+                        return f"⏹️ {_msg}"
+                    transcript.append(f"\n**⏹️ Stopped:** {_msg}{_footer()}")
+                    return "\n".join(transcript)
                 # Bounded per-step: an unbounded command would deadlock the agent + caller.
                 job = await run_to_completion(db, node, target, cmd, user_id=user.id,
                                               timeout=_agent_step_timeout(db))
@@ -602,8 +644,17 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 # Tell the model explicitly when a command was killed for running too long, so it
                 # can adapt (e.g. add a count/limit, background it, or finish) instead of retrying.
                 _status = " [killed: timed out]" if job.status == "killed" or "timeout]" in out else ""
+                # Circling warning: name the repetition explicitly. A model that has rewritten the same
+                # file three times usually cannot see the pattern from the transcript alone, and a vague
+                # "try something else" is easy to ignore — so say what is being repeated and how often.
+                _warn = ""
+                if _tries >= _SIG_WARN:
+                    _warn = (f"\n\n[!] You have now attempted `{_sig}` {_tries} times. This approach is "
+                             "not working. Do something MATERIALLY different (a different tool, library "
+                             "or strategy), or call finish and report what blocked you. "
+                             f"This run stops after {_SIG_MAX} attempts at the same thing.")
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
-                                 "content": f"exit {job.exit_code}{_status}\n{tail(out, 4000)}"})
+                                 "content": f"exit {job.exit_code}{_status}\n{tail(out, 4000)}{_warn}"})
             else:
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"(unknown tool: {name})"})

@@ -11,7 +11,7 @@ All command execution, SSH, per-command timeouts, job logging and live streaming
 Agentic Node Management config (Admin → Services); ``logs_nodes`` optionally narrows it.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -155,6 +155,83 @@ def get_logs_settings(db=None) -> dict:
     return settings
 
 
+# Per-node run state for the report: {"ok": <unix ts of last SUCCESSFUL report>, "attempt": <unix ts of
+# last attempt>}. The `_last_runs` suffix deliberately makes this key node-LOCAL (settings_store
+# _RUNTIME_SUFFIXES): each node keeps its own schedule position, and hydrating a peer's copy off the
+# relay would make one node think another's report was its own.
+_RUN_STATE_KEY = "logs_report_last_runs"
+_CATCHUP_MAX_AGE = 24 * 3600   # don't resurrect a report older than a day — it'd describe a stale system
+_CATCHUP_RETRY_GAP = 1800      # min seconds between attempts, so a crash-restart loop can't hammer it
+_CATCHUP_DELAY = 120           # let the relay/LLM finish coming up before a catch-up run
+
+
+def _run_state() -> dict:
+    import json as _json
+    try:
+        return _json.loads(settings_store.get(_RUN_STATE_KEY, "") or "{}")
+    except Exception:
+        return {}
+
+
+def _mark_run(field: str) -> None:
+    """Stamp 'attempt' (run started) or 'ok' (report delivered). Best-effort: losing a stamp costs at
+    worst one duplicate report, whereas raising here would abort a report that otherwise succeeded."""
+    import json as _json
+    try:
+        st = _run_state()
+        st[field] = int(datetime.now().timestamp())
+        settings_store.put(_RUN_STATE_KEY, _json.dumps(st))
+    except Exception as e:
+        logger.debug("could not stamp report run state (%s): %s", field, e)
+
+
+def _missed_slot(schedule: str) -> Optional[datetime]:
+    """The most recent scheduled slot that has already passed, or None if the schedule is unusable.
+
+    Exists because the report takes ~5 minutes to build and a service restart inside that window
+    killed it silently, with no retry — an 18:00 report was lost exactly this way, and nothing noticed
+    until a human asked where it went. Comparing this against the last SUCCESSFUL run tells us at
+    startup whether we owe one."""
+    try:
+        hours = sorted({int(h) for h in str(schedule).split(",") if h.strip().isdigit()})
+    except Exception:
+        return None
+    if not hours:
+        return None
+    now = datetime.now()
+    today = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in hours]
+    passed = [t for t in today if t <= now]
+    if passed:
+        return passed[-1]
+    # Nothing today yet (e.g. 00:30 with slots 1,12,18) → the last slot of YESTERDAY is the one due.
+    return today[-1] - timedelta(days=1)
+
+
+def _owed_report(schedule: str) -> bool:
+    """True when a scheduled report was missed and is still worth running now."""
+    slot = _missed_slot(schedule)
+    if slot is None:
+        return False
+    slot_ts = int(slot.timestamp())
+    now_ts = int(datetime.now().timestamp())
+    if now_ts - slot_ts > _CATCHUP_MAX_AGE:
+        return False                                  # too old to be a useful picture of the system
+    st = _run_state()
+    if int(st.get("ok") or 0) >= slot_ts:
+        return False                                  # that slot already produced a report
+    if now_ts - int(st.get("attempt") or 0) < _CATCHUP_RETRY_GAP:
+        return False                                  # just tried; don't hammer on a restart loop
+    return True
+
+
+async def _catchup_run():
+    """One-shot catch-up for a scheduled report that a restart interrupted."""
+    if not settings_store.get_bool("logs_scheduler_enabled"):
+        return
+    logger.info("Health report: running CATCH-UP for a missed/interrupted scheduled run")
+    await run_logs_for_admin()
+
+
 def selected_nodes(db) -> dict:
     """Return {name: target} for the nodes to include in the report. Nostr-only: the shared
     `node_service.all_nodes` registry — synthetic ``local`` (this host, direct) + the npub workers
@@ -274,6 +351,10 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
             return None
 
         logger.info("Building agentic system health report...")
+        # Stamp the ATTEMPT before the multi-minute build: if a restart (or a crash) kills us partway,
+        # the startup catch-up sees an attempt with no matching success and knows a report is owed —
+        # while the gap check stops a restart loop from rebuilding it over and over.
+        _mark_run("attempt")
         message_text = await build_health_report(db, admin, notify=notify)
 
         # build_health_report's per-node agent diagnostics can run for minutes, idling THIS transaction
@@ -324,6 +405,9 @@ async def run_logs_for_admin(return_text: bool = False, notify=None,
             except Exception as tg_err:
                 logger.error(f"Failed to send health report to Telegram: {tg_err}")
 
+        # Delivered (it's in the Logs conversation; a failed Telegram push is caught above and doesn't
+        # un-deliver it). Stamping success here is what stops the next startup from filing a duplicate.
+        _mark_run("ok")
         return message_text if return_text else None
 
     except Exception as e:
@@ -372,6 +456,21 @@ def start_logs_scheduler():
         name="System Health Report",
         replace_existing=True,
     )
+    # Catch-up: a report that a restart interrupted (or that this node was down for) is re-run shortly
+    # after startup instead of being silently skipped until the next slot — up to ~11 hours away on the
+    # default 1,12,18 schedule. Delayed rather than inline so the relay/LLM are up first, and gated by
+    # _owed_report so it can't duplicate a report that already landed or spin on a restart loop.
+    if _owed_report(schedule):
+        logs_scheduler.add_job(
+            _catchup_run,
+            "date",
+            run_date=datetime.now() + timedelta(seconds=_CATCHUP_DELAY),
+            id="logs_scheduler_catchup",
+            name="System Health Report (catch-up)",
+            replace_existing=True,
+        )
+        logger.info("Health report: a scheduled run was missed — catch-up queued in %ds", _CATCHUP_DELAY)
+
     logs_scheduler.start()
     logger.info(f"Logs scheduler started - running at hours: {schedule}")
 
