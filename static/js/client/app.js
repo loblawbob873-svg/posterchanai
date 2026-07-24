@@ -5336,6 +5336,7 @@
     const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
     const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
+    const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));   // BCH is a profile field (no per-note tag), so the 🟢 hint shows once the author's kind-0 is cached; doTip still offers BCH at click time regardless
     // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
     const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
@@ -5357,7 +5358,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?' or Monero':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -5703,17 +5704,21 @@
     // from Store, which would otherwise drop its per-note monero_address tag and misroute the tip.
     const xmrAddr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev?xmrForNote(ev):xmrOf(p));
     const hasXmr=isXmrAddr(xmrAddr);
-    if(hasLn && hasXmr){
+    const hasBch=isBchAddr(bchOf(p));   // BCH lives on the author's kind-0 (profile is loaded by click time)
+    // Whatever payment routes the author advertises, offered together. 2+ → a chooser; exactly 1 → straight
+    // in; none → doZap (which shows the "no lightning address" toast).
+    const methods=[];
+    if(hasLn)  methods.push(['ln',  '⚡ Lightning',      'instant zap',              'btn-neon']);
+    if(hasXmr) methods.push(['xmr', 'ɱ Monero',         'private, from your wallet', 'btn-cyan']);
+    if(hasBch) methods.push(['bch', '🟢 Bitcoin Cash',  'on-chain, from your wallet','btn-cyan']);
+    const go=m=>{ if(m==='ln') doZap(noteId,pk); else if(m==='xmr') doXmrTip(noteId,pk,xmrAddr); else doBchTip(pk); };
+    if(methods.length>=2){
       modal(`<h3>Tip ${enc(p.name||p.display_name||'')}</h3>
         <p class="muted small">How would you like to tip?</p>
-        <div class="tip-choices"><button class="btn btn-neon full" id="tip-ln">⚡ Lightning<span class="muted small"> — instant zap</span></button>
-          <button class="btn btn-cyan full" id="tip-xmr">ɱ Monero<span class="muted small"> — private, from your wallet</span></button></div>`,
-        root=>{
-          $('#tip-ln',root).onclick=()=>{ closeModal(); doZap(noteId,pk); };
-          $('#tip-xmr',root).onclick=()=>{ closeModal(); doXmrTip(noteId,pk,xmrAddr); };
-        });
-    } else if(hasXmr){
-      doXmrTip(noteId,pk,xmrAddr);
+        <div class="tip-choices">${methods.map(([k,l,d,c])=>`<button class="btn ${c} full" data-m="${k}">${l}<span class="muted small"> — ${d}</span></button>`).join('')}</div>`,
+        root=>{ $$('.tip-choices [data-m]',root).forEach(b=> b.onclick=()=>{ closeModal(); go(b.dataset.m); }); });
+    } else if(methods.length===1){
+      go(methods[0][0]);
     } else {
       doZap(noteId,pk);
     }

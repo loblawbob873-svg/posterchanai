@@ -2746,6 +2746,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    Lightning/Monero chooser modal. ɱ orange is Monero's brand colour (fixed, reads on every theme). */
 .tipbolt{ white-space:nowrap; }                                   /* keep ⚡ and its ɱ mark together */
 .xmr-mark{ font-size:.58em; color:#f60; font-weight:800; vertical-align:super; margin-left:-1px; }
+.bch-mark{ font-size:.5em; vertical-align:super; margin-left:-1px; }   /* 🟢 already carries its own colour */
 .tip-choices{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
 .tip-choices .btn{ text-align:left; white-space:normal; }         /* full-width chooser buttons wrap cleanly on narrow phones */
 /* The description follows the BUTTON's own text colour (white on neon, dark on cyan) at reduced opacity —
