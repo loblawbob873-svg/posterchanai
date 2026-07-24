@@ -607,3 +607,18 @@ class _Effects1Mixin:
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
+
+    async def _theraped_command(self, attachments: Optional[list]) -> dict:
+        """Pointing-up meme character + caption on an attached image: `theraped`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `theraped`."}
+
+        import asyncio
+        from app.services.effects_service import theraped_attachments
+
+        outputs, summary = await asyncio.to_thread(theraped_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}

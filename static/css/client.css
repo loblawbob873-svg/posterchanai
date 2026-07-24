@@ -1231,6 +1231,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .celeb-sun{position:absolute;left:50%;bottom:-34px;font-size:30px;line-height:1;animation:celeb-rise 2.6s ease-out forwards}
 @keyframes celeb-glow{0%{opacity:0}18%{opacity:1}70%{opacity:1}100%{opacity:0}}
 @keyframes celeb-rise{0%{transform:translate(-50%,0);opacity:0}22%{opacity:1}75%{opacity:1}100%{transform:translate(-50%,-72px);opacity:0}}
+/* sob: 😭 reactions make tears drift UP out of the card and fade. The `i` here is an emoji glyph, not a
+   confetti chip, so the shared .celeb i box/animation is overridden wholesale (no width/height/radius,
+   its own keyframes) — otherwise it inherits celeb-fall and rains 7x12px rectangles. */
+.celeb-sob i{width:auto;height:auto;border-radius:0;background:none;top:auto;bottom:-18px;line-height:1;
+  animation-name:celeb-sob;animation-timing-function:ease-out}
+@keyframes celeb-sob{
+  0%{opacity:0;transform:translate(0,0) scale(.7)}
+  15%{opacity:.95;transform:translate(0,calc(var(--rise,340px) * -.12)) scale(1)}
+  80%{opacity:.75}
+  100%{opacity:0;transform:translate(var(--drift,0),calc(var(--rise,340px) * -1)) scale(1.05)}
+}
 @media(prefers-reduced-motion:reduce){ .celeb{display:none} }   /* JS skips it too — this is the backstop */
 .note::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.15s}
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}

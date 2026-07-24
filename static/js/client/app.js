@@ -1875,7 +1875,7 @@
         try{ const b=el.querySelector(':scope > .celeb'); if(b) b.remove(); }catch(_){}
         el._celebNext=0; continue;
       }
-      const period = el.dataset.celebrate==='gm' ? 3600 : 3200;
+      const period = el.dataset.celebrate==='gm' ? 3600 : (el.dataset.celebrate==='sob' ? 4200 : 3200);
       if(!el._celebNext || now>=el._celebNext){ _playCelebration(el); el._celebNext=now+period; }
     }
   }
@@ -1886,7 +1886,22 @@
     try{ const old=el.querySelector(':scope > .celeb'); if(old) old.remove(); }catch(_){}
     const box=document.createElement('div');
     box.className='celeb celeb-'+kind;
-    if(kind==='confetti'){
+    if(kind==='sob'){
+      // Sobs DRIFT UP and fade rather than falling like confetti — the note is being cried over, not
+      // celebrated, and rising tears read as the reaction pouring out of the post. Same phone/desktop
+      // count split and the same repeat-while-visible budget as confetti.
+      box.style.setProperty('--rise', (el.offsetHeight+40)+'px');
+      const N = (window.innerWidth||1024) <= 820 ? 10 : 16; let h='';
+      for(let i=0;i<N;i++){
+        const left=(i*(100/N)) + (Math.random()*4 - 2);
+        h+=`<i style="left:${left.toFixed(1)}%;`
+          +`font-size:${(14+Math.random()*12).toFixed(0)}px;`
+          +`animation-duration:${(2.0+Math.random()*1.2).toFixed(2)}s;`
+          +`animation-delay:${(Math.random()*0.9).toFixed(2)}s;`
+          +`--drift:${(Math.random()<0.5?-1:1)*(8+Math.round(Math.random()*26))}px">😭</i>`;
+      }
+      box.innerHTML=h;
+    } else if(kind==='confetti'){
       const cols=['#ff5a7a','#ffcf2b','#3fb6c8','#8affc1','#c77dff','#4493f8'];
       // Fall the note's own height (+ a little) so the confetti clears the card whatever size it is.
       box.style.setProperty('--fall', (el.offsetHeight+40)+'px');
@@ -5174,7 +5189,15 @@
   function _media(encUrl, kind, cls, onerr){
     if(NO_IMAGES) return _phold(encUrl, kind, cls, onerr);
     const c = cls?` class="${cls}"`:''; const oe = onerr?` onerror="${onerr}"`:'';
-    if(kind==='video') return `<video${c} src="${encUrl}" controls preload="none" playsinline></video>`;
+    // preload="none" fetched NOTHING, so a timeline video was a blank grey box until you pressed play
+    // ("all the videos are missing a preview"). "metadata" pulls just the header — not the media — and
+    // the #t=0.1 fragment makes the browser seek to that frame and paint it, which is what actually
+    // produces the poster (metadata alone still renders black in several browsers). Skipped when the URL
+    // already carries a fragment, so we never rewrite someone else's. Data saver never gets here (_phold).
+    if(kind==='video'){
+      const poster = encUrl.includes('#') ? encUrl : encUrl + '#t=0.1';
+      return `<video${c} src="${poster}" controls preload="metadata" playsinline></video>`;
+    }
     return `<img${c} src="${encUrl}" loading="lazy"${oe}>`;
   }
   // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
@@ -5333,7 +5356,9 @@
     const cw = BLUR_NSFW && (!!cwTag || isSensitive(ev));   // content-warning OR #nsfw tag; honour the toggle
     const cwReason = cwTag ? String(cwTag[1]||'').trim() : (cw ? 'NSFW' : '');
     const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
-    const _celeb = _celebrateOf(bodyTxt);   // 🎉 congrats / 🌅 gm → a one-shot animation when it scrolls in
+    // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
+    // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
+    const _celeb = _celebrateOf(bodyTxt) || (counts.sob ? 'sob' : '');
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
@@ -5492,23 +5517,37 @@
       <div class="txt"><b>${enc(title)}</b>${summary?`<br><span class="muted small">${enc(summary)}</span>`:''}</div></div>`;
   }
 
+  // A 😭 REACTION makes the post rain sobs (see _playCelebration). Unlike the congrats/gm celebrations
+  // this is driven by other people's reactions rather than the post's own text, so it appears when the
+  // kind-7s load and disappears if they are removed — the note re-renders off these counts either way.
+  // Fediverse-bridged reactions arrive as the `:sob:` shortcode rather than the codepoint, so match both.
+  const _SOB_EMOJI = ['😭', '😢', '🥲', '😿'];
+  // The suffix MUST start with "_" — a bare `[a-z0-9]+` tail made `cry` swallow `:cryptobro:` (and any
+  // other custom emoji that merely STARTS with "cry"), which the test caught.
+  const _SOB_CODES = /^:(sob|cry|crying|cry_face|loudly_crying_face|tear|tears)(_[a-z0-9]+)?:$/i;
+  function _isSob(content){
+    const s = (content || '').trim();
+    if(!s) return false;
+    return _SOB_CODES.test(s) || _SOB_EMOJI.some(e => s.includes(e));
+  }
   // reaction/repost counts — built ONCE per render pass (single scan of the store) instead of
   // re-scanning the whole store for every rendered note (was O(notes × store)).
   let CIDX = null;
   function invalidateCounts(){ CIDX = null; }
   function buildCounts(){
-    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{} };
+    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, sob:{} };
     const lastE = e => { for(let i=e.tags.length-1;i>=0;i--) if(e.tags[i][0]==='e') return e.tags[i][1]; return null; };
     for(const e of Store.all()){
       const id = lastE(e); if(!id) continue;
       if(e.kind===1) c.replies[id]=(c.replies[id]||0)+1;
-      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content); }
+      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content);
+        if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
     }
     CIDX = c;
   }
-  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, zaps:CIDX.zaps[id]||0, zapN:CIDX.zapN[id]||0, iRt:CIDX.myRt.has(id) }; }
+  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, zaps:CIDX.zaps[id]||0, zapN:CIDX.zapN[id]||0, iRt:CIDX.myRt.has(id), sob:CIDX.sob[id]||0 }; }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
   // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/pickEmoji)
 
