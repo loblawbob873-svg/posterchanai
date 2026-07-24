@@ -40,13 +40,18 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
                 if target.startswith("nostr:"):
                     if nfy:
                         await nfy(f"🛰️ dispatching to `{name}` over Nostr…")
-                    body = await node_service.run_agent_over_nostr(target[len("nostr:"):], goal, mode="agent")
+                    # notify=nfy: stream the worker's per-step progress into this chat, exactly like the
+                    # local branch below. Without it a remote/placed run shows NOTHING for its whole
+                    # multi-minute life — the panel looks hung even though the node is working fine.
+                    body = await node_service.run_agent_over_nostr(target[len("nostr:"):], goal, mode="agent",
+                                                                   notify=nfy)
                     sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
                 elif target.startswith("sandboxnostr:"):
                     _, _pk, _u = target.split(":", 2)   # placed sandbox → the worker runs container + agent
                     if nfy:
                         await nfy("🛰️ running your sandbox on its placed node…")
-                    body = await node_service.run_agent_over_nostr(_pk, goal, mode="agent", sandbox_uid=_u)
+                    body = await node_service.run_agent_over_nostr(_pk, goal, mode="agent", sandbox_uid=_u,
+                                                                   notify=nfy)
                     sections.append(f"## Agent on `{name}` — goal: {goal}\n\n{body}")
                 else:
                     sections.append(await node_service.run_agent(db, u, name, target, goal, chat_service,
