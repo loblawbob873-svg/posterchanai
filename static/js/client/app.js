@@ -864,59 +864,26 @@
       // root pages anyway — so the SW never ran there and NOTHING was cached (media re-downloaded every
       // view). Detect the app via the injected __PC_API_BASE__ and register the root sw.js at root scope.
       const _isApp = !!window.__PC_API_BASE__;
-      // Reload once the NEW SW takes control. It only takes control after the USER accepts the update
-      // (applyUpdate → postMessage SKIP_WAITING) — the SW no longer skipWaiting()s on its own — so this
-      // reload is always user-initiated (never yanks the page mid-use). Arm only when a controller
-      // already exists at load, so a first-install clients.claim() doesn't cause a spurious reload.
-      // NOT in the app: the APK ships its own updates (reinstall), so its media-only SW must never drive
-      // an "Update available" prompt or a reload — that would fire a redundant prompt after every APK update.
+      // The whole updater hangs off ONE event: controllerchange. sw.js self-skipWaiting()s on install and
+      // clients.claim()s on activate (robust across the Firefox-PWA "never activates" quirk), so a new build
+      // takes control ON ITS OWN — and controllerchange fires only AFTER it's the controller and has
+      // precached the fresh shell into its (bumped) cache. That's the single, reliable "a new build is now
+      // LIVE" signal. _onNewController() reloads onto it silently at launch, or just PROMPTS mid-session;
+      // and because the new SW already controls the page by the time we prompt, applying is a plain reload
+      // that can't wedge (the old SKIP_WAITING → statechange → 6s-timer handshake was what stranded the row
+      // at "Updating…" and made people tap it over and over). Arm only when a controller already existed at
+      // load, so a first-install clients.claim() doesn't spuriously reload/prompt. NOT in the APK: it ships
+      // its own updates and its SW is media-only, so it must never drive an SW reload/prompt.
       if(!_isApp && navigator.serviceWorker.controller){
-        // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
-        // build. clients.claim() fires this in EVERY open tab, not just the one that clicked, so guard the
-        // reload when the user is mid-compose in ANOTHER tab (unsaved text) — that tab keeps the old build
-        // until its next navigation. The tab that clicked isn't typing, so it reloads.
-        // A NEW SW activating (the user accepted the update) fires controllerchange → reload onto the new
-        // build via the shared _swReload. clients.claim() fires this in EVERY open tab; an in-progress
-        // composer draft is autosaved on pagehide, so reloading a tab mid-compose never loses text.
-        navigator.serviceWorker.addEventListener('controllerchange', ()=> _swReload());
+        navigator.serviceWorker.addEventListener('controllerchange', _onNewController);
       }
-      // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that
-      // can pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every
-      // 15 min. A build found AT LAUNCH is applied SILENTLY (skipWaiting + one reload onto the fresh code)
-      // so nobody sits on stale JS/CSS — that's the recurring "had to clear the browser cache to get the
-      // update" problem. A build that lands LATER, mid-session, still just surfaces the "Update available"
-      // row (no yank while you're reading/typing). Drafts autosave on pagehide, so even the launch reload
-      // is loss-free.
+      // updateViaCache:'none' → fetch sw.js from the NETWORK on each check instead of an HTTP cache that can
+      // pin the old worker for up to 24h (why deploys weren't reaching PWAs). Check on load + every 15 min;
+      // the self-activating worker + controllerchange handle everything from there.
       navigator.serviceWorker.register(_isApp?'/sw.js':'/client/sw.js',{scope:_isApp?'/':'/client',updateViaCache:'none'}).then(reg=>{
-        // App: registered purely for media caching. The APK updates itself, so skip ALL the web
-        // update-prompt/reload wiring — a new media-only SW just activates silently on the next cold start.
-        if(_isApp) return;
+        if(_isApp) return;   // APK: registered purely for media caching — the APK updates itself.
         try{ reg.update(); }catch(_){}
-        // Launch window: a waiting/just-installed worker seen in the first ~20s is the "you just opened the
-        // app on an old build" case → apply it now. After that we assume you're actively using the tab and
-        // only prompt. (applyUpdate posts SKIP_WAITING + reloads on controllerchange, with a 6s fallback.)
-        let _swLaunch=true; setTimeout(()=>{ _swLaunch=false; }, 20000);
-        const surface = w => { if(!w) return;
-          // Launch: silently activate + reload onto the fresh build — BUT at most once per ~40s per session.
-          // If a new worker fails to take control (a known Firefox-PWA quirk), the auto-apply and its 6s
-          // fallback reload would otherwise fire on EVERY load forever — the "app keeps refreshing" loop.
-          // sessionStorage survives reloads within the tab/app session, so after one try we fall back to the
-          // prompt and the app stays put instead of thrashing.
-          let last=0; try{ last=+(sessionStorage.getItem('swAutoApply')||0); }catch(_){}
-          if(_swLaunch && Date.now()-last>40000){
-            try{ sessionStorage.setItem('swAutoApply', String(Date.now())); }catch(_){}
-            _updateReady=w; applyUpdate(); return;
-          }
-          _onSwUpdateReady(w);   // mid-session, or we already auto-applied this session → just prompt, don't reload
-        };
-        // Watch a worker for the installed+waiting state (an UPDATE, not first install → controller exists).
-        const track = w => { if(!w) return;
-          if(w.state==='installed' && navigator.serviceWorker.controller){ surface(w); return; }
-          w.addEventListener('statechange', ()=>{ if(w.state==='installed' && navigator.serviceWorker.controller) surface(w); }); };
-        if(reg.waiting && navigator.serviceWorker.controller) surface(reg.waiting);
-        if(reg.installing) track(reg.installing);            // an install already in-flight when register() resolved
-        reg.addEventListener('updatefound', ()=> track(reg.installing));
-        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic CHECK only — a mid-session build prompts
+        setInterval(()=>{ try{ reg.update(); }catch(_){} }, 900000);   // periodic check; controllerchange does the rest
       }).catch(()=>{});
     }
     Relay.onStatus = renderConn;
@@ -8619,10 +8586,10 @@
       if(ts<=seenNotif.last) return false;
       return e.kind===3 ? ts>_notifEpoch : true;
     // Count the update toward the badge from the SAME condition renderNotifications() draws the row from
-    // (_updateReady || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
+    // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
     // showing +1 with no matching row in Alerts ("a number with no notification"). Now they can't disagree:
     // the badge shows the update iff the row is there, and it clears when you actually apply the update.
-    }).length + ((_updateReady||_apkUpdate)?1:0);
+    }).length + ((_newBuild||_apkUpdate)?1:0);
     // The rail's Alerts tab is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');});
@@ -8630,10 +8597,14 @@
     // lands, re-render it now instead of leaving it stale until you re-click the tab. In-memory read (no relay
     // query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
     if(_notifReady && _rbTab==='notifs' && _rightbarShown()) loadNotifs(); }
-  // ---- In-app updater: when a new service worker has finished installing, surface an "Update available"
-  // entry in the Notifications menu (+ a one-shot bell badge, cleared on view) instead of auto-reloading.
-  // applyUpdate tells the WAITING worker to activate (SKIP_WAITING); controllerchange reloads onto it. ----
-  let _swRefreshing=false, _updateReady=null, _updBadge=false, _updApplying=false;
+  // ---- In-app updater: driven ENTIRELY by controllerchange (see boot()). A new service worker
+  // self-activates + claims control (sw.js), firing controllerchange — the single source of truth that a
+  // fresh build is LIVE and its shell precached. _onNewController() reloads silently at launch, or surfaces
+  // an "Update available" row (+ a one-shot bell badge, cleared on view) mid-session. Because the new SW
+  // already controls the page by the time we prompt, applyUpdate() is a PLAIN reload — no SKIP_WAITING
+  // handshake, no activation race, no fallback timer, nothing to strand the row at "Updating…". ----
+  let _newBuild=false, _updBadge=false, _updApplying=false;
+  const _swBootAt=Date.now();
   // Bundled Android app only: the web assets are FROZEN in the APK and the SW never sees a new build, so the
   // service-worker "Update available" path can't fire. Instead poll /apk/version (latest published APK build)
   // and, when it's newer than the build baked into this bundle (__PC_APP_BUILD__), surface the SAME
@@ -8658,30 +8629,24 @@
       else { _updBadge=true; try{ bumpNotif(); }catch(_){} try{ toast('⬆️ App update available — see Notifications'); }catch(_){} }
     }
   }
-  // Single reload chokepoint for every update trigger (controllerchange, worker-activated, last-resort
-  // timer), enforcing the one-reload latch uniformly. Drafts are protected OUT OF BAND — the composer
-  // autosaves on pagehide — so an SW reload never loses in-progress text and needs no (fragile,
-  // focus-based, stuck-update-prone) composer guard here.
-  function _swReload(force){
-    if(_swRefreshing) return;                        // _swRefreshing guards within THIS page load
-    // Cross-reload guard: if a worker somehow keeps re-firing controllerchange (node flip-flop, a worker
-    // that won't settle), never reload more than once per ~40s per session — otherwise the app thrashes
-    // ("keeps refreshing"). BUT an EXPLICIT update (a user tap or the launch auto-apply set _updApplying,
-    // or force=true) MUST reload: this same 40s guard was suppressing the reload that applyUpdate depends
-    // on, stranding the UI at "Updating… applying the new version" until the window elapsed. So the guard
-    // applies ONLY to automatic (unforced, not-applying) reloads. Latch _swRefreshing only when we truly
-    // reload — early-returning with it set would no-op every later legit trigger this page load.
-    if(!force && !_updApplying){
-      try{ const last=+(sessionStorage.getItem('swReloaded')||0); if(Date.now()-last<40000) return; }catch(_){}
+  // A new service worker has taken control (see the controllerchange listener in boot()). The new build is
+  // now LIVE and its shell is precached under the new SW's cache. Drafts are protected OUT OF BAND (the
+  // composer autosaves on pagehide), so a reload never loses in-progress text.
+  function _onNewController(){
+    if(_updApplying) return;   // our own applyUpdate() reload is already in flight
+    // Launch window ("you just opened the app on a stale build") → reload silently onto the fresh build.
+    // Capped to once per ~40s per session so a worker that won't settle — or load-balanced nodes serving
+    // different sw.js — can't turn this into a refresh loop. After that we fall through to the prompt.
+    let last=0; try{ last=+(sessionStorage.getItem('swAutoApply')||0); }catch(_){}
+    if(Date.now()-_swBootAt<20000 && Date.now()-last>40000){
+      try{ sessionStorage.setItem('swAutoApply', String(Date.now())); }catch(_){}
+      location.reload(); return;
     }
-    _swRefreshing=true;
-    try{ sessionStorage.setItem('swReloaded', String(Date.now())); }catch(_){}
-    location.reload();
-  }
-  function _onSwUpdateReady(worker){
-    if(worker===_updateReady){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // same worker, already surfaced this session
-    _updateReady=worker;   // assigned synchronously so a 2nd near-simultaneous call for the same worker dedupes above
-    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // already looking at it → the row shows; no badge/toast
+    // Mid-session: never yank the page — just surface the row. The new SW already controls us, so the tap
+    // to apply (below) is a plain reload that lands on the fresh build deterministically.
+    if(_newBuild){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // already surfaced
+    _newBuild=true;
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // already looking → row shows; no badge/toast
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
   }
@@ -8691,26 +8656,15 @@
     if(_apkUpdate){ const u=(window.__PC_API_BASE__||'')+'/apk';
       try{ window.open(u,'_blank'); }catch(_){ try{ location.href=u; }catch(e){} }
       try{ toast('Downloading the app update…'); }catch(_){} return; }
-    if(_updApplying) return;   // one tap only — the worker is already activating; a 2nd tap is a no-op
+    if(_updApplying) return;   // one tap only
     _updApplying=true;
-    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…", stops inviting re-taps
-    const w = _updateReady;
-    // skipWaiting → the SW's activate handler calls clients.claim() → fires controllerchange (see the
-    // listener above) → clean reload onto the new build with NO worker left 'waiting' to re-trigger the
-    // prompt. We DON'T reload eagerly: a reload before the worker takes control strands it 'waiting' and
-    // reproduces the "prompt keeps coming back" loop.
-    const go = x => { if(x){ try{ x.postMessage({type:'SKIP_WAITING'}); }catch(_){} } };
-    // Reload the instant the worker reaches 'activated', in case controllerchange is flaky (some iOS/WebKit
-    // PWAs). Activation-DRIVEN → fires only AFTER the worker has taken control, so it can never strand a
-    // still-'waiting' worker (unlike a blind timer). Bound to the ACTUAL worker being activated (reg.waiting),
-    // not just the one captured at surface time, which a 2nd queued update could have superseded.
-    const arm = x => { try{ if(x && x.addEventListener) x.addEventListener('statechange', ()=>{ if(x.state==='activated') _swReload(true); }); }catch(_){} };
-    if(navigator.serviceWorker && navigator.serviceWorker.getRegistration){
-      navigator.serviceWorker.getRegistration('/client').then(reg=>{ const ww=(reg&&reg.waiting)||w; go(ww); arm(ww); }).catch(()=>{ go(w); arm(w); });
-    } else { go(w); arm(w); }
-    // True last resort: if nothing reloaded us in 6s (a worker that genuinely won't activate) reload anyway
-    // (force — bypass the 40s thrash guard) so the tap always does SOMETHING; network-first lands fresh code.
-    setTimeout(()=>_swReload(true), 6000);
+    if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…"
+    // The new SW ALREADY controls this page (we only prompt after controllerchange), so a plain reload
+    // serves the fresh build — no handshake to wedge. Best-effort nudge to any worker somehow still
+    // 'waiting' first (shouldn't exist with self-skipWaiting), then reload unconditionally after a short
+    // beat so a hung getRegistration() can never strand the tap.
+    try{ navigator.serviceWorker.getRegistration('/client').then(reg=>{ try{ if(reg&&reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'}); }catch(_){} }); }catch(_){}
+    setTimeout(()=>{ try{ location.reload(); }catch(_){} }, 250);
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
@@ -8745,7 +8699,7 @@
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = (_updateReady || _apkUpdate) ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':(_apkUpdate?' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>')}</div></div>` : '';
+    const upd = (_newBuild || _apkUpdate) ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':(_apkUpdate?' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>')}</div></div>` : '';
     feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
