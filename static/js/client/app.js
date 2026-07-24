@@ -5838,6 +5838,73 @@
       { const r=await publish(1, body, tags); if(r && r.ok) toast('ɱ tip note posted'); }   // failure toast by publish()
     }catch(e){ toast('could not post tip note'); }
   }
+  // ---- Bitcoin Cash tips — the Monero flow's sibling. NOT a NIP-57 zap (those are Lightning-only);
+  // an on-chain address tip opened via a `bitcoincash:` BIP21 URI, so any BCH wallet handles it and
+  // nothing custodial touches this server. Address lives in kind-0 like Monero (no agreed key, so read
+  // liberally / write the two we control). ---------------------------------------------------------
+  // CashAddr (`q…`/`p…`, with or without the bitcoincash: prefix) OR a legacy base58 address.
+  function isBchAddr(a){ a=(a||'').trim().replace(/^bitcoincash:/i,'');
+    return /^[qp][a-z0-9]{41}$/i.test(a) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(a); }
+  const _BCH_CASHADDR=/(?:bitcoincash:)?[qp][a-z0-9]{41}/i;
+  function bchOf(p){
+    if(!p) return '';
+    const strip=s=>String(s).trim().replace(/^bitcoincash:/i,'');
+    const direct = p.bitcoincash_address || p.bch || p.bch_address || p.bitcoincash;
+    if(direct && isBchAddr(direct)) return strip(direct);
+    // Liberal fallback: only the UNAMBIGUOUS CashAddr form (legacy base58 is too short to scan for
+    // across arbitrary fields without false positives — direct keys still accept it).
+    for(const k in p){ const v=p[k]; if(typeof v==='string'){ const m=v.match(_BCH_CASHADDR); if(m && isBchAddr(m[0])) return strip(m[0]); } }
+    return '';
+  }
+  // Open the payer's BCH wallet (bitcoincash:<addr>?amount=…), show a QR + copyable address. Optional
+  // "I sent it" posts a public tip note crediting them (BCH has no cryptographic zap receipt; a txid,
+  // if given, is verifiable on any explorer).
+  async function doBchTip(pk){
+    const p=profOf(pk); const addr=bchOf(p);
+    if(!isBchAddr(addr)){ toast('no Bitcoin Cash address on this profile'); return; }
+    const name=enc(p.name||p.display_name||'anon');
+    const uri=a=>'bitcoincash:'+addr+(a?('?amount='+encodeURIComponent(a)):'');
+    modal(`<h3>🟢 Tip ${name} · Bitcoin Cash</h3>
+      <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay. Non-custodial: nothing touches this server.</p>
+      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="bch-amt" type="number" min="0" step="0.0001" value="${enc(ClientSettings.get('bchLastAmt','')||'')}" placeholder="amount (BCH) — fills your wallet"><a class="btn btn-neon small" id="bch-open" href="${uri('')}">📲 Open wallet</a></div>
+      <div class="xmr-presets" id="bch-presets">${['0.001','0.01','0.05','0.1'].map(a=>`<button class="xmr-preset bch-preset" data-amt="${a}">🟢 ${a}</button>`).join('')}</div>
+      <div class="xmr-qr" id="bch-qr"><div class="muted small">generating QR…</div></div>
+      <div class="keybox" style="margin-top:8px"><code id="bch-addr">${enc(addr)}</code></div>
+      ${GUEST?'':`<details class="xmr-proof"><summary>🔗 Attach the transaction id (optional)</summary>
+        <p class="muted small">Optional — makes the tip publicly verifiable on any BCH explorer.</p>
+        <input class="input" id="bch-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false"></details>`}
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="bch-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="bch-sent" title="post a public tip note crediting them">✓ I sent it</button>`}</div>`,
+      root=>{
+        const amtEl=$('#bch-amt',root), qrBox=$('#bch-qr',root), openBtn=$('#bch-open',root); let _u=null,_t=null;
+        const amtVal=()=>{ const n=parseFloat(amtEl.value); return (isFinite(n)&&n>0)?String(n):''; };   // omit blank / 0 / NaN
+        const qrFail='<div class="muted small">QR unavailable — scan or copy the address below.</div>';
+        const renderQr=()=>{ qrBox.innerHTML='<div class="muted small">generating QR…</div>';
+          fetch('/client/qr',{method:'POST',headers:{'Content-Type':'text/plain'},body:uri(amtVal())})
+            .then(r=>r.ok?r.blob():null).then(b=>{ if(!b){ qrBox.innerHTML=qrFail; return; }
+              if(_u) URL.revokeObjectURL(_u); _u=URL.createObjectURL(b); qrBox.innerHTML=`<img alt="BCH tip QR" src="${_u}">`; })
+            .catch(()=>{ qrBox.innerHTML=qrFail; }); };
+        const sync=()=>{ openBtn.href=uri(amtVal()); };   // deeplink tracks the amount immediately (QR fetch is debounced)
+        sync(); renderQr();
+        amtEl.addEventListener('input',()=>{ sync(); clearTimeout(_t); _t=setTimeout(renderQr,400); });
+        $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); clearTimeout(_t); _t=setTimeout(renderQr,300); });
+        $('#bch-copy',root).onclick=()=>{ try{ navigator.clipboard.writeText(addr).then(()=>toast('address copied'),()=>prompt('Copy the BCH address:',addr)); }catch(_){ prompt('Copy the BCH address:',addr); } };
+        { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
+          const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
+          if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
+          if(a){ ClientSettings.set('bchLastAmt', a); }
+          closeModal(); _postBchTipNote(pk, a, addr, txid); }; }
+      });
+  }
+  async function _postBchTipNote(pk, amt, addr, txid){
+    try{
+      const who='nostr:'+NT().nip19.npubEncode(pk);
+      let body=`🟢 Tipped${amt?(' '+amt+' BCH'):''} ${who} via Bitcoin Cash 💚`;
+      if(txid) body+=`\n\nTx: https://blockchair.com/bitcoin-cash/transaction/${txid}`;
+      body+=`\n\n— sent with PosterChan; add your BCH address at https://poster.place to receive Bitcoin Cash tips too`;
+      const tags=[['p',pk],['t','bchtip']].concat(amt?[['amount_bch',String(amt)]]:[]).concat(txid?[['bch_tx',txid]]:[]);
+      const r=await publish(1, body, tags); if(r && r.ok) toast('🟢 tip note posted');   // failure toast by publish()
+    }catch(e){ toast('could not post tip note'); }
+  }
   function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
   async function doBlock(pk){
     if(!IS_ADMIN) return;
@@ -6053,9 +6120,12 @@
       try{ await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
-        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px"><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-ghost small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-ghost small" id="ss-close">Close</button></div>`,
+        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-ghost small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-ghost small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
+          // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
+          // publishes a fresh timeline post, exactly like an effect made from a regular image.
+          const fx=root.querySelector('#ss-fx'); if(fx) fx.onclick=()=>{ closeModal(); launchEffectStudio(link, null); };
           const cl=root.querySelector('#ss-close'); if(cl) cl.onclick=closeModal;
         });
       toast('📸 card ready — link copied');
@@ -6187,13 +6257,12 @@
     }
     return null;
   }
-  // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
-  // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
-  async function effectPost(id, pk){
-    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
-    if(!ev){ toast('post not loaded'); return; }
-    const url=postImageUrl(ev);
-    if(!url){ toast('this post has no image to apply an effect to'); return; }
+  // Shared launcher for the Effects studio: gate on AI access, stash the source image + optional reply
+  // target, and switch to the AI view (aiMount consumes _ai.pendingFx and runs startEffectStudio). Used
+  // by a post's 🎬 Effect action (replyTo = that post → the result offers ↩ Send the Reply) and by the
+  // 📸 screenshot card (replyTo = null → the result's 🚀 Post button publishes a fresh timeline post).
+  async function launchEffectStudio(url, replyTo){
+    if(!url){ toast('no image to apply an effect to'); return; }
     // gate on AI permission — show a nice modal if the account isn't allowed
     let a={}; try{ a=await ensureAiSession(); }catch(_){}
     if(!a || !a.can_ai){
@@ -6203,12 +6272,21 @@
       return;
     }
     toast('opening the Effects studio…');
-    _ai.replyTo={ id, pk }; _ai.fxImage=null; _ai.fxMedia={};
+    _ai.replyTo=replyTo||null; _ai.fxImage=null; _ai.fxMedia={};
     // Hand the image off to aiMount via _ai.pendingFx instead of polling for #ai-input: the old wait()
     // loop fired as soon as the input existed, but aiMount's own conversation load was still in flight,
     // so its box re-render wiped the freshly-attached image + guide (the "had to do it twice" bug).
     _ai.pendingFx={ url };
     switchView('ai');
+  }
+  // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
+  // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
+  async function effectPost(id, pk){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const url=postImageUrl(ev);
+    if(!url){ toast('this post has no image to apply an effect to'); return; }
+    launchEffectStudio(url, { id, pk });
   }
   // Consumed by aiMount once the chat is fully mounted + conversations loaded — so the attach + guide
   // land last and survive. Opens a fresh conversation for the effect, fetches the source image, attaches.
@@ -7489,7 +7567,10 @@
     q.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>load(q.value.trim()),350); };
     load(''); q.focus();
   }
-  function blossomPicker(ta){
+  // `ta` mode (default): tapping a file appends its media URL to the textarea (post/DM composer).
+  // `onPick` mode: instead of pasting a link, call onPick({url,type,ext}) with the chosen blob — used
+  // by AI chat, which fetches the bytes into a real attachment rather than a URL in the message text.
+  function blossomPicker(ta, onPick){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal">
@@ -7526,9 +7607,11 @@
           `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`).join('')
           : `<div class="empty">${cur?'Nothing in this folder.':'No files yet — upload some in the Files tab.'}</div>`;
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
-          const ext=_MIME_EXT[el.dataset.type]||'';
-          ta.value+=(ta.value?'\n':'')+el.dataset.url+(ext?('.'+ext):'');
-          ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('attached'); });
+          const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
+          bg.remove();
+          if(onPick){ try{ onPick({url, type, ext}); }catch(_){} return; }
+          ta.value+=(ta.value?'\n':'')+url+(ext?('.'+ext):'');
+          ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
 
       };
       // ONE ROW, always. A wrapping chip bar grew with the folder count until it filled a phone
@@ -9501,12 +9584,14 @@
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call">📞 Call</button>
           <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
+          ${isBchAddr(bchOf(p))?`<button class="btn btn-ghost small" id="bchtip-prof" title="tip Bitcoin Cash (BCH)">🟢 Tip</button>`:''}
           <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div></div>
       <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
+        ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)">🟢 ${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
@@ -9563,6 +9648,8 @@
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
+    { const bb=$('#prof-bch'); if(bb) bb.onclick=()=>doBchTip(pk); }
+    { const bt=$('#bchtip-prof'); if(bt) bt.onclick=()=>doBchTip(pk); }
     // Posts has no list of its own — the Notes tab IS that list, so send them there rather than leaving a
     // dead-looking button next to two clickable stats.
     { const pb=$('#show-posts'); if(pb) pb.onclick=()=>{ const t=$$('.prof-tab',feed).find(x=>x.dataset.tab==='notes'); if(t) t.click(); }; }
@@ -9853,6 +9940,7 @@
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
+      <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchOf(p))}"></label>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
@@ -9869,6 +9957,8 @@
       $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
+        const _bch=$('#pf-bch',root).value.trim().replace(/^bitcoincash:/i,'');
+        if(_bch && !isBchAddr(_bch)){ toast('that doesn\'t look like a Bitcoin Cash address'); $('#pf-bch',root).focus(); return; }
         { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts — per-device only (NOT synced: it's an address-linking privacy choice)
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
         // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
@@ -9877,6 +9967,9 @@
         // those clients and even wiped a monero_address set elsewhere.
         if(_xmr){ meta.xmr=_xmr; meta.monero_address=_xmr; } else { delete meta.xmr; delete meta.monero_address; }
         delete meta.monero;   // fold the rarer `monero` alias into the two canonical keys we write
+        // BCH address → the two keys this client reads back; clearing removes every alias.
+        if(_bch){ meta.bch=_bch; meta.bitcoincash_address=_bch; } else { delete meta.bch; delete meta.bitcoincash_address; }
+        delete meta.bch_address; delete meta.bitcoincash;   // fold rarer aliases into the two canonical keys
         closeModal(); { const r=await publish(0, JSON.stringify(meta), []);   // failure toast by publish()
           if(r && r.ok){ Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); } } };
     });
@@ -10182,12 +10275,17 @@
     $('#ai-del').onclick=()=>aiDeleteConversation();
     $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
     $('#ai-attach').onclick=()=>{
-      if(window.Capacitor){
-        openMenuPopover($('#ai-attach'), [['camera','📷 Camera'],['local','🖼️ Photos / files']], async a=>{
-          if(a==='camera'){ const f=await _cameraPhoto(); if(f) aiAddFiles([f]); }   // AI chat base64-encodes attachments (not blossom)
-          else $('#ai-file').click();
-        });
-      } else $('#ai-file').click();
+      // Attach from Camera (app), a local file, OR an existing Blossom file — so you don't have to
+      // re-upload something already on your drive. Blossom picks are fetched into a real attachment
+      // (bytes base64'd for the model), not pasted as a URL in the message.
+      const opts = window.Capacitor
+        ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
+        : [['local','💻 Local file'],['blossom','🌸 Blossom']];
+      openMenuPopover($('#ai-attach'), opts, async a=>{
+        if(a==='camera'){ const f=await _cameraPhoto(); if(f) aiAddFiles([f]); }
+        else if(a==='blossom'){ blossomPicker(null, ({url,type,ext})=>aiAttachFromBlossom(url,type,ext)); }
+        else $('#ai-file').click();
+      });
     };
     $('#ai-file').onchange=e=>aiAddFiles([...e.target.files]).then(()=>{ e.target.value=''; });
     { const mic=$('#ai-mic'); if(mic) mic.onclick=aiToggleMic; }
@@ -11214,6 +11312,21 @@
       return head+'<div class="ai-files">'+arr.map(f=>{ const u=f.url||f.path||''; const n=f.filename||f.name||f.query||f.text||u||'item'; return u?`<a class="ai-file" href="${enc(u)}" target="_blank" rel="noopener">📄 ${enc(n)}</a>`:`<span class="ai-file">${enc(n)}</span>`; }).join('')+'</div>';
     }
     return head || aiFormat(d.text||d.message||'');   // graceful fallback: never drop a payload
+  }
+  // Pull a file the user already has on their Blossom drive into the AI chat as a real attachment
+  // (fetch the blob → File → aiAddFiles, which base64-encodes it) so the model receives the actual
+  // bytes for OCR / read-text / effects — not just a link it can't open.
+  async function aiAttachFromBlossom(url, type, ext){
+    if(!url) return;
+    try{
+      toast('📥 fetching from Blossom…');
+      const r=await fetch(url); if(!r.ok) throw new Error('http '+r.status);
+      const blob=await r.blob();
+      let name=(url.split('/').pop()||'file').split('?')[0];
+      if(ext && !/\.[a-z0-9]+$/i.test(name)) name+='.'+ext;
+      await aiAddFiles([new File([blob], name, {type: type||blob.type||'application/octet-stream'})]);
+      toast('attached');
+    }catch(e){ toast('couldn\'t attach: '+((e&&e.message)||e)); }
   }
   async function aiAddFiles(files){
     for(const f of files){

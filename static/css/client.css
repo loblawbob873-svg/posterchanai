@@ -1514,6 +1514,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */
 .act.actxmr{color:#f60} .act.actxmr:hover{color:#ff8a33;background:rgba(255,102,0,.14);box-shadow:inset 0 0 0 1px var(--line)}
 .ln-addr.xmr{color:#f60} .ln-addr.xmr:hover{border-color:#f60;box-shadow:0 0 12px rgba(255,102,0,.35)}
+/* Bitcoin Cash tips — BCH green (#0ac18e). Profile address pill + tip-modal preset chips. */
+.ln-addr.bch{color:#0ac18e} .ln-addr.bch:hover{border-color:#0ac18e;box-shadow:0 0 12px rgba(10,193,142,.35)}
+.bch-preset:active{background:rgba(10,193,142,.16)}
 /* Monero tip note badge — shows the amount prominently; when a proof is attached, a one-tap button
    copies a check_tx_proof command so anyone can verify the payment in their own wallet. */
 .xmr-tip-badge{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0;padding:8px 12px;border-radius:12px;background:rgba(255,102,0,.10);border:1px solid rgba(255,102,0,.35)}
