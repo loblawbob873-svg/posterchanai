@@ -6776,7 +6776,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['drafts','draft','Drafts'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
@@ -12848,6 +12848,25 @@
     const i=els.indexOf(im);
     return { items: els.map(el=>({ src: el.currentSrc||el.src, kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
   }
+  // Re-host the media you are looking at onto your own Blossom server, then copy the new URL.
+  async function _lbToBlossom(src){
+    if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
+    try{
+      toast('saving to Blossom…');
+      const r=await fetch(src, { credentials:'omit' });
+      if(!r.ok) throw new Error('could not fetch it ('+r.status+')');
+      const blob=await r.blob();
+      let name=''; try{ name=decodeURIComponent(new URL(src, location.href).pathname.split('/').pop()||''); }catch(_){ }
+      name=(name||'media').split('?')[0].slice(0,48) || 'media';
+      const url=await uploadBlob(new File([blob], name, { type: blob.type || 'application/octet-stream' }));
+      try{ await navigator.clipboard.writeText(url); toast('saved to Blossom — link copied'); }
+      catch(_){ toast('saved to Blossom'); }
+    }catch(err){
+      if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
+      else toast('Blossom save failed: '+((err&&err.message)||err));
+    }
+  }
+
   function openLightbox(src, kind, group){
     const norm=(u)=>{ try{ const x=new URL(u, location.href); x.searchParams.delete('thumb'); return x.href; }catch(_){ return u; } };   // always full-res, never the ?thumb=1 grid image
     const multi = !!(group && group.items && group.items.length>1);
@@ -12871,7 +12890,11 @@
     // Read items[idx] at CLICK time, not now — the toolbar outlives each individual slide.
     const copyB=mkBtn('⧉','Copy image', ()=>_lbCopyImg(items[idx].src));
     const saveB=mkBtn('⤓','Save image', ()=>_lbSaveMedia(items[idx].src));
-    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(mkBtn('✕','Close', close));
+    // Keep a copy on YOUR Blossom. Media in a feed lives on whatever host the author used and can vanish;
+    // this re-hosts it under your own storage and hands back the link. Offered for video/audio too — the
+    // blob path is identical and "save that clip" is the same wish as "save that image".
+    const blossomB=mkBtn('🌸','Save to Blossom', ()=>_lbToBlossom(items[idx].src));
+    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close', close));
     bg.appendChild(bar);
 
     let cur=null;

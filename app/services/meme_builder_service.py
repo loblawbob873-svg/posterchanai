@@ -5,18 +5,15 @@ list and turns it into a single ffmpeg invocation: a solid colour base of the pr
 every layer scaled and overlaid at its own position, gated to its own time window, with per-layer
 effects and audio mixed from whatever clips carry it.
 
-Why one filtergraph instead of rendering layer-by-layer and concatenating: overlapping layers are the
-whole point of a timeline, so they have to composite in a single pass. The only exception is the
-catalogue effects (glow/alive), which are image->video pipelines from effects_service — those run as a
-PRE-PASS that turns an image layer into a video layer, after which it composites like any other.
+Why one filtergraph instead of rendering layer-by-layer and concatenating: layers can overlap in time
+and space, so they have to composite in a single pass.
 
-Deliberately shares media_service's encoder autodetect (NVENC -> VAAPI -> libx264) and append_outro, so
-a meme is encoded and branded exactly like every other video this app produces.
+Deliberately shares media_service's encoder autodetect (NVENC -> VAAPI -> libx264), so a meme is encoded
+exactly like every other video this app produces. It does NOT append the outro card — a meme is often a
+reply or a reaction, and a branded end card on a two-second clip is noise; wire it in if that changes.
 """
-import json
 import logging
 import os
-import shlex
 import subprocess
 import tempfile
 from typing import Optional
@@ -66,11 +63,6 @@ def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
     if e == "flip":
         return "hflip"
     return ""
-
-
-# Catalogue effects that are whole image->video pipelines (effects_service). An image layer carrying one
-# of these is pre-rendered into a clip first, then composited like any other video layer.
-_PREPASS = {"alive", "glowcard"}
 
 
 def _ff_colour(c: Optional[str], fallback: str = "black") -> str:

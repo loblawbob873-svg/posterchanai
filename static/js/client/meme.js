@@ -61,9 +61,14 @@
 
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
+    // APPEND to the end of the timeline, do not stack at t=0. Defaulting every new layer to start:0 made
+    // a second image land exactly on top of the first — the timeline read as "everything overlaps", which
+    // is not how a video editor behaves. Media appends after the last clip so drops play in sequence;
+    // TEXT still starts at 0, because a caption is an overlay ON the footage, not another clip after it.
+    const tail = type==='text' ? 0 : projEnd();
     const l = Object.assign({
       id: nid(), type, src: src||'', name: '',
-      start: 0, dur: type==='text' ? 3 : 4, trim: 0,
+      start: tail, dur: type==='text' ? 3 : 4, trim: 0,
       x: 0, y: 0, w: type==='text' ? 0 : P.w, h: type==='text' ? 0 : Math.round(P.h/2),
       opacity: 1, effect: 'none', volume: 1, mute: false,
       text: type==='text' ? 'top text' : '', size: 64, color:'#ffffff', stroke:'#000000',
@@ -75,7 +80,6 @@
 
   // ---------- rendering the UI ----------
   function view(){
-    const scale = 1;   // stage scales via CSS; geometry stays in project pixels
     return `
     <div class="mb-wrap">
       <div class="mb-bar">
