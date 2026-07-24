@@ -62,7 +62,7 @@ def agent_node_name() -> str:
 
 
 def _image() -> str:
-    return _s("node_exec_sandbox_image", "debian:stable-slim").strip() or "debian:stable-slim"
+    return _s("node_exec_sandbox_image", "python:3.12-slim").strip() or "python:3.12-slim"
 
 
 def _network() -> str:

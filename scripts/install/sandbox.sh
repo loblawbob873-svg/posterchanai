@@ -1,5 +1,5 @@
 #!/bin/bash
-# Set up the per-user Debian Docker sandbox (add-on: ./install.sh --sandbox).
+# Set up the per-user Docker sandbox (add-on: ./install.sh --sandbox).
 #
 # The sandbox lets NON-admin AI users (and opt-in admins) run agentic `node`/`agent` tasks confined to
 # a throwaway per-user Debian container (app/services/sandbox_service.py, via `docker exec`) instead of
@@ -7,7 +7,8 @@
 #   1) the Docker engine + CLI installed and the daemon running,
 #   2) the service user (who runs `python run.py`) in the `docker` group — so the app can reach
 #      /var/run/docker.sock WITHOUT sudo (takes effect on the NEXT restart of the service),
-#   3) the base image pulled (node_exec_sandbox_image, default debian:stable-slim).
+#   3) the base image pulled (node_exec_sandbox_image, default python:3.12-slim — it ships an
+#      interpreter so an agent run does not burn its first two steps apt-get installing python3).
 #
 # After this, enable it in Admin → Services → "Enable the per-user Debian sandbox" (off by default),
 # then restart the service so the new docker-group membership is picked up.
@@ -22,7 +23,7 @@ setup_sandbox() {
 
     local svc_user image
     svc_user="${SUDO_USER:-$(whoami)}"
-    image="${SANDBOX_IMAGE:-debian:stable-slim}"
+    image="${SANDBOX_IMAGE:-python:3.12-slim}"
 
     # 1) Docker present?
     if ! command -v docker >/dev/null 2>&1; then
