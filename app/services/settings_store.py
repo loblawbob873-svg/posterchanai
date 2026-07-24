@@ -62,6 +62,17 @@ _lock = threading.RLock()
 _loaded = False
 _HYDRATED_KEYS: set = set()   # keys for which the relay holds an authoritative value (vs a default)
 _LOCAL_KEYS: set = set()      # keys loaded from the local JSON (vs a default)
+# True once this process has successfully synced the cache with the relay at least once. Guards
+# read-modify-write of replaceable LIST settings (e.g. blossom_whitelist, nostr_relay_nip05_names):
+# before this is set, get(key) may return "" merely because the cache isn't loaded — writing a merged
+# list from that empty read would WIPE the real list. See project_blossom_whitelist_wipe.
+_HYDRATED = False
+
+
+def is_hydrated() -> bool:
+    """Has the cache synced with the relay at least once? If False, an empty get() is 'not loaded yet',
+    not 'genuinely empty' — so callers must NOT rewrite a list setting from it."""
+    return _HYDRATED
 
 _LOCAL_PATH = os.environ.get(
     "POSTERCHANAI_LOCAL_SETTINGS",
@@ -414,7 +425,7 @@ def hydrate_from_db(db) -> int:
     before the relay's WS is up AND inside the relay subprocess itself (which reads its own config).
     Authoritative for shareable keys; local-only keys are left to the JSON file. Caches the operator
     key for the background relay-writer. Returns the number of keys updated."""
-    global _OP_SK
+    global _OP_SK, _HYDRATED
     op_sk = _operator_seckey(db)
     if not op_sk:
         return 0
@@ -460,6 +471,7 @@ def hydrate_from_db(db) -> int:
                 changed += 1
         except Exception:
             continue
+    _HYDRATED = True   # relay event store read successfully (even 0 rows) → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay events (sync)", changed)
     return changed
 
@@ -496,7 +508,7 @@ async def hydrate(db) -> int:
     """relay → cache. Pull every setting doc from the relay into the in-process cache (authoritative
     for shareable keys). Caches the operator key for the background relay-writer. No-op without an
     operator key. Returns the number of keys updated."""
-    global _OP_SK
+    global _OP_SK, _HYDRATED
     op_sk = _operator_seckey(db)
     if not op_sk:
         logger.info("[settings-store] hydrate skipped — no operator key")
@@ -513,6 +525,7 @@ async def hydrate(db) -> int:
             continue
         if _set_local(key, value):
             changed += 1
+    _HYDRATED = True   # relay read succeeded → cache reflects the relay
     logger.info("[settings-store] hydrated %d setting(s) from relay", changed)
     return changed
 

@@ -1488,6 +1488,14 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
     if not _verify_admin_auth(db, data.auth, target):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
+    # This is a read-modify-write of the SHARED replaceable whitelist. Refresh the cache from the relay's
+    # own event store FIRST so `cur` reflects reality — otherwise a stale/empty cache (e.g. a grant on a
+    # node whose cache is behind, or right after a restart) would rewrite a list missing everyone else's
+    # grants (project_blossom_whitelist_wipe). If we've never synced with the relay, refuse rather than
+    # risk wiping the list.
+    settings_store.hydrate_from_db(db)
+    if not settings_store.is_hydrated():
+        return JSONResponse({"ok": False, "error": "settings still loading — try again in a moment"}, status_code=503)
     cur = _whitelist_hex(db)
     _was = target in cur          # 0->1 only: re-saving the list shouldn't re-DM everyone on it
     if data.grant:

@@ -462,6 +462,12 @@ def _nip05_set(name: str, pubkey_hex: str):
     name or pubkey first."""
     try:
         from app.services import settings_store
+        # Read-modify-write of the SHARED names list — if the cache isn't synced with the relay yet,
+        # get() returns "" (not loaded, not empty) and we'd wipe every other bot's name. Skip until
+        # hydrated (this is a post-startup admin action, so it's normally already true).
+        if not settings_store.is_hydrated():
+            logger.warning("[provision] nip05 register skipped — settings not hydrated yet")
+            return
         raw = settings_store.get("nostr_relay_nip05_names", "") or ""
         kept = []
         for ln in raw.split("\n"):
@@ -483,6 +489,12 @@ def _nip05_remove_pubkey(pubkey_hex: str):
     """Remove any NIP-05 name lines that map to this pubkey (bot deleted), then reload."""
     try:
         from app.services import settings_store
+        # Same guard as _nip05_set: don't rewrite the shared names list from an unhydrated (empty) cache,
+        # or we'd wipe every other bot's NIP-05 name. Skipping the removal just leaves a harmless stale
+        # line until the next hydrated write.
+        if not settings_store.is_hydrated():
+            logger.warning("[bot-delete] nip05 remove skipped — settings not hydrated yet")
+            return
         raw = settings_store.get("nostr_relay_nip05_names", "") or ""
         kept = []
         for ln in raw.split("\n"):
