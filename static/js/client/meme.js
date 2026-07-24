@@ -299,6 +299,7 @@
         <option value="">None</option>
         ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
       </select></label>
+      ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
       <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
       <div class="mb-order">
         <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
@@ -602,7 +603,7 @@
       const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
-          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', mute:!!l.mute, volume:+l.volume||1,
+          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute, volume:+l.volume||1,
           text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -680,7 +681,8 @@
     on('mb-f-color','input',(e)=>{ l.color=e.target.value; save(); repaint(); });
     on('mb-f-stroke','input',(e)=>{ l.stroke=e.target.value; save(); repaint(); });
     on('mb-f-fx','change',(e)=>{ l.effect=e.target.value; save(); });
-    on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); toast(l.sound?('sound: '+l.sound):'sound removed'); });
+    on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
+    on('mb-f-sndvol','input',(e)=>{ l.soundVolume=clamp(e.target.value,0,3); save(); });
     on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
     on('mb-f-op','input',(e)=>{ l.opacity=clamp(e.target.value,0.05,1); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });

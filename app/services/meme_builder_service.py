@@ -241,6 +241,16 @@ def render(edit: dict, sources: dict) -> bytes:
                     # Cheap path: draw straight onto the composite (and fade is handled inside _drawtext as
                     # an alpha ramp). Keeps captions above every visual layer, which is what you want by default.
                     textfiles.append((f"[tx{n}]", dt))
+                    # This path `continue`s WITHOUT adding a video input, so its sound has to be handled here
+                    # too — otherwise a caption with a sound but no effect silently loses the sound (it did).
+                    snd0 = _sound_path(layer.get("sound"))
+                    if snd0:
+                        cmd += ["-t", f"{dur:.3f}", "-i", snd0]
+                        svol0 = _num(layer.get("soundVolume"), 0, 4, 1.0)
+                        audio_parts.append(f"[{idx}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+                                           f"loudnorm=I=-16:TP=-1.5:LRA=11,"
+                                           f"adelay={int(start*1000)}|{int(start*1000)},volume={svol0:.2f}[s{n}]")
+                        idx += 1
                     continue
                 # Any OTHER effect needs the caption to be its OWN stream — a filter like blur/spin/zoom acts
                 # on a video frame, and text drawn onto the composite has no frame of its own to transform.
@@ -264,6 +274,7 @@ def render(edit: dict, sources: dict) -> bytes:
                     cmd += ["-t", f"{dur:.3f}", "-i", snd]
                     svol = _num(layer.get("soundVolume"), 0, 4, 1.0)
                     audio_parts.append(f"[{idx}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+                                       f"loudnorm=I=-16:TP=-1.5:LRA=11,"   # same level-matching as the other sound path
                                        f"adelay={int(start*1000)}|{int(start*1000)},volume={svol:.2f}[s{n}]")
                     idx += 1
                 continue
@@ -326,6 +337,11 @@ def render(edit: dict, sources: dict) -> bytes:
                 cmd += ["-t", f"{dur:.3f}", "-i", snd]
                 svol = _num(layer.get("soundVolume"), 0, 4, 1.0)
                 audio_parts.append(f"[{idx}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+                                   # The sound catalogue was recorded at wildly different levels (cheers and
+                                   # gong are far quieter than the rest), so a raw mix is inconsistent.
+                                   # loudnorm brings every clip to the same perceived loudness before the
+                                   # per-layer volume is applied, so "add a sound" sounds the same each time.
+                                   f"loudnorm=I=-16:TP=-1.5:LRA=11,"
                                    f"adelay={int(start*1000)}|{int(start*1000)},volume={svol:.2f}[s{n}]")
                 idx += 1
 
