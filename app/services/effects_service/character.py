@@ -206,8 +206,11 @@ def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
     font, lines, stroke, bbox = chosen
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     if beside:
-        # Vertically centred on her upper half, so the label sits next to her head/torso.
-        cx = (char_left // 2) if side == "left" else (char_right + (W - char_right) // 2)
+        # HUG her: the bubble sits a small fixed gap from her silhouette, not centred in the gutter.
+        # Centring put it out at the far edge of a wide image — the tail stretched across empty space
+        # and it stopped reading as her speech. The gap scales with the image so it holds at any size.
+        gap = max(int(W * 0.015), 6)
+        cx = (char_left - gap - tw // 2) if side == "left" else (char_right + gap + tw // 2)
         cx = max(margin + tw // 2, min(cx, W - margin - tw // 2))
         y = max(margin, min(char_top + int((H - char_top) * 0.15), H - th - margin))
     else:
