@@ -276,7 +276,7 @@
     // Profile if you want max tippability. Your address is still readable from your kind-0 profile regardless.
     tags = _enrichTags(kind, tags);
     const ev = await sign(kind, content, tags);
-    Store.saveEvent(ev); invalidateCounts();   // optimistic: show it instantly
+    Store.saveEvent(ev); invalidateCounts(); applySobLive(ev);   // optimistic: show it instantly
     const r = await Relay.publish(ev);
     // publish() reports {ok}; it never throws on a relay failure. On failure it ROLLS BACK the optimistic
     // save — otherwise a post/follow/react that never reached the relay would sit in the local cache looking
@@ -2214,7 +2214,7 @@
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
-    const onEvent = ev => { if (Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.pubkey);
+    const onEvent = ev => { if (Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.pubkey);
       // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
       // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
       // watchDeletions handles them, so keep them out of the prepend. A small grace covers skew.
@@ -5530,6 +5530,22 @@
     if(!s) return false;
     return _SOB_CODES.test(s) || _SOB_EMOJI.some(e => s.includes(e));
   }
+  // Apply the sob celebration LIVE. data-celebrate is otherwise only set when a note RENDERS, so a 😭
+  // that arrived while you were looking at the post did nothing until the feed happened to re-render —
+  // which reads as the feature being broken. Called from every kind-7 ingest path.
+  function applySobLive(ev){
+    try{
+      if(!ev || ev.kind!==7 || !_isSob(ev.content)) return;
+      let id=null;                                   // NIP-25: the reacted post is the LAST e tag
+      for(let i=ev.tags.length-1;i>=0;i--) if(ev.tags[i][0]==='e'){ id=ev.tags[i][1]; break; }
+      if(!id) return;
+      const el=document.querySelector(`.note[data-id="${CSS.escape(id)}"]`);
+      if(!el || el.dataset.celebrate) return;        // absent, or already celebrating something
+      el.dataset.celebrate='sob';
+      el._celebNext=0;                               // let the sweep fire it on its next tick
+      observeCelebrations();                         // start the sweep if nothing was celebrating yet
+    }catch(_){}
+  }
   // reaction/repost counts — built ONCE per render pass (single scan of the store) instead of
   // re-scanning the whole store for every rendered note (was O(notes × store)).
   let CIDX = null;
@@ -8519,7 +8535,7 @@
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
-      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
+      onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
       onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
