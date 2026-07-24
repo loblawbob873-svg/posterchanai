@@ -5911,6 +5911,17 @@
       const r=await publish(1, body, tags); if(r && r.ok) toast('🟢 tip note posted');   // failure toast by publish()
     }catch(e){ toast('could not post tip note'); }
   }
+  // A kind-1 address-tip note (BCH `t:bchtip` / Monero `t:monerotip`) → the pieces for a proper
+  // "🟢 tipped you 0.01 BCH" notification instead of a generic "mentioned you". Shared by the live
+  // toast/OS-notification builder AND the Notifications list renderer so both agree.
+  function _tipNote(ev){
+    if(!ev || ev.kind!==1 || !ev.tags) return null;
+    const has=v=>ev.tags.some(t=>t[0]==='t'&&t[1]===v);
+    const amtOf=k=>(ev.tags.find(t=>t[0]===k)||[])[1]||'';
+    if(has('bchtip'))    return { icon:'🟢', amt:amtOf('amount_bch'), unit:'BCH' };
+    if(has('monerotip')) return { icon:'ɱ', amt:amtOf('amount_xmr'), unit:'XMR' };
+    return null;
+  }
   function bech32ToBytes(s){ const d=NT().nip19; throw new Error('lnurl decode unsupported'); }
   async function doBlock(pk){
     if(!IS_ADMIN) return;
@@ -8629,7 +8640,9 @@
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
     if(MUTED.has(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
+    const _tn=_tipNote(ev);
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
+      : _tn?`${_tn.icon} tipped you${_tn.amt?' '+enc(_tn.amt)+' '+enc(_tn.unit):''}`
       : ev.kind===3?'🫂 followed you'
       : ev.kind===1984?'🚩 reported you'
       : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
@@ -8762,9 +8775,9 @@
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
   function _notifMatch(e){
     switch(_notifFilter){
-      case 'mentions': return e.kind===1 || e.kind===42 || e.kind===1111;   // incl. chat + community replies
+      case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===42 || e.kind===1111;   // incl. chat + community replies; a tip note belongs in Zaps, not here
       case 'reactions': return e.kind===7||e.kind===6;
-      case 'zaps': return e.kind===9735;
+      case 'zaps': return e.kind===9735 || !!_tipNote(e);   // Lightning zaps + BCH/Monero address tips share the ⚡ tab
       case 'follows': return e.kind===3;
       case 'reports': return e.kind===1984;
       // "All" carries only follows we actually WATCHED arrive (pinned after _notifEpoch, the same test
@@ -8931,6 +8944,7 @@
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
     else if(e.kind===42){cls='reply';ic='💬';txt='in chat'+_notifSaid(e);}
     else if(e.kind===1111){cls='reply';ic='👥';txt='commented'+_notifSaid(e);}
+    else if(_tipNote(e)){const _tn=_tipNote(e);cls='zap';ic=_tn.icon;txt=`tipped you${_tn.amt?` <b>${enc(_tn.amt)} ${enc(_tn.unit)}</b>`:''}`;}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied'+_notifSaid(e);}
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
