@@ -49,7 +49,18 @@
     return { w:720, h:1280, fps:30, bg:'#000000', duration:6, layers:[] };
   }
   // Persist across view switches / reloads so a half-built meme is not lost by tapping Home.
-  function save(){ try{ localStorage.setItem('pc_meme_project', JSON.stringify(P)); }catch(_){ } }
+  // A silent failure here USED to mean the build quietly stopped persisting (localStorage full, or blocked in
+  // private mode) and came back blank on the next load with no explanation. Say so ONCE, and point at the
+  // Blossom save — which is the only copy that survives this browser anyway.
+  let _saveWarned = false;
+  function save(){
+    try{ localStorage.setItem('pc_meme_project', JSON.stringify(P)); _saveWarned = false; }
+    catch(err){
+      if(!_saveWarned){ _saveWarned = true;
+        try{ toast('⚠ can’t auto-save this build in the browser (storage full/blocked) — use 💾 Save to keep it'); }catch(_){ }
+      }
+    }
+  }
   function load(){
     try{ const r=JSON.parse(localStorage.getItem('pc_meme_project')||'null');
       if(r && Array.isArray(r.layers)) return r; }catch(_){ }
