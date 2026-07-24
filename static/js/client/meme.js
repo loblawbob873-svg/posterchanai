@@ -86,6 +86,11 @@
     return Math.min(idx, others.length);
   }
 
+  // Rows read TOP-FIRST, like every editor: P.layers is draw order (last = on top), so the list is
+  // reversed for display. Without this the row you saw at the top was actually the BOTTOM layer —
+  // which is why a caption listed first rendered underneath the clip listed below it.
+  const _rowOrder = () => P.layers.slice().reverse();
+
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
     // APPEND to the end of the timeline, do not stack at t=0. Defaulting every new layer to start:0 made
@@ -102,7 +107,15 @@
     }, extra||{});
     if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
-    P.layers.push(l); sel = l.id;
+    // P.layers order IS the draw order (later = on top). A caption must stay ABOVE the footage, so a new
+    // MEDIA clip goes in below the text layers rather than on top of everything — otherwise adding a clip
+    // after writing your caption silently buried the caption under it. Text still goes on top.
+    if(type==='text'){ P.layers.push(l); }
+    else {
+      const firstText = P.layers.findIndex(x=>x.type==='text');
+      if(firstText < 0) P.layers.push(l); else P.layers.splice(firstText, 0, l);
+    }
+    sel = l.id;
     if(type!=='text') resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
     save(); return l;
   }
@@ -144,7 +157,7 @@
 
       ${P.layers.some(l=>l.type!=='text') ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to reorder it — the rest reflow back-to-back. Drag its edges to trim.</div>' : ''}
       <div class="mb-timeline" id="mb-timeline">
-        ${P.layers.length ? P.layers.map(trackEl).join('') : '<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'}
+        ${P.layers.length ? _rowOrder().map(trackEl).join('') : '<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'}
       </div>
       <div id="mb-result"></div>
     </div>`;
@@ -313,7 +326,7 @@
   function repaint(what){
     const root = document.getElementById('feed'); if(!root) return;
     if(what==='inspector'){ const i=document.getElementById('mb-inspector'); if(i){ i.innerHTML=inspector(); bindInspector(root); } return; }
-    if(what==='timeline'){ const t=document.getElementById('mb-timeline'); if(t){ t.innerHTML=P.layers.length?P.layers.map(trackEl).join(''):'<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'; } return; }
+    if(what==='timeline'){ const t=document.getElementById('mb-timeline'); if(t){ t.innerHTML=P.layers.length?_rowOrder().map(trackEl).join(''):'<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'; } return; }
     render();
   }
 
@@ -355,7 +368,16 @@
         if(resizing){
           if(l.type==='text') l.size = clamp(osz + dy, 8, 400);
           else { l.w = clamp(ow+dx, 16, P.w*2); l.h = clamp(oh+dy, 16, P.h*2); }
-        } else { l.x = Math.round(ox+dx); l.y = Math.round(oy+dy); }
+        } else {
+          // Keep the layer ON the canvas. Unclamped, a drag could push x/y negative (or past the far edge)
+          // and the RENDER honours that literally — a caption nudged left ended up at x=-79, i.e. off-screen,
+          // even though the preview still showed part of it. Text has no w/h in the model, so reserve a
+          // little so it can't be parked completely outside the frame either.
+          const bw = l.type==='text' ? Math.max(24, l.size) : l.w;
+          const bh = l.type==='text' ? Math.max(24, l.size) : l.h;
+          l.x = Math.round(clamp(ox+dx, -bw/2, P.w - bw/2));
+          l.y = Math.round(clamp(oy+dy, 0, Math.max(0, P.h - bh/2)));
+        }
         applyGeom(item, l);
       }, ()=>{ save(); repaint('inspector'); });
     });
@@ -515,7 +537,7 @@
       <div class="mb-resacts">
         <button class="btn btn-neon small" id="mb-post">📤 Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy">🔗 Upload &amp; copy link</button>
-        <a class="btn btn-ghost small" href="${url}" download="meme.mp4">⬇️ Download</a>
+        <a class="btn btn-neon small" href="${url}" download="meme.mp4">⬇️ Download</a>
       </div>
       <div class="muted small" id="mb-reslink"></div>
     </div>`;
