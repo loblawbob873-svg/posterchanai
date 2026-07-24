@@ -259,8 +259,11 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                     r = await _deliver(db, port, "pleroma", user.pleroma_instance_url, instance_host,
                                        status, post, token=user.pleroma_access_token, extra_ptags=[recipient])
                 except _PublishFailed:
-                    return False   # relay publish failed — do NOT advance the cursor; retry next poll
-                return r is not None
+                    return False   # TRANSIENT relay failure (flap/disconnect) — retry next poll, never drop
+                # r is None here only for a PERMANENT non-delivery (blocked author / oversized / already
+                # mirrored): those never succeed, so advance past — do NOT feed them to the retry/skip
+                # machinery (which is only for transient failures). r not None = delivered → also advance.
+                return True
             return True
         if ntype in ("favourite", "reaction", "emoji_reaction", "pleroma:emoji_reaction") and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
@@ -283,8 +286,10 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                     sc = content.strip(":")
                     content = f":{sc}:"
                     tags.append(["emoji", sc, emoji_url])
-            ok, _ = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags, broadcast=broadcast))
-            return ok
+            ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
+            ok, msg = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags,
+                                                                  broadcast=broadcast, created_at=ts))
+            return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype == "reblog" and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
             if not target:
@@ -293,8 +298,10 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                             acct, status.get("id"))
                 return True
             tags = [["p", recipient], ["e", target]]
-            ok, _ = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast))
-            return ok
+            ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
+            ok, msg = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags,
+                                                                  broadcast=broadcast, created_at=ts))
+            return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype in ("follow", "follow_request"):
             # A fediverse user followed this bridge user → reflect it on Nostr by adding the bridge
             # user to the FOLLOWER puppet's kind-3 contact list, so they appear in the user's Nostr
@@ -318,12 +325,43 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
 
 _puppet_follows: dict = {}      # follower puppet pubkey -> set of followed pubkeys we've published
                                 # (so a momentary empty relay read can never SHRINK the list)
-_notif_poison: dict = {}        # user_id -> notification id that failed to publish LAST cycle. A second
 _follow_locks: dict = {}   # puppet pubkey -> asyncio.Lock (kind-3 is REPLACEABLE, so a concurrent
                            # read-modify-write between the poller and a follower backfill lost follows)
 _dm_poison: dict = {}     # (user|status id) -> seen once; second failure skips it (see _deliver_dms)
-                                # failure on the same id = un-deliverable (e.g. a relay-blocked author);
-                                # skip it so it can't head-of-line-block every later notification forever.
+_notif_poison: dict = {}        # user_id -> {"id": notif id, "fails": consecutive-failure count} for the
+                                # item currently stuck at the head of the drain. A False from _deliver_one_notif
+                                # is now ONLY a TRANSIENT failure (permanent non-deliveries advance in-place),
+                                # so the default is to keep retrying — a brief relay flap must NEVER drop a
+                                # notification (the old 2-strike drop silently ate mentions during a flap). Only
+                                # after _POISON_MAX_FAILS consecutive cycles of the SAME item failing — i.e. it's
+                                # genuinely wedging the drain, not a transient blip — do we skip past it so newer
+                                # notifications aren't starved forever. Any success clears the streak.
+_POISON_MAX_FAILS = 20          # ~20 min of continuous same-item failure before skipping (vs a flap of 1-3)
+
+
+def _notif_ts(n: dict, status: dict | None) -> int | None:
+    """A STABLE unix-seconds timestamp for a reaction/reblog event so a RETRY builds the identical
+    Nostr event id — the relay then dedups the re-publish instead of storing a second favourite/boost.
+    Without this, the wider retry window could accrue duplicate reactions when the relay stores an event
+    but its OK is lost/times out. Prefer the notification's own time (recent → passes relay age checks),
+    then the source status's; None (→ wall clock) only if neither parses (rare)."""
+    for s in (n.get("created_at"), (status or {}).get("created_at")):
+        if not s:
+            continue
+        try:
+            return int(datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp())
+        except Exception:
+            continue
+    return None
+
+
+def _is_permanent_reject(msg: str) -> bool:
+    """A relay OK-false whose reason is PERMANENT (the item will never be accepted) vs a transient/
+    connection failure. Mirrors fedi_nostr_bridge_service._deliver's classifier so a permanently-rejected
+    reaction/reblog advances immediately instead of wedging the drain for _POISON_MAX_FAILS cycles.
+    Blocked = author/content not accepted (e.g. not-in-WoT); invalid = bad id/sig/expired; duplicate =
+    already stored. Everything else (connection drop, 'not stored, retry') is transient → keep retrying."""
+    return (msg or "").lower().startswith(("blocked", "invalid", "duplicate"))
 
 
 async def _bridge_follow(db: Session, port: int, follower_puppet: dict, followed_pk: str,
@@ -506,19 +544,25 @@ async def _deliver_notifications(db: Session, port: int, user: User, instance_ho
         for n in sorted(raw, key=lambda x: x.get("id") or ""):   # oldest-first
             nid = n.get("id") or ""
             if not await _deliver_one_notif(db, port, user, instance_host, n, recipient, broadcast, blocked):
-                # Publish failed. Retry next cycle — UNLESS this exact id already failed last cycle, in
-                # which case it's un-deliverable (e.g. a relay-blocked author) and would freeze the
-                # cursor forever, starving every later notification (the "missing a bunch" wedge). Skip
-                # the poison item and keep draining. Transient failures still get one retry first.
-                if _notif_poison.get(user.id) == nid:
-                    logger.warning("[fedi-personal] skipping un-deliverable notification %s (%s from %s) for %s",
-                                   nid, n.get("type"), (n.get("account") or {}).get("acct"), user.username)
+                # TRANSIENT publish failure (relay flap/disconnect) — permanent non-deliveries already
+                # advanced inside _deliver_one_notif and never reach here. Default: STOP and retry next
+                # cycle with the cursor unmoved, so a relay that's briefly down (or flapping across a poll
+                # or two) resumes delivery when it recovers and NEVER drops a notification. Only when the
+                # SAME item keeps failing for _POISON_MAX_FAILS consecutive cycles — genuinely wedging the
+                # drain, not a blip — do we skip past it so newer notifications aren't starved forever.
+                pz = _notif_poison.get(user.id)
+                fails = (pz.get("fails", 0) + 1) if (pz and pz.get("id") == nid) else 1
+                if fails >= _POISON_MAX_FAILS:
+                    logger.warning("[fedi-personal] skipping notification %s (%s from %s) for %s after %d "
+                                   "consecutive failures (relay wedged?)", nid, n.get("type"),
+                                   (n.get("account") or {}).get("acct"), user.username, fails)
                     _notif_poison.pop(user.id, None)
-                    last = nid or last    # advance PAST the poison
+                    last = nid or last    # advance PAST the wedged item
                     continue
-                _notif_poison[user.id] = nid
-                stop = True               # first failure → retry next cycle, don't advance past it
+                _notif_poison[user.id] = {"id": nid, "fails": fails}
+                stop = True               # transient failure → retry next cycle, don't advance past it
                 break
+            _notif_poison.pop(user.id, None)   # a success clears any in-progress failure streak
             last = nid or last
         if last and last != cursor:
             cursor = last

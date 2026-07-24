@@ -209,17 +209,22 @@ _PUPPET_CACHE_MAX = 5000
 
 
 def build_event(p: dict, kind: int, content: str, tags: list | None = None,
-                object_uri: str | None = None, broadcast: bool = False) -> dict:
+                object_uri: str | None = None, broadcast: bool = False,
+                created_at: int | None = None) -> dict:
     """Sign a puppet event, attaching the mandatory `fedibridge` actor anchor (so the relay validates
     it), a NIP-48 `proxy` deep-link to the original fedi object, and — unless broadcast is enabled —
-    a `nofederate` marker so the relay keeps the mirror local-only (see server._broadcastable)."""
+    a `nofederate` marker so the relay keeps the mirror local-only (see server._broadcastable).
+
+    `created_at` (unix seconds) pins the timestamp so a caller that may RE-PUBLISH the same logical
+    event (e.g. a retried favourite/boost) produces the IDENTICAL event id each time and the relay
+    dedups it instead of storing a second copy. Defaults to now (a fresh id every call)."""
     t = list(tags or [])
     t.append([bridge_keys.ACTOR_TAG, p["actor_uri"]])
     if object_uri:
         t.append(["proxy", object_uri, "activitypub"])
     if not broadcast:
         t.append(["nofederate"])
-    return _build_event(p["seckey"], kind, content, tags=t)
+    return _build_event(p["seckey"], kind, content, tags=t, created_at=created_at)
 
 
 async def publish(port: int, ev: dict, timeout: float = 8.0) -> tuple[bool, str]:
