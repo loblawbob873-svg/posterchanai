@@ -5,13 +5,16 @@
 @font-face{font-family:'Orbitron';font-style:normal;font-weight:400 900;font-display:swap;src:url('/static/fonts/orbitron.woff2') format('woff2')}
 :root{
   --bg:#0a0a0f; --bg2:#12121a; --panel:rgba(18,18,28,.72); --panel2:rgba(26,26,42,.85);
-  /* --rail: the CHROME surface — left sidebar, right column and the mobile bottom nav, which frame the
-     feed and are always on screen. ONE token so the two rails can never drift apart (they used to be a
-     hardcoded near-opaque dark on the left vs the translucent --panel on the right, which read as two
-     different colours with the feed between them). Near-opaque on cyberpunk so the city skyline stays
-     in the FEED column instead of bleeding through the navigation; every other theme maps it to
-     --panel (see the themed layer). */
-  --rail:rgba(11,11,18,.95);
+  /* --rail: the surface behind the left sidebar and the right column.
+     TRANSPARENT on purpose — the rails are not panels sitting on the page, they ARE the page. Painting
+     them (the left rail was a hardcoded near-opaque dark, the right one the translucent --panel) split
+     the shell into three tones: on Professional the rails came out pure white against a #f5f7fa feed,
+     a 10/255 seam down each side, and Dark/Monero were worse at 15 and 12. Letting the body background
+     run edge to edge makes left, centre and right the SAME pixels by construction — no value to keep in
+     sync, and the ambient corner washes flow across the whole width instead of stopping at a column
+     boundary. The separation is now done by the hairline rules on .sidebar/.rightbar, which is what a
+     divider is for. Overridable per theme if one ever wants a painted rail (winxp's Luna pane does). */
+  --rail:transparent;
   --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b; --accent-rgb:0,255,255; --accent2-rgb:255,0,255;
   --danger:#ff6b8b;   /* delete/danger action color; overridden per-theme so it stays readable */
   --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
@@ -192,11 +195,10 @@
 /* Sidebar identity cluster (name under the avatar → connection status → user/online counts, right
    above Logout): force the theme's text colour so it's high-contrast on every theme. (Winxp's later
    !important rules override this back to white-on-its-blue-rail.) */
-/* The rails default to cyberpunk's near-opaque dark, so on a light theme the left/right columns and
-   the mobile bottom nav stayed dark and their text (nav items + the avatar→logout cluster) was
-   dark-on-dark / unreadable. Theme the rail SURFACE once; every panel that uses --rail follows, and
-   all their text reads. (Winxp's own blue .sidebar rule + cyberpunk's bare :root are unaffected.) */
-:root[data-theme]{ --rail:var(--panel); }
+/* No per-theme rail colour is needed any more: --rail is transparent for every theme, so each rail
+   shows that theme's own body background and its text sits on exactly the surface the feed does.
+   (This replaces an older `.sidebar{background:var(--panel)!important}` patch that existed only to
+   stop the hardcoded dark rail from swallowing dark text on the light themes.) */
 :root[data-theme] .me .mn,
 :root[data-theme] .usercount,
 :root[data-theme] .conn{ color:var(--text) !important; }
@@ -675,14 +677,15 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   .rb-toggle{display:flex;align-items:center;justify-content:center;position:fixed;z-index:25;
     top:50%;right:calc(340px + 32px);transform:translateY(-50%);width:20px;height:74px;cursor:pointer;padding:0;   /* right rail (340px) + .app's outer padding (32px) — keeps the tab on the panel edge */
     font-size:13px;line-height:1;color:var(--cyan);font-family:inherit;
-    /* Sits ON the right rail's edge, so it takes the rail's surface — it used to hardcode a near-black
-       base, which left a dark tab stuck to a white panel on every light theme. */
-    background:linear-gradient(135deg,rgba(var(--accent-rgb),.16),rgba(var(--accent2-rgb),.12)),var(--rail);
+    /* Opaque var(--bg), not var(--rail): the rail is transparent now and the feed scrolls past behind
+       this tab, so it needs its own fill — the canvas colour, so it still reads as part of the rail.
+       (It used to hardcode a near-black base: a dark tab stuck to a white panel on every light theme.) */
+    background:linear-gradient(135deg,rgba(var(--accent-rgb),.16),rgba(var(--accent2-rgb),.12)),var(--bg);
     border:1px solid var(--line);border-right:none;border-radius:9px 0 0 9px;
     box-shadow:-3px 0 16px rgba(var(--accent-rgb),.18),inset 1px 0 0 rgba(var(--accent-rgb),.3);
     transition:right .2s ease, background .15s, color .15s, box-shadow .15s}
   /* var(--text), not #fff: the hover base is now the themed rail, and white-on-white hid the arrow. */
-  .rb-toggle:hover{color:var(--text);background:linear-gradient(135deg,rgba(var(--accent-rgb),.32),rgba(var(--accent2-rgb),.22)),var(--rail);
+  .rb-toggle:hover{color:var(--text);background:linear-gradient(135deg,rgba(var(--accent-rgb),.32),rgba(var(--accent2-rgb),.22)),var(--bg);
     box-shadow:-3px 0 22px rgba(var(--accent-rgb),.5),inset 1px 0 0 rgba(var(--accent-rgb),.6)}
   body.rb-collapsed .app{grid-template-columns:300px minmax(0,1fr)}   /* drop the 3rd column → main widens */
   body.rb-collapsed .rightbar{display:none}
@@ -1697,7 +1700,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .dm-list.has-active + .dm-thread .dm-compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .mobilenav{display:flex;flex-wrap:nowrap;position:fixed;bottom:0;left:0;right:0;justify-content:space-around;
     align-items:center;padding:6px env(safe-area-inset-right) calc(6px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
-    border-top:1px solid var(--line);z-index:40;background:var(--rail)}   /* same rail surface as the desktop sidebar — it used to be a near-black bar even on the light themes */
+    /* var(--bg), not var(--rail): this bar is FIXED and the feed scrolls underneath it, so unlike the
+       desktop rails it cannot be transparent. The canvas colour keeps it the same tone as everything
+       else; it used to be a hardcoded near-black bar even on the light themes. */
+    border-top:1px solid var(--line);z-index:40;background:var(--bg)}
   /* flex:1 1 0 + min-width:0 → all items shrink to equal widths and stay on ONE line, so the ☰ never
      wraps to a second row on narrow phones. Icon over a 10px label: the label is what turns a row of
      ambiguous glyphs into a bar people can actually navigate, and it fits because the icons are line
