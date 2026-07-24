@@ -194,7 +194,10 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     side = "right" if right_w >= left_w else "left"
     band_w = max(left_w, right_w)
     beside = band_w >= max(int(W * 0.18), 60)
-    max_width = band_w if beside else (W - 2 * margin)
+    # Use only part of the gutter: at full width the bubble filled it end to end and clamped against the
+    # frame margin, which reads as "pinned to the right" rather than sitting beside him. The tail and the
+    # bubble padding also live outside `tw`, so budgeting for them here is what keeps the tail on him.
+    max_width = int(band_w * 0.74) if beside else (W - 2 * margin)
     # "Smaller" applies to BOTH placements: this is a label on her, not a meme banner. The above-head
     # fallback used H/6 and rendered enormous on portrait images where the gutters are too narrow.
     top_size = max(int(H / (11 if beside else 10)), 13)
@@ -234,7 +237,11 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
         gap = max(int(W * 0.015), 6)
         cx = (char_left - gap - tw // 2) if side == "left" else (char_right + gap + tw // 2)
         cx = max(margin + tw // 2, min(cx, W - margin - tw // 2))
-        y = max(margin, min(char_top + int((H - char_top) * 0.15), H - th - margin))
+        # char_top is the top of the RAISED ARM, so anchoring near it put the bubble up level with his
+        # finger. Centre it on the head/upper torso instead (~38% down the character) so it reads as
+        # speech coming from him.
+        char_h = H - char_top
+        y = max(margin, min(char_top + int(char_h * 0.38) - th // 2, H - th - margin))
     else:
         cx, y = W // 2, max(margin, min(char_top - th - margin, H - th - margin))
     if beside:
