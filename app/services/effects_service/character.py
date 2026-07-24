@@ -219,18 +219,25 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     # broken result does technically fit. Require every WORD to fit on its own line and keep shrinking
     # until one does; wrapping between words is still fine for longer captions.
     words = text.split() or [text]
-    chosen = None
-    for size in range(top_size, 10, -1):
-        font = _load_meme_font(size)
-        if max(draw.textlength(w, font=font) for w in words) > max_width:
-            continue                                   # some word would be hyphen-less chopped — go smaller
-        lines = _wrap_text_to_width(draw, text, font, max_width)
-        stroke = max(1, size // 14)
-        bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font,
-                                       stroke_width=stroke, align="center")
-        if (bbox[2] - bbox[0]) <= max_width and (bbox[3] - bbox[1]) <= band_h:
-            chosen = (font, lines, stroke, bbox)
-            break
+
+    def _fit(one_line: bool):
+        """Largest size whose caption fits the box. one_line=True refuses to wrap at all."""
+        for size in range(top_size, 10, -1):
+            font = _load_meme_font(size)
+            if max(draw.textlength(w, font=font) for w in words) > max_width:
+                continue                               # a word would be chopped mid-word — go smaller
+            lines = [text] if one_line else _wrap_text_to_width(draw, text, font, max_width)
+            stroke = max(1, size // 14)
+            bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font,
+                                           stroke_width=stroke, align="center")
+            if (bbox[2] - bbox[0]) <= max_width and (bbox[3] - bbox[1]) <= band_h:
+                return (font, lines, stroke, bbox)
+        return None
+
+    # ONE LINE is the meme's look — "WOULD" read right while "THE RAPED" wrapped to two lines and the
+    # two effects stopped matching. Prefer a single line even though it means a smaller font; only wrap
+    # when the caption cannot fit on one line at any readable size (a long custom caption).
+    chosen = _fit(True) or _fit(False)
     if chosen is None:
         font = _load_meme_font(11)
         lines = _wrap_text_to_width(draw, text, font, max_width)
