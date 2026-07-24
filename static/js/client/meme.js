@@ -132,8 +132,14 @@
     try{
       const el=document.querySelector('.mb-item[data-id="'+l.id+'"]');
       const st=document.getElementById('mb-stage');
-      if(el && st){ const k = P.w / st.getBoundingClientRect().width;
-        return Math.round((+l.x||0) + el.getBoundingClientRect().width * k / 2); }
+      if(el && st){
+        const r = el.getBoundingClientRect();
+        // seek() hides layers outside the playhead's window (display:none), and a hidden element measures
+        // ZERO — which produced a centre equal to the layer's left edge and put the caption off to one side.
+        // Measure only when it is actually laid out; otherwise send nothing and let the renderer use x.
+        if(!r.width) return null;
+        const k = P.w / st.getBoundingClientRect().width;
+        return Math.round((+l.x||0) + r.width * k / 2); }
     }catch(_){ }
     return null;
   }

@@ -183,6 +183,20 @@ def _sound_path(name: str) -> str:
         return ""
 
 
+
+def _has_audio(path: str) -> bool:
+    """True if the file actually carries an audio stream. Referencing [n:a] for an input that has none is a
+    HARD ffmpeg error, not a no-op — so a silent MP4 (a screen recording, a GIF conversion, or a meme this
+    very tool exported with -an) failed the whole render with a 500 instead of just being silent."""
+    try:
+        p = subprocess.run(["ffprobe", "-v", "quiet", "-select_streams", "a:0",
+                            "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+                           capture_output=True, timeout=20)
+        return b"audio" in (p.stdout or b"")
+    except Exception:
+        return False
+
+
 def render(edit: dict, sources: dict) -> bytes:
     """Render the edit list. `sources` maps a layer's `src` key -> local file path (the caller resolves
     and fetches URLs/Blossom hashes, so this stays a pure renderer with no network of its own).
@@ -236,6 +250,12 @@ def render(edit: dict, sources: dict) -> bytes:
                 with open(tf, "w", encoding="utf-8") as fh:
                     fh.write(txt)
                 dt = _drawtext(layer, w, h).replace("{TEXTFILE}", tf)
+                # The own-stream path draws onto a canvas whose OWN timeline runs 0..dur (the shift to the
+                # project timeline happens later via setpts), so drawtext's enable window and fade ramp must
+                # be layer-local. Using the project-absolute start there meant any caption with start>0 was
+                # enabled for frames that canvas never has — the text simply never appeared.
+                _local = dict(layer); _local["start"] = 0.0
+                dt_local = _drawtext(_local, w, h).replace("{TEXTFILE}", tf)
                 fxn = (layer.get("effect") or "none").strip().lower()
                 if fxn in ("", "none", "fade"):
                     # Cheap path: draw straight onto the composite (and fade is handled inside _drawtext as
@@ -257,8 +277,12 @@ def render(edit: dict, sources: dict) -> bytes:
                 # So: a transparent canvas the size of the project, the text drawn on it, then the effect, then
                 # overlaid. That makes every effect in the menu work on a caption, not just fade.
                 cmd += ["-f", "lavfi", "-t", f"{dur:.3f}",
-                        "-i", f"color=c=black@0:s={w}x{h}:r={fps}"]
-                tchain = ["format=rgba", dt]
+                        "-i", f"color=c=black:s={w}x{h}:r={fps}"]
+                # colorchannelmixer=aa=0 FORCES the canvas transparent. `color=c=black@0` does NOT survive
+                # negotiation on ffmpeg 7.x here — it comes out fully opaque, so the full-frame overlay
+                # painted BLACK over every layer beneath the caption. Zeroing alpha explicitly is reliable.
+                # The caption is drawn AFTER, so its own glyphs keep their alpha.
+                tchain = ["format=rgba", "colorchannelmixer=aa=0", dt_local]
                 tfx = _fx_chain(fxn, w, h, dur, fps)
                 if tfx:
                     tchain.append(tfx)
@@ -323,7 +347,7 @@ def render(edit: dict, sources: dict) -> bytes:
                           f"enable='between(t,{start:.3f},{end:.3f})':eof_action=pass{nxt}")
             cur = nxt
 
-            if kind == "video" and layer.get("mute") is not True:
+            if kind == "video" and layer.get("mute") is not True and _has_audio(path):
                 vol = _num(layer.get("volume"), 0, 4, 1.0)
                 audio_parts.append(f"[{idx}:a]adelay={int(start*1000)}|{int(start*1000)},"
                                    f"volume={vol:.2f}[a{n}]")
