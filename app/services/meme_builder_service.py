@@ -380,14 +380,27 @@ def render(edit: dict, sources: dict) -> bytes:
         out = os.path.join(tmp, "out.mp4")
         maps = ["-map", "[vout]"]
         if audio_parts:
+            # A SILENT BASE track for the whole project, mixed in alongside the real audio — the audio
+            # counterpart of the colour base the video is composited onto, and the fix for "the meme has
+            # no sound at all". Every sound is `loudnorm,adelay=<start>`, and an amix whose inputs ALL
+            # begin after t=0 terminates immediately: the output came out as ~0.01s of silence and the
+            # render still succeeded, so a meme whose only sound sat on a layer that wasn't first (media
+            # layers append to the end of the timeline, so the second clip you add always starts late)
+            # rendered mute. One input that runs from 0 to the end keeps the mix alive for the whole
+            # project. It also makes a sound's loudness independent of when it starts.
+            cmd += ["-f", "lavfi", "-t", f"{duration:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
             # Each entry ends in its own output label ("…volume=1.00[a3]"); mix exactly those, by name.
             # Layer indexes are not contiguous (text and skipped layers leave gaps), so the labels have
             # to come from the chains themselves rather than from a range().
             labels = [p.rsplit("[", 1)[-1].rstrip("]") for p in audio_parts]
-            mix_in = "".join(f"[{l}]" for l in labels)
+            mix_in = f"[{idx}:a]" + "".join(f"[{l}]" for l in labels)
+            idx += 1
             filtergraph += ";" + ";".join(audio_parts)
-            filtergraph += f";{mix_in}amix=inputs={len(audio_parts)}:dropout_transition=0:normalize=0[aout]"
-            maps += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k"]
+            filtergraph += f";{mix_in}amix=inputs={len(audio_parts) + 1}:dropout_transition=0:normalize=0[aout]"
+            # -ar 48000 is not cosmetic: loudnorm runs its dynamic mode at 192 kHz, and left alone the AAC
+            # encoder takes the highest rate it supports (96 kHz) — which plenty of players and phone
+            # hardware decoders won't touch, giving a file that looks fine in ffprobe and plays silent.
+            maps += ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k", "-ar", "48000"]
         else:
             maps += ["-an"]
 
