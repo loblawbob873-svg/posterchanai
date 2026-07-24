@@ -11612,11 +11612,15 @@
     // just apply it (no-op if already set) then reflect the current choice into the settings inputs.
     await restoreMediaServer();
     const srv=ClientSettings.get('mediaServer','');
-    if(srv){ const mi=$('#set-media'); if(mi && !mi.value) mi.value=srv;
-      const on=$('#set-blossom-on'); if(on){ on.checked=true; const body=$('#set-blossom-body'); if(body) body.classList.remove('disabled'); }
-      // Refresh the "uploads currently go to…" line now that the restored server is reflected (async, so
-      // it can land after the pane's initial render); the input listener recomputes it.
-      if(mi) mi.dispatchEvent(new Event('input')); }
+    if(srv){
+      // A server was restored from Nostr AFTER the pane rendered — reflect it into the 3-way choice:
+      // nostr.build → the 'nostrbuild' radio, anything else → 'custom' with the URL filled.
+      const isNb=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(srv);
+      const r=$(`input[name=media-mode][value=${isNb?'nostrbuild':'custom'}]`); if(r) r.checked=true;
+      if(!isNb){ const mi=$('#set-media'); if(mi && !mi.value) mi.value=srv; }
+      // Re-run the mode sync so the URL body enables/disables and the "uploads go to…" line updates.
+      const r2=$('input[name=media-mode]:checked'); if(r2) r2.dispatchEvent(new Event('change'));
+    }
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link,
@@ -11671,6 +11675,13 @@
     if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
     const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
     const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
+    // Media destination as a 3-way choice (hydrated from the saved server): 'default' = automatic
+    // (built-in server, or the nostr.build fallback for accounts without upload access), 'nostrbuild'
+    // = always the public nostr.build, 'custom' = your own Blossom/NIP-96 URL. _isNb spots a saved
+    // nostr.build so an existing pin restores as that explicit choice rather than as a custom URL.
+    const _mediaSrv=ClientSettings.get('mediaServer','');
+    const _isNb=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(_mediaSrv);
+    const mediaMode = !blossomOn ? 'default' : (_isNb ? 'nostrbuild' : 'custom');
     // init the relay rows ONCE — renderUserSettings re-runs on connect/disconnect actions in other
     // tabs; re-seeding from saved values each time would wipe in-progress relay edits.
     if(!_nostrPrefsLoaded){ _setRelays=userRelays(); if(!_setRelays.length) _setRelays=['']; }
@@ -11766,15 +11777,18 @@
         </div>
         <div class="us-pane" data-pane="media">
           <label class="fld">📦 Where your uploads are stored</label>
-          <div class="muted small">Photos, videos and files you attach to a post get uploaded to a media server, and its link goes into your note. Out of the box this uses <b>this instance's built-in server</b> — nothing to set up.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;gap:12px;margin-top:14px">
-            <span>Use a custom media server instead<span class="muted small" style="display:block;font-weight:400;margin-top:2px">Send uploads to your own Blossom or NIP-96 server rather than the built-in one.</span></span>
-            <label class="switch"><input type="checkbox" id="set-blossom-on" ${blossomOn?'checked':''}><span class="slider"></span></label>
-          </label>
-          <div class="set-body ${blossomOn?'':'disabled'}" id="set-blossom-body">
-            <label class="fld">Your server URL<input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(ClientSettings.get('mediaServer',''))}"></label>
+          <div class="muted small">Photos, videos and files you attach to a post get uploaded to a media server, and its link goes into your note. Choose where:</div>
+          <div class="media-modes">
+            <label class="media-mode"><input type="radio" name="media-mode" value="default" ${mediaMode==='default'?'checked':''}>
+              <span><b>Default</b> <span class="muted small">· recommended</span><span class="muted small" style="display:block;font-weight:400">Uses this instance's built-in server. New accounts without upload access automatically use nostr.build.</span></span></label>
+            <label class="media-mode"><input type="radio" name="media-mode" value="nostrbuild" ${mediaMode==='nostrbuild'?'checked':''}>
+              <span><b>nostr.build</b><span class="muted small" style="display:block;font-weight:400">Always use the public nostr.build server.</span></span></label>
+            <label class="media-mode"><input type="radio" name="media-mode" value="custom" ${mediaMode==='custom'?'checked':''}>
+              <span><b>My own server</b><span class="muted small" style="display:block;font-weight:400">A Blossom or NIP-96 server you control.</span></span></label>
+          </div>
+          <div class="set-body ${mediaMode==='custom'?'':'disabled'}" id="set-blossom-body">
+            <label class="fld">Your server URL<input class="input" id="set-media" placeholder="https://your-blossom-server.com" value="${enc(mediaMode==='custom'?_mediaSrv:'')}"></label>
             <div class="media-presets"><span class="muted small">Quick pick:</span>
-              <button type="button" class="btn btn-ghost small mp-preset" data-url="https://nostr.build">nostr.build</button>
               <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.primal.net">Primal</button>
               <button type="button" class="btn btn-ghost small mp-preset" data-url="https://blossom.band">blossom.band</button>
             </div>
@@ -11821,21 +11835,34 @@
     drawRelayRows();
     const syncRelays=()=>{ _setRelays=$$('#set-relay-list .relay-row input').map(i=>i.value.trim()); };
     { const t=$('#set-relays-on'); if(t) t.onchange=e=>$('#set-relays-body').classList.toggle('disabled', !e.target.checked); }
-    // Live "you're currently uploading to X" line so it's never ambiguous where files go — built-in
-    // (public url from CFG) vs the custom server the user typed. Reflects the UNSAVED form state.
+    // The chosen media destination ('default' | 'nostrbuild' | 'custom'), read from the radio group.
+    const _mediaMode=()=> (($('input[name=media-mode]:checked')||{}).value) || 'default';
+    // Map the chosen mode → the {enabled, url} we persist. 'default' = built-in/auto (no override);
+    // 'nostrbuild' = pin the public server; 'custom' = the typed URL. Central so both Save paths agree.
+    const _mediaChoice=()=>{ const m=_mediaMode();
+      if(m==='custom')     return { enabled:true,  url:(($('#set-media')||{}).value||'').trim() };
+      if(m==='nostrbuild') return { enabled:true,  url:'https://nostr.build' };
+      return { enabled:false, url:'' }; };
+    // Live "uploads go to X" line — truthful about the actual destination, including the nostr.build
+    // fallback that Default mode gives accounts without built-in upload access (matches uploadTarget()).
     const _updMediaCurrent=()=>{ const el=$('#set-media-current'); if(!el) return;
-      const on=$('#set-blossom-on')&&$('#set-blossom-on').checked;
-      const url=(($('#set-media')||{}).value||'').trim();
-      el.innerHTML = (on&&url)
-        ? `Uploads currently go to your server: <code>${enc(url)}</code>`
-        : `Uploads currently go to the built-in server${CFG.blossom_url?` (<code>${enc(CFG.blossom_url)}</code>)`:''}.`; };
-    { const t=$('#set-blossom-on'); if(t) t.onchange=e=>{ $('#set-blossom-body').classList.toggle('disabled', !e.target.checked); _updMediaCurrent(); }; }
+      const m=_mediaMode();
+      if(m==='custom'){ const url=(($('#set-media')||{}).value||'').trim();
+        el.innerHTML = url ? `✅ Uploads go to <b>your server</b>: <code>${enc(url)}</code>` : `⚠️ Enter your server URL above.`; return; }
+      if(m==='nostrbuild'){ el.innerHTML=`✅ Uploads go to the public <b>nostr.build</b> server.`; return; }
+      // Default: built-in if this account has access, else the automatic nostr.build fallback.
+      el.innerHTML = (_blossomOK===false)
+        ? `✅ Your account has no upload access to this instance's built-in server, so uploads use the public <b>nostr.build</b> automatically.`
+        : `✅ Uploads go to this instance's <b>built-in server</b>${CFG.blossom_url?` (<code>${enc(CFG.blossom_url)}</code>)`:''}.`; };
+    const _syncMediaUI=()=>{ const custom=_mediaMode()==='custom';
+      const body=$('#set-blossom-body'); if(body) body.classList.toggle('disabled', !custom);
+      _updMediaCurrent(); };
+    $$('input[name=media-mode]').forEach(r=> r.onchange=_syncMediaUI);
     { const mi=$('#set-media'); if(mi) mi.addEventListener('input', _updMediaCurrent); }
-    _updMediaCurrent();
-    // Media-server quick-pick presets (nostr.build / Primal / blossom.band): fill the field + turn the
-    // override on so the user can Save. They still need to tap Save & reload to apply.
+    _syncMediaUI();
+    // Quick-pick presets fill the custom URL field (and select the 'My own server' radio so Save applies it).
     $$('.mp-preset').forEach(b=> b.onclick=()=>{ const mi=$('#set-media'); if(mi) mi.value=b.dataset.url;
-      const on=$('#set-blossom-on'); if(on){ on.checked=true; } $('#set-blossom-body').classList.remove('disabled'); _updMediaCurrent(); });
+      const r=$('input[name=media-mode][value=custom]'); if(r) r.checked=true; _syncMediaUI(); });
     { const b=$('#set-relay-add'); if(b) b.onclick=()=>{ syncRelays(); _setRelays.push(''); drawRelayRows(); }; }
     { const b=$('#set-relay-ext'); if(b) b.onclick=async()=>{ syncRelays(); await importExtensionRelays(); }; }
     { const b=$('#set-relay-nip05'); if(b) b.onclick=async()=>{ syncRelays(); await importNip05Relays($('#set-nip05').value.trim()); }; }
@@ -11848,19 +11875,20 @@
         toast('relays saved — reloading'); setTimeout(()=>location.reload(),600);
       }; }
     { const b=$('#set-media-save'); if(b) b.onclick=async()=>{
-        const media=$('#set-media').value.trim();
-        const on=$('#set-blossom-on').checked;
-        if(on && media){
-          const proto=await detectProto(media);   // capability probe (NIP-96 well-known) — works for any host
+        const { enabled, url } = _mediaChoice();
+        if(enabled && !url){ toast('enter your server URL'); return; }   // 'My own server' selected but blank
+        if(enabled){
+          // nostr.build is ALWAYS NIP-96; any other host is capability-probed (NIP-96 well-known) at save time.
+          const proto=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(url) ? 'nip96' : await detectProto(url);
           ClientSettings.set('blossomEnabled', true);
-          ClientSettings.set('mediaServer', media);
+          ClientSettings.set('mediaServer', url);
           ClientSettings.set('mediaProto', proto);
           // Persist to Nostr so a fresh device restores it: kind-10063 (BUD-03 Blossom) or kind-10096
           // (NIP-96 file-storage server list). Newest of the two wins on restore.
-          try{ await publish(proto==='nip96'?10096:10063,'',[['server',media]]); }catch(_){}
+          try{ await publish(proto==='nip96'?10096:10063,'',[['server',url]]); }catch(_){}
         } else {
-          // Reverting to the built-in server: clear locally AND publish EMPTY replaceable lists to both
-          // kinds, so no other device re-restores a now-abandoned server (the stale-restore bug).
+          // Default (automatic): clear locally AND publish EMPTY replaceable lists to both kinds, so no
+          // other device re-restores a now-abandoned server (the stale-restore bug).
           ClientSettings.set('blossomEnabled', false);
           ClientSettings.set('mediaServer', '');
           ClientSettings.set('mediaProto', '');
@@ -12047,11 +12075,17 @@
         // their relay list (which follows them to other clients) just because URLs are prefilled.
         try{ if(on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
       }
-      if($('#set-media')){
-        const media=$('#set-media').value.trim(), on=$('#set-blossom-on').checked;
-        if(on!==!!ClientSettings.get('blossomEnabled') || media!==ClientSettings.get('mediaServer','')) needReload=true;
-        ClientSettings.set('blossomEnabled', on); ClientSettings.set('mediaServer', media);
-        try{ if(on && media) await publish(10063,'',[['server',media]]); }catch(_){}
+      if($('input[name=media-mode]')){
+        const { enabled, url } = _mediaChoice();
+        // Ignore a half-filled 'My own server' (blank URL) so the global Save doesn't wipe the current choice.
+        if(!(enabled && !url)){
+          if(enabled!==!!ClientSettings.get('blossomEnabled') || url!==ClientSettings.get('mediaServer','')) needReload=true;
+          ClientSettings.set('blossomEnabled', enabled); ClientSettings.set('mediaServer', url);
+          if(enabled){ const proto=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(url) ? 'nip96' : await detectProto(url);
+            ClientSettings.set('mediaProto', proto);
+            try{ await publish(proto==='nip96'?10096:10063,'',[['server',url]]); }catch(_){}
+          } else { ClientSettings.set('mediaProto',''); try{ await publish(10063,'',[]); }catch(_){} try{ await publish(10096,'',[]); }catch(_){} }
+        }
       }
       if($('#set-nwc')){ const u=($('#set-nwc').value||'').trim(); if(!u || Nwc.parse(u)) ClientSettings.set('nwc', u); }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

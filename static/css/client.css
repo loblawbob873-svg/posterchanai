@@ -632,6 +632,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .more-stats .relay-ico{width:13px;height:13px;color:var(--green);vertical-align:-2px;margin-right:2px}
 .more-stats .stream-ico{width:13px;height:13px;color:#ff3b5c;vertical-align:-2px;margin-right:2px}
 .more-stats .call-ico{width:12px;height:12px;color:var(--neon,#0ff);vertical-align:-2px;margin-right:2px}
+/* media-server destination choice (Settings → Media): stacked radio cards. */
+.media-modes{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px}
+.media-mode{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border:1px solid var(--border,rgba(255,255,255,.14));border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
+.media-mode:hover{border-color:var(--neon)}
+.media-mode:has(input:checked){border-color:var(--neon);background:color-mix(in srgb, var(--neon) 12%, transparent)}
+.media-mode input{margin-top:3px;flex:none;accent-color:var(--neon)}
 /* media-server quick-pick preset chips (Settings → Media) — wrap on narrow screens. */
 .media-presets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:7px 0 2px}
 .conn .dot{width:14px;height:14px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);animation:conn-pulse 1.6s ease-in-out infinite}
