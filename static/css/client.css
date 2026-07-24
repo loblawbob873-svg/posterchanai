@@ -3327,7 +3327,12 @@ body.modal-open .mobilenav{display:none}
   /* Match the font ffmpeg draws with (Liberation Sans Bold, via _meme_font_path). The preview used to
      inherit the THEME font — cyberpunk's stylised glyphs meant the caption you saw was not the caption
      that rendered (a different 'e', and different widths, which also shifted where the text sat). */
-  font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif}
+  font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif;
+  /* ffmpeg's drawtext places the INK (cap) top exactly at the layer's y — measured, +0px at every size.
+     CSS instead places the ASCENT top there, and the ink sits ~0.19em lower (ascender .905 - capHeight
+     .716 for Arial/Liberation). So the export always came out ~0.19 x font-size HIGHER than the preview
+     showed — 36px on a 189px caption. Lift the preview by the same amount so ink lines up with ink. */
+  transform:translateY(-0.19em)}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}
