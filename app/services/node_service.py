@@ -456,9 +456,13 @@ _NODE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string", "description": "Short summary of the outcome."}
+                    "summary": {"type": "string", "description": "Short summary of the outcome."},
+                    "success": {"type": "boolean",
+                                "description": "true only if the GOAL was actually achieved. false if you "
+                                               "are giving up, blocked, or only partially done — say why in "
+                                               "the summary."},
                 },
-                "required": ["summary"],
+                "required": ["summary", "success"],
             },
         },
     },
@@ -584,7 +588,17 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 summary = (args.get("summary") or "").strip()
                 if report_mode:
                     return summary or "(no summary)"
-                transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}")
+                # `finish` means "I am stopping", NOT "I succeeded" — its own description tells the model
+                # to call it when the goal "cannot be" achieved. Emitting ✅ Done unconditionally labelled
+                # a run that explicitly gave up ("unable to complete the task due to the private key
+                # format mismatch") as "✅ Agent run complete", which is worse than no banner: it reports
+                # success for a failure. Trust the model's own verdict, and treat a MISSING success flag
+                # as achieved so older/looser models that omit it read as they did before.
+                _ok = args.get("success")
+                if _ok is None or bool(_ok):
+                    transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}")
+                else:
+                    transcript.append(f"\n**⚠️ Stopped:** {summary or '(no summary)'}")
                 return "\n".join(transcript)
 
             if name == "run_command":
