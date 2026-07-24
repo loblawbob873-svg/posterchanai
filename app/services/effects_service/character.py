@@ -90,6 +90,33 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.3
     return base, y, x, min(W, x + cw)
 
 
+def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
+    """A rounded dialogue bubble behind the caption with a tail aimed at the character, so the text
+    reads as her SAYING it rather than as a caption laid over the picture. Drawn under the text; the
+    caller then renders the words in dark ink on the white fill."""
+    pad = max(6, scale // 3)
+    x0, y0 = cx - tw // 2 - pad, cy - pad
+    x1, y1 = cx + tw // 2 + pad, cy + th + pad
+    r = max(6, min(pad * 2, (y1 - y0) // 3))
+    outline = max(2, scale // 8)
+    draw.rounded_rectangle([x0, y0, x1, y1], radius=r, fill=(255, 255, 255),
+                           outline=(20, 18, 26), width=outline)
+    # Tail: a small triangle off the side facing the character, overlapping the border so it reads as
+    # one shape rather than a detached wedge.
+    ty = min(y1 - r, max(y0 + r, (y0 + y1) // 2))
+    tl = max(8, scale)
+    if toward_left:
+        pts = [(x0 + outline // 2, ty - tl // 2), (x0 + outline // 2, ty + tl // 2), (x0 - tl, ty)]
+    else:
+        pts = [(x1 - outline // 2, ty - tl // 2), (x1 - outline // 2, ty + tl // 2), (x1 + tl, ty)]
+    draw.polygon(pts, fill=(255, 255, 255), outline=(20, 18, 26))
+    # Re-cover the seam the tail's outline draws across the bubble edge.
+    if toward_left:
+        draw.rectangle([x0 + outline // 2, ty - tl // 2 + outline, x0 + outline, ty + tl // 2 - outline], fill=(255, 255, 255))
+    else:
+        draw.rectangle([x1 - outline, ty - tl // 2 + outline, x1 - outline // 2, ty + tl // 2 - outline], fill=(255, 255, 255))
+
+
 def _draw_point_arrow(draw, W, char_top, caption_bottom, H):
     """A white, black-outlined arrow in the gap between the caption and the character's head, aimed UP
     at the image being pointed at. Drawn with polygons rather than an emoji glyph so it renders
@@ -185,8 +212,14 @@ def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
         y = max(margin, min(char_top + int((H - char_top) * 0.15), H - th - margin))
     else:
         cx, y = W // 2, max(margin, min(char_top - th - margin, H - th - margin))
-    draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(255, 255, 255),
-                        stroke_width=stroke, stroke_fill=(0, 0, 0), anchor="ma", align="center")
+    if beside:
+        # Dialogue: bubble first, then dark ink on it (a white stroke-outlined caption would vanish).
+        _draw_speech_bubble(draw, cx, y, tw, th, toward_left=(side == "right"), scale=max(6, font.size // 3))
+        draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(20, 18, 26),
+                            anchor="ma", align="center")
+    else:
+        draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(255, 255, 255),
+                            stroke_width=stroke, stroke_fill=(0, 0, 0), anchor="ma", align="center")
 
     # The format IS the point: she indicates the image above. The stock animegirl still has no arm-up
     # pose, so draw an explicit arrow above her. Skipped once real pointing art is installed.
