@@ -5871,7 +5871,7 @@
     const uri=a=>'bitcoincash:'+addr+(a?('?amount='+encodeURIComponent(a)):'');
     modal(`<h3>🟢 Tip ${name} · Bitcoin Cash</h3>
       <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay. Non-custodial: nothing touches this server.</p>
-      <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="bch-amt" type="number" min="0" step="0.0001" value="${enc(ClientSettings.get('bchLastAmt','')||'')}" placeholder="amount (BCH) — fills your wallet"><a class="btn btn-neon small" id="bch-open" href="${uri('')}">📲 Open wallet</a></div>
+      <div class="row" style="gap:8px;margin:8px 0;align-items:center"><input class="input" id="bch-amt" type="number" min="0" step="0.0001" style="flex:1 1 auto;min-width:0;margin:0" value="${enc(ClientSettings.get('bchLastAmt','')||'')}" placeholder="amount (BCH) — fills your wallet"><a class="btn btn-neon small" id="bch-open" style="flex:0 0 auto;white-space:nowrap" href="${uri('')}">📲 Open wallet</a></div>
       <div class="xmr-presets" id="bch-presets">${['0.001','0.01','0.05','0.1'].map(a=>`<button class="xmr-preset bch-preset" data-amt="${a}">🟢 ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="bch-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="bch-addr">${enc(addr)}</code></div>
