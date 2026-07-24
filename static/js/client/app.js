@@ -1839,7 +1839,11 @@
   // congrats/congratz/congratulations/congratulating/congratulatory.
   const _RE_CONGRATS = /(^|[^a-z])congrat(s|z|ulations?|ulating|ulatory)?\b/i;
   const _RE_GM = /^\s*(gm+|good\s*morning)\b/i;
+  // Master toggle for the celebratory post effects (confetti / gm sunrise / sob tears). Default OFF;
+  // stored in ClientSettings and synced to Nostr (pcai:client-prefs) so it follows across devices.
+  function _postEffectsOn(){ return ClientSettings.get('postEffects', false) === true; }
   function _celebrateOf(txt){
+    if(!_postEffectsOn()) return '';
     const t = (txt||'').trim();
     if(!t) return '';
     if(_RE_CONGRATS.test(t)) return 'confetti';
@@ -5358,7 +5362,7 @@
     const noteXmr = xmrForNote(ev), hasNoteXmr = isXmrAddr(noteXmr);   // resolve ONCE; stash on the card so the tip handler still has it if the note is later evicted from Store
     // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
-    const _celeb = _celebrateOf(bodyTxt) || (counts.sob ? 'sob' : '');
+    const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
     return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
@@ -5535,6 +5539,7 @@
   // which reads as the feature being broken. Called from every kind-7 ingest path.
   function applySobLive(ev){
     try{
+      if(!_postEffectsOn()) return;                  // post effects disabled — no live sob overlay
       if(!ev || ev.kind!==7 || !_isSob(ev.content)) return;
       let id=null;                                   // NIP-25: the reacted post is the LAST e tag
       for(let i=ev.tags.length-1;i>=0;i--) if(ev.tags[i][0]==='e'){ id=ev.tags[i][1]; break; }
@@ -7300,6 +7305,10 @@
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
       if(!_prefTouched.has('xmrPresets') && pr.xmrPresets!=null) ClientSettings.set('xmrPresets', String(pr.xmrPresets));
+      if(!_prefTouched.has('postEffects') && typeof pr.postEffects==='boolean' && pr.postEffects!==_postEffectsOn()){
+        ClientSettings.set('postEffects', pr.postEffects);       // celebratory note effects follow across devices
+        if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }
     }catch(_){}
   }
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -11569,6 +11578,8 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
           <label class="fld">💾 Media cache size
             <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
           </label>
@@ -11754,6 +11765,13 @@
     { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
         NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: NO_IMAGES });
         toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
+        if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }; }
+    // Post effects (celebratory note animations): persist + sync to Nostr, then re-render so the change
+    // shows immediately (turning OFF drops data-celebrate from notes; the sweep stops on its own).
+    { const pe=$('#set-post-effects'); if(pe) pe.onchange=()=>{
+        const on = pe.checked; ClientSettings.set('postEffects', on); _prefTouched.add('postEffects'); saveClientPrefsNostr({ postEffects: on });
+        toast(on?'post effects on':'post effects off');
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
     // Media cache size (per-device): persist + push the new byte budget to the service worker.
