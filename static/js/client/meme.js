@@ -89,7 +89,14 @@
   // Rows read TOP-FIRST, like every editor: P.layers is draw order (last = on top), so the list is
   // reversed for display. Without this the row you saw at the top was actually the BOTTOM layer —
   // which is why a caption listed first rendered underneath the clip listed below it.
-  const _rowOrder = () => P.layers.slice().reverse();
+  const _rowOrder = () => _stageOrder().slice().reverse();
+
+  // The RENDERER always composites captions last (meme_builder_service collects text layers and applies
+  // their drawtext filters AFTER every overlay), so in the exported video text is ALWAYS on top and layer
+  // order cannot change that. The preview used to draw in raw layer order, so it could show an image
+  // covering a caption that the render would put underneath — you'd restack layers forever trying to fix
+  // something that was only wrong on screen. Draw media first, then text, so the preview matches the export.
+  const _stageOrder = () => P.layers.filter(l=>l.type!=='text').concat(P.layers.filter(l=>l.type==='text'));
 
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
@@ -141,7 +148,7 @@
       <div class="mb-main">
         <div class="mb-stagewrap">
           <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
-            ${P.layers.map(stageEl).join('')}
+            ${_stageOrder().map(stageEl).join('')}
           </div>
           <div class="mb-playrow">
             <button class="btn btn-ghost small" id="mb-play">▶︎</button>
