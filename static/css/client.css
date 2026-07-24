@@ -3323,7 +3323,11 @@ body.modal-open .mobilenav{display:none}
    (no wrapping), no max-width (nothing to wrap against), text-align:left, line-height:1 so the box hugs
    the glyphs. With these, the preview's top-left IS the rendered text's top-left. */
 .mb-text{font-weight:800;line-height:1;white-space:pre;width:max-content;max-width:none;text-align:left;
-  padding:0;margin:0}
+  padding:0;margin:0;
+  /* Match the font ffmpeg draws with (Liberation Sans Bold, via _meme_font_path). The preview used to
+     inherit the THEME font — cyberpunk's stylised glyphs meant the caption you saw was not the caption
+     that rendered (a different 'e', and different widths, which also shifted where the text sat). */
+  font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}
