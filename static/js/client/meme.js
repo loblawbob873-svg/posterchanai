@@ -216,7 +216,7 @@
     if(l.type==='text'){
       // Centred captions span the full width and centre their text, mirroring drawtext's (w-text_w)/2.
       const cpos = _alignOf(l)==='center' ? `left:0;width:100%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;
-      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.h*100).toFixed(2)}cqh;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
+      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
@@ -449,7 +449,7 @@
   function applyGeom(el, l){
     el.style.left = (l.x/P.w*100).toFixed(3)+'%';
     el.style.top  = (l.y/P.h*100).toFixed(3)+'%';
-    if(l.type==='text') el.style.fontSize = (l.size/P.h*100).toFixed(2)+'cqh';
+    if(l.type==='text') el.style.fontSize = (l.size/P.w*100).toFixed(3)+'cqw';
     else { el.style.width=(l.w/P.w*100).toFixed(3)+'%'; el.style.height=(l.h/P.h*100).toFixed(3)+'%'; }
   }
 

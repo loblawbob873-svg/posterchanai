@@ -137,6 +137,20 @@ async def client_app(request: Request, db: Session = Depends(get_db)):
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"})
 
 
+@router.get("/meme-font.ttf")
+async def meme_font():
+    """Serve the EXACT font the renderer draws captions with, so the Meme Builder preview can use it too.
+    Without this the browser fell back to whatever it had (Windows has no Liberation Sans -> Arial, and at
+    weight 800 it SYNTHESISES a bolder, wider face), so the caption on screen was not the caption that
+    rendered — different glyph shapes and different widths, which is what made positioning unwinnable."""
+    from app.services.effects_service._common import _meme_font_path
+    path = _meme_font_path()
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="no meme font installed")
+    return FileResponse(path, media_type="font/ttf",
+                        headers={"Cache-Control": "public, max-age=604800", "Access-Control-Allow-Origin": "*"})
+
+
 @router.get("/config")
 async def client_config(request: Request, db: Session = Depends(get_db)):
     op = _operator(db)

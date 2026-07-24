@@ -1,3 +1,9 @@
+
+/* The renderer's ACTUAL font, served from the app (see /client/meme-font.ttf). The preview used to
+   fall back to whatever the OS had — Windows has no Liberation Sans — so the caption on screen had
+   different glyphs AND different widths than the export. Same file in both now. */
+@font-face{font-family:'PCMemeFont';src:url('/client/meme-font.ttf') format('truetype');
+  font-weight:700;font-style:normal;font-display:swap}
 /* ===== PosterChan Nostr — cyberpunk theme (matches the main PosterChanAI webui: cyan-primary,
    magenta accent, neutral-dark bg, Orbitron/Rajdhani) ===== */
 /* Self-hosted fonts (no Google Fonts dependency) — variable woff2, one file per family. */
@@ -3331,7 +3337,7 @@ body.modal-open .mobilenav{display:none}
      matching face and SYNTHESISES a heavier one, which is measurably WIDER — so a caption centred
      by eye produced an x for a wider string than ffmpeg would draw, landing it left of centre
      (and negative for a caption wider than the canvas). */
-  font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif;
+  font-family:'PCMemeFont','Liberation Sans',Helvetica,Arial,sans-serif;
   /* ffmpeg's drawtext places the INK (cap) top exactly at the layer's y — measured, +0px at every size.
      CSS instead places the ASCENT top there, and the ink sits ~0.19em lower (ascender .905 - capHeight
      .716 for Arial/Liberation). So the export always came out ~0.19 x font-size HIGHER than the preview
