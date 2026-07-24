@@ -10033,7 +10033,11 @@
     if(!state){ toast('Couldn’t load node state — try again'); return; }
     const nodes=state.nodes||[]; const jobs=state.jobs||[];
     if(!nodes.length){ toast('No nodes are configured'); return; }
-    const nodeOpts=nodes.map(n=>`<option value="${enc(n)}">${enc(n)}</option>`).join('');
+    // Default the picker to the sandbox (the Debian container) when it's offered — agentic tasks
+    // belong there, and defaulting to the first node ('local') repeatedly sent runs to a bare host
+    // by accident ("forgot the node"). Falls back to the first node when there's no sandbox.
+    const _defNode=nodes.includes('sandbox')?'sandbox':nodes[0];
+    const nodeOpts=nodes.map(n=>`<option value="${enc(n)}"${n===_defNode?' selected':''}>${enc(n)}</option>`).join('');
     // With a single target (a sandbox-only user has just their own container) the Node picker is
     // meaningless — hide it. Nostr changed the transport, not that a multi-node user still picks a box.
     const soloSandbox = nodes.length===1 && nodes[0]==='sandbox';
