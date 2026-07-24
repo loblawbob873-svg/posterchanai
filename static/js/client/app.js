@@ -976,7 +976,21 @@
     Relay.onStatus = renderConn;
     bindAuth();
     const s = Session.load();
-    if (s) { try { await resume(s); return; } catch(e){ console.warn(e); Session.clear(); } }
+    if (s) {
+      try { await resume(s); return; }
+      catch(e){
+        // Do NOT wipe the saved session here. Resume fails for TRANSIENT/local reasons far more often than
+        // for real ones: a NIP-07 extension not injected yet at cold start, a NIP-46 remote signer briefly
+        // unreachable, a NIP-55 signer app that simply isn't on THIS device (the desktop/Electron build —
+        // Nip55.probe() can only succeed on Android), a worker hiccup. Clearing on the first failure logged
+        // the user out PERMANENTLY and forced a fresh login with their key. Keep the session, fall back to
+        // read-only guest, and say so — a reload (or plugging the signer back in) resumes the same login.
+        console.warn('session resume failed (keeping the saved login):', e);
+        startGuest();
+        try{ toast('couldn’t reach your signer — browsing read-only; reload to retry your login'); }catch(_){}
+        return;
+      }
+    }
     // Not logged in → browse PUBLICLY (read-only guest mode): the global feed and any note/profile,
     // like every other Nostr client. Nostr events are public; only posting/reacting needs an account
     // (the guest banner offers login). No more login wall just to read.
@@ -992,6 +1006,9 @@
 
   async function resume(s){
     if (s.mode === 'nip07'){
+      // The extension injects window.nostr asynchronously — on a cold start (and notably in the desktop
+      // app) we can run BEFORE it lands. Give it a moment instead of declaring the login dead on the spot.
+      for(let i=0; i<20 && !window.nostr; i++) await new Promise(r=>setTimeout(r, 100));
       if (!window.nostr) throw new Error('extension gone');
       const pk = await window.nostr.getPublicKey();
       signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
