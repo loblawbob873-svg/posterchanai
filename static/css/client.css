@@ -15,6 +15,19 @@
      boundary. The separation is now done by the hairline rules on .sidebar/.rightbar, which is what a
      divider is for. Overridable per theme if one ever wants a painted rail (winxp's Luna pane does). */
   --rail:transparent;
+  /* --canvas: the page's own background, as a reusable value. A sticky bar CANNOT be transparent (notes
+     scroll under it), so to stay invisible it has to repaint exactly what the body paints — including the
+     two ambient corner washes. Painting a flat var(--bg) instead left the bar a slightly-unwashed
+     rectangle sitting in a washed area (~7/255 on Cherry Blossom): the seam that read as "a rectangle at
+     the top". Used with background-attachment:fixed so the gradients line up with the viewport-positioned
+     originals rather than with the bar's own little box.
+     --sticky-sh: the shadow under those bars. rgba(0,0,0,.8) was written for the dark flagship and turned
+     into a grey smear across every LIGHT theme — each one softens it below. */
+  --canvas:
+    radial-gradient(ellipse 900px 600px at 50% -8%,var(--amb1) 0%,transparent 55%),
+    radial-gradient(ellipse 800px 600px at 100% 100%,var(--amb2) 0%,transparent 55%),
+    var(--bg);
+  --sticky-sh:0 10px 18px -14px rgba(0,0,0,.8);
   --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b; --accent-rgb:0,255,255; --accent2-rgb:255,0,255;
   --danger:#ff6b8b;   /* delete/danger action color; overridden per-theme so it stays readable */
   --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
@@ -35,6 +48,8 @@
   --text:#4a2b38; --muted:#7a5260; --line:rgba(255,111,165,.30);
   --glow:0 0 10px rgba(255,111,165,.35); --glow-cy:0 0 10px rgba(255,143,176,.3);
   --r:16px; --amb1:rgba(255,143,176,.16); --amb2:rgba(199,125,255,.10);
+
+  --sticky-sh:0 4px 10px -10px rgba(0,0,0,.16);
 }
 
 /* Professional Modern — clean neutral business light theme (no neon glow) */
@@ -45,6 +60,8 @@
   --glow:0 1px 3px rgba(15,23,42,.12); --glow-cy:0 1px 3px rgba(15,23,42,.12);
   /* soft blue/indigo corner washes so the login + app don't read as flat white */
   --r:10px; --amb1:rgba(37,99,235,.07); --amb2:rgba(99,102,241,.06);
+
+  --sticky-sh:0 4px 10px -10px rgba(15,23,42,.16);
 }
 
 /* Windows 98 — silver chrome, navy accents, square corners. NB: --bg is the silver "window" colour
@@ -54,6 +71,8 @@
   --neon:#000080; --neon2:#1084d0; --cyan:#000080; --green:#008000; --amber:#808000; --danger:#c00000; --accent-rgb:0,0,128; --accent2-rgb:16,132,208;
   --text:#000000; --muted:#404040; --line:#808080;
   --glow:none; --glow-cy:none; --r:0; --amb1:transparent; --amb2:transparent;
+
+  --sticky-sh:none;
 }
 
 /* Windows XP — Luna blue accents on a light "window" surface (the feed sits on --bg, so --bg must be
@@ -64,6 +83,8 @@
   --text:#0a1a3a; --muted:#5a6a8a; --line:rgba(10,91,196,.30);
   --glow:0 0 8px rgba(10,91,196,.22); --glow-cy:0 0 8px rgba(10,91,196,.22);
   --r:8px; --amb1:rgba(255,255,255,.10); --amb2:rgba(10,91,196,.06);
+
+  --sticky-sh:0 4px 10px -10px rgba(10,91,196,.18);
 }
 /* Anime Girl — kawaii pastel: lavender + bubblegum pink + mint, extra-round corners, soft glow */
 :root[data-theme="animegirl"]{
@@ -72,6 +93,8 @@
   --text:#5a3a6e; --muted:#a888bd; --line:rgba(157,123,255,.30);
   --glow:0 0 10px rgba(255,126,200,.40); --glow-cy:0 0 10px rgba(157,123,255,.30);
   --r:18px; --amb1:rgba(255,126,200,.16); --amb2:rgba(157,123,255,.12);
+
+  --sticky-sh:0 4px 10px -10px rgba(157,123,255,.20);
 }
 
 /* Soviet Gothic — oppressive dark with communist red + tarnished gold, parchment text, sharp edges */
@@ -305,10 +328,7 @@ body{
      as cramped/"plain" for body & form text; Orbitron stays for the brand/headings below. */
   font-family:'Inter','Segoe UI',system-ui,-apple-system,'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;
   font-weight:400;
-  background:
-    radial-gradient(ellipse 900px 600px at 50% -8%,var(--amb1) 0%,transparent 55%),
-    radial-gradient(ellipse 800px 600px at 100% 100%,var(--amb2) 0%,transparent 55%),
-    var(--bg);
+  background:var(--canvas);
   color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent;
 }
 /* cyberpunk display font for brand + headings, like the main webui */
@@ -872,8 +892,8 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    of moving notes visible ABOVE the bar as you scrolled. */
 .tl-tabs{display:flex;position:sticky;top:-8px;z-index:4;
   margin:12px 0 0;padding:8px 0 0;
-  background:var(--bg);border-bottom:1px solid var(--line);
-  box-shadow:0 10px 18px -14px rgba(0,0,0,.8)}
+  background:var(--canvas);background-attachment:fixed;border-bottom:1px solid var(--line);
+  box-shadow:var(--sticky-sh)}
 /* Plain text tabs with an underline indicator (ditto-style) — NOT pill buttons: two big filled pills
    read as a toolbar, not as "which timeline am I looking at". */
 .tltab{flex:1;position:relative;padding:13px 8px;border:0;background:none;
@@ -931,8 +951,8 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    top:-8px + the taller top padding swallow .feed's 8px padding strip — without it a sliver of scrolling
    notifications stayed visible ABOVE the sticky bar, same bug the timeline tabs had. */
 .notif-tabs{display:flex;gap:2px;position:sticky;top:-8px;z-index:4;
-  padding:16px 10px 0;background:var(--bg);border-bottom:1px solid var(--line);
-  box-shadow:0 10px 18px -14px rgba(0,0,0,.8);
+  padding:16px 10px 0;background:var(--canvas);background-attachment:fixed;border-bottom:1px solid var(--line);
+  box-shadow:var(--sticky-sh);
   overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .notif-tabs::-webkit-scrollbar{display:none}
 .ntab{position:relative;flex:0 0 auto;padding:11px 13px;border:0;background:none;
