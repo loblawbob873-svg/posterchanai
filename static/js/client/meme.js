@@ -28,7 +28,7 @@
       render(){ ME = PC.ME; P = load(); render(); },
       // Persist on the way OUT too. Every edit already saves, but leaving the view is exactly when a
       // missed save becomes 'my project came back different', so make it unconditional.
-      unmount(){ if(_playT){ clearInterval(_playT); _playT=null; } try{ if(P) save(); }catch(_){ } },
+      unmount(){ try{ stopPlay(false); }catch(_){ if(_playT){ clearInterval(_playT); _playT=null; } } try{ if(P) save(); }catch(_){ } },
       reset(){ P = blank(); sel=null; save(); render(); },
     };
   }
@@ -540,15 +540,26 @@
   }
 
   let _playT=null;
+  // One place that ends playback: clears the timer, pauses every video layer and restores the button.
+  // `rewind` parks the playhead back at the start, which is what finishing a play-through should do.
+  function stopPlay(rewind){
+    if(_playT){ clearInterval(_playT); _playT=null; }
+    document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.pause(); }catch(_){ } });
+    const b=document.getElementById('mb-play'); if(b) b.textContent='▶︎';
+    if(rewind){ const s2=document.getElementById('mb-scrub'); if(s2) s2.value=0; seek(0); }
+  }
   function togglePlay(){
     const btn=document.getElementById('mb-play'), scrub=document.getElementById('mb-scrub');
-    if(_playT){ clearInterval(_playT); _playT=null; if(btn) btn.textContent='▶︎';
-      document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.pause(); }catch(_){ } }); return; }
+    if(_playT){ stopPlay(false); return; }
     if(btn) btn.textContent='❚❚';
     let t=+(scrub?scrub.value:0);
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.play().catch(()=>{}); }catch(_){ } });
     _playT=setInterval(()=>{
-      t+=0.1; if(t>projEnd()){ t=0; }
+      t+=0.1;
+      if(t>projEnd()){        // STOP at the end — it used to wrap to 0 and loop forever, so the preview
+        stopPlay(true);       // (and every video layer) just kept running until you switched views.
+        return;
+      }
       if(scrub) scrub.value=t; seek(t);
     }, 100);
   }
