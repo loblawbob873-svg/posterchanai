@@ -136,7 +136,7 @@ def _max_steps(db: Session) -> int:
 # How many times in a row the model may re-issue a command it has already run before we give up.
 # Small models degenerate into re-running the same failing command; re-executing wastes steps and
 # feeds back the same output it's already looping on, so we nudge instead and bail if it persists.
-_MAX_REPEAT_NUDGES = 3
+_MAX_REPEAT_NUDGES = 5
 
 
 # Sentinel: start_job/run_to_completion fall back to the global job timeout when no override given.
