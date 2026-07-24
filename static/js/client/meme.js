@@ -42,6 +42,7 @@
 
   let P = null;          // the project (edit list)
   let sel = null;        // selected layer id
+  let _rendering = false;// a render is in flight — survives view repaints, unlike the button's disabled flag
   let _uid = 0;
   const nid = () => 'L' + (++_uid) + Math.random().toString(36).slice(2, 6);
 
@@ -186,7 +187,7 @@
     return `
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
-        <button class="btn btn-ghost small" id="mb-del">🗑️ Delete</button>
+        <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
       </div>
       ${isText ? `
         <label class="mb-f"><span>Text</span><textarea class="input" id="mb-f-text" rows="2">${enc(l.text)}</textarea></label>
@@ -199,6 +200,7 @@
           <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
         </div>
+        <button class="btn btn-cyan small full" id="mb-fill">⛶ Fill the canvas</button>
         ${l.type==='video' ? `<label class="mb-f"><span>Trim from (s)</span><input class="input" type="number" id="mb-f-trim" min="0" step="0.1" value="${l.trim}"></label>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
       <div class="mb-frow">
@@ -210,8 +212,8 @@
       </select></label>
       <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
       <div class="mb-order">
-        <button class="btn btn-ghost small" id="mb-back">⬇︎ Send back</button>
-        <button class="btn btn-ghost small" id="mb-front">⬆︎ Bring front</button>
+        <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
+        <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
       </div>`;
   }
 
@@ -448,6 +450,12 @@
 
   async function doRender(){
     if(!P.layers.length){ toast('add a layer first'); return; }
+    // Guard on MODULE state, not just the button's disabled flag: any repaint/render() of the view replaces
+    // that button with a fresh ENABLED one, so mid-render edits made it clickable again and each click
+    // spawned another full server-side ffmpeg of the same project (they pile up and the UI sits on
+    // "rendering…" forever). The server enforces this too (429), but don't even send the duplicate.
+    if(_rendering){ toast('already rendering — hang on'); return; }
+    _rendering = true;
     const st=document.getElementById('mb-status'), btn=document.getElementById('mb-render');
     const out=document.getElementById('mb-result');
     if(btn){ btn.disabled=true; }
@@ -471,7 +479,7 @@
     }catch(err){
       if(st) st.textContent='';
       if(out) out.innerHTML='<div class="mb-err">⚠️ '+enc((err&&err.message)||err)+'</div>';
-    }finally{ if(btn) btn.disabled=false; }
+    }finally{ _rendering=false; const b=document.getElementById('mb-render'); if(b) b.disabled=false; }
   }
 
   function showResult(blob, out){
@@ -509,6 +517,9 @@
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) applyGeom(it,l);
       if(key==='start'||key==='dur') repaint('timeline'); });
     num('mb-f-w','w',16,4320); num('mb-f-h','h',16,4320);
+    // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
+    // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
+    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; save(); render(); });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     num('mb-f-size','size',8,400);
     on('mb-f-text','input',(e)=>{ l.text=e.target.value; save();

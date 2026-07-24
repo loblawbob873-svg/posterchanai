@@ -2359,6 +2359,10 @@ class MemeRenderReq(BaseModel):
 
 # ----- Meme Builder: render a layered timeline into one MP4 -----
 # The client edits on a canvas and posts the edit list here; ffmpeg composites it (meme_builder_service).
+# Pubkeys with a render in flight — one at a time per user, so repeat Render clicks can't stack N ffmpegs
+# (each slower than the last) and leave the UI stuck on "rendering…". Per-process is correct here: the
+# renders run on this single port-3051 worker.
+_meme_rendering: set = set()
 # Layer sources are URLs the client already has (Blossom blobs it uploaded, or media already on the
 # timeline), which is why this only ever FETCHES — it never accepts uploaded bytes, so there is no new
 # upload surface. Every fetch goes through the rss_service SSRF guard, the same one the fediverse bridge
@@ -2375,6 +2379,12 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+
+    # ONE render at a time per user. Without this every extra Render click spawned ANOTHER full ffmpeg of the
+    # same project — they pile up, each one slower than the last (software x264 when VAAPI is unavailable),
+    # and the UI just sits on "rendering…" forever. Reject the duplicate instead of stacking it.
+    if pk in _meme_rendering:
+        raise HTTPException(status_code=429, detail="a render is already running — wait for it to finish")
 
     layers = (data.edit or {}).get("layers") or []
     urls = {str(l.get("src")) for l in layers if isinstance(l, dict) and l.get("src")
@@ -2395,6 +2405,7 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
 
     tmpdir = tempfile.mkdtemp(prefix="pcmemesrc-")
     sources: dict = {}
+    _meme_rendering.add(pk)   # released in the finally below — paired so a failure can never wedge the user out
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0), follow_redirects=False) as c:
             for u in urls:
@@ -2430,6 +2441,7 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
         return Response(content=out, media_type="video/mp4",
                         headers={"Content-Disposition": 'attachment; filename="meme.mp4"'})
     finally:
+        _meme_rendering.discard(pk)
         try:
             for f in os.listdir(tmpdir):
                 os.unlink(os.path.join(tmpdir, f))
