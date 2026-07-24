@@ -235,7 +235,37 @@ def render(edit: dict, sources: dict) -> bytes:
                 tf = os.path.join(tmp, f"t{n}.txt")
                 with open(tf, "w", encoding="utf-8") as fh:
                     fh.write(txt)
-                textfiles.append((f"[tx{n}]", _drawtext(layer, w, h).replace("{TEXTFILE}", tf)))
+                dt = _drawtext(layer, w, h).replace("{TEXTFILE}", tf)
+                fxn = (layer.get("effect") or "none").strip().lower()
+                if fxn in ("", "none", "fade"):
+                    # Cheap path: draw straight onto the composite (and fade is handled inside _drawtext as
+                    # an alpha ramp). Keeps captions above every visual layer, which is what you want by default.
+                    textfiles.append((f"[tx{n}]", dt))
+                    continue
+                # Any OTHER effect needs the caption to be its OWN stream — a filter like blur/spin/zoom acts
+                # on a video frame, and text drawn onto the composite has no frame of its own to transform.
+                # So: a transparent canvas the size of the project, the text drawn on it, then the effect, then
+                # overlaid. That makes every effect in the menu work on a caption, not just fade.
+                cmd += ["-f", "lavfi", "-t", f"{dur:.3f}",
+                        "-i", f"color=c=black@0:s={w}x{h}:r={fps}"]
+                tchain = ["format=rgba", dt]
+                tfx = _fx_chain(fxn, w, h, dur, fps)
+                if tfx:
+                    tchain.append(tfx)
+                tchain.append(f"setpts=PTS-STARTPTS+{start:.3f}/TB")
+                chains.append(f"[{idx}:v]" + ",".join(tchain) + f"[l{n}]")
+                tnxt = f"[v{n}]"
+                chains.append(f"{cur}[l{n}]overlay=x=0:y=0:"
+                              f"enable='between(t,{start:.3f},{end:.3f})':eof_action=pass{tnxt}")
+                cur = tnxt
+                idx += 1
+                snd = _sound_path(layer.get("sound"))
+                if snd:
+                    cmd += ["-t", f"{dur:.3f}", "-i", snd]
+                    svol = _num(layer.get("soundVolume"), 0, 4, 1.0)
+                    audio_parts.append(f"[{idx}:a]atrim=0:{dur:.3f},asetpts=PTS-STARTPTS,"
+                                       f"adelay={int(start*1000)}|{int(start*1000)},volume={svol:.2f}[s{n}]")
+                    idx += 1
                 continue
 
             path = sources.get(str(layer.get("src") or ""))
