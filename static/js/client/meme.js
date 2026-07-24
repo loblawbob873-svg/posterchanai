@@ -215,7 +215,7 @@
     const pos = `left:${(l.x/P.w*100).toFixed(3)}%;top:${(l.y/P.h*100).toFixed(3)}%;`;
     if(l.type==='text'){
       // Centred captions span the full width and centre their text, mirroring drawtext's (w-text_w)/2.
-      const cpos = _alignOf(l)==='center' ? `left:0;width:100%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;
+      const cpos = _alignOf(l)==='center' ? `left:50%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;   // .centred shifts back by half its width
       return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }

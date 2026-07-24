@@ -3426,4 +3426,8 @@ body.modal-open .mobilenav{display:none}
 .mb-projrow{text-align:left}
 /* A centred caption spans the canvas and centres its own text — matching drawtext's (w-text_w)/2, so the
    preview and the exported frame put the words in the same place. Not draggable horizontally by design. */
-.mb-text.centred{width:100%;max-width:100%;text-align:center}
+/* Centre WITHOUT stretching the box: a full-width box made the caption's invisible hit area span the
+   whole canvas and parked the resize dot at the far right. Hug the text and shift it by half its own
+   width instead — same visual centre, but the box (and its handle) stay on the words. */
+.mb-text.centred{width:max-content;max-width:none;text-align:center;
+  transform:translate(-50%,-0.19em)}
