@@ -51,8 +51,14 @@ def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
     if e == "shake":
         return (f"crop={max(2,w-8)}:{max(2,h-8)}:'4+3*sin(t*22)':'4+3*cos(t*18)',"
                 f"scale={w}:{h},setsar=1")
-    if e == "pulse":                    # breathing scale, centred by the overlay's own x/y
-        return f"scale='iw*(1+0.03*sin(t*6))':'ih*(1+0.03*sin(t*6))':eval=frame,scale={w}:{h},setsar=1"
+    if e == "pulse":                    # breathing scale — CONSTANT output size (see below)
+        # NOT `scale=...:eval=frame`: that re-sizes the frame EVERY frame, and a stream whose dimensions keep
+        # changing deadlocks the multi-input filter graph downstream (overlay/framesync). Renders wedged with
+        # a 48-byte output, ~1% CPU and 232 threads parked in futex_do_wait until the timeout — verified by
+        # bisecting a 6-layer project: identical project renders in 1.5s without pulse, hangs with it.
+        # zoompan does the same breathing but emits a FIXED s=WxH, like the `zoom` effect above.
+        return (f"scale={w*2}:{h*2},zoompan=z='1.03+0.03*sin(on/{fps}*6)':"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={fps},setsar=1")
     if e == "spin":
         return f"rotate='0.6*t':c=none:ow={w}:oh={h}"
     if e == "grayscale":
@@ -137,7 +143,13 @@ def render(edit: dict, sources: dict) -> bytes:
 
     tmp = tempfile.mkdtemp(prefix="pcmeme-")
     try:
-        cmd = [ffmpeg, "-y", "-f", "lavfi", "-i", f"color=c={bg}:s={w}x{h}:r={fps}:d={duration:.3f}"]
+        # -filter_complex_threads 1 is the fix for the renders that WEDGED: a stuck job was sitting on 232
+        # threads blocked in futex_do_wait with a 48-byte output and ~1% CPU — ffmpeg's multi-threaded filter
+        # graph deadlocking on itself, not slow encoding. A meme graph is many small overlay/scale filters over
+        # several looped image inputs, exactly the shape that trips it. Serialising the FILTER graph costs
+        # little here (the encoder still threads via -threads) and makes the render finish instead of hanging.
+        cmd = [ffmpeg, "-y", "-filter_complex_threads", "1", "-threads", "4",
+               "-f", "lavfi", "-i", f"color=c={bg}:s={w}x{h}:r={fps}:d={duration:.3f}"]
         chains, audio_parts = [], []
         cur = "[0:v]"          # the running composite
         idx = 1                # ffmpeg input index (0 is the colour base)
