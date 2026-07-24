@@ -3476,7 +3476,7 @@
     const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
     const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
-      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button><span style="display:flex;gap:6px"><button class="btn btn-ghost small" id="st-chat-toggle">💬 Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</span></div>
+      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip">⚡ Tip</button>`}<button class="btn btn-ghost small" id="st-chat-toggle">💬 Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
       <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
@@ -3500,6 +3500,8 @@
         // — no background relay traffic — and re-open it when shown again.
         if(hidden) _closeStreamChat(); else _streamChat(saddr); }; }
     { const db=$('#st-del'); if(db) db.onclick=()=>_deleteStream(e); }
+    // Tip the stream creator — ⚡ Lightning / ɱ Monero / 🟢 BCH chooser (doTip picks by what the host advertises).
+    { const tb=$('#st-tip'); if(tb) tb.onclick=()=>doTip(e.id, hpk); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     decorateProfiles();
     // An ENDED stream: prefer the saved recording (VOD) over the now-dead live URL. Resolve it by the
