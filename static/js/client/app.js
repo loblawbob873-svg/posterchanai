@@ -182,8 +182,95 @@
     return { toPeer: await wrapFor(peer), toSelf: await wrapFor(myPk) };
   }
 
+  // ---------- NIP-55: on-device Android signer (Amber) ----------
+  // The native counterpart of NIP-46. Same guarantee — the key never enters this app — but the exchange
+  // is an Android intent to a signer installed on the SAME phone instead of a round trip through a relay,
+  // so it works offline, needs no bunker URI to paste, and has no pairing to expire. Only exists inside
+  // the APK: the Nip55 Capacitor plugin is what talks to the OS, and it is absent in a browser.
+  const Nip55 = {
+    available: false, signers: [], pkg: '', npub: '',
+    _p(){ try{ return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Nip55) || null; }catch(_){ return null; } },
+    async probe(){
+      const p = this._p(); if(!p) return false;
+      try{ const r = await p.isAvailable(); this.available = !!(r && r.available); this.signers = (r && r.signers) || []; }
+      catch(_){ this.available = false; }
+      // Seed the package when exactly ONE signer is installed. The silent (content-resolver) path needs a
+      // package name, and the only other source is the `package` extra on a result — which not every signer
+      // sets. Without this seed a signer that omits it would foreground itself for every single reaction
+      // and every DM decrypted. Unambiguous by construction: one app claims the scheme, so we address it.
+      if(this.available && !this.pkg && this.signers.length === 1) this.pkg = this.signers[0].package || '';
+      return this.available;
+    },
+    // Android delivers activity results ONE at a time, and Capacitor tracks a single "last plugin call" for
+    // them — so two overlapping intent requests would resolve against each other's call and hand back the
+    // wrong plaintext. Decrypting a screenful of DMs fires exactly that pattern, so every request goes
+    // through one queue. The silent resolver path would tolerate parallelism, but the caller cannot know
+    // which path a request will take until it is already running.
+    _q: Promise.resolve(),
+    _serial(fn){
+      const run = this._q.then(fn, fn);
+      this._q = run.then(()=>{}, ()=>{});   // keep the chain alive after a rejection
+      return run;
+    },
+    // Every permission we will ever need, asked for ONCE at login. A signer that remembers the grant can
+    // then answer later calls silently (the plugin's content-resolver path) instead of jumping to the
+    // foreground for every reaction and every DM we decrypt.
+    _perms(){
+      return JSON.stringify(['sign_event','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
+        .map(t => ({ type: t })));
+    },
+    _req(type, opts){
+      return this._serial(async () => {
+        const p = this._p(); if(!p) throw new Error('signer bridge unavailable');
+        const r = await p.request(Object.assign({ type, pkg: this.pkg, currentUser: this.npub }, opts||{}));
+        if(!r || r.rejected) throw new Error('the signer declined');
+        if(r.package && !this.pkg) this.pkg = r.package;   // learn the package → unlocks the silent path
+        return r;
+      });
+    },
+    async getPublicKey(){
+      const r = await this._req('get_public_key', { permissions: this._perms() });
+      const v = (r.result||'').trim();
+      if(!v) throw new Error('the signer returned no key');
+      const hex = /^npub1/i.test(v) ? NT().nip19.decode(v).data : v;
+      this.npub = /^npub1/i.test(v) ? v : NT().nip19.npubEncode(hex);
+      return hex;
+    },
+    async signEvent(tpl){
+      const r = await this._req('sign_event', { content: JSON.stringify(tpl), id: String(Date.now()) });
+      // Prefer the signer's own signed event — it is authoritative about created_at/id. Older signers
+      // return only the signature, so rebuild the event around it (the id is a pure function of the
+      // template, so this cannot disagree unless the signer altered the template).
+      if(r.event){ try{ return JSON.parse(r.event); }catch(_){} }
+      if(!r.result) throw new Error('the signer returned no signature');
+      const ev = Object.assign({}, tpl); ev.id = await _eventId(ev); ev.sig = r.result; return ev;
+    },
+    async _crypt(type, peer, payload){
+      const r = await this._req(type, { content: payload, pubkey: peer });
+      if(r.result == null) throw new Error('the signer returned nothing');
+      return r.result;
+    },
+    nip04enc(peer, text){ return this._crypt('nip04_encrypt', peer, text); },
+    nip04dec(peer, ct){ return this._crypt('nip04_decrypt', peer, ct); },
+    nip44enc(peer, text){ return this._crypt('nip44_encrypt', peer, text); },
+    nip44dec(peer, ct){ return this._crypt('nip44_decrypt', peer, ct); },
+  };
+
   // ---------- signer abstraction ----------
   function makeSigner(mode, pubkey){
+    if (mode === 'nip55'){   // Amber (or any NIP-55 signer) on this phone — key stays in the signer app
+      return {
+        mode, pubkey,
+        signEvent: (tpl) => Nip55.signEvent(tpl),
+        nip04enc: (peer, txt) => Nip55.nip04enc(peer, txt),
+        nip04dec: (peer, ct) => Nip55.nip04dec(peer, ct),
+        nip17wrap: (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>Nip55.nip44enc(r,pt),
+                                                 (tpl)=>Nip55.signEvent(tpl), peer, text),
+        nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip55.nip44dec(p,ct), wrap),
+        nip44dec: (peer, ct) => Nip55.nip44dec(peer, ct),
+        nip44enc: (peer, text) => Nip55.nip44enc(peer, text),
+      };
+    }
     if (mode === 'nip07'){
       const s = {
         mode, pubkey,
@@ -911,6 +998,13 @@
     } else if (s.mode === 'nip46'){
       const pk = await Nip46.resume(s);
       signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+    } else if (s.mode === 'nip55'){
+      // Resume WITHOUT calling the signer: the pubkey is public, so re-asking would foreground Amber on
+      // every cold start just to be told something we already saved. The package + npub come back too,
+      // which is what keeps later calls on the silent content-resolver path.
+      if(!(await Nip55.probe())) throw new Error('signer app gone');
+      Nip55.pkg = s.pkg || ''; Nip55.npub = s.npub || NT().nip19.npubEncode(s.pubkey);
+      signer = makeSigner('nip55', s.pubkey); ME = { mode:'nip55', pubkey: s.pubkey, npub: Nip55.npub };
     } else {
       const r = await Relay.worker.call('setKey', { sk: s.sk });
       signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: NT().nip19.npubEncode(r.pubkey) };
@@ -964,6 +1058,12 @@
   }
   function bindAuth(){
     $('#btn-nip07').onclick = loginNip07;
+    // NIP-55 is Android-only and pointless without a signer installed, so the button stays hidden until
+    // the OS confirms one is there. Probing is cheap (a package-manager query) and returns false instantly
+    // in the browser, where the plugin does not exist.
+    { const b=$('#btn-nip55'); if(b){ b.onclick = loginNip55;
+        Nip55.probe().then(ok => { if(ok){ b.classList.remove('hidden');
+          const n=(Nip55.signers[0]||{}).label; if(n) b.textContent = '📲 Sign in with '+n; } }).catch(()=>{}); } }
     $('#btn-nsec-login').onclick = loginNsec;
     $('#btn-amber').onclick = ()=>{ amberErr(''); $('#auth-login').classList.add('hidden'); $('#auth-amber').classList.remove('hidden'); };
     $('#btn-amber-back').onclick = ()=>{ Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); $('#auth-amber').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
@@ -985,6 +1085,22 @@
       signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
       Session.save({ mode:'nip07' }); startApp();
     } catch(e){ authErr('extension declined'); }
+  }
+  // NIP-55 login: one intent to the signer, which is also where the user grants the permissions that keep
+  // every later sign/encrypt call silent. The pubkey + package + npub are saved so a relaunch resumes
+  // without bouncing through the signer again.
+  async function loginNip55(){
+    authErr('');
+    const b=$('#btn-nip55'), was=b?b.textContent:'';
+    if(b){ b.disabled=true; b.textContent='waiting for the signer…'; }
+    try{
+      const pk = await Nip55.getPublicKey();
+      signer = makeSigner('nip55', pk);
+      ME = { mode:'nip55', pubkey: pk, npub: Nip55.npub || NT().nip19.npubEncode(pk) };
+      Session.save({ mode:'nip55', pubkey: pk, pkg: Nip55.pkg, npub: ME.npub });
+      startApp();
+    }catch(e){ authErr(e.message || 'the signer declined'); }
+    finally{ if(b){ b.disabled=false; b.textContent=was; } }
   }
   function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }
   function finishAmberLogin(pk, session){

@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
+import place.poster.app.nip55.Nip55Plugin;
 import place.poster.app.screenshare.ScreenSharePlugin;
 import place.poster.app.share.ShareTargetPlugin;
 
@@ -25,6 +26,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
+        registerPlugin(Nip55Plugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
     }

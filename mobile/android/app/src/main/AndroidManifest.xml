@@ -91,6 +91,17 @@
             android:foregroundServiceType="mediaProjection|microphone" />
     </application>
 
+    <!-- NIP-55: which other apps we are allowed to SEE. Android 11+ hides the package list by default, so
+         without this queryIntentActivities() for "nostrsigner:" comes back empty and the app reports "no
+         signer installed" on a phone that has Amber sitting right there. Declaring the intent (not the
+         package) keeps it signer-agnostic — any app registering the scheme is discoverable. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="nostrsigner" />
+        </intent>
+    </queries>
+
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching
          files, notifications, and network-state for the relay reconnect logic. -->
     <uses-permission android:name="android.permission.INTERNET" />
