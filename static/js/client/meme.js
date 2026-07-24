@@ -167,9 +167,17 @@
   function trackEl(l){
     const total = Math.max(projEnd(), 1);
     const left = (l.start/total*100), wid = Math.max(3, l.dur/total*100);
-    const label = l.type==='text' ? ('🅣 ' + (l.text||'text')) : (l.type==='video'?'🎬 ':'🖼️ ') + (l.name || srcName(l.src));
+    // Show the CLIP ITSELF, not its filename — a hashed Blossom URL says nothing about what the clip is, so a
+    // row of thumbnails is the only way to read the timeline at a glance. Text layers show their words (that
+    // IS their content). The full name stays as the tooltip.
+    const label = l.type==='text' ? ('🅣 ' + (l.text||'text')) : (l.name || srcName(l.src));
+    const thumb = l.type==='text'
+      ? `<span class="mb-ttxt">🅣 ${enc((l.text||'text').slice(0,16))}</span>`
+      : (l.type==='video'
+          ? `<video class="mb-tthumb" src="${enc(l.src)}" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
+          : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
     return `<div class="mb-track${l.id===sel?' sel':''}" data-id="${l.id}">
-      <div class="mb-trackname">${enc(label.slice(0,28))}</div>
+      <div class="mb-trackname" title="${enc(label)}">${thumb}</div>
       <div class="mb-lane">
         <div class="mb-clip" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%">
           <i class="mb-grip mb-grip-l" data-grip="l"></i>
