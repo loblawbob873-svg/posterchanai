@@ -2351,6 +2351,93 @@ class AdminNip05Req(BaseModel):
     auth: str            # base64 signed admin event (p-tags target), same proof as /block
 
 
+class MemeRenderReq(BaseModel):
+    pubkey: str
+    auth: str            # base64 signed kind-27235 by this pubkey — same self-proof as drafts/ai-files
+    edit: dict           # the timeline: {w,h,fps,duration,bg,layers:[…]} (see meme_builder_service)
+
+
+# ----- Meme Builder: render a layered timeline into one MP4 -----
+# The client edits on a canvas and posts the edit list here; ffmpeg composites it (meme_builder_service).
+# Layer sources are URLs the client already has (Blossom blobs it uploaded, or media already on the
+# timeline), which is why this only ever FETCHES — it never accepts uploaded bytes, so there is no new
+# upload surface. Every fetch goes through the rss_service SSRF guard, the same one the fediverse bridge
+# uses: without it an edit list would be a fully general "make the server request this URL" primitive
+# against the LAN.
+@router.post("/meme/render")
+async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
+    import tempfile
+    import httpx
+    from urllib.parse import urlparse
+    from app.services import meme_builder_service
+    from app.services.rss_service import looks_fetchable, is_safe_host
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+
+    layers = (data.edit or {}).get("layers") or []
+    urls = {str(l.get("src")) for l in layers if isinstance(l, dict) and l.get("src")
+            and (l.get("type") or "") != "text"}
+    if len(urls) > meme_builder_service.MAX_LAYERS:
+        raise HTTPException(status_code=400, detail="too many distinct sources")
+
+    # OUR OWN media hosts are exempt from the SSRF guard, and have to be: on this deployment
+    # poster.place and media.poster.place resolve to 192.168.0.1 from inside the LAN (split-horizon
+    # DNS), so is_safe_host rejects them as private — which would refuse every Blossom blob the user
+    # just uploaded and make the feature fail 100% of the time. These are URLs this node itself mints
+    # and serves, so fetching them is not an SSRF primitive. Everything else still goes through the guard.
+    own = set()
+    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
+        h = urlparse(_setting(db, key) or "").hostname
+        if h:
+            own.add(h.lower())
+
+    tmpdir = tempfile.mkdtemp(prefix="pcmemesrc-")
+    sources: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0), follow_redirects=False) as c:
+            for u in urls:
+                host = (urlparse(u).hostname or "").lower()
+                if urlparse(u).scheme not in ("http", "https"):
+                    raise HTTPException(status_code=400, detail=f"refused source: {u[:80]}")
+                if host not in own:
+                    # is_safe_host resolves DNS (blocking) — off the event loop, per its own docstring.
+                    if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
+                        raise HTTPException(status_code=400, detail=f"refused source: {u[:80]}")
+                try:
+                    r = await c.get(u)
+                    r.raise_for_status()
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"could not fetch a layer source: {e}")
+                # 80 MB per source: a phone-shot clip fits, a film does not. Renders share the box with
+                # chat and image gen, so this is a real resource bound, not a formality.
+                if len(r.content) > 80 * 1024 * 1024:
+                    raise HTTPException(status_code=400, detail="a layer source is too large (80 MB limit)")
+                p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24])
+                with open(p, "wb") as fh:
+                    fh.write(r.content)
+                sources[u] = p
+        try:
+            # Blocking ffmpeg → a thread, or it stalls the whole event loop (every other request on this
+            # single-worker process) for the length of the render.
+            out = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            logger.warning("[meme] render failed for %s: %s", pk[:12], e)
+            raise HTTPException(status_code=500, detail=str(e))
+        return Response(content=out, media_type="video/mp4",
+                        headers={"Content-Disposition": 'attachment; filename="meme.mp4"'})
+    finally:
+        try:
+            for f in os.listdir(tmpdir):
+                os.unlink(os.path.join(tmpdir, f))
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
+
+
 def _verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
     """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window."""
     try:
