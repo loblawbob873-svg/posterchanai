@@ -128,7 +128,13 @@ async def client_app(request: Request, db: Session = Depends(get_db)):
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     return _TEMPLATES.TemplateResponse("client.html",
         {"request": request, "ver": _static_version(), "secure": proto == "https",
-         "nostr_only": nostr_only, "default_theme": _default_theme(db)})
+         "nostr_only": nostr_only, "default_theme": _default_theme(db)},
+        # This page sent NO Cache-Control, so Chromium (and the Electron desktop app, which loads the client
+        # over HTTP) fell back to HEURISTIC caching and served a stale copy. The page is what carries the
+        # `?v=<mtime>` tokens for the JS/CSS, so a stale page pins the whole client to OLD assets — deploys
+        # looked like they "weren't reaching the desktop app". The assets already revalidate; the shell that
+        # references them must never be cached, or the cache-busting it exists to provide cannot work.
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"})
 
 
 @router.get("/config")

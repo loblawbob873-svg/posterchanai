@@ -402,14 +402,11 @@
           if(l.type==='text') l.size = clamp(osz + dy, 8, 400);
           else { l.w = clamp(ow+dx, 16, P.w*2); l.h = clamp(oh+dy, 16, P.h*2); }
         } else {
-          // Keep the layer ON the canvas. Unclamped, a drag could push x/y negative (or past the far edge)
-          // and the RENDER honours that literally — a caption nudged left ended up at x=-79, i.e. off-screen,
-          // even though the preview still showed part of it. Text has no w/h in the model, so reserve a
-          // little so it can't be parked completely outside the frame either.
-          const bw = l.type==='text' ? Math.max(24, l.size) : l.w;
-          const bh = l.type==='text' ? Math.max(24, l.size) : l.h;
-          l.x = Math.round(clamp(ox+dx, -bw/2, P.w - bw/2));
-          l.y = Math.round(clamp(oy+dy, 0, Math.max(0, P.h - bh/2)));
+          // FREE positioning — put it exactly where you drag it. The clamp that used to live here bounded x
+          // by the layer's `size` (text has no width in the model), which meant a wide caption hit the limit
+          // almost immediately and simply would not move left any further. drawtext accepts any x/y, so the
+          // editor should not invent a boundary the renderer does not have.
+          l.x = Math.round(ox+dx); l.y = Math.round(oy+dy);
         }
         applyGeom(item, l);
       }, ()=>{ save(); repaint('inspector'); });
