@@ -3308,6 +3308,11 @@ body.modal-open .mobilenav{display:none}
   border:1px solid var(--line);border-radius:var(--r);container-type:size}
 .mb-item{position:absolute;cursor:grab;touch-action:none}   /* touch-action:none → we own the gesture */
 .mb-item.sel{outline:2px solid var(--neon);outline-offset:1px}
+/* TEXT is its own bounds — the words show you exactly what and where they are, so a big neon rectangle
+   around the layout box only mislead: it looked far larger than the glyphs and ran outside the frame on
+   a large caption. Selection is shown by the resize handle instead, which is unambiguous and tiny. */
+.mb-item.mb-text.sel{outline:none}
+.mb-item.mb-text.sel .mb-h{display:block}
 .mb-item img,.mb-item video{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
 /* width:max-content — the box HUGS the text. It used to be a full 92%-wide box with the text centred
    inside it, so the preview showed the caption centred while ffmpeg's drawtext anchors the text's LEFT
