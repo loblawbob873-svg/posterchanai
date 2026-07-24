@@ -189,9 +189,17 @@ def render(edit: dict, sources: dict) -> bytes:
             else:
                 cmd += ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}", "-i", path]
 
-            chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
-                     f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
-                     "setsar=1", f"fps={fps}", "format=rgba"]
+            # "contain" (default) letterboxes the source inside the layer box; "cover" scales UP until the box
+            # is filled and crops the overflow — what you actually want from a "fill the canvas" background,
+            # where a letterboxed image with transparent bars is not filling anything.
+            if str(layer.get("fit") or "").lower() == "cover":
+                chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=increase",
+                         f"crop={lw}:{lh}",
+                         "setsar=1", f"fps={fps}", "format=rgba"]
+            else:
+                chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
+                         f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
+                         "setsar=1", f"fps={fps}", "format=rgba"]
             fx = _fx_chain(effect, lw, lh, dur, fps)
             if fx:
                 chain.append(fx)

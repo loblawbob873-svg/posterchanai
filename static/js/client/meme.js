@@ -179,9 +179,11 @@
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
+    // object-fit must mirror the renderer: 'cover' fills the box and crops, 'contain' letterboxes.
+    const ofit = (l.fit==='cover') ? 'cover' : 'contain';
     const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}" muted playsinline preload="metadata"></video>`
-      : `<img src="${enc(l.src)}" alt="">`;
+      ? `<video src="${enc(l.src)}" muted playsinline preload="metadata" style="object-fit:${ofit}"></video>`
+      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}">`;
     return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${l.opacity}">${inner}<i class="mb-h"></i></div>`;
   }
 
@@ -541,7 +543,7 @@
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, mute:!!l.mute, volume:+l.volume||1,
-          text:l.text, size:+l.size, color:l.color, stroke:l.stroke })) };
+          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain' })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
@@ -595,7 +597,8 @@
     num('mb-f-w','w',16,4320); num('mb-f-h','h',16,4320);
     // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
     // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
-    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; save(); render(); });
+    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='cover';   // cover, not letterbox
+      save(); render(); toast('layer fills the canvas'); });
     // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
     // Measure the preview element (it now hugs its text) and convert screen px -> project px.
     on('mb-center','click',()=>{
@@ -628,7 +631,12 @@
   function render(){
     const feed=document.getElementById('feed'); if(!feed) return;
     if(_playT){ clearInterval(_playT); _playT=null; }
+    // Keep the playhead where it was. A rebuild used to snap back to t=0, so any edit (Fill, restack,
+    // trim…) jumped the preview to whatever clip happens to be at zero — it looked like the app had
+    // selected a different layer out of nowhere.
+    const _prevT = (()=>{ const s=document.getElementById('mb-scrub'); return s ? +s.value||0 : null; })();
     feed.innerHTML=view();
+    if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
     bindStage(root); bindTimeline(root); bindInspector(root);
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
