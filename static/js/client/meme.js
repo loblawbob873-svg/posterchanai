@@ -118,6 +118,20 @@
   // the wrong place': a hand-set x can never survive the browser/ffmpeg font difference, whereas ffmpeg
   // centring with (w-text_w)/2 is exact by construction. `undefined` (a layer made before this existed)
   // counts as centred too, so old projects fix themselves; an explicit '' means the user turned it off.
+  // The caption's visual CENTRE in project pixels, measured from the preview element. Sent to the
+  // renderer so it can place the text as centre - text_w/2 using ITS OWN width — the browser and
+  // ffmpeg disagree on string width, and anchoring on the left edge bakes that disagreement into the
+  // position (it is what produced x=-105 and captions landing left/right of where they were put).
+  function _textCenterX(l){
+    try{
+      const el=document.querySelector('.mb-item[data-id="'+l.id+'"]');
+      const st=document.getElementById('mb-stage');
+      if(el && st){ const k = P.w / st.getBoundingClientRect().width;
+        return Math.round((+l.x||0) + el.getBoundingClientRect().width * k / 2); }
+    }catch(_){ }
+    return null;
+  }
+
   const _alignOf = (l) => (l.align || '');   // '' = obey the x you dragged it to; 'center' = let ffmpeg centre it
 
   const _stageOrder = () => P.layers.filter(l=>l.type!=='text').concat(P.layers.filter(l=>l.type==='text'));
@@ -568,7 +582,7 @@
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, mute:!!l.mute, volume:+l.volume||1,
-          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l) })) };
+          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });

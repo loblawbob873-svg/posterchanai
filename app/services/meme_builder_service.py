@@ -108,7 +108,19 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     # out with different fonts AND the preview wraps at 92% while drawtext never wraps at all — so a caption
     # the client measured as centred rendered as one long line starting near the left edge. `(w-text_w)/2`
     # uses drawtext's OWN measurement of the text it is about to draw, so it is centred by construction.
-    x_expr = f"(w-text_w)/2" if str(layer.get("align") or "").lower() == "center" else str(x)
+    # Horizontal placement is anchored on the caption's CENTRE, not its left edge, whenever the client can
+    # measure one (`cx`). The browser and ffmpeg never agree on a string's width — different faces, hinting
+    # and synthetic bolding — so an x computed for the preview's width lands the rendered text left or right
+    # of where you put it, and goes NEGATIVE for a caption wider than the canvas. Centre-anchoring cancels
+    # that: ffmpeg subtracts HALF OF ITS OWN text_w, so only the centre point has to be agreed on.
+    if str(layer.get("align") or "").lower() == "center":
+        x_expr = "(w-text_w)/2"
+    else:
+        cx = layer.get("cx")
+        if cx is None:
+            x_expr = str(x)
+        else:
+            x_expr = f"({int(_num(cx, -MAX_DIM, MAX_DIM, 0))})-text_w/2"
     start = _num(layer.get("start"), 0, MAX_DURATION, 0)
     dur = _num(layer.get("dur"), 0.05, MAX_DURATION, 3)
     # Same font resolver the `meme` command and caption_video use, so a caption here looks identical to
