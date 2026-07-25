@@ -13334,6 +13334,9 @@
           +[['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],['gg','Top'],['G','Bottom']]
             .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
           +'</div>' : '')
+      +'<div class="ks-sec">Tabs</div><div class="ks-grid">'
+      +[['[','Previous tab'],[']','Next tab']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
       +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
@@ -13395,6 +13398,7 @@
     // Every other card view — Streams, Articles, Shopping, Communities, 4chan, Pics. Deliberately the SAME
     // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
     // up here without a second place to remember.
+    '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
     '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
     '#feed .file-card',                  // Files (a GRID — see _rowStride)
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
@@ -13404,7 +13408,7 @@
     for(const sel of _ROW_SEL){ const els=[...document.querySelectorAll(sel)]; if(els.length) return els; }
     return [];
   }
-  const _rowKey = (el) => el && (el.dataset.tid || el.dataset.id || el.dataset.peer || el.dataset.open || '');
+  const _rowKey = (el) => el && (el.dataset.tid || el.dataset.draft || el.dataset.id || el.dataset.peer || el.dataset.open || '');
   // The post inside a selected row. A thread row is a .thread-node WRAPPER, so the id/pubkey live on the
   // card within it, not on the row itself.
   function _rowNote(el){
@@ -13424,6 +13428,12 @@
     return el||null;
   }
   function _selectNote(el){
+    // Moving the cursor off a row abandons any button inside it that Tab had focused — otherwise focus
+    // would stay behind on the row you just left.
+    { const a2=document.activeElement, prev=_selRef;
+      if(prev && a2 && a2!==prev && prev.contains(a2) && prev!==el){
+        try{ a2.blur(); document.body.focus({preventScroll:true}); }catch(_){ }
+      } }
     document.querySelectorAll('.sel').forEach(n=>n.classList.remove('sel'));
     if(!el){ _selId=null; _selRef=null; return; }
     _selId=_rowKey(el); _selRef=el; el.classList.add('sel');
@@ -13572,6 +13582,57 @@
     return true;
   }
 
+  // Tab moves INTO the selected row's buttons, and cycles among them. A draft card's Edit / Delete / Send
+  // (and a post's action row) are ordinary buttons, so Tab already reached them — but only after walking
+  // everything else on the page first, which is useless when a cursor is already sitting on the row you
+  // mean. Scoped while a row is selected; Escape drops back out to row selection.
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.key!=='Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if(document.body.classList.contains('modal-open')) return;   // the modal trap owns Tab there
+      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      const row=_selEl(); if(!row) return;
+      const els=[...row.querySelectorAll(_FOCUSABLE)].filter(el=>el.offsetParent!==null);
+      if(!els.length) return;
+      const i=els.indexOf(document.activeElement);
+      e.preventDefault();
+      const n = i<0 ? (e.shiftKey ? els.length-1 : 0)
+                    : (e.shiftKey ? (i<=0 ? els.length-1 : i-1) : (i>=els.length-1 ? 0 : i+1));
+      try{ els[n].focus({preventScroll:true}); }catch(_){ try{ els[n].focus(); }catch(__){} }
+    }, true);
+  })();
+
+  // [ and ] cycle the TAB BAR of whatever view is open — profile's Notes/Replies/Media/Articles/Streams,
+  // the timeline's Home/Nostrverse/Trending, notification filters, the Files tabs. Generic rather than
+  // profile-only because they are all just a row of buttons with one marked current; the marker is `on`
+  // in some bars and `active` in others, so both are accepted.
+  const _TAB_SEL = ['#feed .prof-tabs .prof-tab', '#feed .tl-tabs .tltab', '#feed .notif-tabs .ntab',
+                    '#feed .files-tabs .ftab', '#feed .np-tabs .np-tab'];
+  function _tabGroup(){
+    for(const sel of _TAB_SEL){
+      const els=[...document.querySelectorAll(sel)].filter(el=>el.offsetParent!==null);
+      if(els.length>1) return els;
+    }
+    return null;
+  }
+  function _cycleTab(dir){
+    const els=_tabGroup(); if(!els) return false;
+    let i=els.findIndex(el=>el.classList.contains('active')||el.classList.contains('on'));
+    if(i<0) i=0;
+    els[(i+dir+els.length)%els.length].click();
+    return true;
+  }
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.altKey||e.ctrlKey||e.metaKey) return;
+      if(e.key!=='[' && e.key!==']') return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(_cycleTab(e.key===']' ? 1 : -1)){ e.preventDefault(); _selectNote(null); }   // new tab, new list
+    });
+  })();
+
   // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
   // client uses, and the text-field guard already keeps them out of anything being typed into.
   // `l` is react — until Vim keys are on, where l is MOVEMENT and react moves to f (favourite). The Alt+/
@@ -13588,8 +13649,23 @@
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
       const k=(e.key||'').toLowerCase();
-      if(k==='escape'){ if(_selId){ e.preventDefault(); _selectNote(null); } return; }
+      if(k==='escape'){
+        if(_selId){
+          e.preventDefault();
+          // If Tab had moved focus onto one of the row's buttons, the first Escape steps back out to the
+          // row; a second clears the selection. Otherwise a single Escape would do both at once.
+          const row=_selEl();
+          if(row && row.contains(document.activeElement) && document.activeElement!==row){
+            try{ document.activeElement.blur(); document.body.focus({preventScroll:true}); }catch(_){ }
+          } else _selectNote(null);
+        }
+        return;
+      }
       const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
+      // Once Tab has moved focus onto one of the row's own controls, that control owns the keyboard:
+      // Enter must press the focused button, not re-open the row, and r/b/q must not fire underneath it.
+      { const a2=document.activeElement;
+        if(a2 && a2!==el && el.contains(a2)) return; }
       // 🎬 Effect lives in the post's ☰ menu rather than the action row, so it has no button to click —
       // call it directly, behind the same PC_NOSTR_ONLY gate the menu entry uses (a Nostr-only node has
       // no AI backend to render one).
