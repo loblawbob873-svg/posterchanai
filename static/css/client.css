@@ -837,8 +837,15 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   border:0;border-radius:0;background:transparent}
 .tl-cmp-av{width:52px;height:52px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0}
 .tl-cmp-body{flex:1;min-width:0}
+/* overflow-y:AUTO, not hidden. grow() caps the box at 320px, so with hidden overflow everything past that
+   was unreachable — you could keep typing (the caret drags the view along) but could not scroll back to
+   read what you had written. The bar itself is hidden in every engine: this sits inside a feed row and a
+   gutter appearing mid-sentence would shove the text. overscroll-behavior keeps the gesture in the box
+   rather than yanking the timeline once you hit the end. */
 .tl-cmp-ta{width:100%;min-height:54px;margin:0;padding:7px 0;border:0;background:transparent;color:var(--text);
-  resize:none;overflow:hidden;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
+  resize:none;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;-ms-overflow-style:none;font-family:inherit;font-size:16.5px;line-height:1.45;outline:none}
+.tl-cmp-ta::-webkit-scrollbar{width:0;height:0;display:none}
 .tl-cmp-ta::placeholder{color:var(--muted)}
 /* Kill the global `textarea:focus` treatment here: border-color is a no-op (this one is border:0) but its
    box-shadow glow drew a ring around the composer the moment you clicked in. */

@@ -2559,7 +2559,11 @@
     const _tlAutosave=()=>{ clearTimeout(_tlAutoT); _tlAutoT=setTimeout(()=>{ if((ta.value||'').trim()) _tlSaveDraft(); else _tlDropDraft(); }, 1200); };
     // Always open, like ditto — a one-line box that only unfolds on focus read as a search field and hid
     // the attach/post controls behind an extra interaction. It just grows with the text from here.
-    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),320)+'px'; };
+    // Grow to fit, up to a share of the VIEWPORT rather than a flat 320px — on a desktop that cap wasted
+    // most of the window, on a phone it is still the floor. Past the cap the box scrolls (its bar is hidden
+    // in CSS); it used to just clip, so a long post became invisible and unscrollable.
+    const _taMax=()=>Math.min(560, Math.max(320, Math.round((window.innerHeight||800)*0.42)));
+    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),_taMax())+'px'; };
     // Declared before reset() so it can disarm the 🎨 choice: clearing only the button's .on class
     // would leave a background armed and silently style the NEXT post too.
     let _tlBg=null, _tlBgClear=()=>{};
