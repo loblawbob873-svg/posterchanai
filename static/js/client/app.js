@@ -13114,6 +13114,50 @@
       if((e.ctrlKey||e.metaKey) && !e.altKey && !e.shiftKey && (e.key==='f'||e.key==='F')){ e.preventDefault(); openFind(); }
     }, true);
   })();
+
+  // ---------- keyboard scrolling ----------
+  // The timeline is a scrollable DIV (#feed), not the document — the app is a fixed-height flex layout, so
+  // <body> never scrolls. A div with no tabindex cannot take keyboard focus, so ↓/↑/PageDown/PageUp/Space/
+  // Home/End landed on <body>, which has nothing to scroll, and the feed sat still. Nothing was swallowing
+  // the keys; they simply had nowhere to act. Route them to the feed instead.
+  (function(){
+    const KEYS=new Set(['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' ','Spacebar']);
+    const LINE=48;   // roughly a browser's own arrow-key step
+    document.addEventListener('keydown', e=>{
+      if(e.ctrlKey||e.metaKey||e.altKey) return;          // Ctrl+Home etc. stay the browser's
+      if(!KEYS.has(e.key)) return;
+      const t=e.target;
+      // Never take a key off something being typed in or operated: the composer, a search box, a select,
+      // a focused button (Space activates it), or any custom control that has taken focus deliberately.
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|OPTION|A)$/.test(t.tagName||''))) return;
+      // A modal, the lightbox and the emoji/menu popovers own the keyboard while they are up — the lightbox
+      // in particular pages through images with the arrows.
+      if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.lightbox,.menu-pop,.emoji-pop')) return;
+      const f=document.getElementById('feed');
+      // Views that scroll INSIDE the feed (DM, chat, AI) set overflow:hidden on it and own their own
+      // scroller; leave those alone rather than fighting them.
+      if(!f || getComputedStyle(f).overflowY==='hidden') return;
+      if(f.scrollHeight <= f.clientHeight+4) return;       // nothing to scroll — don't swallow the key
+      const page=Math.max(120, f.clientHeight-64);
+      let dy=0;
+      if(e.key==='ArrowDown') dy=LINE;
+      else if(e.key==='ArrowUp') dy=-LINE;
+      else if(e.key==='PageDown') dy=page;
+      else if(e.key==='PageUp') dy=-page;
+      else if(e.key===' '||e.key==='Spacebar') dy=e.shiftKey?-page:page;   // Space pages, Shift+Space back
+      else if(e.key==='Home'||e.key==='End'){
+        e.preventDefault();
+        // Instant, like the browser's own Home/End on a page — and a smooth animation here can be
+        // suppressed outright (prefers-reduced-motion), which would read as the key doing nothing.
+        f.scrollTo({top: e.key==='Home'?0:f.scrollHeight, behavior:'auto'});
+        return;
+      }
+      if(!dy) return;
+      e.preventDefault();
+      f.scrollBy({top:dy, behavior:'auto'});   // auto, not smooth: held-down arrows must not queue up
+    });
+  })();
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
   // with the arrow keys / on-screen arrows / swipe, like every other client. null when there's nothing to
   // page through (a lone attachment, or an image sitting inline in the text).
