@@ -1575,11 +1575,16 @@ def frames_to_alpha_video(frames, fps: int = 20, loops: int = 1,
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def still_to_alpha_video(image, dur: float = 6.0, fps: int = 12,
+def still_to_alpha_video(image, dur: float = 6.0, fps: int = 6,
                          audio_path: Optional[str] = None) -> bytes:
     """Like frames_to_alpha_video but for a STILL RGBA image held for `dur` seconds (a static character
     overlay). Uses `-loop 1 -t dur` on a single PNG so a motionless layer is not stored as hundreds of
     identical frames. Same ProRes 4444 alpha codec, same optional looped audio, no branding.
+
+    fps is deliberately LOW (6): the image never changes, so a higher rate only multiplies the count of
+    identical all-intra ProRes frames (and the file size) for no visual gain — the meme renderer's
+    framesync duplicates frames up to the project rate on composite. Kept ≥ a few fps so timeline
+    scrubbing/preview stays smooth.
     """
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():

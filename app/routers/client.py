@@ -832,6 +832,10 @@ class MemeEffectReq(BaseModel):
     dur: float | None = None     # optional length hint (seconds)
 
 
+_effect_cooldown: dict = {}      # pubkey -> monotonic ts of last effect render (in-memory; single port-3051 worker)
+_EFFECT_COOLDOWN_S = 4.0         # per-user minimum gap between effect renders (each is a heavy ProRes encode)
+
+
 # Render a full effect onto a TRANSPARENT canvas and store it to Blossom, so the client can add it as an
 # ordinary video layer (its URL is then fetched by /meme/render exactly like any other layer source). We
 # STORE rather than stream-back (unlike /meme/render) because the client needs a stable URL to hang on
@@ -853,6 +857,14 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
     catalog = {e["name"] for e in mb.alpha_effect_catalog()}
     if name not in catalog:
         raise HTTPException(status_code=400, detail="unknown effect")
+
+    # Per-user cooldown: each render is a heavy ProRes encode and the shared render queue is a single
+    # worker, so one impatient user shouldn't be able to fill it (the semaphore below still bounds total
+    # concurrency; this just adds per-user fairness). Cheap in-memory gate, like the node-job registry.
+    _now = time.monotonic()
+    if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one effect at a time — give the last render a moment")
+    _effect_cooldown[pk] = _now
 
     # Cap the length the same spirit as the Meme Builder's own bounds — an effect layer is a short clip on
     # the shared GPU/CPU box, not a film.
