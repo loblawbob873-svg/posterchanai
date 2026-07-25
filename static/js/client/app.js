@@ -7025,14 +7025,14 @@
   function _bgFill(ctx,W,H,bg){ if(bg.colors.length>1){ const g=ctx.createLinearGradient(0,0,W,H); bg.colors.forEach((c,i)=>g.addColorStop(i/(bg.colors.length-1),c)); ctx.fillStyle=g; } else ctx.fillStyle=bg.colors[0]; ctx.fillRect(0,0,W,H); }
   function _bgWrap(ctx, text, maxW){ const out=[]; for(const para of String(text).split('\n')){ if(!para){ out.push(''); continue; } let line=''; for(const word of para.split(/\s+/)){ const t=line?line+' '+word:word; if(ctx.measureText(t).width>maxW && line){ out.push(line); line=word; } else line=t; } if(line) out.push(line); } return out; }
   function _bgDeco(ctx, W, H, deco, framed){   // festive emoji framed along the top + bottom edges
-    ctx.save(); ctx.globalAlpha=0.92; const size=Math.round(W*0.072);
+    ctx.save(); ctx.globalAlpha=0.92; const S=Math.min(W,H), size=Math.round(S*0.072);
     ctx.font=`${size}px system-ui,-apple-system,'Segoe UI',sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
     // With a frame, push the emoji rows INSIDE it — at the default inset the glyphs straddle the inner
     // hairline, which reads as a mistake rather than a decoration.
-    const n=6, m=framed ? Math.round(W*0.108) : size*1.05;
+    const n=6, m=framed ? Math.round(S*0.108) : size*1.05;
     // Horizontally too: spread across the FRAMED area, not the full canvas, or the first and last glyph
     // of each row sit on top of the side rules.
-    const x0=framed?m:0, xw=W-x0*2;
+    const x0=framed?Math.round(S*0.108):0, xw=W-x0*2;
     for(let i=0;i<n;i++){ const x=x0 + xw*(i+0.5)/n;
       ctx.fillText(deco[i%deco.length], x, m);
       ctx.fillText(deco[(i+1)%deco.length], x, H-m); }
@@ -7053,24 +7053,32 @@
   // on every swatch (the light `gold` background has a dark fg — a hardcoded white frame would vanish).
   function _bgFrame(ctx,W,H,bg){
     const col=bg.fg||'#fff';
-    const fi=W*0.042, fw=Math.max(2,W*0.009);
+    // Proportional to the SHORT edge. Keyed on W, a 16:9 card got an inset and a rule nearly twice as
+    // heavy as a square one — the same border has to read the same on every shape.
+    const S=Math.min(W,H), fi=S*0.042, fw=Math.max(2,S*0.009);
     ctx.save();
     ctx.strokeStyle=col; ctx.lineJoin='round';
     ctx.globalAlpha=0.88; ctx.lineWidth=fw;
-    _rrect(ctx, fi, fi, W-fi*2, H-fi*2, W*0.022); ctx.stroke();
+    _rrect(ctx, fi, fi, W-fi*2, H-fi*2, S*0.022); ctx.stroke();
     const gi=fi+fw*1.9;
     ctx.globalAlpha=0.45; ctx.lineWidth=Math.max(1,W*0.0032);
-    _rrect(ctx, gi, gi, W-gi*2, H-gi*2, W*0.016); ctx.stroke();
+    _rrect(ctx, gi, gi, W-gi*2, H-gi*2, S*0.016); ctx.stroke();
     ctx.restore();
   }
   async function renderBgPost(text, bg, framed){
-    const W=1080, t=String(text||'');
-    // A FULL article summary does not belong on a square. Squeezing it there is what makes the type tiny
-    // and the card look cheap, so grow the canvas instead: 1:1 for a punchy line, then the standard tall
-    // social formats (4:5, then 2:3) as the text gets longer. Both still preview well in a feed.
-    const H = t.length>760 ? 1620 : t.length>320 ? 1350 : 1080;
+    const t=String(text||'');
+    // Grow the canvas SIDEWAYS, never downwards. The feed caps an image at 300px TALL (.media-row img), so
+    // a taller card is a SMALLER card: 4:5 shows at 240px wide and 2:3 at 200px, with the type scaled to
+    // roughly 8px — unreadable. Holding the height at 1080 and widening keeps the display scale fixed while
+    // giving each line far more room, so the card fills the column instead of shrinking away from it.
+    const H = 1080;
+    // Two shapes only. Square for a punchy line (it reads as a statement); 16:9 for anything longer,
+    // because at the feed's 300px height cap a 16:9 image is 533px wide — it FILLS a column, where 4:3
+    // stops at 400px. Same height, more room per line, bigger effective type. Wider is strictly better
+    // here; the middle tier just made cards that were smaller for no reason.
+    const W = t.length>320 ? 1920 : 1080;
     const LONG = t.length>320;
-    const pad=W*(framed?0.115:0.095), maxW=W-pad*2,   // the frame eats into the text box
+    const pad=Math.min(W,H)*(framed?0.115:0.095), maxW=W-pad*2,   // the frame eats into the text box
           maxH=(H-pad*2)*(bg.deco?(framed?0.78:0.82):1);   // leave room for deco rows
     const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
     _bgFill(ctx,W,H,bg);
@@ -7097,10 +7105,10 @@
   // source URL appended, and the two halves belong in different places.
   const _BG_WORDS = (t) => String(t||'').replace(/https?:\/\/\S+/g,' ')
     .replace(/[ \t]+/g,' ').replace(/ *\n */g,'\n').trim();
-  // How much the card can carry. High, because the card is the ONLY place the words appear (the post
-  // underneath is just the link) and renderBgPost now grows the canvas rather than shrinking the type —
-  // a whole AI summary lands well inside this, so it is drawn in full instead of cut to a teaser.
-  const _CARD_MAX = 1100;
+  // How much the card can carry. The card is the ONLY place the words appear (the post underneath is just
+  // the link), so this is generous — but not unbounded: past roughly this much, a card shown at a feed
+  // column's width drops under ~13px of effective type, and an unreadable card is not a card.
+  const _CARD_MAX = 780;
   // The opening HOOK, cut on a sentence boundary so the card never ends mid-word. Text that already fits
   // is returned untouched (newlines and all) — a short background post must keep behaving exactly as before.
   function _cardHook(s){
