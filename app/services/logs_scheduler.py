@@ -54,12 +54,35 @@ _HEALTH_GOAL = (
 )
 
 # Fallback for a node that can't run the LLM 'agent' loop (the lightweight standalone agent on
-# router.lan etc. has no local model): a single read-only diagnostic whose raw output IS the report.
-_HEALTH_SHELL = ("echo '== host =='; uname -a; uptime; "
-                 "echo; echo '== disk /=='; df -h / 2>/dev/null; "
-                 "echo; echo '== memory =='; free -h 2>/dev/null; "
-                 "echo; echo '== load =='; cat /proc/loadavg 2>/dev/null; "
-                 "echo; echo '== failed services =='; systemctl --failed --no-legend 2>/dev/null | head -20")
+# router.lan etc. has no local model). It covers the SAME six subsystems as _HEALTH_GOAL in one
+# read-only shell pass — the agent loop is only how a node gathers, so a shell-only node has no
+# reason to report less. Its output is distilled into the identical status board by _to_status_board
+# (the CONTROLLER runs that model, so the worker never needs an LLM); previously this ran a couple of
+# trivia commands and pasted them verbatim, which is why such a node looked nothing like the others.
+# Log/dmesg lines are normalised (timestamps, hex ids and digits blanked) then counted, so thousands
+# of repeats of one nginx error collapse to a single row instead of flooding the board model.
+_HEALTH_SHELL = r"""
+echo '== disk =='; df -hP / /boot /raid 2>/dev/null
+echo; echo '== smart =='
+s=$(for d in $(lsblk -dn -o NAME 2>/dev/null | grep -Ev '^(loop|ram|zram|sr|dm-)'); do
+  o=$(sudo -n smartctl -H /dev/$d 2>&1)
+  case "$o" in *"device type"*|*"Unknown USB"*) o=$(sudo -n smartctl -H -d sat /dev/$d 2>&1);; esac
+  echo "$d: $(echo "$o" | grep -Ei 'overall-health|SMART Health Status|Unavailable|not found|Permission denied|Operation not permitted' | head -1)"
+done)
+echo "${s:-no drives reported}"
+echo; echo '== raid =='; cat /proc/mdstat 2>/dev/null | head -15
+echo; echo '== failed systemd units =='
+f=$(systemctl --failed --no-legend 2>/dev/null | head -20); echo "${f:-none failed}"
+echo; echo '== swap =='; free -h 2>/dev/null | grep -iE '^ *total|swap'
+echo; echo '== journal errors 6h =='
+sudo -n journalctl --since -6h -p err --no-pager -q 2>&1 |
+  sed -E 's/^[A-Z][a-z]{2} +[0-9]+ [0-9:]+ [^ ]+ //; s/[0-9a-f:]{4,}//g; s/[0-9]+/#/g' |
+  cut -c1-110 | sort | uniq -c | sort -rn | head -8
+echo "total: $(sudo -n journalctl --since -6h -p err --no-pager -q 2>/dev/null | wc -l) error lines"
+echo; echo '== dmesg warn/err =='
+sudo -n dmesg -T --level=err,warn 2>&1 | grep -v 'IN=.*OUT=' |
+  sed -E 's/^\[[^]]*\] //; s/[0-9]+/#/g' | cut -c1-110 | sort | uniq -c | sort -rn | head -6
+""".strip()
 
 # Deterministic status board — Python owns the emojis + layout so they're identical on every node.
 # The model only supplies a status word + short detail per subsystem (an easy single-shot task);
@@ -79,7 +102,10 @@ _BOARD_SYS = (
     "green = healthy / passed / none / zero-used; yellow = warning (e.g. disk 75-90%); "
     "red = critical / failed / degraded / errors present; none = subsystem not present on this host "
     "(e.g. no RAID array, no swap). A clean or empty result is green, never none. "
-    "<detail> is a terse phrase, e.g. '/ 33%, /raid 63%' or 'sda,sdb,nvme PASSED' or 'none failed'."
+    "'services' is ONLY failed systemd units — green when none failed. Journal/dmesg/log errors "
+    "belong to 'errors', NEVER to 'services'. "
+    "<detail> is a terse phrase, e.g. '/ 33%, /raid 63%' or 'sda,sdb,nvme PASSED' or 'none failed'. "
+    "Use ONLY figures that literally appear in the input — never compute or invent a percentage."
 )
 
 
@@ -130,19 +156,19 @@ async def _node_uptime(db, admin, name: str, target: str) -> str:
         return ""
 
 
-async def _to_status_board(chat_service, summary: str) -> str:
-    """Turn the agent's plain-text summary into the deterministic emoji board. On any failure, fall
-    back to the raw summary so a node is never blank."""
+async def _to_status_board(chat_service, summary: str, fallback: Optional[str] = None) -> str:
+    """Turn the agent's plain-text summary (or a shell probe's raw output) into the deterministic emoji
+    board. On any failure, fall back to `fallback` — or the input itself — so a node is never blank."""
+    fb = (fallback if fallback is not None else summary).strip()
     try:
         raw = await chat_service.chat([
             {"role": "system", "content": _BOARD_SYS},
             {"role": "user", "content": summary},
         ])
-        board = _render_board(raw)
-        return board or summary.strip()
+        return _render_board(raw) or fb
     except Exception as e:
         logger.warning(f"status-board formatting failed: {e}")
-        return summary.strip()
+        return fb
 
 
 def get_logs_settings(db=None) -> dict:
@@ -307,16 +333,18 @@ async def build_health_report(db, admin: User, notify=None) -> str:
                 await notify(f"🔍 Checking *{name}* ({where})…")
             except Exception:
                 pass
+        fallback = None
         try:
             if _nostr:
                 summary = await node_service.run_agent_over_nostr(target[6:], _HEALTH_GOAL, mode="agent", report=True)
-                # A lightweight standalone worker (no local LLM) can't run agent mode — fall back to a
-                # raw shell diagnostic and present its output verbatim (no status board to distill).
+                # A lightweight standalone worker (no local LLM) can't run agent mode — gather the same
+                # six subsystems with one read-only shell probe instead. The board is still distilled
+                # here on the controller, so such a node reports exactly like a full one; only the raw
+                # probe output (in a code block) is used if that distillation fails.
                 if summary and ("no local LLM" in summary or "shell + claude only" in summary):
-                    raw = await node_service.run_agent_over_nostr(target[6:], _HEALTH_SHELL, mode="shell")
-                    body = f"```\n{(raw or '(no output)').strip()[:2500]}\n```"
-                    sections.append(f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`\n\n{body}")
-                    continue
+                    raw = (await node_service.run_agent_over_nostr(target[6:], _HEALTH_SHELL, mode="shell") or "").strip()
+                    summary = raw[:4000]
+                    fallback = f"```\n{raw[:2500] or '(no output)'}\n```"
             else:
                 summary = await node_service.run_agent(
                     db, admin, name, target, _HEALTH_GOAL, chat_service,
@@ -324,7 +352,7 @@ async def build_health_report(db, admin: User, notify=None) -> str:
                 )
             # Presentation is deterministic (Python owns emojis/layout) so the agent model's
             # formatting drift never reaches the report.
-            body = await _to_status_board(chat_service, summary or "")
+            body = await _to_status_board(chat_service, summary or "", fallback=fallback)
         except Exception as e:
             logger.error(f"Health check failed for node {name}: {e}")
             body = f"⚠️ agent error: {e}"
