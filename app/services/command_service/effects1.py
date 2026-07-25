@@ -148,6 +148,21 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _nakedman_command(self, attachments: Optional[list]) -> dict:
+        """Overlay a fat cartoon man dancing (huge penis) on an attached image → 8s MP4: `nakedman`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `nakedman`."}
+
+        import asyncio
+        from app.services.effects_service import nakedman_attachments
+
+        outputs, summary = await asyncio.to_thread(nakedman_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _alive_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Make an attached photo come alive with 3D parallax motion:
         `alive [subtle|normal|strong]` (default normal)."""

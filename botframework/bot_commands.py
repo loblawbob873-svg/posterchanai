@@ -7,7 +7,7 @@ NO_CAPTION_COMMANDS — of those, the ones whose result IS the media (no text ca
 
 # Image-stamp + effect commands whose output is the media itself (no caption).
 NO_CAPTION_COMMANDS = (
-    "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "glow", "gay", "blacked",
+    "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked",
     "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing",
     "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar",
     "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze", "sopranos",

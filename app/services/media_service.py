@@ -1440,6 +1440,42 @@ def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def mux_audio_loop(video_data: bytes, audio_path: str,
+                   source_filename: str = "video.mp4") -> bytes:
+    """Mux a (looped) audio track under a silent video, cut to the VIDEO's length.
+
+    The audio is stream-looped (`-stream_loop -1`) so a short clip fills a longer
+    silent clip, and `-shortest` ends the muxed file at the video's length (the video
+    is the authoritative/shorter stream here — the opposite of `image_audio_to_video`,
+    which cuts to the audio). Video is stream-copied (no re-encode); audio → AAC.
+    Best-effort: returns the original silent bytes unchanged on any failure — so a
+    missing/broken audio asset never breaks the effect."""
+    ffmpeg = resolve_ffmpeg()
+    if not (ffmpeg_available() and audio_path and os.path.exists(audio_path)):
+        return video_data
+    tmp_dir = tempfile.mkdtemp(prefix="media_muxaudio_")
+    in_path = os.path.join(tmp_dir, "in.mp4")
+    out_path = os.path.join(tmp_dir, "out.mp4")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(video_data)
+        cmd = [ffmpeg, "-i", in_path, "-stream_loop", "-1", "-i", audio_path,
+               "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+               "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE,
+               "-shortest", "-movflags", "+faststart", "-y", out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "rb") as f:
+                return f.read()
+        logger.warning(f"mux_audio_loop failed, returning silent video: {(result.stderr or '')[-300:]}")
+        return video_data
+    except Exception as e:
+        logger.warning(f"mux_audio_loop error ({e}), returning silent video")
+        return video_data
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
                             duration: float = 6.0, audio_path: Optional[str] = None,
                             height_frac: float = 0.55) -> bytes:

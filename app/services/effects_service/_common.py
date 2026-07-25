@@ -60,6 +60,14 @@ _BLOOD_COLORS = [
 _FIRE_ANIM_FRAMES = 20
 _FIRE_ANIM_FPS = 14
 _FIRE_ANIM_LOOPS = 3
+# `nakedman` — a fat cartoon man dancing over the input image, set to an 8s audio clip.
+# One dance cycle is _NAKEDMAN_ANIM_FRAMES frames (wraps seamlessly on phase 0→tau); the
+# whole pass is repeated _NAKEDMAN_ANIM_LOOPS times on disk so total = 40*4 = 160 frames
+# at 20fps = 8.0s of animation, matched to the 8s (looped) audio track.
+_NAKEDMAN_ANIM_FRAMES = 40
+_NAKEDMAN_ANIM_FPS = 20
+_NAKEDMAN_ANIM_LOOPS = 4
+_NAKEDMAN_DURATION = 8.0
 _BLACKED_FONT_CANDIDATES = [
     "/usr/share/fonts/archivo-black/ArchivoBlack-Regular.ttf",
     "/usr/share/fonts/truetype/archivo-black/ArchivoBlack-Regular.ttf",
@@ -78,6 +86,11 @@ _BLACKED_FONT_CANDIDATES = [
 # levels up (_common.py -> effects_service -> services -> app -> repo). (Was three before the
 # effects_service.py monolith became this package.)
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_NAKEDMAN_AUDIO_CANDIDATES = [
+    os.environ.get("NAKEDMAN_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "nakedman.mp3"),
+    "/var/lib/posterchanai/assets/nakedman.mp3",
+]
 _HAVA_AUDIO_CANDIDATES = [
     os.environ.get("HAVA_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "hava.mp3"),

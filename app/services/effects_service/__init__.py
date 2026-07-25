@@ -6,6 +6,7 @@ from .motion import *
 from .character import *
 from .faces import *
 from .gore import *
+from .nakedman import *
 from .stamps import *
 from .audio1 import *
 from .audio2 import *

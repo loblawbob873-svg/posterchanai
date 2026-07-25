@@ -56,6 +56,7 @@ _HELP_SECTIONS = {
         "• ✨ Effects → 💦 Cum — scatter cum all over the image\n"
         "• ✨ Effects → 🩸 Blood — splatter blood all over the image\n"
         "• ✨ Effects → 🔥 Fire — set the image on fire\n"
+        "• ✨ Effects → 🕺 Naked man — a fat cartoon man dances (huge penis) over the image → 8s clip\n"
         "• ✨ Effects → 🕳️ Bullet holes — punch bullet holes into the image\n"
         "• ✨ Effects → 🏳️‍🌈 Gay — stamp a big red GAY on the image\n"
         "• ✨ Effects → 🥷 Blacked — slap the BLACKED logo on the image\n"
@@ -103,7 +104,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell` or `horse` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell` or `horse` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -299,6 +300,7 @@ _FX_MEMES = [
     ("🍆 Dildo", "dildo"), ("💩 Poo", "poo"),
     ("💦 Cum", "cum"), ("🩸 Blood", "blood"),
     ("🔥 Fire", "fire"), ("🕳️ Bullet holes", "bullethole"),
+    ("🕺 Naked man", "nakedman"),
     ("🏳️‍🌈 Gay", "gay"), ("🥷 Blacked", "blacked"),
     ("✡️ Kosher", "kosher"), ("🤔 Consider", "consider"),
     ("🐵 Chimp", "chimp"), ("🗣️ Clay", "clay"),
