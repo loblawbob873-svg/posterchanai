@@ -9148,8 +9148,9 @@
     }
     // Mid-session: never yank the page — just surface the row. The new SW already controls us, so the tap
     // to apply (below) is a plain reload that lands on the fresh build deterministically.
-    if(_newBuild){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } return; }   // already surfaced
+    if(_newBuild){ if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} } try{ loadNotifs(); }catch(_){} return; }   // already surfaced
     _newBuild=true;
+    try{ loadNotifs(); }catch(_){}   // paint the rail NOW — it otherwise waits for the next periodic refresh
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} return; }   // already looking → row shows; no badge/toast
     _updBadge=true; try{ bumpNotif(); }catch(_){}              // light the bell (cleared when Notifications is viewed)
     try{ toast('🔄 Update available — see Notifications'); }catch(_){}
@@ -9197,13 +9198,24 @@
     _updBadge=false;   // clears the one-shot update badge too (no phantom permanent +1)
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
   }
+  // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
+  // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
+  // because both can be on screen at once (the rail is visible while viewing Notifications).
+  function _updNotifHtml(id){
+    if(!(_newBuild || _apkUpdate)) return '';
+    const body = _updApplying ? ' <span class="muted small">applying the new version</span>'
+      : (_apkUpdate ? ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>'
+                    : ' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>');
+    return `<div class="notif upd-notif" id="${id}"><span class="ic">🔄</span>`
+         + `<div><b>${_updApplying?'Updating…':'Update available'}</b>${body}</div></div>`;
+  }
   function renderNotifications(){
     const feed=$('#feed');
     const all=notifGrouped(notifList().filter(_notifMatch));
     const list=all.slice(0, _notifShown);
     const tabs=`<div class="notif-tabs">${_NOTIF_TABS.map(([k,l])=>`<button class="ntab${k===_notifFilter?' on':''}" data-nf="${k}">${enc(l)}</button>`).join('')}</div>`;
     // In-app updater: pinned above the list when a new build is ready to install.
-    const upd = (_newBuild || _apkUpdate) ? `<div class="notif upd-notif" id="upd-notif"><span class="ic">🔄</span><div><b>${_updApplying?'Updating…':'Update available'}</b>${_updApplying?' <span class="muted small">applying the new version</span>':(_apkUpdate?' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>':' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>')}</div></div>` : '';
+    const upd = _updNotifHtml('upd-notif');
     feed.innerHTML = tabs + upd + (all.length
       ? list.map(notifHtml).join('') + (all.length>_notifShown
           ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
@@ -13581,13 +13593,17 @@
   const RB_NOTIF_ROWS=5;
   function loadNotifs(){
     const el=document.getElementById('rb-list'); if(!el) return;
-    const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
-    if(!all.length){ el.innerHTML='<div class="muted small">No notifications yet.</div>'; return; }
-    el.innerHTML=all.map(notifHtml).join('');
+    const upd=_updNotifHtml('upd-notif-rb');
+    // The rail is deliberately 5 rows tall. The updater takes one of them rather than making it 6 —
+    // the row count is what keeps the column from pushing "Get the app" off the bottom.
+    const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, upd ? RB_NOTIF_ROWS-1 : RB_NOTIF_ROWS);
+    if(!all.length && !upd){ el.innerHTML='<div class="muted small">No notifications yet.</div>'; return; }
+    el.innerHTML=upd+all.map(notifHtml).join('');
+    { const un=el.querySelector('#upd-notif-rb'); if(un && !_updApplying) un.onclick=applyUpdate; }
     // Quick actions are APPENDED to the rendered row rather than spliced into notifHtml's string:
     // the row already carries the resolved target in data-open (which differs by kind — a reply opens
     // itself, a reaction opens the post it reacted to), so we just read it back off the DOM.
-    el.querySelectorAll('.notif[data-open]').forEach(n=>{
+    el.querySelectorAll('.notif[data-open]:not(.upd-notif)').forEach(n=>{
       const id=n.dataset.open, ev=Store.get(id); if(!ev) return;   // target not on this relay → no actions
       const body=n.lastElementChild; if(!body) return;
       const bar=document.createElement('div'); bar.className='rbq-bar';

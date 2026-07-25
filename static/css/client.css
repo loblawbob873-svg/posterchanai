@@ -3486,3 +3486,7 @@ body.modal-open .mobilenav{display:none}
 .ks-lbl{margin-left:6px;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ks-foot{margin-top:10px}
 @media(max-width:560px){ .ks-grid{grid-template-columns:1fr} }
+
+/* The updater row in the RIGHT RAIL. The feed version's flush 3px rule collides with the rail's 2px
+   gutter, so give it a little room and round the inner edge; everything else it inherits. */
+.rightbar .upd-notif{padding-left:9px;padding-right:6px;border-radius:0 8px 8px 0}
