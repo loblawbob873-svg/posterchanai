@@ -439,9 +439,12 @@ def decode_download(output: str) -> tuple[Optional[bytes], str]:
                           f"(limit {_DOWNLOAD_MAX:,}). Split it, or read it in the sandbox.")
         return None, ("could not read the file — the target may lack python3, or the command "
                       f"errored:\n{tail(out, 400)}")
-    m = re.match(r"[A-Za-z0-9+/=]+", out[idx + len("PCAI_B64:"):].strip())
+    payload = out[idx + len("PCAI_B64:"):].strip()
+    if payload == "":
+        return b"", ""          # a legitimately empty (0-byte) file — not an error
+    m = re.match(r"[A-Za-z0-9+/=]+", payload)
     if not m:
-        return None, "the download payload was empty or malformed."
+        return None, "the download payload was malformed."
     try:
         return base64.b64decode(m.group(0)), ""
     except Exception as e:

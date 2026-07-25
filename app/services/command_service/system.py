@@ -387,6 +387,8 @@ class _SystemMixin:
             data, err = node_service.decode_download(raw)
             if err:
                 return {"type": "text", "content": f"⚠️ `{path}` on `{name}`: {err}"}
+            if not data:   # 0-byte file: the files/Blossom path drops empty blobs, so say so plainly
+                return {"type": "text", "content": f"📭 `{path}` on `{name}` is empty (0 bytes) — nothing to download."}
             fname = path.rstrip("/").rsplit("/", 1)[-1] or "file"
             return {
                 "type": "files",
