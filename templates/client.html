@@ -242,14 +242,14 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
         <!-- ONE chip cloud: live trending tags, padded out with the curated evergreen ones. Trending
              and Discover used to be two stacked clouds saying much the same thing. -->
         <div class="rb-section"><h3><svg class="ic h-ic"><use href="#i-chart"></use></svg>Topics</h3><div id="rb-topics"><div class="muted small">loading…</div></div></div>
-        <!-- Hot and "From follows" render the identical rb-item card, so they share ONE pane behind a
-             segmented control rather than stacking two lists that read as a second timeline. -->
+        <!-- Notifications only. Hot and "From follows" used to share this pane behind a segmented control;
+             they are the centre column's Trending tab now (a full feed with real note cards, and reachable
+             on a phone, where this rail is display:none).
+             The heading is a BUTTON: it opens the full Notifications view, which is what marks everything
+             read — so tapping the thing showing the unread count is what clears the count. -->
         <div class="rb-section rb-feed">
-            <div class="rb-tabs">
-                <button class="rb-tab active" data-rbtab="hot">Hot</button>
-                <button class="rb-tab" data-rbtab="follows">Follows</button>
-                <button class="rb-tab" data-rbtab="notifs">Alerts<i id="rb-notif-badge" class="badge hidden"></i></button>
-            </div>
+            <h3 class="rb-h3-btn" id="rb-notif-head" role="button" tabindex="0" title="Open Notifications">
+                <svg class="ic h-ic"><use href="#i-bell"></use></svg>Notifications<i id="rb-notif-badge" class="badge hidden"></i></h3>
             <div id="rb-list"><div class="muted small">loading…</div></div>
         </div>
         <!-- Native builds. href is the plain server route; in the bundled app (Capacitor, local origin)

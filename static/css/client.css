@@ -237,8 +237,8 @@
 :root[data-theme] .usercount,
 :root[data-theme] .conn{ color:var(--text) !important; }
 
-/* Right column: the rb-item cards are built from theme vars natively now (flat, no hardcoded neon),
-   so the old per-theme colour patches for them are gone — only the heading still needs routing. */
+/* Right column: its cards are built from theme vars natively (flat, no hardcoded neon), so the old
+   per-theme colour patches for them are gone — only the heading still needs routing. */
 :root[data-theme] .rb-section h3{ color:var(--text); }
 :root[data-theme] .rb-github{ color:var(--text); }
 
@@ -731,17 +731,18 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   body.rb-off .rightbar,body.rb-off .rb-toggle{display:none}
 }
 .rb-section h3{margin:0 0 8px;font-size:18px;letter-spacing:1px;color:var(--text)}
-/* Hot / From-follows segmented control — one pane, two sources. Panel + line vars only, so it takes
-   the theme the way the nav does instead of needing a light-theme patch. */
-.rb-tabs{display:flex;gap:4px;margin:0 0 10px;padding:3px;background:var(--panel2);border:1px solid var(--line);border-radius:11px}
-.rb-tab{flex:1 1 0;min-width:0;padding:7px 6px;border:0;border-radius:8px;background:transparent;color:var(--muted);
-  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rb-tab:hover{color:var(--text)}
-.rb-tab.active{background:rgba(var(--accent-rgb),.16);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.38)}
-/* Unread count on the Alerts tab — smaller than the sidebar bell's badge so three tabs still fit
-   340px, and the tab keeps its label centred with the number beside it. */
-.rb-tab #rb-notif-badge{min-width:17px;height:17px;padding:0 5px;font-size:11px;margin-left:5px;box-shadow:none}
-/* Alerts tab: the SAME .notif rows the Notifications view renders, compacted for a 340px rail and
+/* Unread count beside the Notifications heading (it rode on a segmented-control tab before Hot/Follows moved
+   out to the Trending tab) — smaller than the sidebar bell's badge, and baseline-aligned to the text. */
+.rb-section h3 #rb-notif-badge{min-width:17px;height:17px;padding:0 5px;font-size:11px;margin-left:7px;
+  box-shadow:none;vertical-align:middle}
+/* The Notifications heading is a real control (it opens the full view, which is what marks read), so it
+   has to LOOK clickable — an <h3> that navigates without a hover state is a trap. */
+.rb-h3-btn{cursor:pointer;transition:color .15s}
+/* Matched as `.rb-section h3.rb-h3-btn` to TIE `:root[data-theme] .rb-section h3{color:var(--text)}` on
+   specificity and win on order — a bare `.rb-h3-btn:hover` loses to that theme rule and does nothing. */
+.rb-section h3.rb-h3-btn:hover{color:var(--neon)}
+.rb-h3-btn:focus-visible{outline:2px solid var(--neon);outline-offset:3px;border-radius:6px}
+/* Rail rows: the SAME .notif markup the Notifications view renders, compacted for a 340px rail and
    given a card surface so they read as list items here rather than full-width feed rows. */
 .rightbar .notif{padding:9px 10px;margin-bottom:7px;border:1px solid var(--line);border-radius:11px;
   background:var(--panel);font-size:13.5px;cursor:pointer;transition:.15s}
@@ -768,20 +769,6 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .rightbar .notif .notif-ctx img,
 .rightbar .notif .notif-ctx video{max-height:74px;object-fit:cover}
 .rightbar .notif .notif-ctx .qav{max-height:none;width:18px;height:18px}   /* the avatar is not "media" */
-.rb-item{position:relative;padding:10px 11px 10px 13px;border:1px solid var(--line);border-radius:11px;margin-bottom:9px;cursor:pointer;
-  transition:.15s;background:var(--panel);overflow:hidden}
-/* Flat cards. Every colour here is a theme var — the snippet used to be a hardcoded #7dfcff with a
-   double neon text-shadow and the tile a hardcoded near-black, which the theme layer then had to patch
-   back to var(--text) after the fact. Native vars mean no patch, and it matches the calmer nav. */
-.rb-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--neon);opacity:.35;transition:.15s}
-.rb-item:hover{border-color:var(--neon);background:var(--panel2)}
-.rb-item:hover::before{opacity:1}
-.rb-head{display:flex;align-items:center;gap:7px}
-.rb-av{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex-shrink:0;background:var(--panel2)}
-.rb-item b{font-size:15px;font-weight:650;color:var(--text)}
-.rb-fire{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--amber);white-space:nowrap}
-.rb-item .rb-txt{color:var(--muted);font-size:14.5px;line-height:1.5;margin-top:5px;
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
    takes the margin-top:auto now, so the pair sits together at the foot of the column). */
 .rb-apps{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
@@ -791,7 +778,6 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   background:var(--panel);color:var(--text);text-decoration:none;font-size:13px;font-weight:600;transition:.15s}
 .rb-app:hover{border-color:var(--neon);color:var(--neon)}
 .rb-app svg.ic{width:17px;height:17px}
-.rb-item .rb-media{display:block;width:100%;max-height:160px;object-fit:cover;border-radius:9px;margin-top:7px;border:1px solid var(--line)}
 .rb-github{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
@@ -924,6 +910,20 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   background:transparent;color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;line-height:1;transition:.15s}
 .tltab-media:hover{background:rgba(var(--accent-rgb),.12);color:var(--cyan)}
 .tltab-media.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;border-color:transparent}
+/* ===== Trending tab: the Hot / From-follows source toggle + the per-card heat line ===== */
+/* Chips, NOT a full-width segmented strip: directly under .tl-tabs, a second edge-to-edge bar of two
+   buttons reads as a rival tab row. These name which RANKING you're reading, so they sit inline, left,
+   on the same x as every note's avatar. */
+.tr-bar{display:flex;gap:8px;align-items:center;padding:11px 20px 2px}
+.tr-tab{padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--muted);
+  font-family:inherit;font-size:13.5px;font-weight:600;line-height:1.3;cursor:pointer;transition:.15s;white-space:nowrap}
+.tr-tab:hover{color:var(--text);border-color:var(--neon)}
+.tr-tab.on{background:rgba(var(--accent-rgb),.16);color:var(--text);border-color:rgba(var(--accent-rgb),.55)}
+/* Why this post is here — the ranking is the only thing Trending adds over a timeline, so it has to be
+   on the row itself (same idea as the "🔁 reposted" line above a repost). Aligned with .note's padding
+   so it reads as that card's first line, not as a separator between cards. */
+.tr-heat{padding:10px 20px 0;color:var(--amber);font-size:12.5px;font-weight:700;letter-spacing:.2px}
+.tr-item>.note,.tr-item>.reply-pair>.note{padding-top:5px}
 /* On Home/Nostrverse the topbar had nothing left in it on desktop — title hidden (the tabs name the
    timeline), search lives in the sidebar, compose is the inline box, ▦ moved into the tabs. An empty
    sticky bar above the composer is just a floating rectangle, so drop it. Mobile KEEPS the topbar: its
@@ -937,8 +937,14 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   .tl-cmp-btn{width:36px;height:36px;font-size:19px}
   .tl-cmp-post{padding:9px 16px;font-size:15px}   /* right-alignment is in the base rule above */
   .tl-tabs{margin-top:10px;padding:16px 10px 10px}
-  .tltab{padding:8px 12px;font-size:14px}
-  .tltab-media{padding:8px 11px;font-size:14px}
+  /* 8px sides, not 12: the row carries THREE labels now (Home / Nostrverse / Trending) plus ▦, and they
+     all have to fit a 320px phone on one line — flex:1 + nowrap means overflow, not a graceful wrap. */
+  .tltab{padding:8px 8px;font-size:14px}
+  .tltab-media{padding:8px 10px;font-size:14px}
+  /* Trending: match .note's mobile 12px gutter so the chips and each heat line sit on the card's x. */
+  .tr-bar{padding:9px 12px 2px;gap:7px}
+  .tr-tab{padding:6px 12px;font-size:13px}
+  .tr-heat{padding:9px 12px 0;font-size:12px}
 }
 /* Tiny phones: the status line is the only expendable thing in the tools row — dropping it keeps
    📎 / ⤢ More / Post at a tappable size instead of letting them all squeeze. */
@@ -1718,7 +1724,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .note .handle,.note .time{font-size:13px} .act{font-size:16px;padding:8px 8px} .act.actq{font-size:21px}   /* 8px sides: six actions must still fit a 320px phone */
   .bubble{font-size:14.5px;padding:9px 12px}
   .dm-peer b{font-size:15px} .dm-peer .muted.small{font-size:13px}
-  .prof .pbody h2{font-size:20px} .rb-item .rb-txt{font-size:13.5px}
+  .prof .pbody h2{font-size:20px}
   .topbar h2{font-size:15px} .nav-item{font-size:15px}
   #btn-compose{display:none}   /* topbar compose hidden on mobile — the bottom nav has ✏️ */
   .feed{padding-bottom:80px}

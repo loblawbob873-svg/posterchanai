@@ -1370,12 +1370,15 @@
     if(document.hidden) document.body.classList.add('anim-off');
     const rb=document.querySelector('.rightbar');
     // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
-    // It fought anyone trying to read it, and with the merged Hot/Follows pane the column is short
-    // enough that there's nothing to cycle through. Scrolling is the user's again.
-    if(rb){ rb.addEventListener('scroll', onRightbarScroll, { passive:true });   // Hot infinite-scroll
+    // It fought anyone trying to read it, and the column is short enough (Topics + Notifications) that there's
+    // nothing to cycle through. Scrolling is the user's again. No scroll handler either — the rail's one
+    // infinite-scroll list (Hot) is the centre column's Trending tab now, paging off #feed's scroll.
+    if(rb){
       rb.addEventListener('click', e=>{
-        const tab=e.target.closest('.rb-tab'); if(tab){ setRbTab(tab.dataset.rbtab); return; }   // Hot / From-follows toggle
-        // Alerts tab: react/reply inline, then the row itself. The feed's .act delegate is bound to
+        // The "Notifications" heading opens the full view, which marks everything read — so the surface
+        // carrying the unread badge is also the one that clears it.
+        if(e.target.closest('#rb-notif-head')){ switchView('notifications'); return; }
+        // Notifications: react/reply inline, then the row itself. The feed's .act delegate is bound to
         // #feed, so these buttons need their own handling here — they can't ride on it.
         const q=e.target.closest('.rbq');
         if(q){ const id=q.dataset.id, pk=q.dataset.pk;
@@ -1387,8 +1390,10 @@
           else if(nrow.dataset.prof) renderProfileView(nrow.dataset.prof);        // follows/reports have no thread
           else if(nrow.dataset.open) openThread(nrow.dataset.open);
           return; }
-        const it=e.target.closest('.rb-item[data-open]'); if(it) renderThread(it.dataset.open);  // a row opens its thread
       });
+      // role="button" on the heading has to answer the keyboard too, or it's a button only for a mouse.
+      rb.addEventListener('keydown', e=>{ if(e.key!=='Enter' && e.key!==' ') return;
+        if(e.target.closest('#rb-notif-head')){ e.preventDefault(); switchView('notifications'); } });
     }
     // "Get the app" links: in the bundled native app the client is served from a local origin, so the
     // plain /apk and /desktop/* hrefs would resolve against the bundle and 404. Point them at whichever
@@ -2088,10 +2093,6 @@
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
     }});
-    $$('.rb-item[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
-      const a=n.querySelector('.rb-av'); if(p.picture && a) a.src=p.picture;
-      const b=n.querySelector('b'); if(b) b.textContent=p.name||p.display_name||b.textContent;
-    }});
     // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
     // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
     // do NOT set it via textContent here, which would strip custom :shortcode: emoji from the name.
@@ -2123,7 +2124,7 @@
   // those set VIEW directly, without going through switchView.
   // 'community' is deliberately NOT here: reading a community's posts is reading, and it wants the
   // width the same way an article or the News/Markets dashboards do.
-  const RB_SHOW_VIEWS = new Set(['home','global','notifications','bookmarks','drafts',
+  const RB_SHOW_VIEWS = new Set(['home','global','trending','notifications','bookmarks','drafts',
                                  'profile','thread','hashtag','search']);
   let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
   let _rbBooted=false;   // has the post-onReady delay elapsed? gates the retry below off the cold socket
@@ -2159,10 +2160,10 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
-    { const tl = (v==='home'||v==='global');
+    { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
       document.body.classList.toggle('tl-view', tl);   // desktop hides the now-empty topbar on these views
       const vt=$('#view-title'); if(vt) vt.classList.toggle('hidden', tl); }
     renderView(true);
@@ -2189,6 +2190,7 @@
     if(VIEW!=='admin'){ if(_ah) _ah.style.display='none'; feed.style.display=''; }
     if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
+    if (VIEW==='trending') return renderTrending();
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
     if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
@@ -2422,10 +2424,12 @@
   }
   function _resetLive(){ _livePending=[]; _updateNewPostsPill(); }
   function _hidePill(){ const p=document.getElementById('new-posts-pill'); if(p) p.classList.add('hidden'); }
-  // ditto.pub-style timeline header: an inline compose bar, then the Home ⇄ Nostrverse tab switch. Home has
-  // no sidebar row any more, so these tabs are the ONLY way to reach it — they must render on BOTH views,
-  // and in the media-grid branch too, or toggling ▦ would strand the user with no way back.
-  // Inline composer text, held OUTSIDE the DOM so it survives a Home⇄Nostrverse switch (which resets #feed).
+  // ditto.pub-style timeline header: an inline compose bar, then the Home ⇄ Nostrverse ⇄ Trending tab
+  // switch. Home has no sidebar row any more, so these tabs are the ONLY way to reach it — they must
+  // render on EVERY one of those views, and in the media-grid branch too, or toggling ▦ would strand the
+  // user with no way back. ▦ is omitted on Trending: that view is an engagement RANKING drawn straight
+  // from the relay, not the Store-backed feed the media grid re-slices.
+  // Inline composer text, held OUTSIDE the DOM so it survives a tab switch (which resets #feed).
   let _tlCmpText='';
   let _tlAutoId=null;   // id of the inline composer's rolling auto-draft (src:'tl'); survives reload via the Draft itself
   // AI helpers, module-level so BOTH composers use one implementation. They were private to compose()'s
@@ -2511,7 +2515,8 @@
       +`<div class="tl-tabs" role="tablist">
         <button class="tltab${VIEW==='home'?' on':''}" data-tl="home" role="tab" aria-selected="${VIEW==='home'}">Home</button>
         <button class="tltab${VIEW==='global'?' on':''}" data-tl="global" role="tab" aria-selected="${VIEW==='global'}">Nostrverse</button>
-        <button class="tltab-media${_tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid">▦</button>
+        <button class="tltab${VIEW==='trending'?' on':''}" data-tl="trending" role="tab" aria-selected="${VIEW==='trending'}">Trending</button>
+        ${VIEW==='trending' ? '' : `<button class="tltab-media${_tlMedia?' on':''}" id="tl-media-tab" title="Toggle media grid (this feed, images only)" aria-label="Toggle media grid">▦</button>`}
       </div>`;
   }
   function _bindTimelineHeader(feed){
@@ -2768,6 +2773,7 @@
     if((VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
     if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
     if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
+    else if(VIEW==='trending') loadMoreTrending();
     else if(VIEW==='profile') loadOlderProfile();
     else if(VIEW==='search') loadOlderSearch();
     else if(VIEW==='hashtag') loadOlderHashtag();
@@ -2780,8 +2786,11 @@
   let _gesturesBound = false;
   function bindMobileGestures(){
     const feed = $('#feed'); if(!feed || _gesturesBound) return; _gesturesBound = true;
-    const SWIPE_VIEWS = ['home','global','notifications','messages'];   // mirrors the mobile bottom nav order
-    const REFRESHABLE = new Set(['home','global','notifications','messages','bookmarks','drafts','articles','market','markets','streams','communities']);
+    // Mobile bottom-nav order, with Trending slotted where its TAB sits (Home ▸ Nostrverse ▸ Trending):
+    // it has no bottom-nav row of its own, so swiping on from Nostrverse is the gesture that matches
+    // what the .tl-tabs bar shows above the feed.
+    const SWIPE_VIEWS = ['home','global','trending','notifications','messages'];
+    const REFRESHABLE = new Set(['home','global','trending','notifications','messages','bookmarks','drafts','articles','market','markets','streams','communities']);
     const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
     let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, ind=null;
     // Don't hijack horizontal drags that belong to scrollable/interactive children.
@@ -8871,16 +8880,16 @@
       return e.kind===3 ? ts>_notifEpoch : true;
     // Count the update toward the badge from the SAME condition renderNotifications() draws the row from
     // (_newBuild || _apkUpdate) — NOT the separate _updBadge, which cleared on view and left the badge
-    // showing +1 with no matching row in Alerts ("a number with no notification"). Now they can't disagree:
+    // showing +1 with no matching row in the rail ("a number with no notification"). Now they can't disagree:
     // the badge shows the update iff the row is there, and it clears when you actually apply the update.
     }).length + ((_newBuild||_apkUpdate)?1:0);
-    // The rail's Alerts tab is painted from the SAME count as the sidebar bell and the mobile bar —
+    // The rail's Notifications heading is painted from the SAME count as the sidebar bell and the mobile bar —
     // one computation, three surfaces, so they can't disagree about whether something is unread.
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden');});
-    // Keep the rail's Alerts LIST live too, not just its badge: if you're on that tab when a new notification
-    // lands, re-render it now instead of leaving it stale until you re-click the tab. In-memory read (no relay
-    // query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
-    if(_notifReady && _rbTab==='notifs' && _rightbarShown()) loadNotifs(); }
+    // Keep the rail's notification LIST live too, not just its badge: if one lands while you're
+    // looking at it, re-render now instead of leaving it stale until the 150s refresh. In-memory read (no
+    // relay query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
+    if(_notifReady && _rightbarShown()) loadNotifs(); }
   // ---- In-app updater: driven ENTIRELY by controllerchange (see boot()). A new service worker
   // self-activates + claims control (sw.js), firing controllerchange — the single source of truth that a
   // fresh build is LIVE and its shell precached. _onNewController() reloads silently at launch, or surfaces
@@ -8970,7 +8979,7 @@
   }
   let _notifScrollTop = false;   // next notifications render lands at the top (fresh tab entry only)
   // Mark everything up to now as seen and drop the unread badge on all three surfaces (sidebar bell,
-  // mobile bar, rail Alerts tab). Shared by the full Notifications view and the rail's Alerts tab so
+  // mobile bar, rail heading). Shared by the full Notifications view and the rail so
   // the two can't disagree about what "read" means.
   function markNotifsRead(){
     seenNotif.last = Math.floor(Date.now()/1000); localStorage.setItem('pc_notif_seen', seenNotif.last);
@@ -13104,53 +13113,32 @@
     img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); c.toBlob(b=>{ URL.revokeObjectURL(u); b?res(b):rej(new Error('toBlob')); }, 'image/png'); }catch(e){ URL.revokeObjectURL(u); rej(e); } };
     img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img load')); }; img.src=u; }); }
 
-  // ---------- right column: Topics + the Hot/Follows pane (desktop) ----------
-  // Two sections now: the Topics chip cloud, and ONE post list behind a Hot / From-follows toggle.
+  // ---------- right column: Topics + Notifications (desktop) ----------
+  // Two sections: the Topics chip cloud and the notifications list. Hot and "From follows" USED to live here as
+  // a seven-row digest behind a segmented control; they're the centre column's Trending tab now (see
+  // renderTrending) — a full feed with real note cards, which is also what finally makes them reachable
+  // on a phone, where this rail is display:none.
   // The rightbar EXISTS in the DOM even on mobile (CSS display:none ≤820px), so a bare querySelector
-  // isn't enough — gate on it being VISIBLE, else we run its heavy trending/hot/follows queries for a
-  // sidebar the user can't see (pure waste on a slow phone link).
+  // isn't enough — gate on it being VISIBLE, else we run its heavy trending-tag query for a sidebar the
+  // user can't see (pure waste on a slow phone link).
   function _rightbarShown(){ const rb=document.querySelector('.rightbar'); return !!rb && getComputedStyle(rb).display!=='none'; }
-  // Hot and "From follows" build the identical rb-item card, so they share one #rb-list pane instead
-  // of stacking two lists that read as a second timeline. The choice is remembered across sessions.
-  // rbListEl() hands the pane out ONLY to the tab that currently owns it — that's what stops a
-  // background refresh (or an in-flight query from before a tab switch) writing its rows into the
-  // list the user is actually looking at.
-  const RB_TABS=new Set(['hot','follows','notifs']);
-  let _rbTab='hot'; try{ const t=localStorage.getItem('rbTab'); if(RB_TABS.has(t)) _rbTab=t; }catch(_){}
-  function rbListEl(tab){ return _rbTab===tab ? document.getElementById('rb-list') : null; }
-  function syncRbTabs(){ $$('.rb-tab').forEach(b=> b.classList.toggle('active', b.dataset.rbtab===_rbTab)); }
-  function _loadRbTab(){ if(_rbTab==='hot') loadHot(true); else if(_rbTab==='follows') loadFollows(); else loadNotifs(); }
-  function setRbTab(tab){
-    if(!RB_TABS.has(tab) || tab===_rbTab) return;
-    _rbTab=tab; try{ localStorage.setItem('rbTab',tab); }catch(_){}
-    syncRbTabs();
-    const el=document.getElementById('rb-list'); if(el) el.innerHTML='<div class="muted small">loading…</div>';
-    // Clicking INTO Alerts marks read — same as opening the full Notifications view. Only on the click
-    // (setRbTab), not in loadNotifs: loadNotifs also runs on a passive page load when Alerts is the
-    // remembered tab, and that shouldn't silently clear the badge before you've actually looked.
-    if(tab==='notifs') markNotifsRead();
-    _loadRbTab();
-  }
   async function loadRightbar(){
     if(!_rightbarShown()) return;   // display:none on mobile OR body.rb-off → skip; but build in a backgrounded desktop tab (no document.hidden gate)
     _rbLoaded=true;                 // only once it's genuinely visible — _syncRightbar retries otherwise
     loadTopics();                   // Topics = trending hashtags (last 24h) + curated shortcuts
-    syncRbTabs();                   // paint the remembered tab (markup defaults to Hot)
-    bumpNotif();                    // ...and its unread count: bumpNotif only fires on ARRIVING events,
-                                    // so a rail built afterwards would show a bare "Alerts" despite unread
-    _loadRbTab();
+    bumpNotif();                    // ...and its unread count: bumpNotif only fires on ARRIVING
+                                    // events, so a rail built afterwards would show a bare heading despite unread
+    loadNotifs();
   }
-  // Routine update (timer): refresh the chip cloud and prepend any freshly-hot posts to the top
-  // of the Hot feed WITHOUT rebuilding it (so an in-progress scroll isn't yanked back up).
+  // Routine update (timer): refresh the chip cloud and re-paint notifications from the in-memory store.
   function refreshRightbar(){
     if(document.hidden || !_rightbarShown()) return;   // skip the periodic refresh while backgrounded or on mobile (hidden rightbar)
-    // Only auto-refresh the (heavy: 300-event trending tally + follow reposts) rightbar while the user is
-    // on a feed it belongs to. Refreshing trending/hot every interval while reading a Community/Profile/
-    // Files view was needless CPU + relay load for content that isn't even being looked at.
-    if(VIEW!=='home' && VIEW!=='global') return;
+    // Only auto-refresh the (heavy: 300-event tag tally) rightbar while the user is on a feed it belongs
+    // to. Re-tallying trending tags every interval while reading a Community/Profile/Files view was
+    // needless CPU + relay load for content that isn't even being looked at.
+    if(VIEW!=='home' && VIEW!=='global' && VIEW!=='trending') return;
     loadTopics();
-    // only the visible list costs anything; Alerts reads the in-memory notification store, no query
-    if(_rbTab==='hot') refreshHotTop(); else if(_rbTab==='follows') loadFollows(); else loadNotifs();
+    loadNotifs();   // free: reads the in-memory notification store, no relay query
   }
   // Curated hashtag shortcuts — friendly entry points into popular communities. They now PAD the one
   // Topics cloud rather than owning a section of their own: on a quiet relay the live tally can come
@@ -13229,53 +13217,19 @@
     if(!evs.length || minTs>=until) _hashtag.done=true;
     _hashtag.loading=false;
   }
-  // ---- Hot: infinite-scroll feed of the most-engaged posts ----------------------------------
-  // Engagement = count of reactions/reposts (kinds 6,7) pointing at a note. We rank within a time
-  // window and append the next page on scroll; when a window is exhausted we widen it (4h→8h→…)
-  // until the cap, so scrolling keeps surfacing older-but-hot posts instead of dead-ending.
-  const HOT_WIN0=4*3600, HOT_WIN_MAX=14*24*3600, HOT_PAGE=7, HOT_MAX=7;   // a sidebar digest (matches Follows), not a second feed
-  let _hot={ loading:false, done:false, win:HOT_WIN0, shown:new Set() };
-  // Rank notes by engagement within `windowSec`; returns [[noteId,count],…] sorted desc.
-  async function rankHot(windowSec){
-    const since=Math.floor(Date.now()/1000)-windowSec;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], since, limit:1500 }]); }catch(_){}
-    const tally={};
-    for(const e of evs){ const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(id) tally[id]=(tally[id]||0)+1; }
-    return Object.entries(tally).sort((a,b)=>b[1]-a[1]);
-  }
   async function fetchNotes(ids){
     const miss=ids.filter(id=>!Store.get(id)); if(!miss.length) return;
     try{ const notes=await Relay.query([{ ids:miss }]); notes.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
   }
-  // Clean rightbar snippet: drop URLs and raw nostr: refs (nostr:nevent1…/npub1… looked ugly).
-  function rbSnippet(content){
-    return (content||'')
-      .replace(/https?:\/\/\S+/g,'')
-      .replace(/(?:nostr:)?(?:npub1|nprofile1|nevent1|note1|naddr1)[0-9a-z]{20,}/gi,'')
-      .replace(/\s+/g,' ').trim().slice(0,140);
-  }
-  // Rightbar row body: snippet text + image thumbnail. Shows the actual attachment instead of a
-  // bare "media" placeholder when a post is media-only.
-  function rbBody(ev){
-    const txt=rbSnippet(ev.content), img=postImageUrl(ev);
-    let h = txt ? `<div class="rb-txt">${enc(txt)}</div>` : '';
-    if(img) h += `<img class="rb-media" src="${enc(img)}" loading="lazy" onerror="this.remove()">`;
-    return h || '<div class="rb-txt"><i>media</i></div>';
-  }
-  function hotRowHtml(id, count){
-    const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) return ''; const pr=profOf(ev.pubkey);   // respect mutes + word filter
-    const txt=rbSnippet(ev.content);
-    return `<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${count} 🔥</span></div>${rbBody(ev)}</div>`;
-  }
-  // "From follows": posts the people YOU follow have liked (kind 7) or boosted (kind 6), ranked by
-  // how many of your follows engaged. Surfaces what your own network is reacting to in the rightbar.
-  // ---- Alerts: your notifications, in the rail, actionable ---------------------------------
+  // ---- Notifications in the rail, actionable -----------------------------------------------
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
   // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
-  // the in-memory notification store, so unlike Hot/Follows it costs no relay query.
-  const RB_NOTIF_ROWS=6;
+  // the in-memory notification store, so it costs no relay query.
+  // Ten rows, not six: this pane is notifications outright now that Hot/Follows moved to the Trending
+  // tab, so the column has the height to spare.
+  const RB_NOTIF_ROWS=10;
   function loadNotifs(){
-    const el=rbListEl('notifs'); if(!el) return;
+    const el=document.getElementById('rb-list'); if(!el) return;
     const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
     if(!all.length){ el.innerHTML='<div class="muted small">No notifications yet.</div>'; return; }
     el.innerHTML=all.map(notifHtml).join('');
@@ -13293,94 +13247,124 @@
     all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     decorateProfiles();
   }
-  const FOLLOWS_ROWS=7;
-  async function loadFollows(){
-    let el=rbListEl('follows'); if(!el) return;   // null unless the Follows tab currently owns the pane
-    const authors=[...FOLLOWS]; if(!authors.length){ el.innerHTML='<div class="muted small">Follow people to see what they’re into.</div>'; return; }
-    const since=Math.floor(Date.now()/1000)-24*3600;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[6,7], authors, since, limit:500 }]); }catch(_){}
+  // ---------- Trending (centre column): Hot + From-follows, as a real feed ------------------
+  // Engagement ranking used to be a seven-row digest in the right rail. It's a timeline tab now, so it
+  // gets the whole column: FULL note cards (reply/react/zap/quote inline, media, link cards) and
+  // scroll-back that widens the ranking window instead of dead-ending at seven rows — and it works on a
+  // phone, which the desktop-only rail never did.
+  //   Hot          = every reaction/repost (kinds 6,7) on the relay, tallied per note.
+  //   From follows = the same tally restricted to reactors you FOLLOW ("what my network is into").
+  // Windows: start at 24h and double on each dry spell up to 30d, so scrolling keeps finding
+  // older-but-hot posts rather than stopping.
+  const TR_WIN0=24*3600, TR_WIN_MAX=30*24*3600, TR_PAGE=20, TR_QUERY_LIMIT=3000;
+  let _tr={ tab:'hot', win:TR_WIN0, loading:false, done:false, exhausted:false, shown:new Set(), queue:[], gen:0 };
+  try{ const t=localStorage.getItem('trTab'); if(t==='hot'||t==='follows') _tr.tab=t; }catch(_){}
+  // Rank notes by how many reactions/reposts point at them inside `windowSec`.
+  // Returns [[noteId, count, icon],…] desc. `follows` restricts the REACTORS to the people you follow.
+  async function trRank(windowSec, follows){
+    const since=Math.floor(Date.now()/1000)-windowSec;
+    const me=(ME&&ME.pubkey)||'';   // '' for a logged-out guest — FOLLOWS is empty there anyway
+    const f={ kinds:[6,7], since, limit:TR_QUERY_LIMIT };
+    if(follows){ const authors=[...FOLLOWS].filter(p=>p!==me); if(!authors.length) return []; f.authors=authors; }
+    let evs=[]; try{ evs=await Relay.query([f]); }catch(_){}
     const tally={}, icon={};
-    for(const e of evs){ if(e.pubkey===ME.pubkey) continue; const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
-      tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️'; }
-    // Over-fetch: rank far more candidates than we intend to SHOW. Plenty of the notes your follows
-    // reacted to aren't on this relay at all (nothing to render), and the old code capped candidates
-    // at the display count — so every unresolvable one shrank the list. "Only showing 3 of 9."
-    const ranked=Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
-    const cand=ranked.slice(0, FOLLOWS_ROWS*4);
-    // Re-acquire the pane after every await below: the user can hit "Hot" while these queries are in
-    // flight, and the captured `el` would happily paint follow rows into the Hot list.
-    if(!cand.length){ el=rbListEl('follows'); if(el) el.innerHTML='<div class="muted small">Nothing from your follows yet.</div>'; return; }
-    await fetchNotes(cand);
-    const built=[];
-    for(const id of cand){
-      if(built.length>=FOLLOWS_ROWS) break;
-      const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) continue;   // respect mutes + word filter
-      const pr=profOf(ev.pubkey);
-      built.push(`<div class="rb-item" data-open="${id}" data-pk="${ev.pubkey}"><div class="rb-head"><img class="rb-av" src="${enc(pr.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(pr.name||pr.display_name||'anon')}</b> <span class="rb-fire">${icon[id]||'❤️'} ${tally[id]}</span></div>${rbBody(ev)}</div>`);
+    for(const e of evs){
+      if(follows && e.pubkey===me) continue;   // your own likes aren't "from your follows"
+      // NIP-25: for kinds 6/7 the target is the LAST e tag, not the reply-marked one.
+      const id=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]; if(!id) continue;
+      tally[id]=(tally[id]||0)+1; if(e.kind===6) icon[id]='🔁'; else if(!icon[id]) icon[id]='❤️';
     }
-    const rows=built.join('');
-    el=rbListEl('follows'); if(!el) return;
-    el.innerHTML=rows||'<div class="muted small">Nothing yet.</div>'; decorateProfiles();
+    return Object.entries(tally).sort((a,b)=>b[1]-a[1]).map(([id,c])=>[id,c,icon[id]||'❤️']);
   }
-  // Materialize up to HOT_PAGE not-yet-shown ranked items into the shared list pane. `where` = append
-  // (scroll-down) or prepend (routine refresh). Returns how many rows were actually added.
-  // The pane is looked up AFTER the fetch, not passed in: a tab switch mid-fetch must drop these rows
-  // rather than paint them over whatever Follows has since put there. (Dropping is safe — switching
-  // back to Hot runs loadHot(true), which clears _hot.shown and re-ranks from scratch.)
-  async function addHot(ranked, where){
-    // Over-fetch candidates (same reason as From follows): a ranked id whose note isn't on this relay,
-    // isn't a kind 1, or is muted renders nothing, so picking exactly HOT_PAGE ids yielded short pages.
-    const pick=[];
-    for(const [id,c] of ranked){ if(_hot.shown.has(id)) continue; pick.push([id,c]); if(pick.length>=HOT_PAGE*3) break; }
-    if(!pick.length) return 0;
-    await fetchNotes(pick.map(x=>x[0]));
-    const el=rbListEl('hot'); if(!el) return 0;
-    const frag=document.createDocumentFragment();
-    // Burn `shown` only on ids we actually CONSUME — rendered, or proven unusable. The surplus we
-    // fetched but didn't need stays unmarked and feeds the next page. (Every caller holds
-    // _hot.loading, so there's no concurrent addHot to double-add them.)
-    for(const [id,c] of pick){
-      if(frag.childElementCount>=HOT_PAGE) break;
-      _hot.shown.add(id);
-      const html=hotRowHtml(id,c); if(!html) continue;
-      const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node); }
-    const n=frag.childElementCount; if(!n) return 0;
-    Array.from(el.children).forEach(c=>{ if(!c.classList||!c.classList.contains('rb-item')) c.remove(); });  // drop loader/placeholder
-    if(where==='prepend' && el.firstChild) el.insertBefore(frag, el.firstChild); else el.appendChild(frag);
-    decorateProfiles();
-    return n;
+  // One ranked row = a heat line + the ordinary feed card, so every interaction the timeline has works
+  // here for free. '' when the note isn't renderable (not on this relay, not a kind 1, muted).
+  function trItemHtml(id, count, icon){
+    const ev=Store.get(id); if(!ev||ev.kind!==1||isMutedView(ev)) return '';
+    const heat = _tr.tab==='follows' ? `${icon} ${count} from people you follow` : `🔥 ${count} reaction${count===1?'':'s'}`;
+    return `<div class="tr-item"><div class="tr-heat">${heat}</div>${feedNoteHtml(ev)}</div>`;
   }
-  async function loadHot(reset){
-    let el=rbListEl('hot'); if(!el) return;
-    if(reset){ _hot={ loading:true, done:false, win:HOT_WIN0, shown:new Set() }; el.innerHTML='<div class="muted small">loading…</div>'; }
-    const added=await addHot(await rankHot(_hot.win), 'append');
-    if(reset && !added){ el=rbListEl('hot'); if(el) el.innerHTML='<div class="muted small">Nothing yet.</div>'; }
-    _hot.loading=false;
+  function _trBarHtml(){
+    const t=(k,label)=>`<button class="tr-tab${_tr.tab===k?' on':''}" data-tr="${k}" role="tab" aria-selected="${_tr.tab===k}">${label}</button>`;
+    return `<div class="tr-bar" role="tablist">${t('hot','🔥 Hot')}${t('follows','🫂 From follows')}</div>`;
   }
-  // Scroll-down handler: widen the window until we manage to append something or hit the cap.
-  async function loadMoreHot(){
-    if(_hot.loading||_hot.done) return; const el=rbListEl('hot'); if(!el) return;
-    if(el.querySelectorAll('.rb-item').length>=HOT_MAX){ _hot.done=true; return; }   // hard cap on the column's length
-    _hot.loading=true;
+  // Append the next page of ranked notes to #tl-notes. Returns how many cards were actually added.
+  // Every await is followed by a generation check: a tab switch (or leaving the view) mid-query must
+  // DROP its rows rather than paint them into the list the user is now looking at — the same hazard the
+  // old rail solved with rbListEl(), and the reason both are gated instead of just re-querying the DOM.
+  async function trLoadPage(){
+    const gen=_tr.gen;
     let added=0, guard=0;
     while(added===0 && guard++<8){
-      if(!rbListEl('hot')) break;   // switched to Follows mid-loop: stop widening the window (and firing
-                                    // relay queries) for a list nobody is looking at, and don't mark it done
-      added=await addHot(await rankHot(_hot.win), 'append');
-      if(added===0){ if(_hot.win>=HOT_WIN_MAX){ _hot.done=true; break; } _hot.win=Math.min(_hot.win*2, HOT_WIN_MAX); }
+      if(!_tr.queue.length){
+        if(_tr.exhausted){ _tr.done=true; break; }   // already ranked the widest window and it gave nothing new
+        const ranked=await trRank(_tr.win, _tr.tab==='follows');
+        if(_tr.gen!==gen || VIEW!=='trending') return 0;
+        _tr.queue=ranked.filter(x=>!_tr.shown.has(x[0]));
+        if(_tr.win>=TR_WIN_MAX) _tr.exhausted=true; else _tr.win=Math.min(_tr.win*2, TR_WIN_MAX);
+        if(!_tr.queue.length) continue;   // nothing new in this window → widen and try again
+      }
+      // Over-fetch candidates: a ranked id whose note isn't on this relay (or is muted) renders nothing,
+      // so taking exactly TR_PAGE ids would yield short pages. Only CONSUMED ids leave the queue.
+      const pick=_tr.queue.slice(0, TR_PAGE*3);
+      await fetchNotes(pick.map(x=>x[0]));
+      const feed=$('#feed');
+      if(_tr.gen!==gen || VIEW!=='trending' || !feed) return 0;
+      const box=_tlNotes(feed), frag=document.createDocumentFragment();
+      let used=0;
+      for(const [id,c,ic] of pick){
+        used++; _tr.shown.add(id);
+        if(box.querySelector('.note[data-id="'+id+'"]')) continue;   // a note can be hot in two windows
+        const html=trItemHtml(id,c,ic); if(!html) continue;
+        const d=document.createElement('div'); d.innerHTML=html; const node=d.firstElementChild; if(node) frag.appendChild(node);
+        if(frag.childElementCount>=TR_PAGE) break;
+      }
+      _tr.queue=_tr.queue.slice(used);
+      added=frag.childElementCount;
+      if(added){
+        // Clear the placeholder spinner / empty line AND the scroll-back sentinel first: loadSentinel
+        // parks its spinner at the END of #tl-notes, so appending over it would drop the new page BELOW
+        // a still-spinning loader.
+        clearSentinel(feed);
+        const sp=box.querySelector('.spinner'); if(sp) sp.remove();
+        const em=box.querySelector('.empty'); if(em) em.remove();
+        box.appendChild(frag);
+        invalidateCounts();
+        decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed);
+      }
     }
-    _hot.loading=false;
+    return added;
   }
-  // Routine refresh: prepend genuinely-new hot posts, but only when the user is near the top so we
-  // never jump their scroll position out from under them.
-  async function refreshHotTop(){
-    const el=rbListEl('hot'); if(!el||_hot.loading) return;
-    const rb=document.querySelector('.rightbar'); if(rb && rb.scrollTop>140) return;
-    _hot.loading=true; try{ await addHot(await rankHot(HOT_WIN0), 'prepend'); } finally{ _hot.loading=false; }
+  function renderTrending(){
+    const feed=$('#feed'); if(!feed) return;
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable list view
+    _tr.gen++;   // invalidate any in-flight page from the previous entry / the other tab
+    _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
+    // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline
+    // composer, the ＋ FAB and loadSentinel() all behave exactly as they do on the other two tabs.
+    feed.innerHTML = _timelineHeaderHtml() + _trBarHtml() + '<div id="tl-notes"><div class="spinner"></div></div>'
+      + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post">＋</button>' : '');
+    _bindTimelineHeader(feed);
+    { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
+    $$('.tr-tab',feed).forEach(b=> b.onclick=()=>{ const t=b.dataset.tr; if(t===_tr.tab) return;
+      _tr.tab=t; try{ localStorage.setItem('trTab',t); }catch(_){} renderTrending(); });
+    feed.scrollTop=0;
+    const gen=_tr.gen;
+    trLoadPage().then(n=>{
+      if(_tr.gen!==gen || VIEW!=='trending') return;
+      _tr.loading=false;
+      if(n) return;
+      const box=_tlNotes($('#feed')); if(!box || box.querySelector('.note')) return;
+      box.innerHTML=`<div class="empty">${_tr.tab==='follows'
+        ? (FOLLOWS.size ? 'Nothing from your follows yet — they haven’t liked or boosted anything this month.' : 'Follow people to see what they’re into.')
+        : 'Nothing trending yet. Check back once there are a few reactions about.'}</div>`;
+    });
   }
-  function onRightbarScroll(){
-    const rb=document.querySelector('.rightbar'); if(!rb) return;
-    if(rb.scrollTop+rb.clientHeight >= rb.scrollHeight-320) loadMoreHot();
+  async function loadMoreTrending(){
+    if(_tr.loading || _tr.done || VIEW!=='trending') return;
+    _tr.loading=true;
+    const feed=$('#feed'); if(feed) loadSentinel(feed);
+    try{ await trLoadPage(); }
+    finally{ const f=$('#feed'); if(f) clearSentinel(f); _tr.loading=false; }
   }
   // Shared surface for separate game modules (chess.js, future tic-tac-toe, …) so per-game UI lives
   // in its own file without bloating this core. Live getters for the mutable ME/CFG/VIEW.
