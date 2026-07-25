@@ -13225,10 +13225,10 @@
   // Reuses notifList/_notifMatch/notifGrouped/notifHtml verbatim — the same rows the Notifications
   // view builds — so the rail can't drift from it the way a second copy of that markup would. Reads
   // the in-memory notification store, so it costs no relay query.
-  // Six rows. Ten (tried when Hot/Follows moved out to the Trending tab) overflowed the column: a
+  // Five rows. Ten (tried when Hot/Follows moved out to the Trending tab) overflowed the column: a
   // reply/mention row carries a whole quoted post, so ten of those push "Get the app" + the GitHub link
-  // off the bottom. Six fits whatever KIND of notifications happen to be on top.
-  const RB_NOTIF_ROWS=6;
+  // off the bottom. Five fits whatever KIND of notifications happen to be on top.
+  const RB_NOTIF_ROWS=5;
   function loadNotifs(){
     const el=document.getElementById('rb-list'); if(!el) return;
     const all=notifGrouped(notifList().filter(_notifMatch)).slice(0, RB_NOTIF_ROWS);
