@@ -237,8 +237,9 @@ def render_nakedman_alpha(width: int = 540, height: int = 960, dur: float = 8.0)
         _draw_dancing_man(overlay, cx, ground_y, M, phase)
         frames.append(overlay)   # keep RGBA — the transparency IS the point of an alpha layer
 
-    return frames_to_alpha_video(frames, fps=_NAKEDMAN_ANIM_FPS, loops=loops,
-                                 audio_path=_nakedman_audio_path())
+    # Silent (VP9-alpha can't carry audio without corrupting the alpha); the nakedman sound rides the
+    # meme layer's `sound` field, which the client sets to "nakedman" (already in the sound catalogue).
+    return frames_to_alpha_video(frames, fps=_NAKEDMAN_ANIM_FPS, loops=loops)
 
 
 def nakedman_attachments(

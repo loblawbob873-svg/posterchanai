@@ -762,8 +762,12 @@
           // A normal video layer: gets geometry/timing handles, and its embedded audio mixes in on render.
           // Only pass `dur` when the server gave a valid one — Object.assign copies an undefined through
           // and would blow away addLayer's own default duration.
+          // The clip is silent (VP9 alpha can't carry audio); if the effect has a sound the server hands
+          // back its name → set it as the layer's `sound` so the render mixes it via the per-layer sound
+          // path (same catalogue as the sound dropdown). The layer still shows the 🔊 sound control.
           const extra = { name:(e.label||e.name).slice(0,24) };
           if(+j.dur > 0) extra.dur = +j.dur;
+          if(j.sound) extra.sound = j.sound;
           addLayer('video', j.url, extra);
           if(st) st.textContent='';
           render();

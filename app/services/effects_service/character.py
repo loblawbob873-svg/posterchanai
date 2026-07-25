@@ -232,7 +232,8 @@ def render_shrug_alpha(dur: float = None) -> bytes:
         raise RuntimeError("shrug character art (assets/characters/shrug.png) is missing on the server")
     still = _char_alpha_canvas(cp)
     d = float(dur) if dur else _SHRUG_DURATION
-    return still_to_alpha_video(still, dur=d, audio_path=_shrug_audio_path())
+    # Silent — the shrug sound rides the meme layer's `sound` field (client sets it to "shrug").
+    return still_to_alpha_video(still, dur=d)
 
 
 def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
@@ -246,7 +247,7 @@ def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
     if not cp:
         raise RuntimeError(f"unknown character '{name}'")
     still = _char_alpha_canvas(cp)
-    return still_to_alpha_video(still, dur=float(dur or 6.0), audio_path=None)
+    return still_to_alpha_video(still, dur=float(dur or 6.0))
 
 
 def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:

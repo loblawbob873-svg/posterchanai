@@ -412,7 +412,12 @@ def render(edit: dict, sources: dict) -> bytes:
             if kind == "image":
                 cmd += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
             else:
-                cmd += ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}", "-i", path]
+                # A VP9-alpha .webm layer (e.g. an effect overlay) MUST be decoded with libvpx-vp9 —
+                # ffmpeg's native `vp9` decoder silently ignores the alpha layer, so the overlay would
+                # composite fully opaque (a black box over everything beneath it). Decoder is an INPUT
+                # option, so it goes before -i.
+                _dec = ["-c:v", "libvpx-vp9"] if str(path).lower().endswith(".webm") else []
+                cmd += _dec + ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}", "-i", path]
 
             # "contain" (default) letterboxes the source inside the layer box; "cover" scales UP until the box
             # is filled and crops the overflow — what you actually want from a "fill the canvas" background,

@@ -883,7 +883,7 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
         raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
     try:
         try:
-            mov, has_audio = await asyncio.to_thread(mb.render_alpha_effect, name, dur)
+            clip, has_audio = await asyncio.to_thread(mb.render_alpha_effect, name, dur)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except RuntimeError as e:
@@ -893,13 +893,17 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
         _meme_semaphore().release()
 
     # Store under the acting user's pubkey (their generated content). save_blob is content-addressed and
-    # dedups, so re-rolling the same effect twice costs nothing.
-    desc = await blossom_service.save_blob(db, pk, mov, "video/quicktime")
-    url = f"{_blossom_url(request, db)}/{desc['sha256']}.mov"
+    # dedups, so re-rolling the same effect twice costs nothing. VP9-alpha .webm: plays transparently in
+    # the browser preview AND composites in the render (decoded with libvpx-vp9 — see media_service).
+    desc = await blossom_service.save_blob(db, pk, clip, "video/webm")
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.webm"
     # A sensible default LENGTH for the timeline layer so the whole clip plays (nakedman is ~8s, the
     # shrug clip ~2.7s, a static character 6s). The user trims from there like any layer.
     nominal = dur or (8.0 if name == "nakedman" else 2.7 if name == "shrug" else 6.0)
+    # The clip is SILENT (audio would corrupt VP9 alpha). If the effect has a sound, hand back its name so
+    # the client sets the layer's `sound` field — the render mixes it via the existing per-layer sound path.
     return JSONResponse({"ok": True, "url": url, "audio": bool(has_audio),
+                         "sound": name if has_audio else None,
                          "name": name, "dur": round(nominal, 2)})
 
 
