@@ -13303,6 +13303,27 @@
     _selectNote(els[j]);
     return true;
   }
+  // Focus an element that is about to be rendered. Bounded so a view that never produces it (a failed DM
+  // load) cannot leave a timer running.
+  function _focusSoon(sel, tries){
+    tries = tries || 12;
+    const t=setInterval(()=>{
+      const el=document.querySelector(sel);
+      if(el){ clearInterval(t); try{ el.focus({preventScroll:true}); }catch(_){ try{ el.focus(); }catch(__){} } }
+      else if(--tries<=0) clearInterval(t);
+    }, 50);
+  }
+  // Escape out of the message box, back to the conversation list, so the arrow keys work again — without
+  // it the keyboard path was one-way: you could open a chat but never leave it without the mouse.
+  document.addEventListener('keydown', e=>{
+    if(e.key!=='Escape') return;
+    const t=e.target;
+    if(!t || (t.id!=='dm-in' && t.id!=='grp-input')) return;
+    e.preventDefault(); e.stopPropagation();
+    try{ t.blur(); }catch(_){ }
+    try{ document.body.focus({preventScroll:true}); }catch(_){ }
+  }, true);
+
   // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
   // client uses, and the text-field guard already keeps them out of anything being typed into.
   const _POST_KEYS = { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
@@ -13320,7 +13341,13 @@
         // A post opens its thread; anything else (a conversation, a notification) is just clicked — that
         // is what openDm and the notification row handler are already wired to.
         const tid = el.dataset.tid || (el.matches('article.note') ? el.dataset.id : '');
-        if(tid) renderThread(tid); else el.click();
+        if(tid){ renderThread(tid); return; }
+        el.click();
+        // Opening a conversation from the keyboard should leave you able to TYPE — otherwise focus is
+        // still on the list and the first thing you write goes nowhere. Only on the KEYBOARD path: doing
+        // it for a tap too would throw up the on-screen keyboard every time a phone user opens a chat.
+        // The thread renders asynchronously, so poll briefly for the input rather than assuming it is there.
+        if(el.matches('.dm-peer')) _focusSoon('#dm-in');
         return;
       }
       const a=_POST_KEYS[k]; if(!a) return;
