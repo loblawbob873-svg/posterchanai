@@ -2682,8 +2682,11 @@
           if(bg.deco) s.textContent=bg.deco[0];   // holiday swatches are recognisable, as in the modal
           bgsRow.appendChild(s); marks.push(s);
           s.onclick=()=>{ const why=_bgWhyNot(); if(why){ st.textContent=why; return; } pick(s,bg); }; });
+        // Keep the thumbnail in step with what you are typing (the modal already did this) — otherwise the
+        // preview shows the card as it was when you picked the swatch, not the one you are about to post.
         // …and drop it again if the words are all deleted, leaving nothing to draw.
-        ta.addEventListener('input', ()=>{ if(_tlBg && _bgWhyNot()){ pick(none,null);
+        ta.addEventListener('input', ()=>{ _tlBgPreview();
+          if(_tlBg && _bgWhyNot()){ pick(none,null);
           st.textContent='background removed — nothing left to put on the card';
           setTimeout(()=>{ if(st.textContent.startsWith('background removed')) st.textContent=''; }, 2800); } });
         toggleBg=()=>{ const show=bgsRow.classList.toggle('hidden')===false;
@@ -7438,16 +7441,25 @@
           const select=(bg,el)=>{ _bgChoice=bg; $$('.cmp-swatch',strip).forEach(s=>s.classList.toggle('on', s===el));
             _bgFramePreview();   // dropping the background must drop its preview with it
           };
-          const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='Aa';
+          // ✕, matching the strip at the top of Social. This said "Aa", so the same control was labelled
+          // two different ways depending on which composer you opened.
+          const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='✕';
           none.onclick=()=>select(null,none); strip.appendChild(none);
-          CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch'; s.title=bg.id; s.style.background=_bgCss(bg);
-            if(bg.deco) s.textContent=bg.deco[0];   // show the holiday emoji so the swatch is recognisable
-            s.onclick=()=>select(bg,s); strip.appendChild(s); });
-          bgBtn.onclick=(e)=>{ e.stopPropagation(); const on=strip.classList.toggle('hidden')===false; bgBtn.classList.toggle('active',on); };
           // Length and links no longer disqualify a background: buildBgPost puts the hook on the card and
           // the rest — remaining text, source link — underneath, where a URL is still clickable. Only a
           // draft with NO words left has nothing to draw.
-          const _tooBig=()=>!_BG_WORDS(ta.value);
+          const _bgWhyNot=()=>_BG_WORDS(ta.value) ? ''
+            : 'that is just a link — use 🤖 AI → 🖼️ Framed card to turn it into a card';
+          CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch'; s.title=bg.id; s.style.background=_bgCss(bg);
+            if(bg.deco) s.textContent=bg.deco[0];   // show the holiday emoji so the swatch is recognisable
+            // Refuse the pick and say why, as the Social strip does. Without this the modal let you arm a
+            // background on a bare link and only complained at Post, after the card had already failed.
+            s.onclick=()=>{ const why=_bgWhyNot(); if(why){ const st=$('#cmp-status',root); if(st) st.textContent=why; return; } select(bg,s); };
+            strip.appendChild(s); });
+          bgBtn.onclick=(e)=>{ e.stopPropagation(); const on=strip.classList.toggle('hidden')===false; bgBtn.classList.toggle('active',on);
+            if(!on && _bgChoice) select(null,none);   // collapsing the row must not leave a hidden background armed
+          };
+          const _tooBig=()=>!!_bgWhyNot();
           ta.addEventListener('input', ()=>{ _bgFramePreview();
             if(_bgChoice && _tooBig()){ select(null,none);
             $('#cmp-status',root).textContent='background removed — nothing left to put on the card';
@@ -13459,6 +13471,12 @@
       +'<div class="ks-sec">Tabs</div><div class="ks-grid">'
       +[['[','Previous tab'],[']','Next tab']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
+      +'<div class="ks-sec">On a selected file</div><div class="ks-grid">'
+      +[['O','Open'],['C','Copy the URL'],['M','Move to a folder'],['D','Delete'],['Enter','Open']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
+      +'<div class="ks-sec">Viewing an image</div><div class="ks-grid">'
+      +[['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],['Esc','Close']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
       +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
@@ -13854,6 +13872,10 @@
   // A news item has its own two actions, and they are plain buttons in the card rather than the post
   // action row — so they are matched by class instead of data-a.
   const _NEWS_KEYS = { s:'.news-post', u:'.news-sum' };
+  // …and the file manager's, same shape. The card already carries Open / ⧉ Copy / 📁 Move / ✕ Delete as
+  // real controls, so a shortcut just presses the right one and every guard comes along with it — `d` goes
+  // through delBlob's "Delete this blob?" confirm exactly as the button does.
+  const _FILE_KEYS = { o:'a', c:'.copy', m:'.movebtn', d:'.del' };
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
@@ -13892,6 +13914,9 @@
         // is what openDm and the notification row handler are already wired to.
         const tid = el.dataset.tid || (el.matches('article.note') ? el.dataset.id : '');
         if(tid){ renderThread(tid); return; }
+        // A file card is a grid tile with no click handler of its own — the OPEN is its <a>, so Enter has
+        // to press that or it looked like Enter did nothing in the file manager.
+        if(el.matches('.file-card')){ const a=el.querySelector('a'); if(a){ a.click(); return; } }
         el.click();
         // Opening a conversation from the keyboard should leave you able to TYPE — otherwise focus is
         // still on the list and the first thing you write goes nowhere. Only on the KEYBOARD path: doing
@@ -13901,6 +13926,13 @@
         // Same for the AI view reached the vim way — h into the nav rail, j/k, Enter. That path never goes
         // through _runShortcut, so it needs its own hand-off or the caret is left behind on the rail.
         else if(el.matches('.nav-item[data-view="ai"]')) _focusSoon('#ai-input');
+        return;
+      }
+      if(el.matches('.file-card')){
+        const fsel=_FILE_KEYS[k]; if(!fsel) return;
+        const fb=el.querySelector(fsel);
+        if(!fb) return;                       // e.g. an encrypted card, which has no ⧉ Copy
+        e.preventDefault(); fb.click();
         return;
       }
       if(el.matches('.news-card')){
@@ -14062,7 +14094,17 @@
     const bg=document.createElement('div'); bg.className='lightbox';
     const close=()=>{ try{ bg.remove(); }catch(_){} document.removeEventListener('keydown', onKey); };
     const onKey=(e)=>{
-      if(e.key==='Escape'){ close(); return; }
+      if(e.ctrlKey||e.metaKey||e.altKey) return;
+      // Any key means someone is driving this from the keyboard — hold the toolbar open, since on a
+      // pointer device it is otherwise only revealed by hovering, which a keyboard user never does.
+      bg.classList.add('lb-keys');
+      if(e.key==='Escape'){ e.preventDefault(); close(); return; }
+      // The toolbar's actions as single keys. They were reachable only by pointing at them: the buttons
+      // are real, but nothing gave you a way to run one without a mouse.
+      const k=(e.key||'').toLowerCase();
+      if(k==='c'){ e.preventDefault(); _lbCopyImg(items[idx].src); return; }
+      if(k==='s'){ e.preventDefault(); _lbSaveMedia(items[idx].src); return; }
+      if(k==='b'){ e.preventDefault(); _lbToBlossom(items[idx].src); return; }
       if(items.length<2) return;
       if(e.key==='ArrowRight'){ e.preventDefault(); go(1); }
       else if(e.key==='ArrowLeft'){ e.preventDefault(); go(-1); }
@@ -14073,14 +14115,18 @@
     const bar=document.createElement('div'); bar.className='lb-bar';
     const mkBtn=(label,title,fn)=>{ const b=document.createElement('button'); b.className='lb-btn'; b.type='button'; b.textContent=label; b.title=title; b.setAttribute('aria-label',title); b.onclick=(e)=>{ e.stopPropagation(); fn(); }; return b; };
     // Read items[idx] at CLICK time, not now — the toolbar outlives each individual slide.
-    const copyB=mkBtn('⧉','Copy image', ()=>_lbCopyImg(items[idx].src));
-    const saveB=mkBtn('⤓','Save image', ()=>_lbSaveMedia(items[idx].src));
+    const copyB=mkBtn('⧉','Copy image  (C)', ()=>_lbCopyImg(items[idx].src));
+    const saveB=mkBtn('⤓','Save image  (S)', ()=>_lbSaveMedia(items[idx].src));
     // Keep a copy on YOUR Blossom. Media in a feed lives on whatever host the author used and can vanish;
     // this re-hosts it under your own storage and hands back the link. Offered for video/audio too — the
     // blob path is identical and "save that clip" is the same wish as "save that image".
-    const blossomB=mkBtn('🌸','Save to Blossom', ()=>_lbToBlossom(items[idx].src));
-    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close', close));
+    const blossomB=mkBtn('🌸','Save to Blossom  (B)', ()=>_lbToBlossom(items[idx].src));
+    bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close  (Esc)', close));
     bg.appendChild(bar);
+    // Tab stays on the toolbar instead of walking the page behind the image, and the buttons are then
+    // reachable without knowing the letters. `close` is passed so it removes THIS overlay — the lightbox
+    // is not a .modal-bg and must not go through closeModal().
+    _trapFocus(bg, close);
 
     let cur=null;
     const render=()=>{

@@ -1674,9 +1674,21 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .lightbox img,.lightbox video{max-width:100%;max-height:90vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(var(--accent-rgb),.4)}
 .lightbox img{transform-origin:center center;will-change:transform;touch-action:none}   /* transform-driven zoom/pan (see _lbZoom); touch-action:none so pinch doesn't page-zoom */
 .lightbox audio{width:min(560px,100%)}
-.lb-bar{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:401;display:flex;gap:10px}
-.lb-btn{width:46px;height:46px;border-radius:50%;border:1px solid var(--neon);background:rgba(4,2,12,.72);color:#fff;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);padding:0}
+.lb-bar{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:401;display:flex;gap:10px;transition:opacity .18s ease}
+/* Filled, not a dark disc with a hairline — these read as actions now instead of dissolving into the
+   image behind them. Close is the tertiary accent so it is not one of four identical circles. */
+.lb-btn{width:46px;height:46px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;box-shadow:0 2px 12px rgba(0,0,0,.5)}
+.lb-btn:last-child{background:linear-gradient(135deg,var(--accent-tertiary,#ff3366),#b3123f)}
 .lb-btn:active{transform:scale(.9)}
+.lb-btn:focus-visible{outline:2px solid #fff;outline-offset:3px}
+/* Where there is a real pointer, keep the image clean and bring the actions in when you reach for them.
+   NOT on touch: there is no hover, and a full-screen image leaves no backdrop to tap, so the bar is the
+   only way to close it — hiding it there would trap the user. :focus-within and .lb-keys cover the
+   keyboard, which never hovers. */
+@media (hover:hover) and (pointer:fine){
+  .lb-bar{opacity:0}
+  .lightbox:hover .lb-bar,.lightbox.lb-keys .lb-bar,.lb-bar:focus-within{opacity:1}
+}
 /* tap-to-zoom: show the image at natural size and let the backdrop scroll */
 /* Lightbox gallery paging (multi-attachment posts): arrows + an n / N counter. */
 .lb-nav{position:fixed;top:50%;transform:translateY(-50%);z-index:401;
