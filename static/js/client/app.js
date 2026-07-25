@@ -9794,6 +9794,7 @@
   // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
   // thrash (and re-scrolled to bottom each time). One debounced render absorbs the whole burst.
   let _dmRefreshTimer=null, _dmThreadSig='';
+  let _dmLastPk='';   // which conversation the pane last rendered — a CHANGE means a fresh open
   function _threadSig(pk){ const arr=dmPeers.get(pk)||[]; return pk+'|'+(arr.length?(arr[arr.length-1].id||''):'')+'|'+(_dmShown.get(pk)||_DM_INIT); }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
@@ -9878,7 +9879,13 @@
     const msgs=all.slice(start);
     // Was the user pinned to the bottom before this re-render? If they'd scrolled up to read, DON'T
     // yank them back down when a background message lands (part of "the window keeps moving").
-    const _prev=$('#dm-msgs'); const _atBottom = !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
+    // "Was the user pinned to the bottom?" is only a meaningful question about the SAME conversation.
+    // Measured across a switch it carried the previous chat's scroll state into the new one: open a
+    // conversation after scrolling up in another and it landed mid-history instead of on the latest
+    // message. A different peer is a fresh open, and a fresh open always shows the newest.
+    const _prev=$('#dm-msgs');
+    const _fresh = (_dmLastPk !== pk);
+    const _atBottom = _fresh || !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
     const _wantTop=_dmScrollTop;   // "load older" wants to stay at the top after this render
     const older = start>0 ? `<button class="dm-older" id="dm-older">⬆ Load older (${start})</button>` : '';
     // Paint the thread chrome + bubbles IMMEDIATELY, BEFORE decrypting. Decryption is ECDH+AES in the
@@ -9975,6 +9982,7 @@
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
       m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
+    _dmLastPk=pk;
     _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
     // Decrypt the visible slice lazily and patch each bubble in place. document.querySelector targets the
     // LIVE pane, so if a background renderMessages() rebuilt the DOM mid-decrypt we still patch the
@@ -13451,16 +13459,24 @@
       const cur=_selEl();
       const i=rows.indexOf(cur);
       const take=(n)=>{ e.preventDefault(); e.stopPropagation(); _selectNote(rows[Math.max(0,Math.min(rows.length-1,n))]); };
-      if(k==='G'){ take(rows.length-1); _gPending=0; return; }
+      // scrollIntoView({block:'nearest'}) moves the MINIMUM distance, so selecting the first post leaves
+      // everything above it — the composer, the tab bar — still off screen: you could reach the first row
+      // but never the top of the view. gg/G (and k held at the first row) drive the scroller explicitly.
+      const _edge=(top)=>{ if(_vimPane!=='feed') return; const sc=_keyScroller()||document.getElementById('feed');
+        if(sc) sc.scrollTop = top ? 0 : sc.scrollHeight; };
+      if(k==='G'){ take(rows.length-1); _edge(false); _gPending=0; return; }
       if(k==='g'){
         const now=Date.now();
-        if(_gPending && now-_gPending<700){ _gPending=0; take(0); }
+        if(_gPending && now-_gPending<700){ _gPending=0; take(0); _edge(true); }
         else { _gPending=now; e.preventDefault(); e.stopPropagation(); }   // wait for the second g
         return;
       }
       _gPending=0;
       if(k==='j'){ take(i<0?0:i+stride); return; }
-      if(k==='k'){ take(i<0?0:i-stride); return; }
+      if(k==='k'){
+        if(i<=0){ take(0); _edge(true); return; }   // already at the first row → keep going, to the top
+        take(i-stride); return;
+      }
       // Horizontal. Inside a grid, step through it until the edge; then cross columns.
       const atLeft  = i<0 || stride<2 || (i%stride)===0;
       const atRight = i<0 || stride<2 || ((i+1)%stride)===0 || i===rows.length-1;
