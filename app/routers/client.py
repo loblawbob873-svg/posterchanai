@@ -2573,7 +2573,15 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
                 # chat and image gen, so this is a real resource bound, not a formality.
                 if len(r.content) > 80 * 1024 * 1024:
                     raise HTTPException(status_code=400, detail="a layer source is too large (80 MB limit)")
-                p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24])
+                # KEEP the source's extension on the temp file. The renderer decides how to decode a layer
+                # partly by extension — a VP9-alpha .webm effect layer MUST be decoded with libvpx-vp9 or its
+                # alpha is dropped and the overlay renders INVISIBLE (the "effect layer is audio-only" bug).
+                # A hash-only filename hid that from the renderer.
+                _base = u.split("?", 1)[0].split("#", 1)[0]
+                _ext = os.path.splitext(_base)[1].lower()
+                if len(_ext) > 6 or not _ext[1:].isalnum():
+                    _ext = ""
+                p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24] + _ext)
                 with open(p, "wb") as fh:
                     fh.write(r.content)
                 sources[u] = p
