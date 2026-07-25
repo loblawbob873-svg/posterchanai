@@ -13115,6 +13115,67 @@
     }, true);
   })();
 
+  // ---------- keyboard shortcuts ----------
+  // Alt+<letter> throughout, rather than the bare letters some clients use: this app has a composer sitting
+  // in the timeline and search boxes in half the views, so an unmodified "m" would be a keystroke the user
+  // meant to type. Alt is also what the sidebar's own access keys would be, so it reads as "the app's key".
+  const SHORTCUTS = [
+    ['h', 'home',          'Home'],
+    ['i', 'ai',            'PosterChan AI'],
+    ['n', 'notifications', 'Notifications'],
+    ['b', 'bookmarks',     'Bookmarks'],
+    ['m', 'messages',      'Messages'],
+    ['g', '@games',        'Games'],          // a group in the sidebar, not a view — see _runShortcut
+    ['e', 'global',        'Nostrverse'],
+    ['t', 'trending',      'Trending'],
+    ['s', 'streams',       'Streams'],
+    ['a', 'articles',      'Articles'],
+    ['d', 'drafts',        'Drafts'],
+    ['f', 'blossom',       'Files'],
+    ['c', 'chat',          'Chat'],
+    ['w', 'news',          'News'],
+    ['k', 'markets',       'Markets'],
+    ['r', 'meme',          'Meme Builder'],
+    ['u', 'stats',         'Server Stats'],
+    [',', 'settings',      'Settings'],
+    ['/', '@help',         'This list'],
+  ];
+  function _runShortcut(target){
+    if(target==='@games'){
+      // Games are a sidebar GROUP, not a view, so there is nothing to switch to — expand the group (and on
+      // a phone open the sidebar, or it would expand something that isn't on screen).
+      const sub=$('#games-sub'), chev=$('#games-chev');
+      ClientSettings.set('gamesOpen', true);
+      if(sub) sub.classList.remove('collapsed');
+      if(chev) chev.textContent='▾';
+      const sb=$('#sidebar'); if(sb && sb.classList.contains('open')===false) sb.classList.add('open');
+      if(sub && sub.scrollIntoView) sub.scrollIntoView({block:'nearest'});
+      return;
+    }
+    if(target==='@help'){ _shortcutHelp(); return; }
+    switchView(target);
+  }
+  function _shortcutHelp(){
+    const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
+    modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
+      +'<div class="muted small ks-foot">Arrow keys, Page Up/Down, Space and Home/End scroll the timeline.</div>');
+  }
+  (function(){
+    const MAP=new Map(SHORTCUTS.map(([k,v])=>[k,v]));
+    document.addEventListener('keydown', e=>{
+      if(!e.altKey || e.ctrlKey || e.metaKey) return;
+      const k=(e.key||'').toLowerCase();
+      if(!MAP.has(k)) return;
+      const t=e.target;
+      // Alt+letter inside a text field is a real editing shortcut on some platforms (macOS word-jumps),
+      // so leave a focused field alone — same rule the scroll keys use.
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox')) return;
+      e.preventDefault();
+      _runShortcut(MAP.get(k));
+    });
+  })();
+
   // ---------- keyboard scrolling ----------
   // The timeline is a scrollable DIV (#feed), not the document — the app is a fixed-height flex layout, so
   // <body> never scrolls. A div with no tabindex cannot take keyboard focus, so ↓/↑/PageDown/PageUp/Space/

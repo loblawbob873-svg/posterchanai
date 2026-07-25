@@ -3474,3 +3474,15 @@ body.modal-open .mobilenav{display:none}
    width instead — same visual centre, but the box (and its handle) stay on the words. */
 .mb-text.centred{width:max-content;max-width:none;text-align:center;
   transform:translate(-50%,-0.19em)}
+
+/* ⌨️ Keyboard shortcut sheet (Alt+/). Two columns on a desktop modal, one on a phone — a keycap grid that
+   wraps mid-row reads as noise, so the breakpoint is a hard switch rather than an auto-fit. */
+.ks-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px 18px;margin:12px 0 4px}
+.ks-row{display:flex;align-items:center;gap:5px;min-width:0}
+.ks-row kbd{display:inline-block;min-width:26px;padding:3px 7px;text-align:center;
+  font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);
+  background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:6px}
+.ks-plus{color:var(--muted);font-size:11px}
+.ks-lbl{margin-left:6px;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ks-foot{margin-top:10px}
+@media(max-width:560px){ .ks-grid{grid-template-columns:1fr} }
