@@ -13345,14 +13345,32 @@
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
   }
+  // Which letter an Alt chord means. `e.key` alone is not enough: Android's keymap gives most letters NO
+  // character while Alt is held (Generic.kcm: `ctrl, alt, meta: none`), so the tablet/APK sees key values
+  // like "Unidentified" — or the symbol layer's character — and every Alt shortcut fell on the floor there.
+  // `e.code` is the PHYSICAL key and survives that, so it is the fallback. The layout's own character is
+  // still tried first (a layout that really does put a letter there wins); the fallback is also what keeps
+  // Option+E on a Mac — a dead key, "é" — landing on Nostrverse rather than nothing.
+  const _CODE_CHAR = { Comma:',', Slash:'/' };
+  function _altChars(e){
+    const out=[];
+    const k=(e.key||'').toLowerCase();
+    if(k.length===1) out.push(k);
+    const c=e.code||'';
+    const m=/^Key([A-Z])$/.exec(c);
+    const fromCode = m ? m[1].toLowerCase() : _CODE_CHAR[c];
+    if(fromCode && fromCode!==out[0]) out.push(fromCode);
+    return out;
+  }
   (function(){
     const MAP=new Map(SHORTCUTS.map(([k,v])=>[k,v]));
     document.addEventListener('keydown', e=>{
       if(!e.altKey || e.ctrlKey || e.metaKey) return;
-      const k=(e.key||'').toLowerCase();
       // …or a Vim-mode post action. Q and Z are not view shortcuts at all, so gating purely on the view
       // map dropped Alt+Q / Alt+Z on the floor.
-      if(!MAP.has(k) && !(_vimOn() && _VIM_ALT_POST[k])) return;
+      const bound = (c) => MAP.has(c) || (_vimOn() && !!_VIM_ALT_POST[c]);
+      const k = _altChars(e).find(bound);
+      if(!k) return;
       const t=e.target;
       // Alt+letter inside a text field is a real editing shortcut on some platforms (macOS word-jumps),
       // so leave a focused field alone — same rule the scroll keys use.
