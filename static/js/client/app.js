@@ -4028,6 +4028,13 @@
       { const sel=$('#bp-fsel',root); if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
       $('#bp-x',root).onclick=close;
       draw();
+      // The cover grid is a grid like the emoji/effects pickers, so give it the SAME cursor: arrows (and
+      // hjkl with Vim keys on) to move, Enter/Space to pick, Escape to close. It was mouse-only — Tab
+      // reached the cells one at a time with no cursor to show where you were, across up to 180 of them.
+      // `items()` is re-queried per keypress, so switching folder and redrawing the grid is handled.
+      // The folder <select> keeps the arrows for itself (_popKeys already exempts text fields and
+      // selects), so ↑/↓ still changes folder while it has focus.
+      _popKeys(root, '.bp-cell', el=>el.click(), close);
     });
   }
 
@@ -13540,7 +13547,9 @@
       + '</div>';
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
       +(_vimOn() ? sec('Vim movement', [['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],
-                                        ['gg','Top'],['G','Bottom'],['j / k','Also change a focused dropdown']]) : '')
+                                        ['gg','Top'],['G','Bottom'],['j / k','Also change a focused dropdown'],
+                                        ['k','At the top row — into this view\u2019s action bar'],
+                                        ['h / l','Walk that bar; j drops back to the list']]) : '')
       +sec('Anywhere', [['/','Search'],['Alt+Enter','This view’s main action (Go Live, ＋ New, Write article…)'],
                         ['Alt+←','Back out of what you opened'],['Esc','Leave a text box / close a dialog'],
                         ['[  ]','Previous / next tab']])
@@ -13559,8 +13568,7 @@
         [['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box — lands on the newest reply'],
          ['↑ / ↓','Your previous messages'],['Page Up/Dn','Scroll the conversation while typing'],
          ['Alt+Enter','Reach 🏠 Home · ＋ New · Agents'],['Enter','Send'],['Shift+Enter','New line']]
-        .concat(_vimOn() ? [['k','At the top message — into the toolbar'],
-                            ['h / l','Walk the toolbar; j drops back to the messages']] : [])))
+        .concat(_vimOn() ? [['k','At the top message — into the toolbar (then h / l)']] : [])))
       +'<div class="muted small ks-foot">Arrow keys step through rows; Page Up/Down, Space and Home/End scroll — '
       +'though Space plays/pauses a video once you have tabbed onto it.</div>');
   }
@@ -13773,18 +13781,21 @@
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     const t=e.target;
-    // Escape off AI Chat's toolbar goes back to the compose box, closing the loop: type → Escape → the
-    // transcript → k,k → the bar → Escape → typing again. Without it the bar was a dead end for Escape
-    // (it only clears a SELECTION, and moving into the bar clears that by design), so the one key that
-    // means "get me out of here" everywhere else did nothing exactly where you had just arrived.
-    if(t && t.closest && t.closest('#feed .ai-bar')){
-      const box=document.getElementById('ai-input');
-      if(box){
-        e.preventDefault(); e.stopPropagation();
-        try{ t.blur(); }catch(_){ }
-        try{ box.focus({preventScroll:true}); }catch(_){ try{ box.focus(); }catch(__){} }
-        return;
+    // Escape off a view's action bar. Without this the bar was a dead end for Escape — it only clears a
+    // SELECTION, and moving into the bar clears that by design — so the one key that means "get me out of
+    // here" everywhere else did nothing exactly where you had just arrived. AI Chat goes back to the
+    // compose box (where you live in that view), closing the loop: type → Escape → the transcript → k,k →
+    // the bar → Escape → typing. Every other view drops back onto the list it sits above.
+    if(_actionBarOf(t)){
+      e.preventDefault(); e.stopPropagation();
+      const box=t.closest('#feed .ai-bar') ? document.getElementById('ai-input') : null;
+      try{ t.blur(); }catch(_){ }
+      if(box){ try{ box.focus({preventScroll:true}); }catch(_){ try{ box.focus(); }catch(__){} } }
+      else {
+        try{ document.body.focus({preventScroll:true}); }catch(_){ }
+        const rows=_noteEls(); if(rows.length) _selectNote(rows[0]);
       }
+      return;
     }
     if(!t || !_ESC_FIELDS.has(t.id)) return;
     e.preventDefault(); e.stopPropagation();
@@ -13844,16 +13855,16 @@
         if(n!==t.selectedIndex){ t.selectedIndex=n; t.dispatchEvent(new Event('change',{bubbles:true})); }
         return;
       }
-      // Focus is ON AI Chat's toolbar (reached by k from the top message, see the k branch below): it is a
-      // ROW, not a pane, so h/l walk its buttons and j drops back into the transcript. This sits BEFORE the
-      // text-field guard on purpose — the conversation picker is a <select>, which that guard turns away.
-      // j/k on the picker is already claimed above (it changes conversation, as on every other dropdown),
-      // so only h/l reach here from it; from a button all four do.
-      const _bar = (t && t.closest) ? t.closest('#feed .ai-bar') : null;
+      // Focus is ON the view's action bar (reached by k from the top row, see the k branch below): it is a
+      // ROW, not a pane, so h/l walk its buttons and j drops back into the list. This sits BEFORE the
+      // text-field guard on purpose — AI Chat's conversation picker is a <select>, which that guard turns
+      // away. j/k on a select is already claimed above (it changes the value, as on every other dropdown),
+      // so only h/l reach here from one; from a button all four do.
+      const _bar = _actionBarOf(t);
       if(_bar && e.key.length===1 && 'hjkl'.includes(e.key)){
         e.preventDefault(); e.stopPropagation();
         if(e.key==='k') return;            // nothing above the bar — stop rather than wrap to the bottom
-        if(e.key==='j'){                   // back down to the transcript, at its first message
+        if(e.key==='j'){                   // back down to the list, at its first row
           try{ t.blur(); }catch(_){ }
           const rows=_noteEls(); if(rows.length) _selectNote(rows[0]);
           else { try{ document.body.focus({preventScroll:true}); }catch(_){ } }
@@ -13870,7 +13881,14 @@
       if(!'hjklgG'.includes(k) || k.length!==1) return;
       // Leaving a pane whose rows are gone (view switched under us) resets to the feed.
       if(!_paneRows(_vimPane).length) _vimPane='feed';
-      const rows=_rows(); if(!rows.length) return;
+      const rows=_rows();
+      if(!rows.length){
+        // An EMPTY list still has its action bar, and that is exactly when you want it: "no streams live
+        // right now" is the moment you reach for 🔴 Go Live. The k-at-the-top-row path below can never
+        // fire here because there is no row to be at the top of, so k did nothing at all.
+        if(k==='k' && _focusActionBar()){ e.preventDefault(); e.stopPropagation(); }
+        return;
+      }
       const stride=(_vimPane==='feed') ? _rowStride(rows) : 1;
       const cur=_selEl();
       const i=rows.indexOf(cur);
@@ -13906,12 +13924,13 @@
           // Not when you have JUST left it, though: k is also how you scroll up, so re-entering on the
           // next press made leaving impossible. One j (or any move away) arms it again.
           if(!_cmpLeft && _focusComposer()) return;
-          // In AI Chat there is no composer up here — the TOOLBAR is what sits above the first message, so
-          // k reaches that instead. Deliberately NOT gated on _cmpLeft: that flag exists because k is also
-          // scroll-up, so re-entering the timeline composer right after leaving it would trap you. The bar
-          // has no such trap (j is its exit, and nothing sits above it), and _cmpLeft left over from the
-          // timeline would otherwise make the toolbar unreachable in a view it has nothing to do with.
-          _focusAiBar();
+          // Views with no composer up here have an ACTION BAR instead — Streams' 🔴 Go Live, Articles'
+          // Write article, AI Chat's toolbar — so k reaches that. Deliberately NOT gated on _cmpLeft: that
+          // flag exists because k is also scroll-up, so re-entering the timeline composer right after
+          // leaving it would trap you. A bar has no such trap (j is its exit, and nothing sits above it),
+          // and _cmpLeft left over from the timeline would otherwise make the bar unreachable in a view it
+          // has nothing to do with.
+          _focusActionBar();
           return;
         }
         take(i-stride); return;
@@ -13937,16 +13956,20 @@
   // Set when you Escape out of the timeline composer, so the next k does not walk straight back in. Any
   // move away (j) clears it — going up to the box on purpose still works, it just is not automatic.
   let _cmpLeft=false;
-  // AI Chat's toolbar (🏠 Home, the conversation picker, ＋ New, 🤖 Agents, 🔊, 🗑️), treated as the row
-  // ABOVE the first message — the same relationship the timeline composer has to the first post, so k at
-  // the top of the transcript moves into it. Alt+Enter already reached it, but the vim path could reach
-  // every message and NONE of the buttons over them, which is the whole toolbar.
-  function _focusAiBar(){
-    const bar=document.querySelector('#feed .ai-bar');
-    if(!bar || !_vimShown(bar)) return false;
-    const b=[...bar.querySelectorAll(_FOCUSABLE)].filter(_vimShown)[0];
+  // A view's ACTION BAR (_ACTION_BAR: Go Live, Write article, Add torrent, AI Chat's toolbar, Files'
+  // drop zone), treated as the row ABOVE the first card — the same relationship the timeline composer has
+  // to the first post, so k at the top of the list moves into it. Alt+Enter already reached these, but the
+  // vim path could reach every row and NONE of the buttons over them, which in Streams is the whole point
+  // of the view: you could scroll the stream list but never get to 🔴 Go Live.
+  function _actionBarOf(el){
+    if(!el || !el.closest) return null;
+    for(const sel of _ACTION_BAR){ const b=el.closest(sel); if(b) return b; }
+    return null;
+  }
+  function _focusActionBar(){
+    const b=_viewAction();                 // the first focusable in whichever bar this view has
     if(!b) return false;
-    _selectNote(null);                     // the cursor is in the bar now, not on a message
+    _selectNote(null);                     // the cursor is in the bar now, not on a row
     try{ b.focus({preventScroll:true}); }catch(_){ try{ b.focus(); }catch(__){} }
     return true;
   }
