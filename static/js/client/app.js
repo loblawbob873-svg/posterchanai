@@ -3907,7 +3907,7 @@
     const canScreen = !!_screenPlugin()
       || !!(canPhone && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     modal(`<h3>🔴 Go Live</h3>
-      <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120"></label>
+      <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${canPhone || canScreen
@@ -3951,6 +3951,11 @@
       $('#gl-cancel',root).onclick=closeModal;
       { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _phoneGoLive(info, t, a, c); }; }
       { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _screenGoLive(info, t, a, c); }; }
+      // Enter in the title is "go" — otherwise typing a title meant Tabbing past the checkboxes, the OBS
+      // server/key boxes and their Copy buttons to reach the one button you actually wanted.
+      $('#gl-title',root).addEventListener('keydown',e=>{
+        if(e.key==='Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey){ e.preventDefault(); $('#gl-go',root).click(); }
+      });
       $('#gl-go',root).onclick=async()=>{
         const t=title(), a=announce(), c=cover();
         try{ await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
@@ -6704,7 +6709,11 @@
       // Arrow through the chips. `:not(.hidden)` so the cursor walks what the SEARCH left on screen
       // rather than stepping through filtered-out effects. Up/Down and Enter work while typing in the
       // search box (the caret only needs Left/Right there), which is what makes search-then-arrow work.
-      _popKeys(root, '.fxs-chip:not(.hidden)', el=>el.click(), closeModal,
+      // The footer buttons are part of the SAME walk, so ↓ / j keeps going past the last chip into Clear
+      // and ▶ Apply instead of dead-ending on the grid — the whole point is to never leave the keyboard
+      // between picking an effect and applying it. `:not([disabled])` skips Apply until a base effect is
+      // picked (items() is re-read on every keypress, so it appears the moment one is).
+      _popKeys(root, '.fxs-chip:not(.hidden), .fxs-ft .btn:not([disabled])', el=>el.click(), closeModal,
                { inText:['ArrowDown','ArrowUp','Enter'] });
       const cmdEl=$('#fxs-cmd',root), cap=$('#fxs-cap',root), go=$('#fxs-go',root);
       const build=()=>{
@@ -8047,8 +8056,19 @@
       <div class="bp-head"><h3>${enc(opts.title||'🌸 Blossom Files')}</h3>
         <div id="bp-folders" class="bp-folders"></div></div>
       <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
-    bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
+    // This sheet is hand-rolled rather than built by modal()/subModal(), so it used to get NONE of what
+    // they provide: no Escape, no focus trap, and body.modal-open was never set (so `/` and the other
+    // global keys still fired at the view behind it). One close path now does all of it.
+    const close=()=>{ bg.remove(); const root=$('#modal-root');
+      if(!root || !root.children.length) document.body.classList.remove('modal-open'); };
+    bg.onclick=e=>{ if(e.target===bg) close(); };
     $('#modal-root').appendChild(bg);
+    document.body.classList.add('modal-open');
+    _trapFocus(bg.querySelector('.modal'), close);
+    // The grid is a grid of DIVs — nothing focusable, so Tab could never reach a file and Enter had
+    // nothing to press. _popKeys is the app's grid cursor (arrows, and hjkl when Vim keys are on, with
+    // the row length measured from the layout), the same one the effects and emoji pickers use.
+    _popKeys(bg, '#bp-grid .file-card', el=>el.click(), close);
     FilesIdx.loadLocal();
     (async()=>{
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
@@ -8079,7 +8099,7 @@
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
-          bg.remove();
+          close();
           if(onPick){ try{ onPick({url, type, ext}); }catch(_){} return; }
           ta.value+=(ta.value?'\n':'')+url+(ext?('.'+ext):'');
           ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
@@ -10639,7 +10659,10 @@
   }
 
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
-  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false };
+  // `hist` is what you have SENT, oldest first — ↑/↓ in the compose box walk it. `histIdx` is -1 whenever
+  // you are editing your own live draft (which `histDraft` holds while you browse away from it).
+  let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false,
+              hist:[], histIdx:-1, histDraft:'', histApplying:false };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   // ---- Node Control panel: a beginner-friendly launcher for the agentic `node` command --------------
@@ -10815,7 +10838,38 @@
     $('#ai-send').onclick=aiSend;
     const ta=$('#ai-input');
     ta.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); } });
-    ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; aiUpdateLinkActions(); });
+    // ↑/↓ walk back through what you have already sent, as a shell or any other chat box does. Re-running a
+    // long `geni …` prompt with one word changed is the single most common thing to want here, and it was
+    // mouse-only. Gated on the caret being on the FIRST/LAST line, so the arrows still move normally inside
+    // a multi-line draft and only step out of it at the edges.
+    ta.addEventListener('keydown',e=>{
+      if(e.key!=='ArrowUp' && e.key!=='ArrowDown') return;
+      if(e.shiftKey||e.ctrlKey||e.metaKey||e.altKey) return;
+      if(ta.selectionStart!==ta.selectionEnd) return;              // a selection means they are editing
+      const H=_ai.hist;
+      if(e.key==='ArrowUp'){
+        if(ta.value.slice(0, ta.selectionStart).includes('\n')) return;   // not on the first line yet
+        if(!H.length || _ai.histIdx===0) return;                  // nothing older to go to
+        if(_ai.histIdx<0){ _ai.histDraft=ta.value; _ai.histIdx=H.length; }
+        _ai.histIdx--;
+      }else{
+        if(ta.value.slice(ta.selectionEnd).includes('\n')) return;         // not on the last line yet
+        if(_ai.histIdx<0) return;                                 // already on the live draft
+        _ai.histIdx++;
+      }
+      e.preventDefault();
+      let v;
+      if(_ai.histIdx>=0 && _ai.histIdx<H.length) v=H[_ai.histIdx];
+      else { _ai.histIdx=-1; v=_ai.histDraft||''; }               // walked back off the end → your draft
+      _ai.histApplying=true;                                      // ...so the input handler below doesn't
+      ta.value=v; ta.dispatchEvent(new Event('input'));           //    read this as "they typed something"
+      _ai.histApplying=false;
+      try{ ta.setSelectionRange(v.length, v.length); }catch(_){ }
+    });
+    // Typing anything drops you out of history onto a fresh draft — otherwise a recalled line you had begun
+    // editing would be silently thrown away by the next ↓.
+    ta.addEventListener('input',()=>{ if(!_ai.histApplying) _ai.histIdx=-1;
+      ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; aiUpdateLinkActions(); });
     // Ctrl/⌘-V an image from the clipboard → attach it (so you can paste a screenshot then `post`, etc.)
     ta.addEventListener('paste', async e=>{
       const items=(e.clipboardData && e.clipboardData.items)||[]; const files=[];
@@ -11214,7 +11268,7 @@
         <button class="aw-card" data-gen="ocr"><span class="awc-ic">🔤</span><b>Read the text</b><span>OCR a photo or PDF</span></button>
         <button class="aw-card" data-gen="flashcards"><span class="awc-ic">🎴</span><b>Flashcards</b><span>PDF or notes → quiz</span></button>
       </div>
-      <p class="muted small">Tap <span class="ai-cmd" data-cmd="help">help</span> to see everything I can do.</p>
+      <p class="muted small">Tap <button class="ai-cmd" data-cmd="help">help</button> to see everything I can do.</p>
     </div>`;
   }
   function aiConnect(id){
@@ -11963,6 +12017,9 @@
     clearTimeout(_ai.recoverWatch);
     _ai.recoverWatch=setTimeout(()=>{ if(_ai.awaiting && VIEW==='ai' && _ai.convId===cid) aiRecover(cid); }, 30000);
     aiWsSend(payload);   // sends now if open, else queues + (re)connects and flushes on open
+    // Remember it for ↑ — skipping an immediate repeat, which is only ever noise to walk back through.
+    if(text && _ai.hist[_ai.hist.length-1]!==text){ _ai.hist.push(text); if(_ai.hist.length>100) _ai.hist.shift(); }
+    _ai.histIdx=-1; _ai.histDraft='';
     ta.value=''; ta.style.height='auto';
   }
 
@@ -13138,16 +13195,46 @@
   // Tab walked the page BEHIND it — invisibly, since the backdrop covers everything. That is the whole of
   // "New Post: Tab stops at the Write tab and never goes anywhere": the Write tab only LOOKS focused
   // (.cmp-tab.active is its own styling), and every Tab after it moved through the sidebar underneath.
-  function _trapFocus(box){
+  function _trapFocus(box, close){
     if(!box) return;
     const vis=el=>el.offsetParent!==null || getComputedStyle(el).position==='fixed';
     const items=()=>[...box.querySelectorAll(_FOCUSABLE)].filter(vis);
     // Land in the TEXT box when the dialog is one you type into (the composer), otherwise on the sheet
     // itself. Focusing the first input regardless would throw up the on-screen keyboard every time a phone
     // user opened, say, the Effects studio.
+    // A dialog can name its own landing spot with `autofocus` — honoured only at desktop widths, for that
+    // same reason (the same test #cmds-q already uses).
+    let af=box.querySelector('[autofocus]');
+    if(af && !(vis(af) && matchMedia('(min-width:821px)').matches)) af=null;
     const ta=box.querySelector('textarea:not([disabled])');
-    if(ta && vis(ta)){ try{ ta.focus({preventScroll:true}); const n=(ta.value||'').length; ta.setSelectionRange(n,n); }catch(_){ } }
+    // If onMount ALREADY put the cursor somewhere in the sheet, leave it there. This ran after onMount and
+    // stamped over it, which is exactly why the Effects studio and the command sheet stopped opening with
+    // their search box focused — both focus it themselves, and both were overridden a moment later.
+    const at=document.activeElement;
+    if(at && at!==document.body && at!==document.documentElement && box.contains(at)){ /* onMount chose — respect it */ }
+    else if(af){ try{ af.focus({preventScroll:true}); if(af.select) af.select(); }catch(_){ } }
+    else if(ta && vis(ta)){ try{ ta.focus({preventScroll:true}); const n=(ta.value||'').length; ta.setSelectionRange(n,n); }catch(_){ } }
     else { box.tabIndex=-1; try{ box.focus({preventScroll:true}); }catch(_){ } }
+    // Escape closes the dialog. NOTHING did this before: every sheet in the app is built by modal(), and
+    // once one was open the only way out was to find the Close button with the mouse.
+    // Bubble phase + defaultPrevented, so anything that owns its own Escape still wins — the composer
+    // (which saves a draft first) handles it on an earlier-registered bubble listener, and the popovers /
+    // uiConfirm stop it in capture, so neither ever reaches this.
+    const layer=box.closest('.modal-bg');
+    const shut = close || (()=>{
+      const root=$('#modal-root');
+      if(layer && root && root.contains(layer)){ layer.remove(); if(!root.children.length) document.body.classList.remove('modal-open'); }
+      else closeModal();
+    });
+    const onEsc=e=>{
+      if(!box.isConnected){ document.removeEventListener('keydown', onEsc); return; }
+      if(e.key!=='Escape' || e.defaultPrevented) return;
+      // Only the TOP layer closes — a picker opened from inside a sheet must not take the sheet with it.
+      if(layer && layer!==$('#modal-root').lastElementChild) return;
+      e.preventDefault();
+      shut();
+    };
+    document.addEventListener('keydown', onEsc);
     const onKey=e=>{
       if(e.key!=='Tab') return;
       if(!box.isConnected){ document.removeEventListener('keydown', onKey, true); return; }
@@ -13221,7 +13308,11 @@
     const close=()=>{ bg.remove(); if(!root.children.length) document.body.classList.remove('modal-open'); };
     bg.onclick=e=>{ if(e.target===bg) close(); };
     root.appendChild(bg); document.body.classList.add('modal-open');
-    if(onMount) onMount(bg.querySelector('.modal'), close);
+    const _box=bg.querySelector('.modal');
+    if(onMount) onMount(_box, close);
+    // Sub-dialogs never had a focus trap, so Tab inside the cover picker walked the Go Live sheet behind
+    // it. Same trap as modal(), but closing THIS layer only — hence passing its own close.
+    _trapFocus(_box, close);
     return close;
   }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
@@ -13299,7 +13390,15 @@
     }
     if(target==='@react'){ _postAction('react'); return; }   // Alt+L reacts in EITHER mode
     if(target==='@help'){ _shortcutHelp(); return; }
+    // Alt+I when the AI view is ALREADY up means "put me back in the box" (you pressed Escape to reach a
+    // shortcut and now want to keep typing) — NOT a re-render, which remounts the chat and would throw the
+    // half-written draft away. That makes Escape ⇄ Alt+I a real round trip.
+    if(target==='ai' && VIEW==='ai'){ const t=$('#ai-input'); if(t){ try{ t.focus(); }catch(_){ } return; } }
     switchView(target);
+    // Entering it fresh from the KEYBOARD puts the caret where you were going to type anyway — the same
+    // courtesy opening a DM from the keyboard already gets. Deliberately not inside switchView: a TAP on
+    // the sidebar must NOT throw up the on-screen keyboard, and that is the only other way in.
+    if(target==='ai') _focusSoon('#ai-input');
   }
   // Perform one of the selected post's actions by name. Clicking its own button, as everywhere else, so
   // the guest guard / already-reposted check / counts / toasts all come along.
@@ -13334,6 +13433,9 @@
           +[['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],['gg','Top'],['G','Bottom']]
             .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
           +'</div>' : '')
+      +'<div class="ks-sec">Anywhere</div><div class="ks-grid">'
+      +[['/','Search'],['Alt+Enter','This view’s main action (Go Live, Write article…)'],['Esc','Leave a text box / close a dialog']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">Tabs</div><div class="ks-grid">'
       +[['[','Previous tab'],[']','Next tab']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
@@ -13343,6 +13445,10 @@
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
       +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
+      +(window.PC_NOSTR_ONLY ? '' : '<div class="ks-sec">In AI Chat</div><div class="ks-grid">'
+        +[['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box (shortcuts work again)'],
+          ['↑ / ↓','Your previous messages'],['Enter','Send'],['Shift+Enter','New line']]
+          .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>')
       +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
   }
   // Which letter an Alt chord means. `e.key` alone is not enough: Android's keymap gives most letters NO
@@ -13379,6 +13485,31 @@
       if(_vimOn() && _VIM_ALT_POST[k]){ e.preventDefault(); _postAction(_VIM_ALT_POST[k]); return; }
       e.preventDefault();
       _runShortcut(MAP.get(k));
+    });
+  })();
+
+  // `/` focuses search — what vim, and every other site with a search box, has trained everyone to expect.
+  // There are TWO search inputs (sidebar on desktop, topbar on mobile) with CSS showing exactly one at any
+  // width, so take whichever is actually on screen rather than picking one and being wrong at a breakpoint.
+  // Not gated on !shiftKey: on plenty of layouts `/` IS a shifted key.
+  function _searchBox(){
+    for(const sel of ['#nav-search-input','#search-input']){
+      const el=document.querySelector(sel);
+      if(el && (el.offsetParent!==null || getComputedStyle(el).position==='fixed')) return el;
+    }
+    return null;
+  }
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.key!=='/' || e.altKey || e.ctrlKey || e.metaKey) return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      const box=_searchBox(); if(!box) return;                   // nothing to focus — leave the key alone
+      e.preventDefault();                                        // ...or the "/" lands in the box
+      try{ box.focus({preventScroll:true}); }catch(_){ try{ box.focus(); }catch(__){} }
+      try{ box.select(); }catch(_){ }                            // a second `/` replaces the last query
     });
   })();
 
@@ -13496,10 +13627,15 @@
   }
   // Escape out of the message box, back to the conversation list, so the arrow keys work again — without
   // it the keyboard path was one-way: you could open a chat but never leave it without the mouse.
+  // #ai-input is in the same list for the same reason, and it matters MORE there: the AI view's compose box
+  // is where you spend the whole session, and every Alt shortcut, Page Up/Down and the vim keys all bail on
+  // a focused text field — so with no way out, reaching any of them meant picking up the mouse.
+  // The search boxes are in here too, so `/` in and Escape out is a round trip like every other field.
+  const _ESC_FIELDS = new Set(['dm-in','grp-input','tl-cmp-ta','ai-input','nav-search-input','search-input']);
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     const t=e.target;
-    if(!t || (t.id!=='dm-in' && t.id!=='grp-input' && t.id!=='tl-cmp-ta')) return;
+    if(!t || !_ESC_FIELDS.has(t.id)) return;
     e.preventDefault(); e.stopPropagation();
     try{ t.blur(); }catch(_){ }
     try{ document.body.focus({preventScroll:true}); }catch(_){ }
@@ -13620,6 +13756,36 @@
     }, true);
   })();
 
+  // Alt+Enter reaches the button a view puts ABOVE its content — Go Live in Streams, Write article, Add
+  // torrent, Sell something, Announce a repo. Tab could not get there: while a card is selected Tab is
+  // scoped to that card, and with nothing selected it walked the whole sidebar first. Same shape in every
+  // view, so one key does the lot.
+  const _ACTION_BAR = ['#feed .streams-top', '#feed .art-top'];
+  function _viewAction(){
+    for(const sel of _ACTION_BAR){
+      for(const bar of document.querySelectorAll(sel)){
+        const b=[...bar.querySelectorAll(_FOCUSABLE)].find(el=>el.offsetParent!==null);
+        if(b) return b;
+      }
+    }
+    return null;
+  }
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.key!=='Enter' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      const b=_viewAction(); if(!b) return;
+      e.preventDefault();
+      // First press moves the cursor there (so you can see what you are about to do); pressing it again
+      // — or Enter, which the button handles itself — runs it. Nothing fires by surprise.
+      if(document.activeElement===b) b.click();
+      else { try{ b.focus({preventScroll:true}); }catch(_){ try{ b.focus(); }catch(__){} } }
+    });
+  })();
+
   // [ and ] cycle the TAB BAR of whatever view is open — profile's Notes/Replies/Media/Articles/Streams,
   // the timeline's Home/Nostrverse/Trending, notification filters, the Files tabs. Generic rather than
   // profile-only because they are all just a row of buttons with one marked current; the marker is `on`
@@ -13704,6 +13870,9 @@
         // it for a tap too would throw up the on-screen keyboard every time a phone user opens a chat.
         // The thread renders asynchronously, so poll briefly for the input rather than assuming it is there.
         if(el.matches('.dm-peer')) _focusSoon('#dm-in');
+        // Same for the AI view reached the vim way — h into the nav rail, j/k, Enter. That path never goes
+        // through _runShortcut, so it needs its own hand-off or the caret is left behind on the rail.
+        else if(el.matches('.nav-item[data-view="ai"]')) _focusSoon('#ai-input');
         return;
       }
       if(el.matches('.news-card')){

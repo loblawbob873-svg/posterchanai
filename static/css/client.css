@@ -2243,7 +2243,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .tag-chip.disc{background:linear-gradient(135deg,rgba(var(--accent-rgb),.10),rgba(var(--accent2-rgb),.08));border-color:var(--line)}
 .tag-chip.disc:hover{border-color:var(--neon2);color:#fff}
 .ai-magnet{display:inline-block;margin:4px 6px 4px 0;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;border:none;border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
-.ai-cmd{display:inline-block;margin:4px 6px 4px 0;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px}
+.ai-cmd{display:inline-block;margin:4px 6px 4px 0;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:9px;padding:7px 13px;font-weight:600;cursor:pointer;font-size:14px;font-family:inherit}
+/* Tab has to be VISIBLE to be usable. The AI view is all buttons — the starter cards, the chips, the
+   compose row — and none of them showed where the focus was, so tabbing to one was a guess. */
+.ai-chat button:focus-visible,.ai-chat select:focus-visible,.ai-chat textarea:focus-visible,
+.ai-welcome button:focus-visible,.ai-cmd:focus-visible,.aw-card:focus-visible{
+  outline:2px solid var(--neon);outline-offset:3px}
 /* 🎬 Effects studio chips — bigger tap targets (mobile-friendly), prefill (don't auto-send) */
 .fx-cmd{display:inline-flex;align-items:center;background:var(--panel2);color:var(--text);border:1px solid var(--neon);border-radius:11px;padding:10px 14px;font-weight:600;cursor:pointer;font-size:15px;min-height:44px}
 .fx-cmd:active{background:rgba(var(--accent-rgb),.14)}
@@ -3512,6 +3517,11 @@ body.modal-open .mobilenav{display:none}
 
 /* Keyboard cursor in the Effects studio, matching how a picked chip already reads. */
 .fxs-chip.kb{outline:2px solid var(--neon);outline-offset:1px}
+/* The footer buttons are on the same arrow/vim walk as the chips, so they need the same cursor — without
+   it, stepping down past the last chip looked like the cursor had simply vanished. */
+.fxs-ft .btn.kb{outline:2px solid var(--neon);outline-offset:2px}
+/* Same cursor for the Blossom picker's grid, which is now arrow/vim navigable. */
+.file-card.kb{outline:2px solid var(--neon);outline-offset:2px}
 
 /* Cursor on the other card views (Streams, Articles, Shopping, Communities, 4chan, Pics). They are
    bordered cards rather than full-bleed rows, so a ring reads better here than the inset rule. */
