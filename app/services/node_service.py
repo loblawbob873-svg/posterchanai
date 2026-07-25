@@ -780,20 +780,13 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 _path = str(args.get("path") or "").strip()
                 _label = agent_file_tools.label_for(name, args)
 
-                # Read before edit. A model editing a file it has not seen this run is working from
-                # memory, and old_string will not match — so refuse with the fix rather than let it
-                # burn a step failing. write_file is exempt: creating a file needs no prior read.
-                if name == "edit_file" and _path and _path not in files_read:
-                    await _say(f"↩️ {_label} — refused: not read yet")
-                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
-                                     "content": f"You have not read {_path} in this run, so you cannot "
-                                                "know its exact contents. Call read_file on it first, "
-                                                "then edit using text copied verbatim from what you read."})
-                    continue
-
                 # Loop breaker for MUTATING file ops. Rewriting one file over and over is the exact
                 # spin _cmd_signature was written for, so it shares that counter; reads and greps are
                 # cheap and legitimately repeat (paging a big file), so they are not counted.
+                # Counted BEFORE the read-before-edit refusal below, deliberately: a refusal costs an
+                # LLM step even though nothing runs, so a model that ignores the instruction and calls
+                # edit_file again and again must trip this breaker too. Counting after the refusal
+                # left that loop uncounted and it could spin for the whole step budget.
                 _warn = ""
                 if name not in agent_file_tools.READ_ONLY_TOOLS:
                     _sig = f"{name} {_path}"
@@ -810,6 +803,18 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                                  "not right, the approach is wrong — read the file and think again, or "
                                  f"call finish and report what blocked you. This run stops after "
                                  f"{_SIG_MAX} attempts at the same file.")
+
+                # Read before edit. A model editing a file it has not seen this run is working from
+                # memory, and old_string will not match — so refuse with the fix rather than let it
+                # burn a step failing. write_file is exempt: creating a file needs no prior read.
+                if name == "edit_file" and _path and _path not in files_read:
+                    await _say(f"↩️ {_label} — refused: not read yet")
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": f"You have not read {_path} in this run, so you cannot "
+                                                "know its exact contents. Call read_file on it first, "
+                                                "then edit using text copied verbatim from what you "
+                                                f"read.{_warn}"})
+                    continue
 
                 ok, body = await agent_file_tools.run_file_op(_exec, name, args)
                 if ok and name == "read_file" and _path:
