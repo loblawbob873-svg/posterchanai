@@ -13215,7 +13215,7 @@
     const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
-      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],['L','React'],['Z','Tip'],['Enter','Open thread'],['Esc','Deselect']]
+      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],['L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
   }
@@ -13273,6 +13273,14 @@
     return [];
   }
   const _rowKey = (el) => el && (el.dataset.tid || el.dataset.id || el.dataset.peer || el.dataset.open || '');
+  // The post inside a selected row. A thread row is a .thread-node WRAPPER, so the id/pubkey live on the
+  // card within it, not on the row itself.
+  function _rowNote(el){
+    const art = el.matches('article.note') ? el : el.querySelector('article.note');
+    if(!art) return null;
+    const id = art.dataset.id || el.dataset.tid || '';
+    return id ? { id, pk: art.dataset.pk || '' } : null;
+  }
   function _selEl(){
     if(!_selId) return null;
     const el=_noteEls().find(n=>_rowKey(n)===_selId);
@@ -13336,6 +13344,14 @@
       const k=(e.key||'').toLowerCase();
       if(k==='escape'){ if(_selId){ e.preventDefault(); _selectNote(null); } return; }
       const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
+      // 🎬 Effect lives in the post's ☰ menu rather than the action row, so it has no button to click —
+      // call it directly, behind the same PC_NOSTR_ONLY gate the menu entry uses (a Nostr-only node has
+      // no AI backend to render one).
+      if(k==='e' && !window.PC_NOSTR_ONLY){
+        const n=_rowNote(el);
+        if(n){ e.preventDefault(); effectPost(n.id, n.pk); }
+        return;
+      }
       if(e.key==='Enter'){
         e.preventDefault();
         // A post opens its thread; anything else (a conversation, a notification) is just clicked — that
