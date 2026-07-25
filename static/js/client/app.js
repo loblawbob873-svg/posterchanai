@@ -13558,7 +13558,9 @@
       +(window.PC_NOSTR_ONLY ? '' : sec('In AI Chat',
         [['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box — lands on the newest reply'],
          ['↑ / ↓','Your previous messages'],['Page Up/Dn','Scroll the conversation while typing'],
-         ['Alt+Enter','Reach 🏠 Home · ＋ New · Agents'],['Enter','Send'],['Shift+Enter','New line']]))
+         ['Alt+Enter','Reach 🏠 Home · ＋ New · Agents'],['Enter','Send'],['Shift+Enter','New line']]
+        .concat(_vimOn() ? [['k','At the top message — into the toolbar'],
+                            ['h / l','Walk the toolbar; j drops back to the messages']] : [])))
       +'<div class="muted small ks-foot">Arrow keys step through rows; Page Up/Down, Space and Home/End scroll — '
       +'though Space plays/pauses a video once you have tabbed onto it.</div>');
   }
@@ -13771,6 +13773,19 @@
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     const t=e.target;
+    // Escape off AI Chat's toolbar goes back to the compose box, closing the loop: type → Escape → the
+    // transcript → k,k → the bar → Escape → typing again. Without it the bar was a dead end for Escape
+    // (it only clears a SELECTION, and moving into the bar clears that by design), so the one key that
+    // means "get me out of here" everywhere else did nothing exactly where you had just arrived.
+    if(t && t.closest && t.closest('#feed .ai-bar')){
+      const box=document.getElementById('ai-input');
+      if(box){
+        e.preventDefault(); e.stopPropagation();
+        try{ t.blur(); }catch(_){ }
+        try{ box.focus({preventScroll:true}); }catch(_){ try{ box.focus(); }catch(__){} }
+        return;
+      }
+    }
     if(!t || !_ESC_FIELDS.has(t.id)) return;
     e.preventDefault(); e.stopPropagation();
     try{ t.blur(); }catch(_){ }
@@ -13829,6 +13844,26 @@
         if(n!==t.selectedIndex){ t.selectedIndex=n; t.dispatchEvent(new Event('change',{bubbles:true})); }
         return;
       }
+      // Focus is ON AI Chat's toolbar (reached by k from the top message, see the k branch below): it is a
+      // ROW, not a pane, so h/l walk its buttons and j drops back into the transcript. This sits BEFORE the
+      // text-field guard on purpose — the conversation picker is a <select>, which that guard turns away.
+      // j/k on the picker is already claimed above (it changes conversation, as on every other dropdown),
+      // so only h/l reach here from it; from a button all four do.
+      const _bar = (t && t.closest) ? t.closest('#feed .ai-bar') : null;
+      if(_bar && e.key.length===1 && 'hjkl'.includes(e.key)){
+        e.preventDefault(); e.stopPropagation();
+        if(e.key==='k') return;            // nothing above the bar — stop rather than wrap to the bottom
+        if(e.key==='j'){                   // back down to the transcript, at its first message
+          try{ t.blur(); }catch(_){ }
+          const rows=_noteEls(); if(rows.length) _selectNote(rows[0]);
+          else { try{ document.body.focus({preventScroll:true}); }catch(_){ } }
+          return;
+        }
+        const btns=[...(_bar.querySelectorAll(_FOCUSABLE))].filter(_vimShown);
+        const n=btns.indexOf(t) + (e.key==='l' ? 1 : -1);
+        if(n>=0 && n<btns.length){ try{ btns[n].focus({preventScroll:true}); }catch(_){ try{ btns[n].focus(); }catch(__){} } }
+        return;
+      }
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const k=e.key;
@@ -13870,7 +13905,13 @@
           // could see the box but still had to reach for the mouse to write. Escape hands focus back.
           // Not when you have JUST left it, though: k is also how you scroll up, so re-entering on the
           // next press made leaving impossible. One j (or any move away) arms it again.
-          if(!_cmpLeft) _focusComposer();
+          if(!_cmpLeft && _focusComposer()) return;
+          // In AI Chat there is no composer up here — the TOOLBAR is what sits above the first message, so
+          // k reaches that instead. Deliberately NOT gated on _cmpLeft: that flag exists because k is also
+          // scroll-up, so re-entering the timeline composer right after leaving it would trap you. The bar
+          // has no such trap (j is its exit, and nothing sits above it), and _cmpLeft left over from the
+          // timeline would otherwise make the toolbar unreachable in a view it has nothing to do with.
+          _focusAiBar();
           return;
         }
         take(i-stride); return;
@@ -13896,6 +13937,20 @@
   // Set when you Escape out of the timeline composer, so the next k does not walk straight back in. Any
   // move away (j) clears it — going up to the box on purpose still works, it just is not automatic.
   let _cmpLeft=false;
+  // AI Chat's toolbar (🏠 Home, the conversation picker, ＋ New, 🤖 Agents, 🔊, 🗑️), treated as the row
+  // ABOVE the first message — the same relationship the timeline composer has to the first post, so k at
+  // the top of the transcript moves into it. Alt+Enter already reached it, but the vim path could reach
+  // every message and NONE of the buttons over them, which is the whole toolbar.
+  function _focusAiBar(){
+    const bar=document.querySelector('#feed .ai-bar');
+    if(!bar || !_vimShown(bar)) return false;
+    const b=[...bar.querySelectorAll(_FOCUSABLE)].filter(_vimShown)[0];
+    if(!b) return false;
+    _selectNote(null);                     // the cursor is in the bar now, not on a message
+    try{ b.focus({preventScroll:true}); }catch(_){ try{ b.focus(); }catch(__){} }
+    return true;
+  }
+
   // The timeline's inline composer, treated as the row ABOVE the first post: k at the top moves into it.
   // Only where it exists (home/global/trending) and is on screen — elsewhere k just stops at the top.
   function _focusComposer(){
