@@ -2532,6 +2532,7 @@
           </div>
           <div class="tl-cmp-cw hidden" id="tl-cmp-cwrow"><input class="input" id="tl-cmp-cwreason" maxlength="120" placeholder="🔞 sensitive — reason (optional)"></div>
           <div class="cmp-bg-strip hidden" id="tl-cmp-bgs" aria-label="post background"></div>
+          <div class="cmp-cardprev hidden" id="tl-cmp-cardprev" aria-label="card preview"></div>
           <div class="cmp-sched-row hidden" id="tl-cmp-schedrow"><span class="muted small">Publish at</span><input type="datetime-local" id="tl-cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="tl-cmp-sched-go">Schedule</button><span class="muted small" id="tl-cmp-sched-when"></span></div>
           <div class="tl-cmp-poll hidden" id="tl-cmp-pollbox">
             <div class="muted small">Poll options</div>
@@ -2599,7 +2600,7 @@
     else { try{ const d=Drafts.all().filter(x=>x && x.src==='tl' && !x.del && (x.text||'').trim()).sort((a,b)=>(b.ts||0)-(a.ts||0))[0];
       if(d){ ta.value=d.text; _tlCmpText=d.text; _tlAutoId=d.id; } }catch(_){} }   // restore the rolling inline draft across a reload
     grow();
-    ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); _tlAutosave(); });
+    ta.addEventListener('input', ()=>{ _tlCmpText=ta.value; grow(); _tlAutosave(); _tlBgPreview(); });
     ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); post.click(); } });
     const upload=async files=>{ files=(files||[]).filter(Boolean); if(!files.length) return;
       for(let i=0;i<files.length;i++){ st.textContent=`uploading ${i+1}/${files.length}…`;
@@ -2661,15 +2662,10 @@
         const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on';
         none.title='no background'; none.textContent='✕'; bgsRow.appendChild(none);
         const marks=[none];
-        // Show the chosen background (and its frame) IN the box, exactly as the modal composer does.
-        // Without this, arming a background here changed nothing on screen — you only found out what you
-        // had made after posting it.
-        _tlBgPreview=()=>{
-          if(_tlBg){ ta.classList.add('cmp-bg-on'); ta.style.background=_bgCss(_tlBg); ta.style.color=_tlBg.fg||'#fff'; }
-          else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; }
-          ta.classList.toggle('cmp-bg-framed', !!(_tlBg && _tlBgFramed));
-          grow();
-        };
+        // Show the REAL card, not a card-styled textarea (see makeCardPreview): the box holds your draft,
+        // the thumbnail holds what will actually be posted.
+        const _tlCardPrev=makeCardPreview($('#tl-cmp-cardprev',box));
+        _tlBgPreview=()=>_tlCardPrev(ta.value, _tlBg, _tlBgFramed);
         const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); _tlBgPreview(); };
         none.onclick=()=>pick(none,null);
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
@@ -7100,6 +7096,36 @@
     cut=win.lastIndexOf(' ');
     return (cut>0 ? flat.slice(0,cut) : flat.slice(0,_CARD_MAX)).trim()+'…';
   }
+  // A TRUE card preview: the real thing, rendered by the same function that builds the post.
+  // Styling the textarea to look like a card used to be honest, back when the whole draft WAS the card.
+  // It isn't any more — the card is a derived subset (links stripped, trimmed to the opening) — so a
+  // card-styled textarea showed a URL that the card would never contain, which reads as "the link is in
+  // my image". Render the actual card instead and let the textarea go back to being a text box.
+  function makeCardPreview(host){
+    let timer=null, objUrl=null, busy=false, want=null;
+    const draw=async()=>{
+      if(busy) return;                       // a run is already in flight; it will pick up `want`
+      busy=true;
+      try{
+        while(want){
+          const job=want; want=null;
+          if(!job.bg){ host.classList.add('hidden'); host.innerHTML=''; continue; }
+          const words=_BG_WORDS(job.text), card=_cardHook(words);
+          const blob=await renderBgPost(card||' ', job.bg, job.framed);
+          if(objUrl) URL.revokeObjectURL(objUrl);
+          objUrl=URL.createObjectURL(blob);
+          host.classList.remove('hidden');
+          host.innerHTML='<img class="cmp-cardprev-img" alt="card preview">'
+            + '<div class="muted small">'+(words && words!==card
+                ? 'this is the card — the rest of your text won’t fit on it'
+                : 'this is the card; any link posts under it')+'</div>';
+          host.querySelector('img').src=objUrl;
+        }
+      }catch(_){ host.classList.add('hidden'); }
+      busy=false;
+    };
+    return (text,bg,framed)=>{ want={text,bg,framed}; clearTimeout(timer); timer=setTimeout(draw, 320); };
+  }
   // Render + upload the card and return the note content: the image, then the links, LAST.
   // The words are not repeated underneath — the card is a picture OF them, so posting them again is the
   // same thing twice. The link goes at the end because that is the one part a reader has to be able to
@@ -7147,7 +7173,8 @@
       <div id="cmp-preview" class="note-preview hidden"></div>
       <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(reply||quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
-      ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>`}
+      ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
+      <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px">💾 Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
@@ -7311,13 +7338,12 @@
       let _bgFramed=false;   // 🖼️ Framed card (AI menu) — a border on the 🎨 background post
       // The modal already previews the background by tinting the textarea, so preview the frame there too —
       // otherwise the only way to find out what "framed" looks like is to post it.
-      const _bgFramePreview=()=>{ try{ ta.classList.toggle('cmp-bg-framed', !!(_bgFramed && _bgChoice)); }catch(_){ } };
+      const _cardPrev=makeCardPreview($('#cmp-cardprev',root)||document.createElement('div'));
+      const _bgFramePreview=()=>_cardPrev(ta.value, _bgChoice, _bgFramed);
       { const bgBtn=$('#cmp-bg-btn',root), strip=$('#cmp-bg-strip',root);
         if(bgBtn && strip){
           const select=(bg,el)=>{ _bgChoice=bg; $$('.cmp-swatch',strip).forEach(s=>s.classList.toggle('on', s===el));
-            if(bg){ ta.classList.add('cmp-bg-on'); ta.style.background=_bgCss(bg); ta.style.color=bg.fg||'#fff'; }
-            else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; }
-            _bgFramePreview();   // dropping the background must drop its frame preview with it
+            _bgFramePreview();   // dropping the background must drop its preview with it
           };
           const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='Aa';
           none.onclick=()=>select(null,none); strip.appendChild(none);
@@ -7329,7 +7355,8 @@
           // the rest — remaining text, source link — underneath, where a URL is still clickable. Only a
           // draft with NO words left has nothing to draw.
           const _tooBig=()=>!_BG_WORDS(ta.value);
-          ta.addEventListener('input', ()=>{ if(_bgChoice && _tooBig()){ select(null,none);
+          ta.addEventListener('input', ()=>{ _bgFramePreview();
+            if(_bgChoice && _tooBig()){ select(null,none);
             $('#cmp-status',root).textContent='background removed — nothing left to put on the card';
             setTimeout(()=>{ const st=$('#cmp-status',root); if(st && st.textContent.startsWith('background removed')) st.textContent=''; },2500); } });
         }
