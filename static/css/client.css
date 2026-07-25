@@ -742,11 +742,13 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    specificity and win on order — a bare `.rb-h3-btn:hover` loses to that theme rule and does nothing. */
 .rb-section h3.rb-h3-btn:hover{color:var(--neon)}
 .rb-h3-btn:focus-visible{outline:2px solid var(--neon);outline-offset:3px;border-radius:6px}
-/* Rail rows: the SAME .notif markup the Notifications view renders, compacted for a 340px rail and
-   given a card surface so they read as list items here rather than full-width feed rows. */
-.rightbar .notif{padding:9px 10px;margin-bottom:7px;border:1px solid var(--line);border-radius:11px;
-  background:var(--panel);font-size:13.5px;cursor:pointer;transition:.15s}
-.rightbar .notif:hover{border-color:var(--neon);background:var(--panel2)}
+/* Rail rows: the SAME .notif markup the Notifications view renders, only COMPACTED — padding and type
+   size, nothing else. No card treatment: the base .notif is already a flat row with a hairline
+   border-bottom, so five bordered+filled tiles were five boxes inside a box. Letting the base rule show
+   through means one hairline between rows and no fill, matching the rails' own borderless look. */
+.rightbar .notif{padding:10px 2px;font-size:13.5px;cursor:pointer;transition:background .15s}
+.rightbar .notif:hover{background:rgba(var(--accent-rgb),.08)}
+.rightbar .notif:last-child{border-bottom:0}   /* no trailing rule above "Get the app" */
 .rightbar .notif *{max-width:100%}          /* quoted context / previews can't widen the column */
 .rightbar .notif .notif-av{width:24px;height:24px}
 .rightbar .notif > .ic{font-size:15px;width:18px}
@@ -763,7 +765,10 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    itself still shows them in full. */
 .rightbar .notif .notif-ctx .txt,
 .rightbar .notif .notif-said{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.rightbar .notif .notif-ctx .quoted{padding:7px 8px}
+/* The quoted post it happened to: an indent rule, not a bordered tile. With the row's own card gone this
+   was the only box left in the column, and a box nested in a flat row reads as the row's frame. */
+.rightbar .notif .notif-ctx .quoted{padding:1px 0 1px 9px;border:0;border-left:2px solid var(--line);
+  border-radius:0;background:transparent;box-shadow:none}
 .rightbar .notif .notif-ctx .hd .handle,
 .rightbar .notif .notif-ctx .hd .time{display:none}   /* the name + a 2-line snippet is the whole job here */
 .rightbar .notif .notif-ctx img,
