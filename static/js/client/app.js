@@ -6267,7 +6267,22 @@
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
     let _detachKeys=()=>{};
-    const close=()=>{ _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    // Give the popover itself the focus. Without it a picker was only keyboard-navigable when whatever had
+    // focus happened to be harmless: _popKeys ignores keys aimed at a text field (so you can keep typing
+    // while one is open), and the boxes these hang off — AI Chat's compose, the post composer — hold the
+    // caret practically all the time. So the menu opened and then swallowed every arrow key.
+    // Focusing the POP rather than its first item keeps the .kb cursor as the single indicator instead of
+    // racing a browser focus ring.
+    const _prevFocus = document.activeElement;
+    pop.tabIndex = -1;
+    try{ pop.focus({preventScroll:true}); }catch(_){ }
+    const close=()=>{
+      // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
+      // Only when the popover still owns it — an item's action may have moved focus deliberately.
+      const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
+      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close);
+      if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
+    };
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works
@@ -6288,7 +6303,22 @@
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
     let _detachKeys=()=>{};
-    const close=()=>{ _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    // Give the popover itself the focus. Without it a picker was only keyboard-navigable when whatever had
+    // focus happened to be harmless: _popKeys ignores keys aimed at a text field (so you can keep typing
+    // while one is open), and the boxes these hang off — AI Chat's compose, the post composer — hold the
+    // caret practically all the time. So the menu opened and then swallowed every arrow key.
+    // Focusing the POP rather than its first item keeps the .kb cursor as the single indicator instead of
+    // racing a browser focus ring.
+    const _prevFocus = document.activeElement;
+    pop.tabIndex = -1;
+    try{ pop.focus({preventScroll:true}); }catch(_){ }
+    const close=()=>{
+      // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
+      // Only when the popover still owns it — an item's action may have moved focus deliberately.
+      const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
+      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close);
+      if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
+    };
     const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });
@@ -10902,6 +10932,17 @@
       _ai.histApplying=false;
       try{ ta.setSelectionRange(v.length, v.length); }catch(_){ }
     });
+    // Page Up/Down scroll the TRANSCRIPT while the caret stays in the box. Every scroll key bails on a
+    // focused text field, and this field holds the caret the whole session — so a long reply arriving
+    // above you could not be scrolled without leaving the box first. The compose box grows to at most a
+    // couple of hundred pixels, so these keys are not doing anything for the caret here.
+    ta.addEventListener('keydown', e=>{
+      if(e.key!=='PageUp' && e.key!=='PageDown') return;
+      if(e.ctrlKey||e.metaKey||e.altKey) return;
+      const box=$('#ai-msgs'); if(!box) return;
+      e.preventDefault();
+      box.scrollTop += (e.key==='PageDown' ? 1 : -1) * Math.max(120, box.clientHeight-64);
+    });
     // Typing anything drops you out of history onto a fresh draft — otherwise a recalled line you had begun
     // editing would be silently thrown away by the next ↓.
     ta.addEventListener('input',()=>{ if(!_ai.histApplying) _ai.histIdx=-1;
@@ -13512,7 +13553,7 @@
       +[['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],['Esc','Close']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
-      +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
+      +[['S','Share (also Markets)'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
       +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['V','Play its video, or open its link'],['Enter','Open thread'],['Esc','Deselect']]
@@ -13622,7 +13663,7 @@
     // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
     // up here without a second place to remember.
     '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
-    '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
+    '#feed .news-card',                  // News (its own keys — see _CARD_KEYS)
     // Files (a GRID — see _rowStride). "↓ Load more" is a row too: it sits at the END of the same grid,
     // and without it the cursor stopped dead on the last tile — Tab could not save you either, because
     // while a row is selected Tab is scoped to THAT row's own controls.
@@ -13742,6 +13783,13 @@
     if(t.id==='tl-cmp-ta'){
       _cmpLeft=true;
       try{ const rows=_noteEls(); if(rows.length) _selectNote(rows[0]); }catch(_){ }
+    }
+    // AI Chat runs oldest→newest and you are always looking at the BOTTOM of it, so leaving the compose
+    // box hands the cursor to the LAST message — the reply that just arrived. Landing on nothing meant the
+    // next j jumped to the top of the whole conversation, which is why the buttons on a freshly generated
+    // effect were so hard to get to.
+    else if(t.id==='ai-input'){
+      try{ const rows=_noteEls(); if(rows.length) _selectNote(rows[rows.length-1]); }catch(_){ }
     }
   }, true);
 
@@ -14002,13 +14050,17 @@
   // sheet is generated from this, so whichever is live is what the sheet shows.
   const _postKeys = () => _vimOn() ? { r:'reply', b:'repost', q:'quote', f:'react', z:'tip' }
                                    : { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
-  // A news item has its own two actions, and they are plain buttons in the card rather than the post
-  // action row — so they are matched by class instead of data-a.
-  const _NEWS_KEYS = { s:'.news-post', u:'.news-sum' };
-  // …and the file manager's, same shape. The card already carries Open / ⧉ Copy / 📁 Move / ✕ Delete as
-  // real controls, so a shortcut just presses the right one and every guard comes along with it — `d` goes
-  // through delBlob's "Delete this blob?" confirm exactly as the button does.
-  const _FILE_KEYS = { o:'a', c:'.copy', m:'.movebtn', d:'.del' };
+  // Cards that carry their OWN buttons rather than the post action row, so they are matched by class
+  // instead of data-a: which letter presses which of the card's controls. One table because all three
+  // worked the same way already, and adding a fourth card type should not mean a fourth copy of it.
+  // Pressing the card's real button means its guards come along — `d` still goes through delBlob's
+  // "Delete this blob?" confirm exactly as clicking ✕ does, and Markets' S is the same Share the News
+  // card already used, so the letter means one thing everywhere.
+  const _CARD_KEYS = [
+    ['.file-card', { o:'a', c:'.copy', m:'.movebtn', d:'.del' }],
+    ['.news-card', { s:'.news-post', u:'.news-sum' }],
+    ['.mkts-card', { s:'.mkts-post' }],
+  ];
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
@@ -14085,18 +14137,12 @@
         else if(el.matches('.nav-item[data-view="ai"]')) _focusSoon('#ai-input');
         return;
       }
-      if(el.matches('.file-card')){
-        const fsel=_FILE_KEYS[k]; if(!fsel) return;
-        const fb=el.querySelector(fsel);
-        if(!fb) return;                       // e.g. an encrypted card, which has no ⧉ Copy
-        e.preventDefault(); fb.click();
-        return;
-      }
-      if(el.matches('.news-card')){
-        const nsel=_NEWS_KEYS[k]; if(!nsel) return;
-        const nb=el.querySelector(nsel);
-        if(!nb) return;                       // Summarize is absent on a Nostr-only node
-        e.preventDefault(); nb.click();
+      for(const [sel,map] of _CARD_KEYS){
+        if(!el.matches(sel)) continue;
+        const csel=map[k]; if(!csel) return;  // this card type owns its letters; don't fall through
+        const cb=el.querySelector(csel);
+        if(!cb) return;                       // e.g. an encrypted file (no ⧉ Copy), or a Nostr-only node
+        e.preventDefault(); cb.click();       //      where News has no Summarize
         return;
       }
       const a=_postKeys()[k]; if(!a) return;
