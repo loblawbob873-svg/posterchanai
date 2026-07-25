@@ -59,6 +59,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "blood": "Splatter blood all over an attached image: blood",
         "bullethole": "Punch bullet holes all over an attached image: bullethole",
         "fire": "Set an attached image on fire: fire",
+        "nakedman": "Overlay a fat cartoon man dancing (with a huge penis) on an attached image → 8s MP4: nakedman",
         "gay": "Stamp a big red GAY rubber stamp on an attached image: gay",
         "hag": "Stamp a big red HAG stamp + draw a cute old lady on an attached image: hag",
         "goon": "Stamp a big red GOON rubber stamp on an attached image: goon",
@@ -163,7 +164,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "saved": "pins",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "hag", "goon",
+        "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze",
@@ -173,7 +174,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
-    ANIMATED_EFFECTS = {"chimp", "clay", "reze"}
+    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "nakedman"}
     OVERLAY_MOTIONS = {"glow"}
     # --- effect modifier combination rules (ONE source of truth: the command path, the
     # media API and the web studio all resolve combos through check_motion_combo) ---
@@ -564,6 +565,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._bullethole_command(attachments)
         elif command == "fire":
             return await self._fire_command(attachments)
+        elif command == "nakedman":
+            return await self._nakedman_command(attachments)
         elif command == "alive":
             return await self._alive_command(arg, attachments)
         elif command == "glow":

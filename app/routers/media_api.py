@@ -99,7 +99,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse"):
         return {"error": f"unsupported command '{command}'"}
 
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
@@ -183,6 +183,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.bullethole_attachments, attachments)
         elif command == "fire":
             outputs, summary = await asyncio.to_thread(effects_service.fire_attachments, attachments)
+        elif command == "nakedman":
+            outputs, summary = await asyncio.to_thread(effects_service.nakedman_attachments, attachments)
         elif command == "alive":
             from app.services import parallax_service
             outputs, summary = await asyncio.to_thread(parallax_service.alive_attachments, attachments, arg)
