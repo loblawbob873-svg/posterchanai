@@ -3541,7 +3541,7 @@ body.modal-open .mobilenav{display:none}
 .aw-card.sel,.ai-welcome .ai-cmd.sel{outline:2px solid var(--neon);outline-offset:2px}
 /* The detail views that are now navigable too: an open 4chan thread, a chat room, Markets' tickers. */
 .fc-post.sel,.chat-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
-.mkts-card.sel{outline:2px solid var(--neon);outline-offset:2px}
+.mkts-card.sel,.bl-more.sel{outline:2px solid var(--neon);outline-offset:2px}
 /* Cursor for the More / Files / Discover / Games sheets, which are arrow/vim navigable grids now. */
 .more-item.kb{outline:2px solid var(--neon);outline-offset:2px}
 /* A thread thumbnail is an <a> with no href — it only became reachable by being given a tabindex, so it

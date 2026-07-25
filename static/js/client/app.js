@@ -8555,7 +8555,7 @@
       return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
         <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):(((b.size||0)/1024|0)+'KB')}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
-    }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
+    }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
     $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
@@ -8568,6 +8568,10 @@
       chip.ondragleave=()=>chip.classList.remove('drop');
       chip.ondrop=e=>{ e.preventDefault(); chip.classList.remove('drop'); const sha=e.dataTransfer&&e.dataTransfer.getData('text/sha'); if(sha){ FilesIdx.move(sha, chip.dataset.folder); toast('moved to '+(chip.dataset.folder||'All')); renderBlossom(); } };
     });
+    // Re-attach the keyboard cursor. _selEl() re-finds the row by key and re-adds .sel, but only when
+    // something asks it to — so after "Load more" redraws the grid the highlight vanished until the next
+    // keypress, even though the selection was still live (the next Enter loaded another page just fine).
+    try{ _selEl(); }catch(_){ }
   }
   function _moveMenu(anchor, sha){
     const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
@@ -13608,7 +13612,10 @@
     // up here without a second place to remember.
     '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
     '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
-    '#feed .file-card',                  // Files (a GRID — see _rowStride)
+    // Files (a GRID — see _rowStride). "↓ Load more" is a row too: it sits at the END of the same grid,
+    // and without it the cursor stopped dead on the last tile — Tab could not save you either, because
+    // while a row is selected Tab is scoped to THAT row's own controls.
+    '#feed .file-card, #feed .bl-more',
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
     // AI Chat's splash — the starter cards you are greeted with, plus the `help` chip under them. They
     // were real buttons, so Tab reached them, but only one at a time: twenty cards meant twenty presses
