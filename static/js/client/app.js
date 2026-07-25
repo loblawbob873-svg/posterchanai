@@ -6229,10 +6229,16 @@
       const k=e.key; let d=0;
       if(k==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); return; }
       if(k==='Enter'||k===' '){ if(i>=0){ e.preventDefault(); e.stopPropagation(); activate(els[i]); } return; }
-      if(k==='ArrowRight') d=1; else if(k==='ArrowLeft') d=-1;
-      else if(k==='ArrowDown') d=rowLen(); else if(k==='ArrowUp') d=-rowLen();
-      else if(k==='Home'){ e.preventDefault(); e.stopPropagation(); i=0; mark(); return; }
-      else if(k==='End'){ e.preventDefault(); e.stopPropagation(); i=els.length-1; mark(); return; }
+      // hjkl move here too when Vim keys are on — the popover is a grid like any other, and having to
+      // switch back to the arrows just to pick a reaction is exactly the break in flow vim mode avoids.
+      // (g/G are single-press here: there is no other g binding inside a popover to disambiguate from.)
+      const vim=_vimOn();
+      if(k==='ArrowRight'||(vim&&k==='l')) d=1;
+      else if(k==='ArrowLeft'||(vim&&k==='h')) d=-1;
+      else if(k==='ArrowDown'||(vim&&k==='j')) d=rowLen();
+      else if(k==='ArrowUp'||(vim&&k==='k')) d=-rowLen();
+      else if(k==='Home'||(vim&&k==='g')){ e.preventDefault(); e.stopPropagation(); i=0; mark(); return; }
+      else if(k==='End'||(vim&&k==='G')){ e.preventDefault(); e.stopPropagation(); i=els.length-1; mark(); return; }
       else return;
       e.preventDefault(); e.stopPropagation();
       i = i<0 ? (d>0?0:els.length-1) : Math.max(0, Math.min(els.length-1, i+d));
@@ -13308,10 +13314,11 @@
     const b=el.querySelector('.act[data-a="'+name+'"]');
     if(b) b.click();
   }
-  // VIM MODE puts the post actions on Alt, leaving the bare letters to movement. Three of these are view
-  // shortcuts in normal mode (Alt+B bookmarks, Alt+E nostrverse, Alt+R meme) — in Vim mode the POST action
-  // wins, and those views stay reachable the vim way: h into the nav rail, j/k, Enter.
-  const _VIM_ALT_POST = { r:'reply', b:'repost', q:'quote', z:'tip', e:'effect' };
+  // Post actions on Alt, for the keys that are NOT already views: Alt+Q quote, Alt+Z tip (and Alt+L react,
+  // which is in SHORTCUTS and works in both modes). Alt+R/B/E deliberately stay Meme / Bookmarks /
+  // Nostrverse — taking them cost three view shortcuts and bought nothing, because bare r, b and e do not
+  // collide with hjklgG and still act on the post in Vim mode. `l` was the only real collision.
+  const _VIM_ALT_POST = { q:'quote', z:'tip' };
   function _shortcutHelp(){
     const POSTLBL={ reply:'Reply to the selected post', repost:'Boost the selected post',
                     quote:'Quote the selected post', tip:'Tip the selected post', effect:'Effect on the selected post' };
