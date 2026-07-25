@@ -6918,7 +6918,14 @@
   const Drafts = {
     key(){ return 'pc_drafts_' + ((typeof ME!=='undefined' && ME && ME.pubkey) || 'anon'); },
     all(){ try{ return JSON.parse(localStorage.getItem(this.key())||'[]'); }catch(_){ return []; } },
-    _save(a){ try{ localStorage.setItem(this.key(), JSON.stringify(a.slice(0,300))); }catch(_){} bumpDraft(); this._sync(a); },
+    // DATA SAFETY: keep EVERY live draft; only bound tombstones. The old flat slice(0,300)-by-ts dropped
+    // whatever was oldest — so a burst of freshly-timestamped tombstones (a delete storm / rolling-autosave
+    // churn) evicted real drafts out of the cap and destroyed them. A tombstone only has to survive long
+    // enough to propagate its delete, so a small recent set suffices; a live draft is NEVER dropped for one.
+    _cap(a){ const live=[], tomb=[]; for(const d of (a||[])){ if(d&&d.id){ (d.del?tomb:live).push(d); } }
+      live.sort((x,y)=>(y.ts||0)-(x.ts||0)); tomb.sort((x,y)=>(y.ts||0)-(x.ts||0));
+      return [...live.slice(0,2000), ...tomb.slice(0,120)]; },
+    _save(a){ const c=this._cap(a); try{ localStorage.setItem(this.key(), JSON.stringify(c)); }catch(_){} bumpDraft(); this._sync(c); },
     get(id){ return this.all().find(x=>x.id===id && !x.del); },
     // live = real drafts (tombstones + empties hidden); all() keeps tombstones for the sync merge.
     live(){ return this.all().filter(d=> d && !d.del && (d.text||'').trim()); },
@@ -6945,8 +6952,8 @@
         if(r && r.ok && Array.isArray(r.drafts)){
           // union by id, newest ts wins — never drops a draft made offline on either device
           const map={}; [...r.drafts, ...this.all()].forEach(d=>{ if(d&&d.id&&(!map[d.id]||(d.ts||0)>=(map[d.id].ts||0))) map[d.id]=d; });
-          const merged=Object.values(map).sort((a,b)=>(b.ts||0)-(a.ts||0));
-          try{ localStorage.setItem(this.key(), JSON.stringify(merged.slice(0,300))); }catch(_){}
+          const merged=this._cap(Object.values(map));   // live never evicted by tombstones (see _cap)
+          try{ localStorage.setItem(this.key(), JSON.stringify(merged)); }catch(_){}
           bumpDraft(); if(VIEW==='drafts') renderDrafts();
         } }catch(_){} },
   };

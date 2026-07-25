@@ -2114,6 +2114,20 @@ class DraftsReq(BaseModel):
     drafts: list | None = None   # present → save the list; absent → load
 
 
+def _cap_drafts(entries) -> list:
+    """DATA SAFETY: keep EVERY live draft, only bound tombstones. The old `sorted(...)[:300]` dropped the
+    oldest entries by timestamp — so a burst of freshly-stamped tombstones (a delete storm / autosave
+    churn) evicted real drafts out of the cap and lost them, with no older relay copy to recover from
+    (kind-30078 is replaceable). A tombstone only needs to survive long enough to propagate its delete, so
+    a bounded recent set is plenty; a live draft is NEVER dropped in favour of one. Mirrors Drafts._cap on
+    the client."""
+    live = [d for d in entries if isinstance(d, dict) and d.get("id") and not d.get("del")]
+    tomb = [d for d in entries if isinstance(d, dict) and d.get("id") and d.get("del")]
+    live.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+    tomb.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+    return live[:2000] + tomb[:120]
+
+
 @router.post("/drafts")
 async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
     """Save (when `drafts` provided) or load the user's drafts — stored as one encrypted doc under
@@ -2143,7 +2157,7 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
                 cur = merged.get(d["id"])
                 if cur is None or (d.get("ts") or 0) >= (cur.get("ts") or 0):
                     merged[d["id"]] = d
-        out = sorted(merged.values(), key=lambda x: x.get("ts") or 0, reverse=True)[:300]
+        out = _cap_drafts(merged.values())
         await store.put_doc(port, sk, "pcai:drafts", {"drafts": out})
         return JSONResponse({"ok": True, "drafts": out})
     doc = await store.get_doc(port, "pcai:drafts", seckey=sk)
