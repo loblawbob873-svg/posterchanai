@@ -13466,9 +13466,11 @@
         if(sc) sc.scrollTop = top ? 0 : sc.scrollHeight; };
       if(k==='G'){ take(rows.length-1); _edge(false); _gPending=0; return; }
       if(k==='g'){
-        const now=Date.now();
-        if(_gPending && now-_gPending<700){ _gPending=0; take(0); _edge(true); }
-        else { _gPending=now; e.preventDefault(); e.stopPropagation(); }   // wait for the second g
+        // No time limit on the second g. A 700ms window meant a slower double-tap silently did nothing,
+        // and vim itself does not race you either: a pending g simply waits, and ANY other key clears it
+        // (see below), so it cannot get stuck armed.
+        if(_gPending){ _gPending=0; take(0); _edge(true); }
+        else { _gPending=1; e.preventDefault(); e.stopPropagation(); }
         return;
       }
       _gPending=0;
