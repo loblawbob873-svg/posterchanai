@@ -13292,7 +13292,12 @@
     };
     document.addEventListener('keydown', onKey, true);
   }
-  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box); }
+  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box);
+    // More / Files / Discover / Games are all the same shape: a .more-grid of .more-item buttons. Tab and
+    // Escape they already had; this gives them the grid cursor the effects and emoji pickers use (arrows,
+    // and hjkl with Vim keys on). Done here rather than in each of the four, so a fifth sheet gets it free.
+    if(_box && _box.querySelector('.more-grid .more-item')) _popKeys(_box, '.more-item', el=>el.click(), closeModal);
+  }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   // In-app confirm — a themed replacement for native window.confirm(). WHY it exists: a native dialog in
   // the Electron desktop shell blurs the renderer and the browser→renderer re-focus handshake goes stale,
@@ -13847,6 +13852,34 @@
     }, true);
   })();
 
+  // Games: type your move. Chess already took typed moves (it has a move box); the rest were tap-only,
+  // which is worst in Hangman — a word game you could not type a letter into. Every board already renders
+  // its moves as elements carrying the value, so a keypress just presses the right one: a–z guesses a
+  // letter, 1–9 plays that Tic-Tac-Toe cell (the cells are NUMBERED on screen for exactly this) or drops
+  // into that Connect Four column. Blackjack and Hold'em are left alone — their actions are ordinary
+  // buttons in a row, which Tab already handles.
+  // Nothing here can collide with the post keys or hjkl: both of those bail when no row is selected, and
+  // a game view has no rows.
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.altKey||e.ctrlKey||e.metaKey) return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
+      const k=(e.key||'').toLowerCase();
+      let b=null;
+      if(/^[a-z]$/.test(k)) b=document.querySelector(`#feed .hm-key[data-l="${k}"]:not([disabled])`);
+      else if(/^[1-9]$/.test(k)){
+        b=document.querySelector(`#feed .ttt-cell.empty[data-i="${+k-1}"]`)
+          || document.querySelector(`#feed .c4-cell[data-c="${+k-1}"]`);
+      }
+      if(!b || b.offsetParent===null) return;
+      e.preventDefault();
+      b.click();
+    });
+  })();
+
   // Alt+← goes BACK out of whatever you opened. Every detail view — an article, a 4chan thread, a chat
   // room, a community, a stream, a listing, a DM — puts a "←" button in its header, and every one of them
   // was mouse-only: you could open the thing from the keyboard and then had no way out of it.
@@ -13880,7 +13913,8 @@
   // ...and AI Chat's toolbar (🏠 Home, the conversation picker, ＋ New, Agents, 🔊, 🗑️), which had the same
   // problem: real buttons, but only after Tab had walked the whole sidebar. Landing on it puts plain Tab
   // on the rest of the row, since nothing is selected there.
-  const _ACTION_BAR = ['#feed .streams-top', '#feed .art-top', '#feed .ai-bar'];
+  const _ACTION_BAR = ['#feed .streams-top', '#feed .art-top', '#feed .ai-bar',
+                       '#feed .drop-zone'];   // Files — "choose files" is this view's main action
   function _viewAction(){
     for(const sel of _ACTION_BAR){
       for(const bar of document.querySelectorAll(sel)){
