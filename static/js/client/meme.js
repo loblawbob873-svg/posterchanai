@@ -189,7 +189,7 @@
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
-        <button class="btn btn-ghost small" id="mb-clear" title="Remove every layer and start a fresh build">🧹 Clear all</button>
+        <button class="btn btn-danger small" id="mb-clear" title="Remove every layer and start a fresh build">🧹 Clear all</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
         </select>
