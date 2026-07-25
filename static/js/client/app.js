@@ -2456,13 +2456,15 @@
   async function _aiFramedCard(ta, setSt, o){
     const v=(ta.value||'').trim();
     if(!v){ toast('write something, or paste a link'); return; }
-    // THE point of this option: paste a link, get the AI summary laid out as a card. With nothing but a
-    // URL in the box there are no words to draw, so run the same summarizer ✨ AI Enhancer uses first —
-    // it writes the post AND appends the link, which buildBgPost then splits into card text vs. the
-    // clickable link under the image.
-    if(!_BG_WORDS(v)){
-      const m=v.match(/https?:\/\/\S+/);
-      if(!m){ toast('write something, or paste a link'); return; }
+    // THE point of this option: paste a link, get the FULL AI summary laid out as a card. Summarize when
+    // the box holds no real draft yet — nothing but a URL, OR just a short headline beside it (how a
+    // SHARED article opens the composer: "Title\n\nlink"). Without this the title counted as "words", so
+    // the summarizer was skipped and the card showed the bare headline instead of the AI description — the
+    // "new post modal is just the link title" bug. A real written post (multi-line, or long) is left alone.
+    const m=v.match(/https?:\/\/\S+/);
+    const words=_BG_WORDS(v);
+    const looksLikeBareLinkOrTitle = !!m && (!words || (!words.includes('\n') && words.length < 200));
+    if(looksLikeBareLinkOrTitle){
       setSt('summarizing link…');
       try{
         const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -2470,6 +2472,8 @@
         if(!r || !r.text){ setSt('couldn’t summarize: '+((r&&r.error)||'no content')); return; }
         ta.value=r.text; ta.dispatchEvent(new Event('input'));
       }catch(_){ setSt('summarize failed'); return; }
+    } else if(!words){
+      toast('write something, or paste a link'); return;   // no link and no words → nothing to draw
     }
     const on=!o.framed;
     o.set(on);
