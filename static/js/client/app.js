@@ -13132,6 +13132,7 @@
   // in the timeline and search boxes in half the views, so an unmodified "m" would be a keystroke the user
   // meant to type. Alt is also what the sidebar's own access keys would be, so it reads as "the app's key".
   const SHORTCUTS = [
+    ['p', '@compose',      'New post'],
     ['h', 'home',          'Home'],
     ['i', 'ai',            'PosterChan AI'],
     ['n', 'notifications', 'Notifications'],
@@ -13163,6 +13164,12 @@
       const sb=$('#sidebar'); if(sb && sb.classList.contains('open')===false) sb.classList.add('open');
       if(sub && sub.scrollIntoView) sub.scrollIntoView({block:'nearest'});
       return;
+    }
+    if(target==='@compose'){
+      // The one shortcut that isn't a view. Guests get the same nudge the compose button gives them
+      // rather than an empty modal they cannot post from.
+      if(GUEST){ _guestPrompt(); return; }
+      compose(); return;
     }
     if(target==='@help'){ _shortcutHelp(); return; }
     switchView(target);
