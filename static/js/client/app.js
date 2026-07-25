@@ -2448,13 +2448,24 @@
   // 🖼️ Framed card — the 🎨 background post with a border drawn round it. Shared by both composers (the
   // timeline's inline one and the modal), which keep their own armed-background state, so the caller
   // passes its state in and takes the new value back rather than this reaching for a global.
-  function _aiFramedCard(ta, setSt, o){
+  async function _aiFramedCard(ta, setSt, o){
     const v=(ta.value||'').trim();
-    if(!v){ toast('write something first'); return; }
-    if(v.length>_BG_MAX){ setSt(`a framed card needs ${_BG_MAX} characters or fewer`); return; }
-    // Same rule as the background it is drawn on: the card renders your TEXT, so a link in the box would
-    // become a picture of a URL.
-    if(/https?:\/\/|\/blossom\/|!\[/i.test(v)){ setSt('a framed card is text only — remove the link or attached media'); return; }
+    if(!v){ toast('write something, or paste a link'); return; }
+    // THE point of this option: paste a link, get the AI summary laid out as a card. With nothing but a
+    // URL in the box there are no words to draw, so run the same summarizer ✨ AI Enhancer uses first —
+    // it writes the post AND appends the link, which buildBgPost then splits into card text vs. the
+    // clickable link under the image.
+    if(!_BG_WORDS(v)){
+      const m=v.match(/https?:\/\/\S+/);
+      if(!m){ toast('write something, or paste a link'); return; }
+      setSt('summarizing link…');
+      try{
+        const r=await fetch('/client/compose-from-url',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({url:m[0]})}).then(r=>r.json());
+        if(!r || !r.text){ setSt('couldn’t summarize: '+((r&&r.error)||'no content')); return; }
+        ta.value=r.text; ta.dispatchEvent(new Event('input'));
+      }catch(_){ setSt('summarize failed'); return; }
+    }
     const on=!o.framed;
     o.set(on);
     if(!on){ setSt('framed card off'); return; }
@@ -2662,20 +2673,19 @@
         const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); _tlBgPreview(); };
         none.onclick=()=>pick(none,null);
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
-        // A background post renders the TEXT onto an image, so a link or attached media in the box gets
-        // drawn as the card's wording — you post a picture of a URL. The modal composer already refused
-        // that; this one only checked length, which is how it happened here.
-        const _hasLink=()=>/https?:\/\/|\/blossom\/|!\[/i.test(ta.value||'');
-        const _bgWhyNot=()=>_hasLink() ? 'a background post is text only — remove the link or attached media'
-          : (ta.value.trim().length>_BG_MAX ? `background needs ${_BG_MAX} characters or fewer` : '');
+        // The only thing a card cannot be made from is NO WORDS (a bare link). Length and links are no
+        // longer refusals: buildBgPost puts the hook on the card and everything else — the rest of the
+        // text, the source link — underneath it, where a URL is still clickable.
+        const _bgWhyNot=()=>_BG_WORDS(ta.value) ? ''
+          : 'that is just a link — use 🤖 AI → 🖼️ Framed card to turn it into a card';
         CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch';
           s.title=bg.id; s.style.background=_bgCss(bg);
           if(bg.deco) s.textContent=bg.deco[0];   // holiday swatches are recognisable, as in the modal
           bgsRow.appendChild(s); marks.push(s);
           s.onclick=()=>{ const why=_bgWhyNot(); if(why){ st.textContent=why; return; } pick(s,bg); }; });
-        // …and drop it again if the text later grows a link, rather than silently rendering one.
+        // …and drop it again if the words are all deleted, leaving nothing to draw.
         ta.addEventListener('input', ()=>{ if(_tlBg && _bgWhyNot()){ pick(none,null);
-          st.textContent='background removed — '+_bgWhyNot();
+          st.textContent='background removed — nothing left to put on the card';
           setTimeout(()=>{ if(st.textContent.startsWith('background removed')) st.textContent=''; }, 2800); } });
         toggleBg=()=>{ const show=bgsRow.classList.toggle('hidden')===false;
           if(!show && _tlBg) pick(none,null);   // collapsing the row must not leave a hidden background armed
@@ -2697,13 +2707,15 @@
       // 🎨 renders the text to an image and posts THAT, so the styled text survives in every client.
       // A poll can't also be a background (its question must stay readable text), so poll wins.
       if(_tlBg && !isPoll){
-        if(text.length>_BG_MAX){ st.textContent=`background needs ${_BG_MAX} characters or fewer`; return null; }
+        if(!_BG_WORDS(text)){ st.textContent='nothing to put on the card — write something, or use 🤖 AI → 🖼️ Framed card to summarize the link'; return null; }
         st.textContent='rendering…';
-        const blob=await renderBgPost(text, _tlBg, _tlBgFramed);
+        const built=await buildBgPost(text, _tlBg, _tlBgFramed);
         st.textContent='uploading…';
-        const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
-        const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); cwOf(btags);
-        return {kind:1, content:url, tags:btags, what:_tlBgFramed?'posted 🖼️':'posted 🎨'};
+        // imeta from the CONTENT, not the bare image URL: the note may now also carry the source link,
+        // which has no _MEDIA_META entry and is correctly skipped.
+        const btags=[]; imetaTagsFor(built.content).forEach(t=>btags.push(t)); cwOf(btags);
+        mentionTags(built.content).forEach(t=>{ if(!btags.some(x=>x[0]==='p'&&x[1]===t[1])) btags.push(t); });
+        return {kind:1, content:built.content, tags:btags, what:_tlBgFramed?'posted 🖼️':'posted 🎨'};
       }
       mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
       imetaTagsFor(text).forEach(t=>tags.push(t));
@@ -7001,7 +7013,8 @@
     {id:'thanksgiving', colors:['#c0392b','#e67e22','#6e2c00'], deco:['🍂','🦃','🍁']},
     {id:'easter',       colors:['#a1c4fd','#fbc2eb'], fg:'#3a2a4a', deco:['🐰','🌷','🥚']},
   ];
-  const _BG_MAX=200;   // backgrounds are for SHORT text only (longer posts fall back to a plain note)
+  // (The old _BG_MAX=200 hard refusal is gone: a long draft is no longer rejected, it is split — the hook
+  //  is drawn on the card and the remainder posted beneath it. See _cardHook / buildBgPost.)
   function _bgCss(bg){ return bg.colors.length>1 ? `linear-gradient(135deg,${bg.colors.join(',')})` : bg.colors[0]; }
   function _bgFill(ctx,W,H,bg){ if(bg.colors.length>1){ const g=ctx.createLinearGradient(0,0,W,H); bg.colors.forEach((c,i)=>g.addColorStop(i/(bg.colors.length-1),c)); ctx.fillStyle=g; } else ctx.fillStyle=bg.colors[0]; ctx.fillRect(0,0,W,H); }
   function _bgWrap(ctx, text, maxW){ const out=[]; for(const para of String(text).split('\n')){ if(!para){ out.push(''); continue; } let line=''; for(const word of para.split(/\s+/)){ const t=line?line+' '+word:word; if(ctx.measureText(t).width>maxW && line){ out.push(line); line=word; } else line=t; } if(line) out.push(line); } return out; }
@@ -7061,6 +7074,41 @@
     ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=fs*0.12; ctx.shadowOffsetY=Math.max(1,fs*0.03);
     lines.forEach((l,i)=>ctx.fillText(l, W/2, y0+i*lh));
     return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
+  }
+  // ---- Turning a draft into a background/framed post ----
+  // A card is a PICTURE of your words, so a URL drawn onto it is dead pixels. Everything that is not a
+  // link becomes the card; the links are posted UNDER the image, where they stay clickable. This is what
+  // makes "paste a link → ✨ summarize → 🖼️ card" work: the summarizer returns the post text with the
+  // source URL appended, and the two halves belong in different places.
+  const _BG_WORDS = (t) => String(t||'').replace(/https?:\/\/\S+/g,' ')
+    .replace(/[ \t]+/g,' ').replace(/ *\n */g,'\n').trim();
+  const _CARD_MAX = 240;   // what fits on a 1080² card at a size that still looks designed
+  // The opening HOOK, cut on a sentence boundary so the card never ends mid-word. Text that already fits
+  // is returned untouched (newlines and all) — a short background post must keep behaving exactly as before.
+  function _cardHook(s){
+    const t=String(s||'').trim();
+    if(t.length<=_CARD_MAX) return t;
+    const flat=t.replace(/\s+/g,' ');
+    const win=flat.slice(0,_CARD_MAX+1);
+    let cut=Math.max(win.lastIndexOf('. '), win.lastIndexOf('! '), win.lastIndexOf('? '));
+    // Strongly prefer ending on a full stop: a complete sentence reads as designed, a trailing "…" reads
+    // as truncated. Only fall back to a word cut when the opening sentence is too short to carry the card.
+    if(cut > _CARD_MAX*0.3) return flat.slice(0, cut+1).trim();
+    cut=win.lastIndexOf(' ');
+    return (cut>0 ? flat.slice(0,cut) : flat.slice(0,_CARD_MAX)).trim()+'…';
+  }
+  // Render + upload the card and return the note content: the image, then whatever did not fit on it,
+  // then the links. A short plain background post yields JUST the image URL, exactly as it always did.
+  async function buildBgPost(text, bg, framed){
+    const urls=(String(text||'').match(/https?:\/\/\S+/g)||[]).map(u=>u.replace(/[)\].,>'"]+$/,''));
+    const words=_BG_WORDS(text);
+    const card=_cardHook(words);
+    const blob=await renderBgPost(card||' ', bg, framed);
+    const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
+    const rest=[];
+    if(words && words!==card) rest.push(words);        // the card only showed the hook — keep the rest
+    if(urls.length) rest.push(urls.join(' '));
+    return { url, content: url + (rest.length ? '\n\n'+rest.join('\n\n') : '') };
   }
   // `open` ('poll' | 'ai' | 'react') auto-opens one of the composer's tools after the modal renders. The
   // timeline's inline composer uses it to surface Poll/AI as first-class buttons without reimplementing
@@ -7271,9 +7319,12 @@
             if(bg.deco) s.textContent=bg.deco[0];   // show the holiday emoji so the swatch is recognisable
             s.onclick=()=>select(bg,s); strip.appendChild(s); });
           bgBtn.onclick=(e)=>{ e.stopPropagation(); const on=strip.classList.toggle('hidden')===false; bgBtn.classList.toggle('active',on); };
-          const _tooBig=()=>{ const v=ta.value||''; return v.length>_BG_MAX || /https?:\/\/|\/blossom\/|!\[/i.test(v); };
+          // Length and links no longer disqualify a background: buildBgPost puts the hook on the card and
+          // the rest — remaining text, source link — underneath, where a URL is still clickable. Only a
+          // draft with NO words left has nothing to draw.
+          const _tooBig=()=>!_BG_WORDS(ta.value);
           ta.addEventListener('input', ()=>{ if(_bgChoice && _tooBig()){ select(null,none);
-            $('#cmp-status',root).textContent='background removed — too long or has a link/media';
+            $('#cmp-status',root).textContent='background removed — nothing left to put on the card';
             setTimeout(()=>{ const st=$('#cmp-status',root); if(st && st.textContent.startsWith('background removed')) st.textContent=''; },2500); } });
         }
       }
@@ -7316,15 +7367,16 @@
         if(_bgChoice && !reply && !quote){
           const sb=$('#cmp-send',root); if(sb) sb.disabled=true; $('#cmp-status',root).textContent='rendering…';
           try{
-            const blob=await renderBgPost(text, _bgChoice, _bgFramed);
+            const built=await buildBgPost(text, _bgChoice, _bgFramed);
             $('#cmp-status',root).textContent='uploading…';
-            const url=await uploadBlob(new File([blob], 'post.png', {type:'image/png'}));
+            const url=built.content;   // the image, plus anything that did not fit on the card
             const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
+            mentionTags(url).forEach(t=>{ if(!btags.some(x=>x[0]==='p'&&x[1]===t[1])) btags.push(t); });
             // Save a draft before publishing so the text survives a failure (the styled image is re-rendered
             // from it on retry), and only report success / drop the draft when the relay actually stored it.
             _saveDraftNow(); closeModal();
             const r=await publish(1, url, btags);
-            if(r && r.ok){ _dropDraft(); toast('posted 🎨'); }   // failure toast + kept draft handled by publish()
+            if(r && r.ok){ _dropDraft(); toast(_bgFramed?'posted 🖼️':'posted 🎨'); }   // failure toast + kept draft handled by publish()
             if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
           }catch(err){ committed=false; const sb2=$('#cmp-send',root); if(sb2) sb2.disabled=false;
             if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; }
@@ -7382,8 +7434,8 @@
                 imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
               } else if(typeof _bgChoice!=='undefined' && _bgChoice){        // 🎨 background → render+upload now, post the image
                 if(!text){ st.textContent='write something first'; go.disabled=false; return; }
-                st.textContent='rendering…'; const blob=await renderBgPost(text, _bgChoice, _bgFramed);
-                st.textContent='uploading…'; content=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
+                st.textContent='rendering…'; const _b=await buildBgPost(text, _bgChoice, _bgFramed);
+                st.textContent='uploading…'; content=_b.content;
                 imetaTagsFor(content).forEach(t=>tags.push(t)); _applyCw(tags);
               } else {                                                       // plain text (incl. attached media URLs in the text)
                 if(!text){ st.textContent='write something to schedule'; go.disabled=false; return; }
