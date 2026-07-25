@@ -1639,7 +1639,9 @@
     _lastStreams=streams; _lastCalls=calls;
     if(!uc) return;   // sidebar element absent (mobile) — cached above for the More sheet
     const parts=[];
-    if(users>0) parts.push(`<span class="uc-stat">${WOT_ICON} ${users.toLocaleString()} users</span>`);
+    // "WoT", not "users": the number is the size of the web of trust, and sitting next to "online" and
+    // "on relay" the old label read as a third headcount of this instance rather than the network graph.
+    if(users>0) parts.push(`<span class="uc-stat" title="People in this relay’s web of trust">${WOT_ICON} ${users.toLocaleString()} WoT</span>`);
     if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
     if(relay>0) parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
     // Live activity — ALWAYS shown (even 0) so the streamers/callers counts are always visible; the
@@ -6948,7 +6950,7 @@
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
-    const _stat=`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span>${WOT_ICON} ${_wot.toLocaleString()} users</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span></div>`;
+    const _stat=`<div class="more-stats muted small" style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:-2px 0 12px">${_wot?`<span title="People in this relay’s web of trust">${WOT_ICON} ${_wot.toLocaleString()} WoT</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span></div>`;
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });
@@ -13688,6 +13690,13 @@
     e.preventDefault(); e.stopPropagation();
     try{ t.blur(); }catch(_){ }
     try{ document.body.focus({preventScroll:true}); }catch(_){ }
+    // Leaving the timeline composer hands the cursor back to the FIRST POST rather than to nothing, so
+    // you resume scrolling from a visible position instead of an empty selection — and flag it, so the
+    // k you press next carries on up the timeline instead of dropping you back in the box.
+    if(t.id==='tl-cmp-ta'){
+      _cmpLeft=true;
+      try{ const rows=_noteEls(); if(rows.length) _selectNote(rows[0]); }catch(_){ }
+    }
   }, true);
 
   // ---------- vim movement (opt-in: Settings → "Vim keys") ----------
@@ -13729,7 +13738,9 @@
       const stride=(_vimPane==='feed') ? _rowStride(rows) : 1;
       const cur=_selEl();
       const i=rows.indexOf(cur);
-      const take=(n)=>{ e.preventDefault(); e.stopPropagation(); _selectNote(rows[Math.max(0,Math.min(rows.length-1,n))]); };
+      const take=(n)=>{ e.preventDefault(); e.stopPropagation();
+        if(n>0) _cmpLeft=false;    // landed anywhere but the top row → going back up to the box is armed again
+        _selectNote(rows[Math.max(0,Math.min(rows.length-1,n))]); };
       // scrollIntoView({block:'nearest'}) moves the MINIMUM distance, so selecting the first post leaves
       // everything above it — the composer, the tab bar — still off screen: you could reach the first row
       // but never the top of the view. gg/G (and k held at the first row) drive the scroller explicitly.
@@ -13747,11 +13758,18 @@
       _gPending=0;
       if(k==='j'){ take(i<0?0:i+stride); return; }
       if(k==='k'){
-        if(i<=0){
+        // NO SELECTION is not "already at the first post". `i<0` fell into the branch below, so the very
+        // first k in a view — and every k straight after Escaping out of the composer, which clears the
+        // selection — went directly into the composer instead of moving the cursor. That is the "locked
+        // in the new post box" loop: Escape, press k to carry on scrolling, and you are back inside it.
+        if(i<0){ take(0); _edge(true); return; }
+        if(i===0){
           take(0); _edge(true);
           // …and one more k from the first post lands IN the composer. Revealing it was not enough: you
           // could see the box but still had to reach for the mouse to write. Escape hands focus back.
-          _focusComposer();
+          // Not when you have JUST left it, though: k is also how you scroll up, so re-entering on the
+          // next press made leaving impossible. One j (or any move away) arms it again.
+          if(!_cmpLeft) _focusComposer();
           return;
         }
         take(i-stride); return;
@@ -13774,6 +13792,9 @@
     }, true);   // CAPTURE — vim movement must win over the single-letter post actions (l = react)
   })();
 
+  // Set when you Escape out of the timeline composer, so the next k does not walk straight back in. Any
+  // move away (j) clears it — going up to the box on purpose still works, it just is not automatic.
+  let _cmpLeft=false;
   // The timeline's inline composer, treated as the row ABOVE the first post: k at the top moves into it.
   // Only where it exists (home/global/trending) and is on screen — elsewhere k just stops at the top.
   function _focusComposer(){
@@ -14423,8 +14444,11 @@
       const id=n.dataset.open, ev=Store.get(id); if(!ev) return;   // target not on this relay → no actions
       const body=n.lastElementChild; if(!body) return;
       const bar=document.createElement('div'); bar.className='rbq-bar';
-      bar.innerHTML=`<button class="rbq" data-q="react" data-id="${id}" data-pk="${ev.pubkey}" title="React">♥</button>`
-                   +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply">↩</button>`;
+      // U+FE0E (text presentation) on both glyphs. They already share one class and one set of rules, but
+      // ↩ U+21A9 has an emoji form and the system font was drawing it as the colour ↩️ — so Reply came out
+      // as a coloured badge next to a flat ♥. The selector pins both to the flat text glyph.
+      bar.innerHTML=`<button class="rbq" data-q="react" data-id="${id}" data-pk="${ev.pubkey}" title="React">♥︎</button>`
+                   +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply">↩︎</button>`;
       body.appendChild(bar);
     });
     all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
