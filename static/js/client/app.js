@@ -13256,17 +13256,25 @@
   // directly: that row already carries the guest guard, the already-reposted check, the counts and the
   // toasts, and a second path into them would be a second place for those to drift.
   let _selId=null;
-  const _noteEls = () => [...document.querySelectorAll('#feed article.note[data-id]')];
+  // The rows a keyboard selection can land on. Posts in a feed or a thread; CONVERSATIONS in Messages —
+  // the same gesture, so it is the same code rather than a second selection model bolted on beside it.
+  // First list with any rows on screen wins.
+  const _ROW_SEL = ['#feed article.note[data-id]', '#dm-list .dm-peer[data-peer]'];
+  function _noteEls(){
+    for(const sel of _ROW_SEL){ const els=[...document.querySelectorAll(sel)]; if(els.length) return els; }
+    return [];
+  }
+  const _rowKey = (el) => el && (el.dataset.id || el.dataset.peer || '');
   function _selEl(){
     if(!_selId) return null;
-    const el=_noteEls().find(n=>n.dataset.id===_selId);
+    const el=_noteEls().find(n=>_rowKey(n)===_selId);
     if(el && !el.classList.contains('sel')) el.classList.add('sel');   // survived a re-render → re-mark it
     return el||null;
   }
   function _selectNote(el){
-    document.querySelectorAll('#feed article.note.sel').forEach(n=>n.classList.remove('sel'));
+    document.querySelectorAll('.note.sel,.dm-peer.sel').forEach(n=>n.classList.remove('sel'));
     if(!el){ _selId=null; return; }
-    _selId=el.dataset.id; el.classList.add('sel');
+    _selId=_rowKey(el); el.classList.add('sel');
     el.scrollIntoView({block:'nearest'});
   }
   // The note at the top of what you are looking at — where a selection should START, and where it should
@@ -13299,7 +13307,12 @@
       const k=(e.key||'').toLowerCase();
       if(k==='escape'){ if(_selId){ e.preventDefault(); _selectNote(null); } return; }
       const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
-      if(e.key==='Enter'){ e.preventDefault(); renderThread(el.dataset.id); return; }
+      if(e.key==='Enter'){
+        e.preventDefault();
+        // A post opens its thread; a conversation row just gets clicked, which is what openDm is wired to.
+        if(el.matches('article.note')) renderThread(el.dataset.id); else el.click();
+        return;
+      }
       const a=_POST_KEYS[k]; if(!a) return;
       const btn=el.querySelector('.act[data-a="'+a+'"]');
       if(!btn) return;                        // e.g. a poll card, which carries only reply + menu
@@ -13384,7 +13397,8 @@
         // Instant, like the browser's own Home/End on a page — and a smooth animation here can be
         // suppressed outright (prefers-reduced-motion), which would read as the key doing nothing.
         f.scrollTo({top: e.key==='Home'?0:f.scrollHeight, behavior:'auto'});
-        if(_selId){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); }
+        { const cur=_selEl();
+          if(cur && cur.matches('article.note')){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); } }
         return;
       }
       if(!dy) return;
@@ -13394,7 +13408,8 @@
       f.scrollBy({top:dy, behavior:'auto'});   // auto, not smooth: held-down arrows must not queue up
       // A page jump leaves the selection off-screen; move it to whatever is now at the top, so the action
       // keys stay pointed at what you are actually looking at.
-      if(_selId){ const n=_topNote(); if(n) _selectNote(n); }
+      { const cur=_selEl();
+        if(cur && cur.matches('article.note')){ const n=_topNote(); if(n) _selectNote(n); } }
     });
   })();
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
