@@ -1907,6 +1907,18 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .tor-actions{gap:8px;margin-top:10px;flex-wrap:wrap}
 .art-by .name{cursor:pointer;color:var(--text)}.art-by .name:hover{color:var(--neon)}
 .article-view{padding:20px 22px 60px;max-width:none;margin:0 auto;animation:fade .25s}   /* wide format — fill the column, like Markets/News (not a centered reading column) */
+/* NIP-34 repo detail (README + issues + patches) */
+.repo-view{padding:20px 22px 60px;animation:fade .25s}
+.rv-title{font-size:28px;line-height:1.15;margin:12px 0;font-weight:800;letter-spacing:.3px;
+  background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
+.rv-by{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;color:var(--muted)}
+.rv-by .name{color:var(--text);cursor:pointer}.rv-by .name:hover{color:var(--neon)}
+.rv-desc{margin:6px 0 14px;color:var(--text);line-height:1.5}
+.rv-actions{margin:8px 0 18px;flex-wrap:wrap}
+.rv-readme{border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:8px 0 6px;overflow-x:auto}
+.rv-collab-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:22px}
+.collab-row{margin:8px 0;cursor:default}
+.collab-row .collab-title{font-weight:600;margin-bottom:4px;word-break:break-word}
 .av-banner{width:100%;max-height:340px;object-fit:cover;border-radius:16px;border:1px solid var(--line);margin:16px 0;box-shadow:0 0 30px rgba(var(--accent2-rgb),.18)}
 .av-title{font-size:32px;line-height:1.15;margin:12px 0;font-weight:800;letter-spacing:.3px;
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}

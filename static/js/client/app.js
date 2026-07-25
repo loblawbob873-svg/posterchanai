@@ -2165,7 +2165,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git Repos 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -3570,8 +3570,10 @@
       + (repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
     $('#repo-new').onclick=()=>publishRepo();
     decorateProfiles();
-    $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=()=>renderProfileView(n.dataset.prof));
-    $$('.repo-clone',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+    $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
+    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+    $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
+    $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
   }
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
@@ -3613,12 +3615,111 @@
     const clone=(e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean);
     const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
     const wurl=_mdUrl(web[0]||'');   // scheme-allowlist (http/https only) — a relay-supplied javascript: href must never become clickable
-    return `<article class="repo-card note"><div class="body">
+    return `<article class="repo-card note" data-id="${e.id}" data-pk="${e.pubkey}"><div class="body">
       <div class="tor-title">🌱 ${enc(name)}</div>
       <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
       ${desc?`<div class="tor-desc">${enc(desc.slice(0,400))}</div>`:''}
       <div class="row tor-actions">${wurl?`<a class="btn btn-cyan small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open</a>`:''}${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Copy clone URL</button>`:''}</div>
     </div></article>`;
+  }
+  // ---------- NIP-34 repo detail (README + issues + patches) ----------
+  // Addressable coordinate a repo's collaboration events (issues 1621 / patches 1617) point at via `a`.
+  function _repoAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return `30617:${e.pubkey}:${d}`; }
+  function _repoTag(e,k){ return (e.tags.find(t=>t[0]===k)||[])[1]||''; }
+  // A collaboration event's human title: prefer a `subject` tag (NIP-34), else the first non-empty line.
+  function _collabTitle(ev){
+    const s=_repoTag(ev,'subject'); if(s) return s;
+    const ln=((ev.content||'').split('\n').find(l=>l.trim())||'').trim();
+    return ln || '(no title)';
+  }
+  function _collabRow(ev){
+    const p=profOf(ev.pubkey); needProfile(ev.pubkey);
+    return `<div class="collab-row note" data-id="${ev.id}"><div class="body">
+      <div class="collab-title">${enc(_collabTitle(ev).slice(0,200))}</div>
+      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
+    </div></div>`;
+  }
+  function openRepo(e){
+    if(!e) return;
+    VIEW='repo'; _clearNav(); $('#view-title').textContent='Repo';
+    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
+    const name=_repoTag(e,'name')||_repoTag(e,'d')||'(unnamed repo)';
+    const desc=_repoTag(e,'description');
+    const clone=(e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean);
+    const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
+    const wurl=_mdUrl(web[0]||'');
+    const readmeSrc=clone[0]||web[0]||'';   // clone URL preferred (points straight at the forge)
+    feed.innerHTML=`<div class="repo-view">
+      <button class="btn btn-ghost small" id="repo-back">← Repos</button>
+      <h1 class="rv-title">🌱 ${enc(name)}</h1>
+      <div class="rv-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      ${desc?`<div class="rv-desc">${enc(desc)}</div>`:''}
+      <div class="row rv-actions">${wurl?`<a class="btn btn-cyan small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a>`:''}${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Copy clone URL</button>`:''}</div>
+      <div class="search-section-title">README</div>
+      <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
+      <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
+      <div id="rv-issues"><div class="spinner"></div></div>
+      <div class="search-section-title">Patches</div>
+      <div id="rv-patches"><div class="spinner"></div></div>
+    </div>`;
+    $('#repo-back',feed).onclick=()=>switchView('repos');
+    $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', cb.dataset.clone); } }; }
+    { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
+    // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
+    (async()=>{
+      const box=$('#rv-readme',feed); if(!box) return;
+      if(!readmeSrc){ box.innerHTML=`<div class="muted small">No clone/web URL on this repo.</div>`; return; }
+      try{
+        const r=await fetch('/client/git/readme?url='+encodeURIComponent(readmeSrc));
+        const j=await r.json();
+        if(VIEW!=='repo') return;
+        if(j && j.ok && j.markdown){ box.innerHTML=mdToHtml(j.markdown);
+          box.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src)); }
+        else box.innerHTML=`<div class="muted small">No README found${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`;
+      }catch(_){ if(VIEW==='repo') box.innerHTML=`<div class="muted small">Couldn’t load the README${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`; }
+    })();
+    // Issues (1621) + patches (1617) reference the repo via an `a` tag = the repo coordinate.
+    const addr=_repoAddr(e);
+    _loadRepoCollab(feed, '#rv-issues', 1621, addr, 'No issues yet.');
+    _loadRepoCollab(feed, '#rv-patches', 1617, addr, 'No patches yet.');
+    decorateProfiles();
+  }
+  async function _loadRepoCollab(feed, sel, kind, addr, emptyMsg){
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[kind], '#a':[addr], limit:100 }]); }catch(_){}
+    evs.forEach(ev=>{ Store.saveEvent(ev); needProfile(ev.pubkey); });
+    if(VIEW!=='repo') return;
+    const box=$(sel,feed); if(!box) return;
+    evs.sort((a,b)=>b.created_at-a.created_at);
+    box.innerHTML = evs.length ? evs.map(_collabRow).join('') : `<div class="muted small">${emptyMsg}</div>`;
+    $$('[data-prof]',box).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
+    decorateProfiles();
+  }
+  // Publish a NIP-34 issue (kind 1621) against a repo: `a` tag → repo coordinate + a `subject` tag.
+  function newRepoIssue(repo){
+    if(GUEST){ _guestPrompt(); return; }
+    const addr=_repoAddr(repo);
+    modal(`<h3>🐛 New issue</h3>
+      <p class="muted small">Publishes a NIP-34 issue (kind 1621) signed by your key, against <b>${enc(_repoTag(repo,'name')||_repoTag(repo,'d')||'this repo')}</b>.</p>
+      <label class="fld">Subject<input class="input" id="ri-subj" placeholder="Short summary"></label>
+      <label class="fld">Description<textarea class="input" id="ri-body" rows="5" placeholder="Describe the issue… (markdown)"></textarea></label>
+      <div class="set-actions"><button class="btn btn-neon small" id="ri-pub">Publish</button><button class="btn btn-ghost small" id="ri-cancel">Cancel</button></div>
+      <div class="muted small" id="ri-status"></div>`,
+      root=>{
+        $('#ri-cancel',root).onclick=closeModal;
+        $('#ri-pub',root).onclick=async()=>{
+          const subj=($('#ri-subj',root).value||'').trim();
+          const body=($('#ri-body',root).value||'').trim();
+          const st=$('#ri-status',root);
+          if(!subj){ st.textContent='A subject is required.'; return; }
+          const tags=[['a', addr], ['subject', subj]];
+          st.textContent='publishing…';
+          try{ const r=await publish(1621, body, tags);
+            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }
+            else { toast('issue published'); closeModal(); if(VIEW==='repo') openRepo(repo); }
+          }catch(err){ st.textContent='failed: '+((err&&err.message)||err); }
+        };
+      });
   }
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
@@ -13146,7 +13247,9 @@
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
     $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet:', b.dataset.magnet); } });
-    $$('.repo-clone',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+    $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
+    $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     // pagination cursor for scroll-back through more search hits
     _search = { q, loading:false, done:posts.length<40, oldest: posts.length ? posts[posts.length-1].created_at : 0 };
   }
