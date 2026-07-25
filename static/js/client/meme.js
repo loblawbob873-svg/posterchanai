@@ -277,7 +277,15 @@
 
   function trackEl(l){
     const total = Math.max(projEnd(), 1);
-    const left = (l.start/total*100), wid = Math.max(3, l.dur/total*100);
+    let left = (l.start/total*100), wid = Math.max(3, l.dur/total*100);
+    // Music is the ONE layer that can run past the end of the timeline (the renderer truncates it), and
+    // an unclamped bar is a real layout break, not a cosmetic one: a 3-minute song on a 6-second meme is
+    // a 3000%-wide absolutely-positioned div in a lane with no overflow clipping. Clamp it to the lane and
+    // mark it as cut, so the bar shows exactly the part that will actually be in the video.
+    let cut = false;
+    if(l.type==='audio' && left + wid > 100){
+      left = Math.min(left, 97); wid = Math.max(3, 100 - left); cut = true;
+    }
     // Show the CLIP ITSELF, not its filename — a hashed Blossom URL says nothing about what the clip is, so a
     // row of thumbnails is the only way to read the timeline at a glance. Text layers show their words (that
     // IS their content). The full name stays as the tooltip.
@@ -297,9 +305,9 @@
         </span>`}
       </div>
       <div class="mb-lane">
-        <div class="mb-clip" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%">
+        <div class="mb-clip${cut?' mb-cut':''}" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%"${cut?` title="${l.dur.toFixed(1)}s of music — cut off at ${total.toFixed(1)}s"`:''}>
           <i class="mb-grip mb-grip-l" data-grip="l"></i>
-          <span>${l.dur.toFixed(1)}s</span>
+          <span>${cut ? '✂ '+total.toFixed(1)+'s' : l.dur.toFixed(1)+'s'}</span>
           <i class="mb-grip mb-grip-r" data-grip="r"></i>
         </div>
       </div>
@@ -558,8 +566,12 @@
         if(side==='l'){ const ns=clamp(ost+d, 0, ost+odur-0.2); l.dur=+(odur+(ost-ns)).toFixed(2); l.start=+ns.toFixed(2); }
         else if(side==='r'){ l.dur=+clamp(odur+d, 0.2, 120).toFixed(2); }
         else { l.start=+clamp(ost+d, 0, 120).toFixed(2); }
-        clip.style.left=(l.start/total*100).toFixed(3)+'%';
-        clip.style.width=Math.max(3, l.dur/total*100).toFixed(3)+'%';
+        // Same clamp as trackEl — without it, stretching a music bar past the end of the meme blows the
+        // lane out mid-drag (it only snapped back on drop, when the row is re-rendered).
+        let dl=l.start/total*100, dw=Math.max(3, l.dur/total*100);
+        if(l.type==='audio' && dl+dw>100){ dl=Math.min(dl,97); dw=Math.max(3,100-dl); }
+        clip.style.left=dl.toFixed(3)+'%';
+        clip.style.width=dw.toFixed(3)+'%';
         const sp=clip.querySelector('span'); if(sp) sp.textContent=l.dur.toFixed(1)+'s';
       }, ()=>{
         // Drop = commit to the MASTER TIMELINE. A media clip dragged anywhere REORDERS the sequence (it lands
@@ -600,13 +612,21 @@
     if(time) time.textContent=t.toFixed(1)+'s / '+projEnd().toFixed(1)+'s';
   }
 
+  // LIVE REFERENCES to the preview <audio> elements, not a DOM query. Replacing #feed's innerHTML detaches
+  // them but does NOT stop them: a detached <audio> keeps playing until it is garbage collected, and by then
+  // it can no longer be found by querySelector. That is silent for the video layers (they are muted) but
+  // would leave music playing over the whole app after leaving the Meme Builder. Holding the elements means
+  // stopPlay can always pause them, mounted or not.
+  let _audioEls = [];
+  const pauseAudio = () => _audioEls.forEach(a=>{ try{ a.pause(); }catch(_){ } });
+
   // The music beds, driven by the same playhead. Scrubbing only re-seeks them (silent); they actually
   // sound during playback. Preview volume is capped at 1 because that is all an <audio> element accepts —
   // the render honours the full 0-2 range, so a track boosted past 1 previews a little quieter than it exports.
   function seekAudio(t){
     const playing = !!_playT;
     P.layers.filter(l=>l.type==='audio').forEach(l=>{
-      const a=document.querySelector('#mb-audios audio[data-id="'+l.id+'"]'); if(!a) return;
+      const a=_audioEls.find(x=>x.dataset.id===l.id); if(!a) return;
       const on = t>=(+l.start||0) && t<=(+l.start||0)+(+l.dur||0);
       a.volume = clamp(l.volume==null?0.6:l.volume, 0, 1);
       if(!on || !playing){ try{ a.pause(); }catch(_){ } }
@@ -623,7 +643,7 @@
   function stopPlay(rewind){
     if(_playT){ clearInterval(_playT); _playT=null; }
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.pause(); }catch(_){ } });
-    document.querySelectorAll('#mb-audios audio').forEach(a=>{ try{ a.pause(); }catch(_){ } });
+    pauseAudio();
     const b=document.getElementById('mb-play'); if(b) b.textContent='▶︎';
     if(rewind){ const s2=document.getElementById('mb-scrub'); if(s2) s2.value=0; seek(0); }
   }
@@ -638,6 +658,10 @@
     _playT=1; seekAudio(t);
     _playT=setInterval(()=>{
       t+=0.1;
+      // Leaving the Meme Builder replaces #feed wholesale and nothing calls unmount(), so the ticker used
+      // to keep running over whatever view you switched to. Harmless while the only media was muted video;
+      // with music it means a song playing over the rest of the app. Stop as soon as the stage is gone.
+      if(!document.getElementById('mb-stage')){ stopPlay(false); return; }
       if(t>projEnd()){        // STOP at the end — it used to wrap to 0 and loop forever, so the preview
         stopPlay(true);       // (and every video layer) just kept running until you switched views.
         return;
@@ -802,7 +826,7 @@
     on('mb-aud-all','click',()=>{ l.start=0; l.dur=+Math.max(projEnd(),0.1).toFixed(2); save(); render();
       toast('music spans the whole meme'); });
     on('mb-f-avol','input',(e)=>{ l.volume=clamp(e.target.value,0,2); save();
-      const a=document.querySelector('#mb-audios audio[data-id="'+l.id+'"]'); if(a) a.volume=clamp(l.volume,0,1); });
+      const a=_audioEls.find(x=>x.dataset.id===l.id); if(a) a.volume=clamp(l.volume,0,1); });
     on('mb-f-afade','change',(e)=>{ l.fade=e.target.checked; save(); });
     on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
     on('mb-f-sndvol','input',(e)=>{ l.soundVolume=clamp(e.target.value,0,3); save(); });
@@ -824,7 +848,9 @@
     // trim…) jumped the preview to whatever clip happens to be at zero — it looked like the app had
     // selected a different layer out of nowhere.
     const _prevT = (()=>{ const s=document.getElementById('mb-scrub'); return s ? +s.value||0 : null; })();
+    pauseAudio();          // BEFORE the rebuild — after it, these elements are detached and unreachable
     feed.innerHTML=view();
+    _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio'));
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
     bindStage(root); bindTimeline(root); bindInspector(root);

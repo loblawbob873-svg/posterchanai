@@ -3393,6 +3393,8 @@ body.modal-open .mobilenav{display:none}
 .mb-track-aud .mb-clip{background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent-rgb),.10));
   box-shadow:inset 3px 0 0 var(--cyan),inset -3px 0 0 var(--cyan)}
 .mb-track-aud .mb-lane{height:26px}
+/* Music that runs past the end of the meme: the bar is clamped to the lane, so say it is cut, not short. */
+.mb-clip.mb-cut{border-right:2px dashed var(--danger)}
 /* Preview-only <audio> elements — audible, never visible (hidden would also stop them in some engines). */
 .mb-audios{position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}
 /* z-order right beside the thumbnail — where you're looking when you decide what sits on top. */
