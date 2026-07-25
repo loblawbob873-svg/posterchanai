@@ -2445,6 +2445,21 @@
       else setSt('couldn’t summarize: '+((r&&r.error)||'no content'));
     }catch(_){ setSt('summarize failed'); }
   }
+  // 🖼️ Framed card — the 🎨 background post with a border drawn round it. Shared by both composers (the
+  // timeline's inline one and the modal), which keep their own armed-background state, so the caller
+  // passes its state in and takes the new value back rather than this reaching for a global.
+  function _aiFramedCard(ta, setSt, o){
+    const v=(ta.value||'').trim();
+    if(!v){ toast('write something first'); return; }
+    if(v.length>_BG_MAX){ setSt(`a framed card needs ${_BG_MAX} characters or fewer`); return; }
+    const on=!o.framed;
+    o.set(on);
+    if(!on){ setSt('framed card off'); return; }
+    // A frame on nothing is nothing: the border is drawn onto the background image, so without a
+    // background armed this silently does nothing at post time. Open the swatches and say so.
+    if(!o.hasBg){ if(o.reveal) o.reveal(); setSt('🖼️ framed card on — now pick a background'); }
+    else setSt('🖼️ framed card on');
+  }
   async function _aiHashtags(ta, setSt){
     const body=(ta.value||'').trim();
     const hasImage=/(?:!\[|https?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b|\/blossom\/|media\.)/i.test(ta.value||'');
@@ -2548,6 +2563,7 @@
     // Declared before reset() so it can disarm the 🎨 choice: clearing only the button's .on class
     // would leave a background armed and silently style the NEXT post too.
     let _tlBg=null, _tlBgClear=()=>{};
+    let _tlBgFramed=false;   // 🖼️ Framed card (AI menu) — a border on the 🎨 background post
     // Clear the PANELS too, not just the text — a posted poll leaving its options behind would silently
     // attach them to the next thing you wrote.
     const reset=()=>{ _tlCmpText=''; ta.value=''; st.textContent=''; _aiLastTags=''; _tlDropDraft();
@@ -2557,7 +2573,7 @@
         if(w) w.innerHTML='<input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2">';
         const mu=$('#tl-cmp-poll-multi',box); if(mu) mu.checked=false; }
       if(cw){ cw.classList.add('hidden'); const r=$('#tl-cmp-cwreason',box); if(r) r.value=''; }
-      _tlBgClear();
+      _tlBgClear(); _tlBgFramed=false;
       const bgs=$('#tl-cmp-bgs',box); if(bgs) bgs.classList.add('hidden');
       $$('.tl-cmp-btn.on',box).forEach(b=>b.classList.remove('on'));
       grow(); };
@@ -2607,10 +2623,16 @@
       if(on){ const r=$('#tl-cmp-cwreason',box); if(r) r.focus(); } };
     // 🤖 AI — inline, using the module-level helpers (they used to be private to compose()).
     { const ab=$('#tl-cmp-ai',box); if(ab) ab.onclick=e=>{ e.stopPropagation();
-        openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']], a=>{
+        // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
+        // there is nothing anywhere telling you the next post will be framed.
+        openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate'],
+                             ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
+          else if(a==='card') _aiFramedCard(ta, setSt, {
+            framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; },
+            reveal: ()=>{ if(bgsRow && bgsRow.classList.contains('hidden')) toggleBg(); } });
           else if(a==='translate') composeTranslate(ta, ab); }); }; }
     // 🎨 Background post — same swatches and renderer the modal uses (CMP_BGS/renderBgPost are
     // module-level), so the two composers can't drift. Short text only; picking one is exclusive.
@@ -2649,11 +2671,11 @@
       if(_tlBg && !isPoll){
         if(text.length>_BG_MAX){ st.textContent=`background needs ${_BG_MAX} characters or fewer`; return null; }
         st.textContent='rendering…';
-        const blob=await renderBgPost(text, _tlBg);
+        const blob=await renderBgPost(text, _tlBg, _tlBgFramed);
         st.textContent='uploading…';
         const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
         const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); cwOf(btags);
-        return {kind:1, content:url, tags:btags, what:'posted 🎨'};
+        return {kind:1, content:url, tags:btags, what:_tlBgFramed?'posted 🖼️':'posted 🎨'};
       }
       mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
       imetaTagsFor(text).forEach(t=>tags.push(t));
@@ -6955,20 +6977,53 @@
   function _bgCss(bg){ return bg.colors.length>1 ? `linear-gradient(135deg,${bg.colors.join(',')})` : bg.colors[0]; }
   function _bgFill(ctx,W,H,bg){ if(bg.colors.length>1){ const g=ctx.createLinearGradient(0,0,W,H); bg.colors.forEach((c,i)=>g.addColorStop(i/(bg.colors.length-1),c)); ctx.fillStyle=g; } else ctx.fillStyle=bg.colors[0]; ctx.fillRect(0,0,W,H); }
   function _bgWrap(ctx, text, maxW){ const out=[]; for(const para of String(text).split('\n')){ if(!para){ out.push(''); continue; } let line=''; for(const word of para.split(/\s+/)){ const t=line?line+' '+word:word; if(ctx.measureText(t).width>maxW && line){ out.push(line); line=word; } else line=t; } if(line) out.push(line); } return out; }
-  function _bgDeco(ctx, W, H, deco){   // festive emoji framed along the top + bottom edges
+  function _bgDeco(ctx, W, H, deco, framed){   // festive emoji framed along the top + bottom edges
     ctx.save(); ctx.globalAlpha=0.92; const size=Math.round(W*0.072);
     ctx.font=`${size}px system-ui,-apple-system,'Segoe UI',sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    const n=6, m=size*1.05;
-    for(let i=0;i<n;i++){ const x=W*(i+0.5)/n;
+    // With a frame, push the emoji rows INSIDE it — at the default inset the glyphs straddle the inner
+    // hairline, which reads as a mistake rather than a decoration.
+    const n=6, m=framed ? Math.round(W*0.108) : size*1.05;
+    // Horizontally too: spread across the FRAMED area, not the full canvas, or the first and last glyph
+    // of each row sit on top of the side rules.
+    const x0=framed?m:0, xw=W-x0*2;
+    for(let i=0;i<n;i++){ const x=x0 + xw*(i+0.5)/n;
       ctx.fillText(deco[i%deco.length], x, m);
       ctx.fillText(deco[(i+1)%deco.length], x, H-m); }
     ctx.restore();
   }
-  async function renderBgPost(text, bg){
-    const W=1080,H=1080, pad=W*0.11, maxW=W-pad*2, maxH=(H-pad*2)*(bg.deco?0.82:1);   // leave room for deco rows
+  // Rounded rect as an explicit path. NOT ctx.roundRect(): that is recent enough (Firefox 112, Safari 16)
+  // that the APK's WebView on an older device would throw mid-render and lose the whole card.
+  function _rrect(ctx,x,y,w,h,r){
+    r=Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+  }
+  // The 🖼️ framed-card treatment: a heavy rounded rule just inside the edge with a lighter hairline
+  // tucked behind it. Drawn in the background's OWN foreground colour so it reads as part of the design
+  // on every swatch (the light `gold` background has a dark fg — a hardcoded white frame would vanish).
+  function _bgFrame(ctx,W,H,bg){
+    const col=bg.fg||'#fff';
+    const fi=W*0.042, fw=Math.max(2,W*0.009);
+    ctx.save();
+    ctx.strokeStyle=col; ctx.lineJoin='round';
+    ctx.globalAlpha=0.88; ctx.lineWidth=fw;
+    _rrect(ctx, fi, fi, W-fi*2, H-fi*2, W*0.022); ctx.stroke();
+    const gi=fi+fw*1.9;
+    ctx.globalAlpha=0.45; ctx.lineWidth=Math.max(1,W*0.0032);
+    _rrect(ctx, gi, gi, W-gi*2, H-gi*2, W*0.016); ctx.stroke();
+    ctx.restore();
+  }
+  async function renderBgPost(text, bg, framed){
+    const W=1080,H=1080, pad=W*(framed?0.135:0.11), maxW=W-pad*2,   // the frame eats into the text box
+          maxH=(H-pad*2)*(bg.deco?(framed?0.78:0.82):1);   // leave room for deco rows
     const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
     _bgFill(ctx,W,H,bg);
-    if(bg.deco) _bgDeco(ctx,W,H,bg.deco);
+    if(bg.deco) _bgDeco(ctx,W,H,bg.deco,framed);
+    // Before the text, so a descender can never be crossed by the rule.
+    if(framed) _bgFrame(ctx,W,H,bg);
     ctx.fillStyle=bg.fg||'#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
     const font=s=>`800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
     let fs=112, lines=[];
@@ -7131,7 +7186,16 @@
             } else $('#cmp-status',root).textContent='no hashtags: '+((r&&r.error)||'try again');
           }catch(_){ $('#cmp-status',root).textContent='hashtags failed'; }
         };
-        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation(); openMenuPopover(aiBtn, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']], a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
+        // 🖼️ Framed card is offered only where a 🎨 background can be (the strip is hidden for replies
+        // and quotes), so the menu never lists something that cannot apply here.
+        const doCard=()=>_aiFramedCard(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; }, {
+          framed: _bgFramed, hasBg: !!_bgChoice, set: v=>{ _bgFramed=v; _bgFramePreview(); },
+          reveal: ()=>{ const strip=$('#cmp-bg-strip',root), b=$('#cmp-bg-btn',root);
+            if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
+        if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
+          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']];
+          if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]);
+          openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
@@ -7162,11 +7226,17 @@
       // 🎨 Background: swatch strip; picking one previews it in the composer and, on Post, renders the
       // text onto it as an IMAGE. Only for SHORT plain text — a link/media or long text drops it + warns.
       let _bgChoice=null;
+      let _bgFramed=false;   // 🖼️ Framed card (AI menu) — a border on the 🎨 background post
+      // The modal already previews the background by tinting the textarea, so preview the frame there too —
+      // otherwise the only way to find out what "framed" looks like is to post it.
+      const _bgFramePreview=()=>{ try{ ta.classList.toggle('cmp-bg-framed', !!(_bgFramed && _bgChoice)); }catch(_){ } };
       { const bgBtn=$('#cmp-bg-btn',root), strip=$('#cmp-bg-strip',root);
         if(bgBtn && strip){
           const select=(bg,el)=>{ _bgChoice=bg; $$('.cmp-swatch',strip).forEach(s=>s.classList.toggle('on', s===el));
             if(bg){ ta.classList.add('cmp-bg-on'); ta.style.background=_bgCss(bg); ta.style.color=bg.fg||'#fff'; }
-            else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; } };
+            else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; }
+            _bgFramePreview();   // dropping the background must drop its frame preview with it
+          };
           const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on'; none.title='no background'; none.textContent='Aa';
           none.onclick=()=>select(null,none); strip.appendChild(none);
           CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch'; s.title=bg.id; s.style.background=_bgCss(bg);
@@ -7218,7 +7288,7 @@
         if(_bgChoice && !reply && !quote){
           const sb=$('#cmp-send',root); if(sb) sb.disabled=true; $('#cmp-status',root).textContent='rendering…';
           try{
-            const blob=await renderBgPost(text, _bgChoice);
+            const blob=await renderBgPost(text, _bgChoice, _bgFramed);
             $('#cmp-status',root).textContent='uploading…';
             const url=await uploadBlob(new File([blob], 'post.png', {type:'image/png'}));
             const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
@@ -7284,7 +7354,7 @@
                 imetaTagsFor(text).forEach(t=>tags.push(t)); _applyCw(tags);
               } else if(typeof _bgChoice!=='undefined' && _bgChoice){        // 🎨 background → render+upload now, post the image
                 if(!text){ st.textContent='write something first'; go.disabled=false; return; }
-                st.textContent='rendering…'; const blob=await renderBgPost(text, _bgChoice);
+                st.textContent='rendering…'; const blob=await renderBgPost(text, _bgChoice, _bgFramed);
                 st.textContent='uploading…'; content=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
                 imetaTagsFor(content).forEach(t=>tags.push(t)); _applyCw(tags);
               } else {                                                       // plain text (incl. attached media URLs in the text)
