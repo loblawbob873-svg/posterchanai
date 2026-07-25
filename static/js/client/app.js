@@ -6203,7 +6203,8 @@
   // Keyboard navigation for the flat button popovers (the reaction grid, the ☰ menu). They were
   // mouse-only, so a reaction could not be chosen from the keyboard at all. Bound in the CAPTURE phase and
   // stopping what it handles, so the global scroll/post-action keys cannot also fire while one is open.
-  function _popKeys(pop, sel, activate, close){
+  function _popKeys(pop, sel, activate, close, opts){
+    opts=opts||{};
     const items=()=>[...pop.querySelectorAll(sel)];
     let i=-1;
     const mark=()=>{ const els=items(); els.forEach((b,n)=>b.classList.toggle('kb', n===i));
@@ -6216,6 +6217,12 @@
       return Math.max(1,n); };
     const onKey=e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
+      if(!pop.isConnected){ detach(); return; }   // closed by a click/✕ → stop listening, don't leak
+      // A sheet with a search box (the Effects studio) still needs the caret keys while you type, so it
+      // opts into a SUBSET. A bare popover has no text field and takes everything.
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName||''))
+         && !(opts.inText||[]).includes(e.key)) return;
       const els=items(); if(!els.length) return;
       const k=e.key; let d=0;
       if(k==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); return; }
@@ -6229,8 +6236,9 @@
       i = i<0 ? (d>0?0:els.length-1) : Math.max(0, Math.min(els.length-1, i+d));
       mark();
     };
+    const detach=()=>document.removeEventListener('keydown', onKey, true);
     document.addEventListener('keydown', onKey, true);
-    return ()=>document.removeEventListener('keydown', onKey, true);
+    return detach;
   }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
@@ -6685,6 +6693,11 @@
       // flex column with its own sticky header/footer, not the default single scrolling box.
       root.classList.add('fxs-modal');
       if(root.parentElement) root.parentElement.classList.add('fxs-bg');
+      // Arrow through the chips. `:not(.hidden)` so the cursor walks what the SEARCH left on screen
+      // rather than stepping through filtered-out effects. Up/Down and Enter work while typing in the
+      // search box (the caret only needs Left/Right there), which is what makes search-then-arrow work.
+      _popKeys(root, '.fxs-chip:not(.hidden)', el=>el.click(), closeModal,
+               { inText:['ArrowDown','ArrowUp','Enter'] });
       const cmdEl=$('#fxs-cmd',root), cap=$('#fxs-cap',root), go=$('#fxs-go',root);
       const build=()=>{
         // The caption is TEXT, not a command — the studio supplies the `meme` keyword itself. People
@@ -13214,6 +13227,9 @@
   function _shortcutHelp(){
     const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
+      +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
+      +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
       +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],['L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
@@ -13255,7 +13271,7 @@
   // on. The actions deliberately click the note's own .act button rather than calling doRepost/compose
   // directly: that row already carries the guest guard, the already-reposted check, the counts and the
   // toasts, and a second path into them would be a second place for those to drift.
-  let _selId=null;
+  let _selId=null, _selRef=null;   // key survives a re-render; the reference covers cards that carry no id
   // The rows a keyboard selection can land on. Posts in a feed or a thread; CONVERSATIONS in Messages —
   // the same gesture, so it is the same code rather than a second selection model bolted on beside it.
   // First list with any rows on screen wins.
@@ -13266,6 +13282,11 @@
     '#feed .thread-node[data-tid]',
     '#feed article.note[data-id]',       // timeline
     '#feed .notif[data-open]',           // notifications (the updater row has no data-open — not selectable)
+    // Every other card view — Streams, Articles, Shopping, Communities, 4chan, Pics. Deliberately the SAME
+    // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
+    // up here without a second place to remember.
+    '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
+    '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
     '#dm-list .dm-peer[data-peer]',      // messages
   ];
   function _noteEls(){
@@ -13282,15 +13303,19 @@
     return id ? { id, pk: art.dataset.pk || '' } : null;
   }
   function _selEl(){
+    // Prefer the live element: not every card view gives its cards an id (4chan, some listings), and those
+    // cannot be found again by key. Fall back to the key so a keyed row survives the feed re-rendering
+    // under it — which is what happens constantly on a live timeline.
+    if(_selRef && _selRef.isConnected){ _selRef.classList.add('sel'); return _selRef; }
     if(!_selId) return null;
     const el=_noteEls().find(n=>_rowKey(n)===_selId);
-    if(el && !el.classList.contains('sel')) el.classList.add('sel');   // survived a re-render → re-mark it
+    if(el){ _selRef=el; el.classList.add('sel'); }
     return el||null;
   }
   function _selectNote(el){
     document.querySelectorAll('.sel').forEach(n=>n.classList.remove('sel'));
-    if(!el){ _selId=null; return; }
-    _selId=_rowKey(el); el.classList.add('sel');
+    if(!el){ _selId=null; _selRef=null; return; }
+    _selId=_rowKey(el); _selRef=el; el.classList.add('sel');
     el.scrollIntoView({block:'nearest'});
   }
   // The note at the top of what you are looking at — where a selection should START, and where it should
@@ -13335,6 +13360,9 @@
   // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
   // client uses, and the text-field guard already keeps them out of anything being typed into.
   const _POST_KEYS = { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
+  // A news item has its own two actions, and they are plain buttons in the card rather than the post
+  // action row — so they are matched by class instead of data-a.
+  const _NEWS_KEYS = { s:'.news-post', u:'.news-sum' };
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
@@ -13364,6 +13392,13 @@
         // it for a tap too would throw up the on-screen keyboard every time a phone user opens a chat.
         // The thread renders asynchronously, so poll briefly for the input rather than assuming it is there.
         if(el.matches('.dm-peer')) _focusSoon('#dm-in');
+        return;
+      }
+      if(el.matches('.news-card')){
+        const nsel=_NEWS_KEYS[k]; if(!nsel) return;
+        const nb=el.querySelector(nsel);
+        if(!nb) return;                       // Summarize is absent on a Nostr-only node
+        e.preventDefault(); nb.click();
         return;
       }
       const a=_POST_KEYS[k]; if(!a) return;

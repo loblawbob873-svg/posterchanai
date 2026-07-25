@@ -3509,3 +3509,12 @@ body.modal-open .mobilenav{display:none}
    card inside it; .thread-hl (the post you arrived at) keeps its own ring and the two can coexist. */
 .thread-node.sel>.note{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
 .notif.sel{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
+
+/* Keyboard cursor in the Effects studio, matching how a picked chip already reads. */
+.fxs-chip.kb{outline:2px solid var(--neon);outline-offset:1px}
+
+/* Cursor on the other card views (Streams, Articles, Shopping, Communities, 4chan, Pics). They are
+   bordered cards rather than full-bleed rows, so a ring reads better here than the inset rule. */
+.stream-card.sel,.article-card.sel,.mkt-card.sel,.community-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
+  outline:2px solid var(--neon);outline-offset:2px}
+.news-card.sel{outline:2px solid var(--neon);outline-offset:2px}
