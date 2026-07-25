@@ -13259,12 +13259,20 @@
   // The rows a keyboard selection can land on. Posts in a feed or a thread; CONVERSATIONS in Messages —
   // the same gesture, so it is the same code rather than a second selection model bolted on beside it.
   // First list with any rows on screen wins.
-  const _ROW_SEL = ['#feed article.note[data-id]', '#dm-list .dm-peer[data-peer]'];
+  const _ROW_SEL = [
+    // A THREAD first: every post is wrapped in .thread-node[data-tid], whereas the card inside is not
+    // guaranteed to carry data-id (a repost whose original is still being fetched renders a placeholder
+    // with data-orig instead). Keying on the wrapper is why the cursor no longer stops partway down.
+    '#feed .thread-node[data-tid]',
+    '#feed article.note[data-id]',       // timeline
+    '#feed .notif[data-open]',           // notifications (the updater row has no data-open — not selectable)
+    '#dm-list .dm-peer[data-peer]',      // messages
+  ];
   function _noteEls(){
     for(const sel of _ROW_SEL){ const els=[...document.querySelectorAll(sel)]; if(els.length) return els; }
     return [];
   }
-  const _rowKey = (el) => el && (el.dataset.id || el.dataset.peer || '');
+  const _rowKey = (el) => el && (el.dataset.tid || el.dataset.id || el.dataset.peer || el.dataset.open || '');
   function _selEl(){
     if(!_selId) return null;
     const el=_noteEls().find(n=>_rowKey(n)===_selId);
@@ -13272,7 +13280,7 @@
     return el||null;
   }
   function _selectNote(el){
-    document.querySelectorAll('.note.sel,.dm-peer.sel').forEach(n=>n.classList.remove('sel'));
+    document.querySelectorAll('.sel').forEach(n=>n.classList.remove('sel'));
     if(!el){ _selId=null; return; }
     _selId=_rowKey(el); el.classList.add('sel');
     el.scrollIntoView({block:'nearest'});
@@ -13309,8 +13317,10 @@
       const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
       if(e.key==='Enter'){
         e.preventDefault();
-        // A post opens its thread; a conversation row just gets clicked, which is what openDm is wired to.
-        if(el.matches('article.note')) renderThread(el.dataset.id); else el.click();
+        // A post opens its thread; anything else (a conversation, a notification) is just clicked — that
+        // is what openDm and the notification row handler are already wired to.
+        const tid = el.dataset.tid || (el.matches('article.note') ? el.dataset.id : '');
+        if(tid) renderThread(tid); else el.click();
         return;
       }
       const a=_POST_KEYS[k]; if(!a) return;
@@ -13398,7 +13408,7 @@
         // suppressed outright (prefers-reduced-motion), which would read as the key doing nothing.
         f.scrollTo({top: e.key==='Home'?0:f.scrollHeight, behavior:'auto'});
         { const cur=_selEl();
-          if(cur && cur.matches('article.note')){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); } }
+          if(cur && !cur.matches('.dm-peer')){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); } }
         return;
       }
       if(!dy) return;
@@ -13406,10 +13416,14 @@
       // (Arrow → selection was handled above; reaching here means there was no post to step to, so this is
       //  a plain pixel scroll — settings, files, the tail of a list.)
       f.scrollBy({top:dy, behavior:'auto'});   // auto, not smooth: held-down arrows must not queue up
-      // A page jump leaves the selection off-screen; move it to whatever is now at the top, so the action
-      // keys stay pointed at what you are actually looking at.
-      { const cur=_selEl();
-        if(cur && cur.matches('article.note')){ const n=_topNote(); if(n) _selectNote(n); } }
+      // A PAGE jump leaves the selection off-screen; move it to whatever is now at the top, so the action
+      // keys stay pointed at what you are actually looking at. Page keys ONLY: an arrow that reached the
+      // end of the list also lands here, and re-syncing there dragged the cursor back to the topmost
+      // visible row — which reads as the selection being stuck partway down the thread.
+      if(e.key==='PageDown'||e.key==='PageUp'||e.key===' '||e.key==='Spacebar'){
+        const cur=_selEl();
+        if(cur && !cur.matches('.dm-peer')){ const n=_topNote(); if(n) _selectNote(n); }
+      }
     });
   })();
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post
