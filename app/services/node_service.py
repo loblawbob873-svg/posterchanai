@@ -453,7 +453,15 @@ Rules:
   do NOT fall back to rewriting the whole file.
 - One logical step per turn; wait for its result before the next.
 - Never run interactive commands that wait for input (use flags like -y, --noninteractive).
+- For anything needing more than two or three steps, call update_plan FIRST with the steps you
+  intend to take, then keep it current as you go — mark a step done before starting the next.
 - When the goal is achieved, or cannot be, call the finish tool with a short summary."""
+
+# Re-stated into the SYSTEM message every turn (see _apply_plan). Deliberately not a mid-transcript
+# "reminder" message: a trailing user/system turn after tool results is handled inconsistently by chat
+# templates, whereas messages[0] is always valid and is what models attend to hardest.
+_PLAN_HEADER = "\n\nYOUR CURRENT PLAN (keep it current with update_plan):\n"
+_PLAN_MARK = {"done": "[x]", "doing": "[>]", "pending": "[ ]"}
 
 # OpenAI-style tool schema for the agent. Driven through the same tool-calling path as opencode
 # (chat_completion with tools -> generate_message), so it benefits from the native tool template
@@ -492,6 +500,48 @@ _NODE_TOOLS = [
         },
     },
 ]
+
+_NODE_TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "update_plan",
+        "description": "Record the steps you intend to take, and keep them current as you work. Call "
+                       "this once up front for any multi-step task, then again whenever a step is "
+                       "finished or the plan changes. Send the WHOLE list each time — it replaces the "
+                       "previous one. Exactly one step should be 'doing' at a time.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "The full plan, in order.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {"type": "string", "description": "Short description of the step."},
+                            "status": {"type": "string", "enum": ["pending", "doing", "done"]},
+                        },
+                        "required": ["step", "status"],
+                    },
+                },
+            },
+            "required": ["steps"],
+        },
+    },
+})
+
+
+def _render_plan(plan: list) -> str:
+    """The plan as a checklist, for both the system message and the user-facing play-by-play."""
+    return "\n".join(f"{_PLAN_MARK.get(s.get('status'), '[ ]')} {s.get('step', '')}" for s in plan)
+
+
+def _apply_plan(messages: list, base_sys: str, plan: list) -> None:
+    """Rewrite the system message so it always carries the CURRENT plan. Rewriting (rather than
+    appending a reminder turn) keeps exactly one copy in context no matter how many times the plan is
+    updated, and survives _trim_to_budget — which never touches messages[0]."""
+    messages[0]["content"] = base_sys + (_PLAN_HEADER + _render_plan(plan) if plan else "")
+
 
 # Structured file tools (read/edit/write/grep) ride the same executor as run_command, so they act
 # on whichever machine the agent is managing — host, sandbox container, or a Nostr worker. See
@@ -589,6 +639,12 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     if str(target).startswith("sandbox:"):
         # The agent is inside a fresh disposable Debian container (root). Steer it past the two things
         # that trip up package tasks here: Debian's PEP-668 externally-managed pip, and guessed package names.
+        from app.services import sandbox_service as _sbx
+        if _sbx.workspace_enabled():
+            _sys += (f"\n\nWORKSPACE: {_sbx.WORKSPACE_DIR} is your persistent working directory and "
+                     "survives between runs — keep checkouts, scripts and results there. Everything "
+                     "OUTSIDE it is wiped when this run ends, so do not leave anything worth keeping "
+                     "elsewhere.")
         _sys += ("\n\nENVIRONMENT: this host is a FRESH, disposable Debian container and you are root, so "
                  "install freely — but a bare `pip install` FAILS with 'externally-managed-environment'. "
                  "Either use a venv (`apt-get install -y python3-venv && python3 -m venv /venv && "
@@ -603,6 +659,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
     cmd_outputs: dict[str, str] = {}   # command -> its last output, to detect/short-circuit repeats
     files_read: set = set()    # paths read this run — edit_file is refused until its file is in here
+    plan: list = []            # the model's own checklist (update_plan), re-stated into messages[0]
     repeat_nudges = 0          # consecutive "you already ran this" nudges (reset by a fresh command)
     sig_counts: dict = {}      # command signature -> times attempted (see _cmd_signature): catches a model
                                # re-doing the same ACTION with a tweaked body, which repeat_nudges misses
@@ -699,10 +756,16 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 # success for a failure. Trust the model's own verdict, and treat a MISSING success flag
                 # as achieved so older/looser models that omit it read as they did before.
                 _ok = args.get("success")
+                # A plan the model never finished is evidence against its own success claim, and it is
+                # the user who has to act on the difference — so name the leftover steps rather than
+                # letting a green banner paper over them. Does not override the model's verdict.
+                _left = [s["step"] for s in plan if s["status"] != "done"]
+                _unfinished = ("\n\n🗒️ Plan steps not marked done: "
+                               + ", ".join(f"`{s}`" for s in _left)) if _left else ""
                 if _ok is None or bool(_ok):
-                    transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}")
+                    transcript.append(f"\n**✅ Done:** {summary or '(no summary)'}{_unfinished}")
                 else:
-                    transcript.append(f"\n**⚠️ Stopped:** {summary or '(no summary)'}")
+                    transcript.append(f"\n**⚠️ Stopped:** {summary or '(no summary)'}{_unfinished}")
                 return "\n".join(transcript)
 
             if name == "run_command":
@@ -774,6 +837,27 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"exit {job.exit_code}{_status}\n"
                                             f"{tail(out, _TOOL_RESULT_CHARS)}{_warn}"})
+                continue
+
+            if name == "update_plan":
+                _steps = args.get("steps")
+                if not isinstance(_steps, list) or not _steps:
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": "update_plan needs a non-empty `steps` list; the plan is "
+                                                "unchanged."})
+                    continue
+                # Normalise: an unknown status becomes pending rather than silently rendering as one,
+                # so the model's own view and the user's match exactly.
+                plan = [{"step": str(s.get("step") or "").strip(),
+                         "status": (s.get("status") if s.get("status") in _PLAN_MARK else "pending")}
+                        for s in _steps if isinstance(s, dict) and str(s.get("step") or "").strip()][:20]
+                _apply_plan(messages, _sys, plan)
+                _done = sum(1 for s in plan if s["status"] == "done")
+                if not report_mode:
+                    await _say(f"**🗒️ Plan** ({_done}/{len(plan)})\n```\n{_render_plan(plan)}\n```")
+                messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                 "content": f"Plan recorded ({_done}/{len(plan)} done). It is shown in "
+                                            "your system message; keep it current."})
                 continue
 
             if name in agent_file_tools.FILE_TOOL_NAMES:

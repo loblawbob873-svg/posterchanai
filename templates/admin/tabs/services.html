@@ -214,6 +214,12 @@
                 <small>Docker image for each user's container. Default: <code>debian:stable-slim</code>.</small>
             </div>
             <div class="form-group">
+                <label for="node_exec_sandbox_workspace">
+                    <input type="checkbox" id="node_exec_sandbox_workspace" name="node_exec_sandbox_workspace"> Give each sandbox a persistent <code>/workspace</code>
+                </label>
+                <small>The container itself is thrown away when a run finishes. This mounts a per-user Docker volume at <code>/workspace</code> that <strong>survives</strong>, so an agent can keep a checkout, scripts and results between runs. Off = every run starts on bare Debian with nothing. Volumes are named <code>pcai-ws-&lt;user&gt;</code> and are never deleted automatically — prune them yourself if disk matters.</small>
+            </div>
+            <div class="form-group">
                 <label for="node_exec_sandbox_network">Sandbox network</label>
                 <input type="text" id="node_exec_sandbox_network" name="node_exec_sandbox_network" placeholder="bridge">
                 <small><code>bridge</code> = internet (so the agent can <code>apt install</code> tools); <code>none</code> = fully isolated. The container can't reach the host either way.</small>

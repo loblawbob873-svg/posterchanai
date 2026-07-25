@@ -322,6 +322,8 @@ class SettingsResponse(BaseModel):
     # `nostr-post` tool (zero-dep decode+sign+publish+confirm). Built by install.sh --sandbox and
     # self-built on first use (sandbox_service).
     node_exec_sandbox_image: str = "posterchanai-sandbox:2"  # per-user container image (built locally)
+    node_exec_sandbox_workspace: str = "true"  # persistent /workspace volume per user (survives the
+    # throwaway container, so an agent can keep a checkout between runs)
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
     node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)
     node_exec_sandbox_cpus: str = "1"          # per-container CPU cap (docker --cpus)

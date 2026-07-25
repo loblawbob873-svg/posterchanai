@@ -120,6 +120,24 @@ def _network() -> str:
     return _s("node_exec_sandbox_network", "bridge").strip() or "bridge"
 
 
+def workspace_enabled() -> bool:
+    """Give each user's sandbox a PERSISTENT /workspace (a named Docker volume), on by default.
+
+    The container itself stays throwaway — it is reaped when an agent run finishes — so without this
+    the agent had nowhere to keep anything: every run started on bare Debian with no checkout, no
+    files, and no memory of the last one. That makes multi-run work (clone, edit, test, come back
+    tomorrow) impossible. The volume outlives the container and is NOT removed by reap(); it is the
+    one thing a user is meant to keep."""
+    return _s("node_exec_sandbox_workspace", "true").strip().lower() == "true"
+
+
+def workspace_volume(uid) -> str:
+    return f"pcai-ws-{uid}"
+
+
+WORKSPACE_DIR = "/workspace"
+
+
 def _mem() -> str:
     return _s("node_exec_sandbox_memory", "1g").strip() or "1g"
 
@@ -190,11 +208,16 @@ async def ensure(uid) -> str:
                 await _docker("start", name, timeout=30)
             else:
                 await _ensure_image()   # build the built-in image on first use if a node lacks it
+                # The persistent workspace is mounted (and made the working dir) at create time, so a
+                # container recreated after a reap comes back to the SAME files. Docker creates the
+                # named volume on first use — no separate `volume create` step.
+                _ws = (["-v", f"{workspace_volume(key)}:{WORKSPACE_DIR}", "-w", WORKSPACE_DIR]
+                       if workspace_enabled() else [])
                 rc, out = await _docker(
                     "run", "-d", "--name", name, "--hostname", "sandbox",
                     "--memory", _mem(), "--cpus", _cpus(), "--pids-limit", "256",
                     "--network", _network(), "--security-opt", "no-new-privileges",
-                    "--label", "pcai-sandbox=1",
+                    "--label", "pcai-sandbox=1", *_ws,
                     _image(), "sleep", "infinity", timeout=120,
                 )
                 if rc != 0:
