@@ -161,6 +161,15 @@ _BRIDGE_DM_TTL_DAYS = 4
 # needed to render rooms).
 _PRUNABLE_KINDS = (1, 6, 7, 42, 1111, 30023, 30311)
 
+# NIP-34 git-over-nostr events — a repo's source of truth (announcement 30617, repo state 30618,
+# patches 1617, issues 1621, replies/PRs 1622, issue-status 1623, and status 1630-1633). These are
+# the collaboration record; losing one loses code/history that isn't reconstructable from the WoT
+# firehose. They are DELIBERATELY absent from _PRUNABLE_KINDS (so age/bridge/count-cap prunes never
+# touch them — kept forever), and are also exempted from the NIP-40 expiration sweep below so a stray
+# `expiration` tag can't quietly delete a repo. NEVER add any of these to _PRUNABLE_KINDS.
+_GIT_KINDS = (30617, 30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
+assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be prunable"
+
 
 class RelayStore:
     def __init__(self, dsn: str = None, *,
@@ -835,8 +844,12 @@ class RelayStore:
         # NIP-40 expiration sweep FIRST — unconditional: an expired event is gone per the AUTHOR's
         # explicit intent, so unlike the age-based prune below this ignores kind allowlist AND the
         # preserve clause (even a local user's / profile / DM event with an `expiration` tag goes).
+        # EXCEPTION: git-over-nostr events (_GIT_KINDS) are a repo's source of truth, so a stray
+        # `expiration` tag must NOT be able to delete a repo/patch/issue — they are kept regardless.
+        _gitk = ",".join(str(k) for k in _GIT_KINDS)
         rows = conn.execute(
-            "DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ? RETURNING id",
+            f"DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ? "
+            f"AND kind NOT IN ({_gitk}) RETURNING id",
             (int(time.time()),)).fetchall()
         gone += [r["id"] for r in rows]; removed += len(rows)
         # Age-based auto-cleaner: delete only old feed content (kinds in _PRUNABLE_KINDS — notes/
