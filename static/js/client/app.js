@@ -6200,17 +6200,51 @@
       pop.style.left=left+'px'; pop.style.top=top+'px';
     }
   }
+  // Keyboard navigation for the flat button popovers (the reaction grid, the ☰ menu). They were
+  // mouse-only, so a reaction could not be chosen from the keyboard at all. Bound in the CAPTURE phase and
+  // stopping what it handles, so the global scroll/post-action keys cannot also fire while one is open.
+  function _popKeys(pop, sel, activate, close){
+    const items=()=>[...pop.querySelectorAll(sel)];
+    let i=-1;
+    const mark=()=>{ const els=items(); els.forEach((b,n)=>b.classList.toggle('kb', n===i));
+      if(els[i]) els[i].scrollIntoView({block:'nearest'}); };
+    // The emoji grid wraps, so Up/Down must move a ROW, not one button. Buttons on the same row share an
+    // offsetTop — count them to get the row length, which adapts to whatever width the popover ended up.
+    const rowLen=()=>{ const els=items(); if(els.length<2) return 1;
+      const top=els[0].offsetTop; let n=0;
+      for(const el of els){ if(el.offsetTop!==top) break; n++; }
+      return Math.max(1,n); };
+    const onKey=e=>{
+      if(e.altKey||e.ctrlKey||e.metaKey) return;
+      const els=items(); if(!els.length) return;
+      const k=e.key; let d=0;
+      if(k==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); return; }
+      if(k==='Enter'||k===' '){ if(i>=0){ e.preventDefault(); e.stopPropagation(); activate(els[i]); } return; }
+      if(k==='ArrowRight') d=1; else if(k==='ArrowLeft') d=-1;
+      else if(k==='ArrowDown') d=rowLen(); else if(k==='ArrowUp') d=-rowLen();
+      else if(k==='Home'){ e.preventDefault(); e.stopPropagation(); i=0; mark(); return; }
+      else if(k==='End'){ e.preventDefault(); e.stopPropagation(); i=els.length-1; mark(); return; }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+      i = i<0 ? (d>0?0:els.length-1) : Math.max(0, Math.min(els.length-1, i+d));
+      mark();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return ()=>document.removeEventListener('keydown', onKey, true);
+  }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
     pop.innerHTML=REACTION_EMOJIS.map(x=>`<button data-e="${x}">${x}</button>`).join('');
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
-    const close=()=>{ pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    let _detachKeys=()=>{};
+    const close=()=>{ _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works
     $$('[data-e]',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); onPick(b.dataset.e, close); });
+    _detachKeys=_popKeys(pop, '[data-e]', b=>onPick(b.dataset.e, close), close);
     return close;
   }
   function pickEmoji(id,pk,btn){
@@ -6225,10 +6259,12 @@
     pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
-    const close=()=>{ pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
+    let _detachKeys=()=>{};
+    const close=()=>{ _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); };
     const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });
+    _detachKeys=_popKeys(pop, '[data-m]', b=>{ close(); onPick(b.dataset.m); }, close);
     return close;
   }
   // Translate the DRAFT in a compose box into a chosen language (reply / quote / new post all use
@@ -13259,7 +13295,7 @@
       if(e.altKey||e.ctrlKey||e.metaKey) return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
-      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox')) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
       const k=(e.key||'').toLowerCase();
       if(k==='escape'){ if(_selId){ e.preventDefault(); _selectNote(null); } return; }
       const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
@@ -13328,6 +13364,12 @@
       // in particular pages through images with the arrows.
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.menu-pop,.emoji-pop')) return;
+      // SELECTION FIRST, before asking whether anything scrolls. A short thread fits on screen, so there is
+      // no scroller — and bailing here meant the arrows did nothing there, which in turn meant nothing was
+      // ever selected and r/b/q were dead too.
+      if(e.key==='ArrowDown' || e.key==='ArrowUp'){
+        if(_moveSel(e.key==='ArrowDown'?1:-1)){ e.preventDefault(); return; }
+      }
       const f=_keyScroller();
       if(!f) return;                                       // nothing to scroll — don't swallow the key
       const page=Math.max(120, f.clientHeight-64);
@@ -13347,10 +13389,8 @@
       }
       if(!dy) return;
       e.preventDefault();
-      // In a timeline, an ARROW should step from post to post — that is what gives the action keys (r/b/q)
-      // something to act on. Only when there are no posts, or the selection is already at an end, does it
-      // fall through to a plain pixel scroll (settings, files, a thread's tail).
-      if((e.key==='ArrowDown'||e.key==='ArrowUp') && _moveSel(e.key==='ArrowDown'?1:-1)) return;
+      // (Arrow → selection was handled above; reaching here means there was no post to step to, so this is
+      //  a plain pixel scroll — settings, files, the tail of a list.)
       f.scrollBy({top:dy, behavior:'auto'});   // auto, not smooth: held-down arrows must not queue up
       // A page jump leaves the selection off-screen; move it to whatever is now at the top, so the action
       // keys stay pointed at what you are actually looking at.

@@ -3495,3 +3495,8 @@ body.modal-open .mobilenav{display:none}
    bottom rule, so an outline would draw outside it and clash with the row above. */
 .note.sel{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
 .ks-sec{margin:14px 0 2px;font-weight:700;font-size:13px;color:var(--text)}
+
+/* Keyboard cursor inside the reaction grid / ☰ menu — matches each popover's own hover treatment, so
+   arrowing through looks the same as mousing through. */
+.emoji-pop button.kb{background:rgba(var(--accent-rgb),.18);transform:scale(1.18)}
+.menu-pop button.kb{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
