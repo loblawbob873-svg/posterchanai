@@ -9794,6 +9794,27 @@
   // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
   // thrash (and re-scrolled to bottom each time). One debounced render absorbs the whole burst.
   let _dmRefreshTimer=null, _dmThreadSig='';
+  // Hold the message pane at the bottom while it SETTLES. Scrolling once is not enough: bubbles are
+  // painted as placeholders and patched after decryption, and images load later still — every one of
+  // those makes the pane taller than it was when we measured it, leaving you above the newest message.
+  // Re-pin over the next few frames and as each image lands, and give up the moment the user scrolls
+  // themselves (they are reading history, not waiting for us).
+  function _dmPinBottom(m){
+    if(!m) return;
+    let stop=false;
+    const pin=()=>{ if(!stop && m.isConnected) m.scrollTop=m.scrollHeight; };
+    const done=()=>{ stop=true; try{ obs.disconnect(); }catch(_){ } };
+    // Watch for the CONTENT changing rather than guessing how long it takes. Decryption patches each
+    // bubble as it finishes — over hundreds of milliseconds on a long thread — and a fixed frame budget
+    // expired long before that, which is why the pane still opened part-way up.
+    const obs=new MutationObserver(pin);
+    try{ obs.observe(m, { childList:true, subtree:true, characterData:true }); }catch(_){ }
+    ['wheel','touchmove','keydown'].forEach(ev=>m.addEventListener(ev, done, {passive:true, once:true}));
+    m.querySelectorAll('img').forEach(im=>{ if(!im.complete) im.addEventListener('load', pin, {once:true}); });
+    pin();
+    setTimeout(pin, 0);            // after the current layout pass
+    setTimeout(done, 4000);        // hard stop — never hold the pane hostage
+  }
   let _dmLastPk='';   // which conversation the pane last rendered — a CHANGE means a fresh open
   function _threadSig(pk){ const arr=dmPeers.get(pk)||[]; return pk+'|'+(arr.length?(arr[arr.length-1].id||''):'')+'|'+(_dmShown.get(pk)||_DM_INIT); }
   function _scheduleDmRefresh(){
@@ -9978,7 +9999,7 @@
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
     _dmReplyBanner();
     _wireBubbleActions($('#dm-msgs'), pk);
-    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) m.scrollTop=m.scrollHeight;
+    const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) _dmPinBottom(m);
       // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
       // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
       m.addEventListener('click', ce=>{ const im=ce.target.closest('img'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
@@ -10001,7 +10022,7 @@
         _patched=true;
       } } }
     // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.
-    if(_patched && _atBottom && !_wantTop){ const mm2=$('#dm-msgs'); if(mm2) mm2.scrollTop=mm2.scrollHeight; }
+    if(_patched && _atBottom && !_wantTop){ _dmPinBottom($('#dm-msgs')); }
   }
 
   // ---------- profile ----------
@@ -12168,7 +12189,7 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement so React moves to <code>f</code>. Syncs across your devices.</div>
+          <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
           <label class="fld">💾 Media cache size
@@ -13231,6 +13252,7 @@
   // meant to type. Alt is also what the sidebar's own access keys would be, so it reads as "the app's key".
   const SHORTCUTS = [
     ['p', '@compose',      'New post'],
+    ['l', '@react',        'React to the selected post'],
     ['h', 'home',          'Home'],
     ['i', 'ai',            'PosterChan AI'],
     ['n', 'notifications', 'Notifications'],
@@ -13269,11 +13291,37 @@
       if(GUEST){ _guestPrompt(); return; }
       compose(); return;
     }
+    if(target==='@react'){ _postAction('react'); return; }   // Alt+L reacts in EITHER mode
     if(target==='@help'){ _shortcutHelp(); return; }
     switchView(target);
   }
+  // Perform one of the selected post's actions by name. Clicking its own button, as everywhere else, so
+  // the guest guard / already-reposted check / counts / toasts all come along.
+  function _postAction(name){
+    const el=_selEl();
+    if(!el){ toast('select a post first — ↑/↓ or j/k'); return; }
+    if(name==='effect'){
+      if(window.PC_NOSTR_ONLY) return;
+      const n=_rowNote(el); if(n) effectPost(n.id, n.pk);
+      return;
+    }
+    const b=el.querySelector('.act[data-a="'+name+'"]');
+    if(b) b.click();
+  }
+  // VIM MODE puts the post actions on Alt, leaving the bare letters to movement. Three of these are view
+  // shortcuts in normal mode (Alt+B bookmarks, Alt+E nostrverse, Alt+R meme) — in Vim mode the POST action
+  // wins, and those views stay reachable the vim way: h into the nav rail, j/k, Enter.
+  const _VIM_ALT_POST = { r:'reply', b:'repost', q:'quote', z:'tip', e:'effect' };
   function _shortcutHelp(){
-    const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
+    const POSTLBL={ reply:'Reply to the selected post', repost:'Boost the selected post',
+                    quote:'Quote the selected post', tip:'Tip the selected post', effect:'Effect on the selected post' };
+    const row=([k,,label])=>{
+      // In Vim mode Alt+<r/b/q/z/e> act on the post instead of switching view — say so here rather than
+      // listing a binding that no longer does what it claims.
+      const over=_vimOn() && _VIM_ALT_POST[k];
+      const lbl=over ? POSTLBL[_VIM_ALT_POST[k]] : label;
+      return `<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(lbl)}</span></div>`;
+    };
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
       +(_vimOn() ? '<div class="ks-sec">Vim movement</div><div class="ks-grid">'
           +[['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],['gg','Top'],['G','Bottom']]
@@ -13292,12 +13340,15 @@
     document.addEventListener('keydown', e=>{
       if(!e.altKey || e.ctrlKey || e.metaKey) return;
       const k=(e.key||'').toLowerCase();
-      if(!MAP.has(k)) return;
+      // …or a Vim-mode post action. Q and Z are not view shortcuts at all, so gating purely on the view
+      // map dropped Alt+Q / Alt+Z on the floor.
+      if(!MAP.has(k) && !(_vimOn() && _VIM_ALT_POST[k])) return;
       const t=e.target;
       // Alt+letter inside a text field is a real editing shortcut on some platforms (macOS word-jumps),
       // so leave a focused field alone — same rule the scroll keys use.
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox')) return;
+      if(_vimOn() && _VIM_ALT_POST[k]){ e.preventDefault(); _postAction(_VIM_ALT_POST[k]); return; }
       e.preventDefault();
       _runShortcut(MAP.get(k));
     });
@@ -13413,7 +13464,7 @@
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     const t=e.target;
-    if(!t || (t.id!=='dm-in' && t.id!=='grp-input')) return;
+    if(!t || (t.id!=='dm-in' && t.id!=='grp-input' && t.id!=='tl-cmp-ta')) return;
     e.preventDefault(); e.stopPropagation();
     try{ t.blur(); }catch(_){ }
     try{ document.body.focus({preventScroll:true}); }catch(_){ }
@@ -13476,7 +13527,13 @@
       _gPending=0;
       if(k==='j'){ take(i<0?0:i+stride); return; }
       if(k==='k'){
-        if(i<=0){ take(0); _edge(true); return; }   // already at the first row → keep going, to the top
+        if(i<=0){
+          take(0); _edge(true);
+          // …and one more k from the first post lands IN the composer. Revealing it was not enough: you
+          // could see the box but still had to reach for the mouse to write. Escape hands focus back.
+          _focusComposer();
+          return;
+        }
         take(i-stride); return;
       }
       // Horizontal. Inside a grid, step through it until the edge; then cross columns.
@@ -13496,6 +13553,17 @@
       }
     }, true);   // CAPTURE — vim movement must win over the single-letter post actions (l = react)
   })();
+
+  // The timeline's inline composer, treated as the row ABOVE the first post: k at the top moves into it.
+  // Only where it exists (home/global/trending) and is on screen — elsewhere k just stops at the top.
+  function _focusComposer(){
+    const ta=document.getElementById('tl-cmp-ta');
+    if(!ta || !(ta.offsetParent!==null)) return false;
+    if(document.activeElement===ta) return true;
+    _selectNote(null);                     // the cursor is in the composer now, not on a post
+    try{ ta.focus({preventScroll:true}); }catch(_){ try{ ta.focus(); }catch(__){} }
+    return true;
+  }
 
   // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
   // client uses, and the text-field guard already keeps them out of anything being typed into.
