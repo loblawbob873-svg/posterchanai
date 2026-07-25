@@ -13529,6 +13529,7 @@
     const MAP=new Map(SHORTCUTS.map(([k,v])=>[k,v]));
     document.addEventListener('keydown', e=>{
       if(!e.altKey || e.ctrlKey || e.metaKey) return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       // …or a Vim-mode post action. Q and Z are not view shortcuts at all, so gating purely on the view
       // map dropped Alt+Q / Alt+Z on the floor.
       const bound = (c) => MAP.has(c) || (_vimOn() && !!_VIM_ALT_POST[c]);
@@ -13559,6 +13560,7 @@
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.key!=='/' || e.altKey || e.ctrlKey || e.metaKey) return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open')) return;
@@ -13867,6 +13869,7 @@
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       const k=(e.key||'').toLowerCase();
       let b=null;
       if(/^[a-z]$/.test(k)) b=document.querySelector(`#feed .hm-key[data-l="${k}"]:not([disabled])`);
@@ -13898,6 +13901,7 @@
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.key!=='ArrowLeft' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const b=_backBtn(); if(!b) return;      // nothing open → leave Alt+← to the browser's own history
@@ -13927,6 +13931,7 @@
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.key!=='Enter' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const t=e.target;
@@ -13965,6 +13970,7 @@
     document.addEventListener('keydown', e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
       if(e.key!=='[' && e.key!==']') return;
+      if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
@@ -13988,6 +13994,12 @@
   (function(){
     document.addEventListener('keydown', e=>{
       if(e.altKey||e.ctrlKey||e.metaKey) return;
+      // Somebody above already claimed this keystroke. Checking the overlay classes is NOT enough: the
+      // confirm dialog handles Enter in the CAPTURE phase and removes itself there, so by the time this
+      // bubble-phase handler runs the .uiconfirm-bg it would have matched on is already gone. That is why
+      // deleting a file with `d` then confirming with Enter also OPENED the file — the very same Enter
+      // fell through to the Enter branch below, which presses a file card's <a>.
+      if(e.defaultPrevented) return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
