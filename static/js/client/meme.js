@@ -93,14 +93,21 @@
   }
 
   const clamp = (v,lo,hi) => Math.max(lo, Math.min(hi, Number(v)||0));
-  const projEnd = () => P.layers.reduce((m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || P.duration;
+  // A layer that occupies the CANVAS. Audio has no picture, so every place that reasoned "not text =
+  // something to draw / something in the clip sequence" has to ask this instead.
+  const _isVisual = (l) => l.type==='image' || l.type==='video';
+  // AUDIO IS EXCLUDED from the project length, exactly like the renderer: dropping a three-minute song
+  // onto a six-second meme must not turn it into a three-minute video. Music is truncated at the end
+  // of the timeline instead.
+  const projEnd = () => P.layers.filter(l=>l.type!=='audio')
+    .reduce((m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || P.duration;
 
   // ---------- the MASTER TIMELINE ----------
   // Media clips (image/video) form ONE ordered sequence that plays back-to-back — the way every video editor
   // works. Their `start` is DERIVED from that order, never hand-typed: drop a clip anywhere on the timeline
   // and the rest reflow around it (no gaps, no accidental overlaps). TEXT is excluded on purpose — a caption
   // is an overlay pinned ON the footage, so it keeps its own free start/duration.
-  const mediaSeq = () => P.layers.filter(l=>l.type!=='text')
+  const mediaSeq = () => P.layers.filter(_isVisual)
     .sort((a,b)=>((+a.start||0)-(+b.start||0)) || (P.layers.indexOf(a)-P.layers.indexOf(b)));
   function resequence(seq){ let t=0; (seq||mediaSeq()).forEach(l=>{ l.start=+t.toFixed(2); t+=(+l.dur||0); }); }
   // Where a clip dragged to `center` (seconds, its midpoint) belongs in the sequence of the OTHERS.
@@ -113,7 +120,9 @@
   // Rows read TOP-FIRST, like every editor: P.layers is draw order (last = on top), so the list is
   // reversed for display. Without this the row you saw at the top was actually the BOTTOM layer —
   // which is why a caption listed first rendered underneath the clip listed below it.
-  const _rowOrder = () => _stageOrder().slice().reverse();
+  // ...and the audio beds hang below everything, the way a soundtrack track sits under the video tracks
+  // in any editor. They are not in _stageOrder at all (nothing to draw), so they are appended here.
+  const _rowOrder = () => _stageOrder().slice().reverse().concat(P.layers.filter(l=>l.type==='audio'));
 
   // The RENDERER always composites captions last (meme_builder_service collects text layers and applies
   // their drawtext filters AFTER every overlay), so in the exported video text is ALWAYS on top and layer
@@ -146,7 +155,7 @@
 
   const _alignOf = (l) => (l.align || '');   // '' = obey the x you dragged it to; 'center' = let ffmpeg centre it
 
-  const _stageOrder = () => P.layers.filter(l=>l.type!=='text').concat(P.layers.filter(l=>l.type==='text'));
+  const _stageOrder = () => P.layers.filter(_isVisual).concat(P.layers.filter(l=>l.type==='text'));
 
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
@@ -154,27 +163,45 @@
     // a second image land exactly on top of the first — the timeline read as "everything overlaps", which
     // is not how a video editor behaves. Media appends after the last clip so drops play in sequence;
     // TEXT still starts at 0, because a caption is an overlay ON the footage, not another clip after it.
-    const tail = type==='text' ? 0 : projEnd();
+    // Music defaults to the WHOLE timeline — that is what you want nine times out of ten when you drop a
+    // song on a meme, and shortening it to one clip is a drag away. It never lengthens the project (the
+    // renderer truncates it at the end), so "the whole timeline" is safe as a default even for a long track.
+    const wasEnd = projEnd();
+    const tail = (type==='text' || type==='audio') ? 0 : wasEnd;
     const l = Object.assign({
       id: nid(), type, src: src||'', name: '',
-      start: tail, dur: type==='text' ? 3 : 4, trim: 0,
+      start: tail, dur: type==='text' ? 3 : (type==='audio' ? Math.max(projEnd(), 1) : 4), trim: 0,
       x: 0, y: 0, w: type==='text' ? 0 : P.w, h: type==='text' ? 0 : Math.round(P.h/2),
       opacity: 1, effect: 'none', volume: 1, mute: false,
       text: type==='text' ? 'top text' : '', size: 64, color:'#ffffff', stroke:'#000000',
       align: '',
     }, extra||{});
-    if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
+    if(type==='audio'){
+      l.x=0; l.y=0; l.w=0; l.h=0;
+      l.volume = 0.6;      // sit UNDER the clips' own sound — amix here runs normalize=0, so 1.0 competes with it
+      l.fade = true;       // truncation at the end of the timeline is a hard cut otherwise
+    }
+    else if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
     // P.layers order IS the draw order (later = on top). A caption must stay ABOVE the footage, so a new
     // MEDIA clip goes in below the text layers rather than on top of everything — otherwise adding a clip
     // after writing your caption silently buried the caption under it. Text still goes on top.
     if(type==='text'){ P.layers.push(l); }
+    else if(type==='audio'){ P.layers.unshift(l); }   // draw order is meaningless for it; keep it out of the way
     else {
       const firstText = P.layers.findIndex(x=>x.type==='text');
       if(firstText < 0) P.layers.push(l); else P.layers.splice(firstText, 0, l);
     }
     sel = l.id;
-    if(type!=='text') resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
+    if(_isVisual(l)){
+      resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
+      // Keep a FULL-LENGTH music bed full-length. Adding a clip makes the meme longer, and a soundtrack
+      // that was covering the whole thing would otherwise stop early — reported as "the music cuts out".
+      // Only a track that spans exactly the old timeline is grown; one you deliberately trimmed is left alone.
+      const end = projEnd();
+      P.layers.forEach(a=>{ if(a.type==='audio' && !(+a.start||0) && Math.abs((+a.dur||0) - wasEnd) < 0.06)
+        a.dur = +end.toFixed(2); });
+    }
     save(); return l;
   }
 
@@ -185,6 +212,7 @@
       <div class="mb-bar">
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
+        <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
@@ -203,6 +231,12 @@
           <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
             ${_stageOrder().map(stageEl).join('')}
           </div>
+          <!-- Music beds have nothing to show on the stage, but the PREVIEW has to be able to hear them —
+               otherwise you can only judge the mix by rendering. One hidden <audio> per track, driven by
+               the same playhead as the video layers (see seekAudio). -->
+          <div class="mb-audios" id="mb-audios" aria-hidden="true">
+            ${P.layers.filter(l=>l.type==='audio').map(l=>`<audio data-id="${l.id}" src="${enc(l.src)}" preload="metadata"></audio>`).join('')}
+          </div>
           <div class="mb-playrow">
             <button class="btn btn-ghost small" id="mb-play">▶︎</button>
             <input type="range" id="mb-scrub" class="mb-scrub" min="0" max="${projEnd().toFixed(2)}" step="0.05" value="0">
@@ -215,7 +249,7 @@
         </div>
       </div>
 
-      ${P.layers.some(l=>l.type!=='text') ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to reorder it — the rest reflow back-to-back. Drag its edges to trim.</div>' : ''}
+      ${P.layers.some(_isVisual) ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to reorder it — the rest reflow back-to-back. Drag its edges to trim.</div>' : ''}
       <div class="mb-timeline" id="mb-timeline">
         ${P.layers.length ? _rowOrder().map(trackEl).join('') : '<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'}
       </div>
@@ -250,15 +284,17 @@
     const label = l.type==='text' ? ('🅣 ' + (l.text||'text')) : (l.name || srcName(l.src));
     const thumb = l.type==='text'
       ? `<span class="mb-ttxt">🅣 ${enc((l.text||'text').slice(0,16))}</span>`
-      : (l.type==='video'
+      : (l.type==='audio'
+        ? `<span class="mb-ttxt mb-taud">🎵 ${enc((l.name || srcName(l.src)).slice(0,16))}</span>`
+        : l.type==='video'
           ? `<video class="mb-tthumb" src="${enc(l.src)}" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
           : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
-    return `<div class="mb-track${l.id===sel?' sel':''}" data-id="${l.id}">
+    return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
       <div class="mb-trackname" title="${enc(label)}">${thumb}
-        <span class="mb-zbtns">
+        ${l.type==='audio' ? '' : `<span class="mb-zbtns">
           <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front">⬆︎</button>
           <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back">⬇︎</button>
-        </span>
+        </span>`}
       </div>
       <div class="mb-lane">
         <div class="mb-clip" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%">
@@ -274,6 +310,27 @@
     const l = P.layers.find(x=>x.id===sel);
     if(!l) return `<div class="muted small">Select a layer to edit it.</div>`;
     const isText = l.type==='text';
+    // Audio gets its OWN short panel and returns early: geometry, opacity, visual effects and the sound
+    // catalogue are all meaningless for a track with no picture, and showing them just invites you to set
+    // something the renderer will ignore.
+    if(l.type==='audio'){
+      const vol = (l.volume==null?0.6:+l.volume);
+      return `
+      <div class="mb-insp-hd">
+        <b>🎵 Music layer</b>
+        <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+      </div>
+      <div class="muted small mb-dbg">${enc(l.name || srcName(l.src))}</div>
+      <button class="btn btn-cyan small full" id="mb-aud-all" title="Start at 0 and run to the end of the meme">⇔ Span the whole meme</button>
+      <div class="mb-frow">
+        <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
+        <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
+      </div>
+      <label class="mb-f"><span>Skip into the song (s)</span><input class="input" type="number" id="mb-f-trim" min="0" step="0.5" value="${l.trim||0}"></label>
+      <label class="mb-f"><span>Volume</span><input type="range" id="mb-f-avol" min="0" max="2" step="0.05" value="${vol}"></label>
+      <label class="mb-f mb-check"><input type="checkbox" id="mb-f-afade" ${l.fade?'checked':''}><span>Fade in/out</span></label>
+      <div class="muted small mb-dbg">Music never lengthens the meme — anything past ${projEnd().toFixed(1)}s is cut off.</div>`;
+    }
     return `
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
@@ -538,8 +595,26 @@
       const v=el.querySelector('video');
       if(v && on){ const local=(l.trim||0)+(t-l.start); if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } } }
     });
+    seekAudio(t);
     const time=document.getElementById('mb-time');
     if(time) time.textContent=t.toFixed(1)+'s / '+projEnd().toFixed(1)+'s';
+  }
+
+  // The music beds, driven by the same playhead. Scrubbing only re-seeks them (silent); they actually
+  // sound during playback. Preview volume is capped at 1 because that is all an <audio> element accepts —
+  // the render honours the full 0-2 range, so a track boosted past 1 previews a little quieter than it exports.
+  function seekAudio(t){
+    const playing = !!_playT;
+    P.layers.filter(l=>l.type==='audio').forEach(l=>{
+      const a=document.querySelector('#mb-audios audio[data-id="'+l.id+'"]'); if(!a) return;
+      const on = t>=(+l.start||0) && t<=(+l.start||0)+(+l.dur||0);
+      a.volume = clamp(l.volume==null?0.6:l.volume, 0, 1);
+      if(!on || !playing){ try{ a.pause(); }catch(_){ } }
+      if(!on) return;
+      const local=(+l.trim||0)+(t-(+l.start||0));
+      if(Math.abs(a.currentTime-local)>0.3){ try{ a.currentTime=local; }catch(_){ } }
+      if(playing && a.paused){ try{ a.play().catch(()=>{}); }catch(_){ } }
+    });
   }
 
   let _playT=null;
@@ -548,6 +623,7 @@
   function stopPlay(rewind){
     if(_playT){ clearInterval(_playT); _playT=null; }
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.pause(); }catch(_){ } });
+    document.querySelectorAll('#mb-audios audio').forEach(a=>{ try{ a.pause(); }catch(_){ } });
     const b=document.getElementById('mb-play'); if(b) b.textContent='▶︎';
     if(rewind){ const s2=document.getElementById('mb-scrub'); if(s2) s2.value=0; seek(0); }
   }
@@ -557,6 +633,9 @@
     if(btn) btn.textContent='❚❚';
     let t=+(scrub?scrub.value:0);
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.play().catch(()=>{}); }catch(_){ } });
+    // Start the music INSIDE the click handler. Kicking it off from the interval tick instead puts the
+    // play() outside the user gesture, which is exactly what the browsers' autoplay policy blocks.
+    _playT=1; seekAudio(t);
     _playT=setInterval(()=>{
       t+=0.1;
       if(t>projEnd()){        // STOP at the end — it used to wrap to 0 and loop forever, so the preview
@@ -589,6 +668,40 @@
     inp.click();
   }
 
+  // Music: a local mp3/m4a/ogg/wav (uploaded to Blossom first, like every other layer source) or a track
+  // already on your drive. One button, both paths — a separate "from Blossom" for audio would be a fourth
+  // add-button in a bar that is already full on a phone.
+  async function pickAudio(){
+    const st=document.getElementById('mb-status');
+    PC.modal(`<h3>🎵 Add music</h3>
+      <button class="btn btn-neon full" id="mba-file">📁 Upload a file from this device</button>
+      <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>`, root=>{
+      root.querySelector('#mba-blossom').onclick=()=>{
+        PC.closeModal();
+        PC.blossomPicker(null, ({url})=>{ addLayer('audio', url); render(); }, {
+          title: '🎵 Add music from Blossom',
+          filter: b => /^audio\//.test(b.type||''),
+          empty: 'No audio on your Blossom drive yet — upload some in the Files tab.',
+        });
+      };
+      root.querySelector('#mba-file').onclick=()=>{
+        PC.closeModal();
+        const inp=document.createElement('input'); inp.type='file'; inp.accept='audio/*';
+        inp.onchange=async()=>{
+          const f=(inp.files||[])[0]; if(!f) return;
+          try{
+            if(st) st.textContent='uploading '+f.name+'…';
+            const url=await uploadBlob(f);
+            addLayer('audio', url, { name:f.name.slice(0,24) });
+            if(st) st.textContent='';
+            render();
+          }catch(err){ if(st) st.textContent='upload failed: '+((err&&err.message)||err); }
+        };
+        inp.click();
+      };
+    });
+  }
+
   async function doRender(){
     if(!P.layers.length){ toast('add a layer first'); return; }
     // Guard on MODULE state, not just the button's disabled flag: any repaint/render() of the view replaces
@@ -605,7 +718,9 @@
       const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
-          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute, volume:+l.volume||1,
+          opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
+          // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
+          volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
           text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -683,6 +798,12 @@
     on('mb-f-color','input',(e)=>{ l.color=e.target.value; save(); repaint(); });
     on('mb-f-stroke','input',(e)=>{ l.stroke=e.target.value; save(); repaint(); });
     on('mb-f-fx','change',(e)=>{ l.effect=e.target.value; save(); });
+    // --- music layer ---
+    on('mb-aud-all','click',()=>{ l.start=0; l.dur=+Math.max(projEnd(),0.1).toFixed(2); save(); render();
+      toast('music spans the whole meme'); });
+    on('mb-f-avol','input',(e)=>{ l.volume=clamp(e.target.value,0,2); save();
+      const a=document.querySelector('#mb-audios audio[data-id="'+l.id+'"]'); if(a) a.volume=clamp(l.volume,0,1); });
+    on('mb-f-afade','change',(e)=>{ l.fade=e.target.checked; save(); });
     on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
     on('mb-f-sndvol','input',(e)=>{ l.soundVolume=clamp(e.target.value,0,3); save(); });
     on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
@@ -710,6 +831,7 @@
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
+    on('mb-add-audio','click',pickAudio);
     on('mb-add-blossom','click',pickBlossom);
     on('mb-save','click',saveProject);
     on('mb-open','click',openProject);

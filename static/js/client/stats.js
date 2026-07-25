@@ -134,7 +134,9 @@
       const T = _data.totals || {}, G = _data.games || {by_game:{}};
       const CT = _data.counters || {metrics:{}}, isNew = !!CT.since_deploy;
       const blank = {series:[], total:0, today:0};
-      const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank}, CT.metrics||{});
+      // Defaults for every counter, so a node running an older server (whose payload has no `meme`
+      // key yet) renders an empty card instead of throwing on cm.meme.series.
+      const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank, meme:blank}, CT.metrics||{});
       const chat = (_data.chat||{}).series || [];
       // Per-game bars follow the selected range too (the last section that didn't). Fall back to the
       // all-time breakdown only if an older server hasn't got per-window figures.
@@ -186,6 +188,7 @@
           ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, inRange(cm.image.series), cm.image.total, isNew)}
           ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, inRange(cm.music.series), cm.music.total, isNew)}
           ${seriesCard('video','🎬','Video','#34d399', cm.video.series, inRange(cm.video.series), cm.video.total, isNew)}
+          ${seriesCard('meme','😂','Memes','#fb923c', cm.meme.series, inRange(cm.meme.series), cm.meme.total, isNew)}
           ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, inRange(cm.calls.series), cm.calls.total, isNew)}
         </div>
         <div class="muted small st-hint">These are counted per day, so the 60-minute range shows today.</div>

@@ -3,7 +3,8 @@
 The client owns the EDITING (drag/resize/trim on a canvas); this owns the RENDER. It takes a JSON edit
 list and turns it into a single ffmpeg invocation: a solid colour base of the project size/duration,
 every layer scaled and overlaid at its own position, gated to its own time window, with per-layer
-effects and audio mixed from whatever clips carry it.
+effects and audio mixed from whatever clips carry it. A layer can also be pure audio (a music bed) —
+it contributes nothing to the composite, only a track to the mix.
 
 Why one filtergraph instead of rendering layer-by-layer and concatenating: layers can overlap in time
 and space, so they have to composite in a single pass.
@@ -217,9 +218,12 @@ def render(edit: dict, sources: dict) -> bytes:
     if len(layers) > MAX_LAYERS:
         raise ValueError(f"too many layers ({len(layers)}); the limit is {MAX_LAYERS}")
 
-    # Project duration: explicit, or the end of the last layer.
+    # Project duration: explicit, or the end of the last layer. AUDIO layers are excluded on purpose —
+    # a three-minute song dropped onto a six-second meme must not stretch the video to three minutes
+    # (it would also slam straight into MAX_DURATION). Music is truncated at the end of the timeline
+    # instead; see the audio branch below.
     ends = [_num(l.get("start"), 0, MAX_DURATION, 0) + _num(l.get("dur"), 0.05, MAX_DURATION, 3)
-            for l in layers]
+            for l in layers if (l.get("type") or "").lower() != "audio"]
     duration = _num(edit.get("duration"), 0.1, MAX_DURATION, max(ends) if ends else 3.0)
 
     tmp = tempfile.mkdtemp(prefix="pcmeme-")
@@ -306,6 +310,39 @@ def render(edit: dict, sources: dict) -> bytes:
             path = sources.get(str(layer.get("src") or ""))
             if not path or not os.path.exists(path):
                 logger.warning("[meme] layer %s has no resolved source — skipped", n)
+                continue
+
+            if kind == "audio":
+                # A music bed (mp3/m4a/ogg/wav). No video chain at all — it contributes nothing to the
+                # composite, only a label to the amix below. That is why this branch never touches `cur`.
+                if not _has_audio(path):
+                    logger.warning("[meme] audio layer %s carries no audio stream — skipped", n)
+                    continue
+                # TRUNCATE at the end of the timeline. The song does not extend the project (see `ends`
+                # above), so a clip that starts inside the timeline is cut where the video ends, and one
+                # starting past the end is dropped entirely rather than fed to ffmpeg as a zero-length input.
+                a_start = min(start, duration)
+                a_dur = min(dur, duration - a_start)
+                if a_dur <= 0.05:
+                    continue
+                vol = _num(layer.get("volume"), 0, 4, 1.0)
+                a_trim = _num(layer.get("trim"), 0, MAX_DURATION, 0)   # skip into the song
+                cmd += ["-ss", f"{a_trim:.3f}", "-t", f"{a_dur:.3f}", "-i", path]
+                # Resample/relayout explicitly: an arbitrary user mp3 can be 44.1 kHz mono while the mix's
+                # silent base is 48 kHz stereo. ffmpeg would auto-insert the conversion, but doing it here
+                # keeps adelay's per-channel argument list honest (it is written for stereo).
+                aparts = [f"atrim=0:{a_dur:.3f}", "asetpts=PTS-STARTPTS",
+                          "aresample=48000", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
+                if layer.get("fade"):
+                    # Truncation makes a hard cut mid-song, so an out-ramp is the default for music
+                    # (unlike the sound-effect catalogue, which is meant to hit sharply).
+                    f = min(1.0, max(0.2, a_dur / 8))
+                    aparts.append(f"afade=t=in:st=0:d={f:.2f}")
+                    aparts.append(f"afade=t=out:st={max(0.0, a_dur - f):.2f}:d={f:.2f}")
+                aparts.append(f"adelay={int(a_start*1000)}|{int(a_start*1000)}")
+                aparts.append(f"volume={vol:.2f}")
+                audio_parts.append(f"[{idx}:a]" + ",".join(aparts) + f"[m{n}]")
+                idx += 1
                 continue
 
             lw = int(_num(layer.get("w"), 2, MAX_DIM, w)) // 2 * 2

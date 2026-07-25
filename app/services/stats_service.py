@@ -76,9 +76,10 @@ _COUNTER_KEY = "stats_counters"   # local-only settings key: {"YYYY-MM-DD": {"ca
 # Things that leave NO trace to aggregate later, so they can only be counted as they happen:
 #   calls  — kind-25050 signaling is ephemeral, the relay stores none of it
 #   image/music/video — generated media is returned to the caller, never recorded server-side
+#   meme   — same: the Meme Builder streams the rendered MP4 straight back and keeps no row
 # (Chat is NOT here: `messages` rows are real history, so chat is aggregated from the table instead
 # and keeps its full past rather than starting at zero on the day this shipped.)
-COUNTERS = ("calls", "image", "music", "video")
+COUNTERS = ("calls", "image", "music", "video", "meme")
 _counts: dict = {}                # {"YYYY-MM-DD": {metric: n}}
 _counts_dirty = False
 _counts_loaded = False

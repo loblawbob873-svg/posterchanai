@@ -3387,6 +3387,14 @@ body.modal-open .mobilenav{display:none}
 .mb-tthumb{width:52px;height:34px;object-fit:cover;border-radius:7px;border:1px solid var(--line);background:var(--panel2);flex:0 0 auto}
 .mb-tvid{position:absolute;left:19px;font-style:normal;font-size:11px;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
 .mb-ttxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Music beds: tinted so the soundtrack reads as a different KIND of track at a glance, not another clip. */
+/* Theme vars only — a hardcoded rgba() here would be invisible or garish in the light themes. */
+.mb-taud{color:var(--cyan)}
+.mb-track-aud .mb-clip{background:linear-gradient(135deg,rgba(var(--accent-rgb),.22),rgba(var(--accent-rgb),.10));
+  box-shadow:inset 3px 0 0 var(--cyan),inset -3px 0 0 var(--cyan)}
+.mb-track-aud .mb-lane{height:26px}
+/* Preview-only <audio> elements — audible, never visible (hidden would also stop them in some engines). */
+.mb-audios{position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}
 /* z-order right beside the thumbnail — where you're looking when you decide what sits on top. */
 .mb-zbtns{display:flex;flex-direction:column;gap:2px;margin-left:auto;flex:0 0 auto}
 .mb-z{width:22px;height:16px;line-height:1;padding:0;font-size:11px;cursor:pointer;

@@ -2491,6 +2491,14 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
         except RuntimeError as e:
             logger.warning("[meme] render failed for %s: %s", pk[:12], e)
             raise HTTPException(status_code=500, detail=str(e))
+        # Public stats counter (Server Stats page): count a PRODUCED meme, not an attempt — this sits
+        # after the render so a 400/500 never inflates it. The MP4 is streamed straight back and no row
+        # is kept, so like image/music/video there is nothing to aggregate after the fact.
+        try:
+            from app.services import stats_service
+            stats_service.bump("meme")
+        except Exception:
+            pass
         return Response(content=out, media_type="video/mp4",
                         headers={"Content-Disposition": 'attachment; filename="meme.mp4"'})
     finally:
