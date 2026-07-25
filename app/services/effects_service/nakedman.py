@@ -184,7 +184,10 @@ def add_nakedman_animated(data: bytes) -> bytes:
         # Man geometry: prominent but framed (never wider than the image).
         M = min(H * 0.62, W * 0.52)
         cx = W * 0.5
-        ground_y = H * 0.93
+        # Feet baseline. The huge penis hangs to ~ground_y + 0.28*M, so a baseline near the bottom
+        # (was 0.93) clipped the shaft off the frame — hold the man higher so the full length fits with a
+        # margin even at the largest M (0.62*H → lowest ≈ 0.97*H). The head still clears the top.
+        ground_y = H * 0.80
 
         frames = []
         for fi in range(_NAKEDMAN_ANIM_FRAMES):
