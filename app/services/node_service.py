@@ -550,6 +550,44 @@ from app.services import agent_file_tools  # noqa: E402  (after _NODE_TOOLS so t
 
 _NODE_TOOLS = _NODE_TOOLS + agent_file_tools.FILE_TOOLS
 
+# The READ-ONLY tool set, used by the two callers that must never change the machine:
+#   * a sub-agent, which only INVESTIGATES — that is what makes it safe to delegate to without the
+#     parent losing track of the machine's state (and no spawn_agent, so recursion stops at depth 1);
+#   * the system-health report (report_mode), which is read-only diagnostics BY DEFINITION. It used to
+#     be safe by accident, because the whole tool list was just run_command+finish; once file tools were
+#     added it silently gained the ability to edit and write files on every node it audits. It gets
+#     read_file/grep here, which genuinely help it read configs and logs, and nothing that mutates.
+_READONLY_TOOLS = [t for t in _NODE_TOOLS
+                   if t["function"]["name"] in ("run_command", "finish", "read_file", "grep")]
+_MAX_SPAWNS = 3        # per run — a sub-agent costs real GPU steps, so it cannot be free-for-all
+_SUB_MAX_STEPS = 12
+# The health report runs on a CRON across every node, so its budget is pinned here rather than riding
+# node_exec_agent_max_steps — raising that for interactive agent work must not quietly multiply the
+# cost of a scheduled job. Still well above the 8 it effectively had before.
+_REPORT_MAX_STEPS = 12
+
+_NODE_TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "spawn_agent",
+        "description": "Delegate a self-contained READ-ONLY question to a helper agent that "
+                       "investigates on its own and reports back one short answer. Use it when finding "
+                       "something out would take several noisy commands whose full output you do not "
+                       "need — 'which unit is listening on 8080 and what is its config path?'. The "
+                       "helper cannot change anything, so do the actual work yourself afterwards. Give "
+                       "it ONE specific question, with any context it needs, since it cannot see your "
+                       "conversation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string",
+                             "description": "The self-contained question, including needed context."},
+            },
+            "required": ["question"],
+        },
+    },
+})
+
 
 # --- context control -------------------------------------------------------------------------
 # The transcript grows by one tool result per step, each up to _TOOL_RESULT_CHARS. Nothing ever
@@ -610,7 +648,8 @@ def _trim_to_budget(messages: list, budget: int) -> int:
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
                     chat_service: "ChatService", notify: Optional[Callable] = None,
-                    report_mode: bool = False, should_stop: Optional[Callable] = None) -> str:
+                    report_mode: bool = False, should_stop: Optional[Callable] = None,
+                    depth: int = 0) -> str:
     """Drive commands on `node` toward `goal` via native tool-calling. Returns a concise summary
     (header + the model's ✅ Done line); the per-command play-by-play is streamed live via `notify`
     and recorded in the node job log, not folded into the returned/persisted message.
@@ -628,7 +667,18 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     import json as _json
     from app.services.inference_factory import get_inference_service
 
-    max_steps = _max_steps(db)
+    # A sub-agent (depth>0) gets a read-only tool set and a small budget of its own, and always
+    # returns just its summary — report_mode's return shape is exactly what the parent wants back.
+    # The health report (report_mode) is read-only too, and separately budgeted (see _REPORT_MAX_STEPS).
+    if depth:
+        report_mode = True
+    tools = _READONLY_TOOLS if (depth or report_mode) else _NODE_TOOLS
+    if depth:
+        max_steps = min(_SUB_MAX_STEPS, _max_steps(db))
+    elif report_mode:
+        max_steps = min(_REPORT_MAX_STEPS, _max_steps(db))
+    else:
+        max_steps = _max_steps(db)
     # Agentic model for the tool-call loop. Prefer the unified `llm_tools_model` (shared with the
     # /v1 agentic path); fall back to the legacy `node_exec_agent_model` for back-compat, then the
     # tuned default. Empty/missing gguf -> backend falls back to the default model (resolve_model_path).
@@ -656,11 +706,15 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         {"role": "system", "content": _sys},
         {"role": "user", "content": f"Goal: {goal}"},
     ]
+    _allowed_tools = {t["function"]["name"] for t in tools}
     transcript = [] if report_mode else [f"## Agent on `{node}` — goal: {goal}\n"]
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
     cmd_outputs: dict[str, str] = {}   # command -> its last output, to detect/short-circuit repeats
     files_read: set = set()    # paths read this run — edit_file is refused until its file is in here
     plan: list = []            # the model's own checklist (update_plan), re-stated into messages[0]
+    unverified: set = set()    # paths changed with nothing checked since — see the finish gate
+    finish_held = False        # the "verify first" gate fires at most ONCE, so it can never deadlock
+    spawns_used = 0            # sub-agents launched this run (capped: each costs real GPU steps)
     repeat_nudges = 0          # consecutive "you already ran this" nudges (reset by a fresh command)
     sig_counts: dict = {}      # command signature -> times attempted (see _cmd_signature): catches a model
                                # re-doing the same ACTION with a tweaked body, which repeat_nudges misses
@@ -715,7 +769,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         try:
             result = await service.chat_completion(
                 messages=messages, model=model,
-                tools=_NODE_TOOLS, tool_choice="auto", temperature=0.2,
+                tools=tools, tool_choice="auto", temperature=0.2,
             )
         except Exception as e:
             if report_mode:
@@ -746,6 +800,19 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 args = {}
             tcid = tc.get("id") or ""
 
+            # The `tools` list only ADVERTISES what is available; nothing stops a model emitting any
+            # name it likes. So the read-only contract — the health report (report_mode) and a helper
+            # agent both promise they cannot change the machine — has to be ENFORCED here rather than
+            # implied by omission. Without this a health run that decided to call write_file simply
+            # wrote the file (verified: it did).
+            if name not in _allowed_tools:
+                messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                 "content": f"The tool `{name}` is not available in this run"
+                                            + (" — you are a read-only helper and cannot change "
+                                               "anything." if (depth or report_mode) else ".")
+                                            + " Available tools: " + ", ".join(sorted(_allowed_tools))})
+                continue
+
             if name == "finish":
                 summary = (args.get("summary") or "").strip()
                 if report_mode:
@@ -757,6 +824,22 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 # success for a failure. Trust the model's own verdict, and treat a MISSING success flag
                 # as achieved so older/looser models that omit it read as they did before.
                 _ok = args.get("success")
+                # Verification gate. `finish(success=true)` is the model's own unchecked word, and a
+                # weak model will happily report a change it never confirmed took effect. So: if it
+                # changed files and has checked NOTHING since, hold the finish once and make it look.
+                # Once only (finish_held) — a gate that can fire twice could deadlock a run that
+                # genuinely cannot verify, and the model can always finish with success=false instead.
+                if (_ok is None or bool(_ok)) and unverified and not finish_held:
+                    finish_held = True
+                    _files = ", ".join(f"`{p}`" for p in sorted(unverified))
+                    await _say(f"↩️ finish held — nothing checked since editing {_files}")
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": f"You changed {_files} but have checked nothing since, so "
+                                                "you do not know the change actually worked. Verify it now "
+                                                "— read the file back, run the thing, or run a test — then "
+                                                "call finish again. If you cannot verify it, call finish "
+                                                "with success=false and say what is unconfirmed."})
+                    continue
                 # A plan the model never finished is evidence against its own success claim, and it is
                 # the user who has to act on the difference — so name the leftover steps rather than
                 # letting a green banner paper over them. Does not override the model's verdict.
@@ -821,6 +904,10 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     await _say(f"**⚙️ `{cmd}`**{_ex}\n```\n{tail(out, 700)}\n```")
                 cmds_run.append(cmd)
                 cmd_outputs[cmd] = out
+                if job.exit_code == 0:
+                    # Running something successfully after an edit IS checking your work (a test, a
+                    # restart, a re-grep). A FAILING command proves nothing, so it must not clear this.
+                    unverified.clear()
                 repeat_nudges = 0   # made progress with a fresh command; reset the stuck counter
                 last_job_id = job.id
                 # Tell the model explicitly when a command was killed for running too long, so it
@@ -859,6 +946,39 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": f"Plan recorded ({_done}/{len(plan)} done). It is shown in "
                                             "your system message; keep it current."})
+                continue
+
+            if name == "spawn_agent":
+                _q = str(args.get("question") or "").strip()
+                if not _q:
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": "spawn_agent needs a `question`."})
+                    continue
+                if spawns_used >= _MAX_SPAWNS:
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": f"You have already used all {_MAX_SPAWNS} helper agents "
+                                                "for this run. Investigate this one yourself."})
+                    continue
+                spawns_used += 1
+                await _say(f"**🔎 Helper agent** — {_q}")
+                _nfy = None
+                if notify:
+                    async def _nfy(payload):        # noqa: F811 — None when nobody is watching
+                        # Nest the helper's play-by-play under the parent's so the transcript reads as
+                        # one run. Only STRINGS get the marker: a progress DICT must pass through
+                        # untouched or the web notify persists a stringified dict as junk.
+                        await notify(f"↳ {payload}" if isinstance(payload, str) else payload)
+                try:
+                    _ans = await run_agent(db, user, node, target, _q, chat_service,
+                                           notify=_nfy, should_stop=should_stop, depth=depth + 1)
+                except Exception as e:
+                    logger.warning(f"[node] helper agent failed: {e}")
+                    _ans = f"(helper agent failed: {e})"
+                _ans = (_ans or "(no answer)").strip()
+                cmds_run.append(f"helper: {_q[:60]}")
+                await _say(f"**🔎 Helper answered**\n{tail(_ans, 700)}")
+                messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                 "content": _ans[:_TOOL_RESULT_CHARS]})
                 continue
 
             if name in agent_file_tools.FILE_TOOL_NAMES:
@@ -904,6 +1024,9 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 ok, body = await agent_file_tools.run_file_op(_exec, name, args)
                 if ok and name == "read_file" and _path:
                     files_read.add(_path)      # an edit of this path is unlocked from here on
+                    unverified.discard(_path)  # reading it back is the cheapest possible check
+                if ok and name in ("edit_file", "write_file") and _path:
+                    unverified.add(_path)      # changed, and nothing has confirmed it yet
                 cmds_run.append(_label)
                 if report_mode:
                     await _say(f"{'📄' if name in agent_file_tools.READ_ONLY_TOOLS else '✏️'} `{_label}`")
