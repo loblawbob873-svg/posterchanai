@@ -42,6 +42,12 @@
   // dropdown simply shows 'None' on a node with no sound assets rather than breaking.
   let SOUNDS = [];
   fetch('/client/meme/sounds').then(r=>r.json()).then(j=>{ SOUNDS=(j&&j.sounds)||[]; if(document.getElementById('mb-inspector')) repaint('inspector'); }).catch(()=>{});
+  // Full effects that can be dropped in as a TRANSPARENT overlay layer (nakedman, shrug, characters).
+  // Rendered server-side onto an alpha canvas, stored to Blossom, then added as a normal video layer —
+  // so it gets position/scale/timing handles and its sound mixes into the final render. Fetched once;
+  // empty until it resolves, so the picker simply shows nothing to add on a node with no assets.
+  let EFFECTS = [];
+  fetch('/client/meme/effects').then(r=>r.json()).then(j=>{ EFFECTS=(j&&j.effects)||[]; }).catch(()=>{});
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -214,6 +220,7 @@
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
         <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
+        <button class="btn btn-cyan small" id="mb-add-effect" title="Add a full effect (dancing man, shrug, a character) as a transparent overlay layer">✨ Effect</button>
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
@@ -726,6 +733,47 @@
     });
   }
 
+  // Add a full effect as a transparent overlay LAYER. The server renders it onto an alpha canvas
+  // (ProRes 4444, transparency preserved), stores it to Blossom, and returns a URL we hang on the
+  // timeline as an ordinary video layer — so it composites over whatever is beneath it and its sound
+  // mixes into the final render. One render call per pick; guarded like doRender so a double-tap can't
+  // fire two.
+  let _fxBusy = false;
+  function pickEffect(){
+    if(!EFFECTS.length){ toast('no add-in effects available on this server'); return; }
+    const rows = EFFECTS.map((e,i)=>`<button class="btn btn-ghost full" data-i="${i}" style="text-align:left">`
+      + `${enc(e.label||e.name)}${e.audio?' <span class="muted small">🔊 with sound</span>':''}</button>`).join('');
+    PC.modal(`<h3>✨ Add an effect layer</h3>
+      <div class="muted small" style="margin-bottom:8px">Rendered on a transparent background, so it sits over whatever is beneath it.</div>
+      ${rows}`, root=>{
+      root.querySelectorAll('button[data-i]').forEach(btn=>btn.onclick=async()=>{
+        const e = EFFECTS[+btn.dataset.i]; if(!e) return;
+        PC.closeModal();
+        if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
+        _fxBusy = true;
+        const st=document.getElementById('mb-status');
+        if(st) st.textContent='rendering '+(e.label||e.name)+'…';
+        try{
+          const auth = await selfProof();
+          const r = await fetch('/client/meme/effect',{ method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ pubkey: ME.pubkey, auth, name: e.name }) });
+          const j = await r.json().catch(()=>({}));
+          if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
+          // A normal video layer: gets geometry/timing handles, and its embedded audio mixes in on render.
+          // Only pass `dur` when the server gave a valid one — Object.assign copies an undefined through
+          // and would blow away addLayer's own default duration.
+          const extra = { name:(e.label||e.name).slice(0,24) };
+          if(+j.dur > 0) extra.dur = +j.dur;
+          addLayer('video', j.url, extra);
+          if(st) st.textContent='';
+          render();
+          toast('effect layer added');
+        }catch(err){ if(st) st.textContent=''; toast('effect failed: '+((err&&err.message)||err)); }
+        finally{ _fxBusy = false; }
+      });
+    });
+  }
+
   async function doRender(){
     if(!P.layers.length){ toast('add a layer first'); return; }
     // Guard on MODULE state, not just the button's disabled flag: any repaint/render() of the view replaces
@@ -859,6 +907,7 @@
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
     on('mb-add-audio','click',pickAudio);
     on('mb-add-blossom','click',pickBlossom);
+    on('mb-add-effect','click',pickEffect);
     on('mb-save','click',saveProject);
     on('mb-open','click',openProject);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen

@@ -816,6 +816,81 @@ async def meme_sounds():
     return JSONResponse({"sounds": names})
 
 
+@router.get("/meme/effects")
+async def meme_effects():
+    """Full effects that can be added to a build as a TRANSPARENT overlay LAYER (nakedman, shrug, and
+    the character overlays) — the picker's list, filtered to the ones whose assets actually resolve on
+    this node. Mirrors /meme/sounds. Each entry: {name, label, audio}."""
+    from app.services import meme_builder_service as mb
+    return JSONResponse({"effects": mb.alpha_effect_catalog()})
+
+
+class MemeEffectReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/render
+    name: str                    # one of alpha_effect_catalog() names
+    dur: float | None = None     # optional length hint (seconds)
+
+
+# Render a full effect onto a TRANSPARENT canvas and store it to Blossom, so the client can add it as an
+# ordinary video layer (its URL is then fetched by /meme/render exactly like any other layer source). We
+# STORE rather than stream-back (unlike /meme/render) because the client needs a stable URL to hang on
+# the timeline. The bytes are ProRes 4444 .mov (alpha preserved — see media_service) and public, which is
+# fine: this is a generated cartoon, not private user content, and it must be fetchable by the later
+# render pass (whose SSRF guard already exempts our own blossom_public_url host).
+@router.post("/meme/effect")
+async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depends(get_db)):
+    from app.services import meme_builder_service as mb
+    from app.services import blossom_service
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    if not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+
+    name = (data.name or "").strip().lower()
+    catalog = {e["name"] for e in mb.alpha_effect_catalog()}
+    if name not in catalog:
+        raise HTTPException(status_code=400, detail="unknown effect")
+
+    # Cap the length the same spirit as the Meme Builder's own bounds — an effect layer is a short clip on
+    # the shared GPU/CPU box, not a film.
+    dur = None
+    if data.dur is not None:
+        try:
+            dur = max(0.5, min(float(data.dur), 30.0))
+        except (TypeError, ValueError):
+            dur = None
+
+    # ffmpeg is blocking → a thread, and share the Meme Builder's render queue so effect renders can't
+    # stack N ffmpegs alongside timeline renders and starve the single worker.
+    try:
+        await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
+    try:
+        try:
+            mov, has_audio = await asyncio.to_thread(mb.render_alpha_effect, name, dur)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            logger.warning("[meme] effect render failed (%s) for %s: %s", name, pk[:12], e)
+            raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _meme_semaphore().release()
+
+    # Store under the acting user's pubkey (their generated content). save_blob is content-addressed and
+    # dedups, so re-rolling the same effect twice costs nothing.
+    desc = await blossom_service.save_blob(db, pk, mov, "video/quicktime")
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.mov"
+    # A sensible default LENGTH for the timeline layer so the whole clip plays (nakedman is ~8s, the
+    # shrug clip ~2.7s, a static character 6s). The user trims from there like any layer.
+    nominal = dur or (8.0 if name == "nakedman" else 2.7 if name == "shrug" else 6.0)
+    return JSONResponse({"ok": True, "url": url, "audio": bool(has_audio),
+                         "name": name, "dur": round(nominal, 2)})
+
+
 @router.get("/proxy-image")
 async def client_proxy_image(url: str = Query(...)):
     """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's

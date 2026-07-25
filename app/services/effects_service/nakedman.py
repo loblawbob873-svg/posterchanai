@@ -206,6 +206,41 @@ def add_nakedman_animated(data: bytes) -> bytes:
     return mux_audio_loop(silent, audio, "nakedman.mp4")
 
 
+def render_nakedman_alpha(width: int = 540, height: int = 960, dur: float = 8.0) -> bytes:
+    """Render the dancing man on a FULLY TRANSPARENT canvas → an alpha .mov (ProRes 4444) with the
+    nakedman audio muxed in. This is the Meme Builder LAYER variant: no input image behind him, and NO
+    branded outro (branding belongs on the finished meme, not a composited sub-layer). Reuses the exact
+    per-frame drawing (_draw_dancing_man) as the opaque command path, just onto a transparent overlay
+    instead of over a photo. Returns .mov bytes. Raises on unrecoverable ffmpeg failure.
+    """
+    from PIL import Image
+    from app.services.media_service import frames_to_alpha_video
+
+    W = max(64, int(width))
+    H = max(64, int(height))
+    # Same framing maths as add_nakedman_animated, but sized to our own transparent canvas: prominent
+    # but never wider than the frame, held high enough that the full pendulous shaft clears the bottom.
+    M = min(H * 0.62, W * 0.52)
+    cx = W * 0.5
+    ground_y = H * 0.80
+
+    # One dance CYCLE is _NAKEDMAN_ANIM_FRAMES (phase 0→tau wraps seamlessly); repeat it enough whole
+    # cycles to cover `dur` (the audio is looped to match). Never fewer than the original 4 loops so the
+    # default 8s clip is unchanged in feel.
+    per_cycle = _NAKEDMAN_ANIM_FRAMES
+    loops = max(1, round(float(dur) * _NAKEDMAN_ANIM_FPS / per_cycle)) if dur else _NAKEDMAN_ANIM_LOOPS
+
+    frames = []
+    for fi in range(per_cycle):
+        phase = math.tau * (fi / per_cycle)
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        _draw_dancing_man(overlay, cx, ground_y, M, phase)
+        frames.append(overlay)   # keep RGBA — the transparency IS the point of an alpha layer
+
+    return frames_to_alpha_video(frames, fps=_NAKEDMAN_ANIM_FPS, loops=loops,
+                                 audio_path=_nakedman_audio_path())
+
+
 def nakedman_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:

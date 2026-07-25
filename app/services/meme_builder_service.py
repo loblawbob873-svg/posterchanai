@@ -166,6 +166,62 @@ def sound_names() -> list:
     return sorted(set(out))
 
 
+# ---- Full-effect ALPHA layers -------------------------------------------------------------------
+# A handful of the effects_service overlays can be rendered on a TRANSPARENT canvas (see
+# media_service.frames_to_alpha_video / still_to_alpha_video) and dropped onto the Meme Builder
+# timeline as a compositable video layer over whatever is beneath. Each carries its own sound where
+# the effect has one. The client picks from alpha_effect_catalog(); the render runs via
+# render_alpha_effect(). Nothing here appends the branded outro — that belongs on the FINAL meme.
+_ALPHA_CHARACTERS = [
+    # (name, label) — the character-overlay effects worth having as a transparent layer. `shrug` is
+    # intentionally NOT here: it is exposed separately below because it carries audio and its own pose.
+    ("pepe", "Pepe"), ("trump", "Trump"), ("cow", "Cow"), ("boobs", "Boobs"),
+    ("panties", "Panties"), ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
+    ("animegirl", "Anime girl"),
+]
+
+
+def alpha_effect_catalog() -> list:
+    """The full effects that can be added as a transparent LAYER, filtered to what actually resolves on
+    THIS node (so the client never offers a broken pick). Each entry:
+      {"name": str, "label": str, "audio": bool}
+    `audio` reports whether the layer will carry sound, so the picker can hint it. Mirrors
+    sound_names()/_sound_path(): discovered/validated against real files, never a hard-coded list that
+    can drift from the installed assets."""
+    from app.services.effects_service import nakedman as _nm, character as _ch
+    out = []
+    # nakedman is drawn procedurally, so it is always available; its audio is a bundled asset.
+    out.append({"name": "nakedman", "label": "🍆 Naked man (dancing)",
+                "audio": bool(_nm._nakedman_audio_path())})
+    # shrug needs its pose art; audio is a bundled asset.
+    if _ch._character_path("shrug"):
+        out.append({"name": "shrug", "label": "🤷 Shrug",
+                    "audio": bool(_ch._shrug_audio_path())})
+    for key, label in _ALPHA_CHARACTERS:
+        if _ch._character_path(key):
+            out.append({"name": key, "label": f"🧍 {label}", "audio": False})
+    return out
+
+
+def render_alpha_effect(name: str, dur: float = None) -> tuple:
+    """Render one alpha-capable effect to a transparent .mov (ProRes 4444, see media_service). Returns
+    (mov_bytes, has_audio). Raises ValueError for a name not in the catalogue, RuntimeError on a render
+    failure. `dur` (seconds) is an optional length hint honoured by the effects that support it."""
+    from app.services.effects_service import nakedman as _nm, character as _ch
+    name = (name or "").strip().lower()
+    allowed = {e["name"]: e for e in alpha_effect_catalog()}
+    meta = allowed.get(name)
+    if not meta:
+        raise ValueError(f"unknown effect: {name}")
+    if name == "nakedman":
+        data = _nm.render_nakedman_alpha(dur=dur or 8.0)
+    elif name == "shrug":
+        data = _ch.render_shrug_alpha(dur=dur)
+    else:
+        data = _ch.render_character_alpha(name, dur=dur or 6.0)
+    return data, bool(meta["audio"])
+
+
 def _sound_path(name: str) -> str:
     """Absolute path to a named sound effect's audio file, or "" if it isn't installed."""
     name = (name or "").strip().lower()

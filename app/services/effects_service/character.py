@@ -199,6 +199,56 @@ def add_shrug_video(data: bytes, caption: str = "Whaddya gonna do?",
     return image_audio_to_video(still, "shrug.jpg", audio, duration=_SHRUG_DURATION)
 
 
+def _char_alpha_canvas(char_path: str, long_edge: int = 720):
+    """A transparent RGBA canvas sized to the character's OWN silhouette (cropped to its opaque bbox),
+    scaled so its long edge is `long_edge`. Returns the character alone on transparency — the caller
+    encodes it as an alpha layer the Meme Builder composites over whatever is beneath. Sizing the canvas
+    to the figure (rather than padding it into a fixed 9:16 frame) means the exported layer has no dead
+    transparent margin, so it scales/positions cleanly on the timeline."""
+    from PIL import Image as _Img
+    char = _character_still(char_path)
+    try:
+        bb = char.getbbox()
+        if bb:
+            char = char.crop(bb)     # drop the empty canvas padding the assets ship with
+    except Exception:
+        pass
+    w, h = char.size
+    if max(w, h) > long_edge:
+        r = long_edge / float(max(w, h))
+        char = char.resize((max(2, int(w * r)), max(2, int(h * r))), _Img.LANCZOS)
+    return char
+
+
+def render_shrug_alpha(dur: float = None) -> bytes:
+    """The shrug pose (shrug.png) on a transparent canvas → alpha .mov with the shrug audio muxed in.
+    The Meme Builder LAYER variant of `shrug`: unlike add_shrug_video it has NO background image and NO
+    caption/speech bubble (there is nothing beneath it to caption yet — the user composites it over
+    their own footage) and NO branded outro. Carries its sound so the layer plays the shrug clip.
+    """
+    from app.services.media_service import still_to_alpha_video
+    cp = _character_path("shrug")
+    if not cp:
+        raise RuntimeError("shrug character art (assets/characters/shrug.png) is missing on the server")
+    still = _char_alpha_canvas(cp)
+    d = float(dur) if dur else _SHRUG_DURATION
+    return still_to_alpha_video(still, dur=d, audio_path=_shrug_audio_path())
+
+
+def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
+    """A named character (pepe/trump/would/…) on a transparent canvas → alpha .mov, no audio, no outro.
+    The Meme Builder LAYER variant of `char <name>`: the character art alone, composited over whatever
+    is beneath it on the timeline. Animated .mov characters (animegirl) contribute their FIRST frame
+    only (same as _composite_char_on_image), which is acceptable for a static overlay.
+    """
+    from app.services.media_service import still_to_alpha_video
+    cp = _character_path(name)
+    if not cp:
+        raise RuntimeError(f"unknown character '{name}'")
+    still = _char_alpha_canvas(cp)
+    return still_to_alpha_video(still, dur=float(dur or 6.0), audio_path=None)
+
+
 def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
     """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
     with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character

@@ -1476,6 +1476,135 @@ def mux_audio_loop(video_data: bytes, audio_path: str,
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# ---- ALPHA (transparent-background) effect layers for the Meme Builder ---------------------------
+# These encode an effect onto a FULLY TRANSPARENT canvas so it can be dropped onto the Meme Builder
+# timeline as a compositable layer over whatever is beneath it (see meme_builder_service /
+# client.py:/meme/effect). They deliberately do NOT append the outro/branding card — branding belongs
+# on the FINAL exported meme, never on a sub-layer that gets composited into it.
+#
+# Codec choice — ProRes 4444 in a .mov, NOT VP9/VP8-alpha WebM:
+#   VP9/VP8 store the alpha channel as a SEPARATE coded layer that the WebM (Matroska) muxer has to
+#   write as a BlockAdditional. On this deployment's ffmpeg (Jellyfin 7.1.3) that round-trip is lossy:
+#   `libvpx`/`libvpx-vp9 -pix_fmt yuva420p` reports yuva420p on the ENCODE stream, but decoding the
+#   resulting .webm back yields plain RGB — the alpha never made it into (or out of) the container, so
+#   a composite over a red base came out fully opaque black. ProRes 4444 instead carries alpha INLINE in
+#   the video stream (yuva444p10le), so there is no separate-stream muxing to lose; it round-trips to
+#   RGBA correctly and composites transparently (verified end-to-end). It is stock ffmpeg (prores_ks),
+#   needs no exotic deps, and — because the transparent regions compress well — an 8s 540x960 clip is
+#   only ~5 MB, comfortably under the Meme Builder's 80 MB per-source fetch limit. If a future node
+#   proves to mux WebM-alpha correctly, VP9-alpha would be a smaller drop-in here.
+_ALPHA_VCODEC = ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]
+
+
+def _mux_alpha_audio(mov_bytes: bytes, audio_path: str) -> bytes:
+    """Loop `audio_path` under an alpha .mov and cut it to the video's length, KEEPING the alpha video
+    stream intact (`-c:v copy`) and the .mov container (ProRes lives in QuickTime, not MP4/WebM). The
+    Meme Builder mixes this layer's embedded audio into the final render like any other video layer.
+    Best-effort: returns the silent .mov unchanged on any failure, so a missing asset never breaks the
+    effect."""
+    ffmpeg = resolve_ffmpeg()
+    if not (ffmpeg_available() and audio_path and os.path.exists(audio_path)):
+        return mov_bytes
+    tmp_dir = tempfile.mkdtemp(prefix="media_alphaaudio_")
+    in_path = os.path.join(tmp_dir, "in.mov")
+    out_path = os.path.join(tmp_dir, "out.mov")
+    try:
+        with open(in_path, "wb") as f:
+            f.write(mov_bytes)
+        cmd = [ffmpeg, "-i", in_path, "-stream_loop", "-1", "-i", audio_path,
+               "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+               "-c:a", "aac", "-b:a", VIDEO_AUDIO_BITRATE,
+               "-shortest", "-y", out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            with open(out_path, "rb") as f:
+                return f.read()
+        logger.warning(f"_mux_alpha_audio failed, returning silent clip: {(result.stderr or '')[-300:]}")
+        return mov_bytes
+    except Exception as e:
+        logger.warning(f"_mux_alpha_audio error ({e}), returning silent clip")
+        return mov_bytes
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def frames_to_alpha_video(frames, fps: int = 20, loops: int = 1,
+                          audio_path: Optional[str] = None) -> bytes:
+    """Encode a sequence of RGBA PIL frames into a ProRes 4444 .mov WITH a real alpha channel.
+
+    `frames` is one pass of full-size RGBA ``PIL.Image`` frames (a wrapping animation cycle); `loops`
+    repeats that pass on disk so a periodic motion plays seamlessly. The frames' transparency is
+    preserved through the encode (see _ALPHA_VCODEC), so the result composites over anything beneath it
+    in the Meme Builder. If `audio_path` is given it is looped under the clip (KEEPING the alpha video).
+    No outro/branding — this is a sub-layer, not a finished meme.
+
+    Returns .mov bytes; raises RuntimeError if ffmpeg is missing, no frames are given, or the encode
+    fails. Unlike frames_to_video there is NO encoder ladder: ProRes 4444 is a software codec and the
+    only one here that preserves alpha, so there is nothing to fall back to.
+    """
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    frames = list(frames or [])
+    if not frames:
+        raise RuntimeError("no frames to encode")
+
+    tmp_dir = tempfile.mkdtemp(prefix="media_alpha_")
+    pattern = os.path.join(tmp_dir, "f_%05d.png")
+    out_path = os.path.join(tmp_dir, "output.mov")
+    try:
+        idx = 0
+        for _ in range(max(int(loops), 1)):
+            for fr in frames:
+                # RGBA PNG carries the alpha the ProRes encoder reads; force the mode so an accidental
+                # RGB frame doesn't silently produce an opaque layer.
+                fr.convert("RGBA").save(pattern % idx, format="PNG")
+                idx += 1
+        cmd = ([ffmpeg, "-framerate", str(fps), "-i", pattern]
+               + _ALPHA_VCODEC
+               + ["-r", str(fps), "-an", "-y", out_path])
+        result = subprocess.run(cmd, capture_output=True, timeout=1800, text=True)
+        if not (result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+            raise RuntimeError(f"alpha frames→video failed: {(result.stderr or '')[-400:]}")
+        with open(out_path, "rb") as f:
+            data = f.read()
+        if audio_path:
+            data = _mux_alpha_audio(data, audio_path)
+        return data
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def still_to_alpha_video(image, dur: float = 6.0, fps: int = 12,
+                         audio_path: Optional[str] = None) -> bytes:
+    """Like frames_to_alpha_video but for a STILL RGBA image held for `dur` seconds (a static character
+    overlay). Uses `-loop 1 -t dur` on a single PNG so a motionless layer is not stored as hundreds of
+    identical frames. Same ProRes 4444 alpha codec, same optional looped audio, no branding.
+    """
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    dur = max(0.3, min(float(dur or 6.0), 30.0))
+    tmp_dir = tempfile.mkdtemp(prefix="media_alphastill_")
+    png_path = os.path.join(tmp_dir, "still.png")
+    out_path = os.path.join(tmp_dir, "output.mov")
+    try:
+        image.convert("RGBA").save(png_path, format="PNG")
+        cmd = ([ffmpeg, "-loop", "1", "-framerate", str(fps), "-t", f"{dur:.3f}", "-i", png_path]
+               + _ALPHA_VCODEC
+               + ["-r", str(fps), "-an", "-y", out_path])
+        result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+        if not (result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+            raise RuntimeError(f"alpha still→video failed: {(result.stderr or '')[-400:]}")
+        with open(out_path, "rb") as f:
+            data = f.read()
+        if audio_path:
+            data = _mux_alpha_audio(data, audio_path)
+        return data
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
                             duration: float = 6.0, audio_path: Optional[str] = None,
                             height_frac: float = 0.55) -> bytes:
