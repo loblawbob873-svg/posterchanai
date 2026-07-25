@@ -2,12 +2,10 @@
 # Standalone installer for the PosterChan node agent (systemd). Run ON the worker machine.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-RELAY=""; TRUST=""; CLAUDE=""; DANGER=""
+RELAY=""; TRUST=""
 while [ $# -gt 0 ]; do case "$1" in
   --relay) RELAY="${RELAY:+$RELAY,}$2"; shift 2;;   # repeatable — comma-joined (one controller relay each)
   --trust) TRUST="$TRUST $2"; shift 2;;
-  --claude) CLAUDE=1; shift;;
-  --claude-dangerous) CLAUDE=1; DANGER=1; shift;;
   *) echo "unknown arg: $1"; exit 1;;
 esac; done
 [ -z "$RELAY" ] && RELAY="wss://poster.place/relay"
@@ -29,8 +27,6 @@ echo "[pcnode] installing systemd unit → $UNIT"
 sed -e "s|__USER__|$USER|g" -e "s|__DIR__|$DIR|g" -e "s|__RELAY__|$RELAY|g" \
     -e "s|__TRUST__|$(echo $TRUST)|g" -e "s|__DATA__|$DATA|g" -e "s|__PY__|$PY|g" \
     "$DIR/pcnode-agent.service" | sudo tee "$UNIT" >/dev/null
-[ -n "$CLAUDE" ]  && sudo sed -i '/Environment=PCNODE_DATA/a Environment=PCNODE_CLAUDE=1' "$UNIT"
-[ -n "$DANGER" ]  && sudo sed -i '/Environment=PCNODE_DATA/a Environment=PCNODE_CLAUDE_DANGEROUS=1' "$UNIT"
 sudo systemctl daemon-reload
 sudo systemctl enable pcnode-agent.service
 sudo systemctl restart pcnode-agent.service   # restart (not just enable --now) so a REINSTALL reloads the unit

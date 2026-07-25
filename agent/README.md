@@ -15,10 +15,10 @@ Admin → Services → *Worker nodes* (name → npub) and its trusted list.
 
 ## Manual run
     pip install -r requirements.txt
-    python3 pcnode_agent.py --relay wss://poster.place/relay --trust npub1… [--claude] [--claude-dangerous]
+    python3 pcnode_agent.py --relay wss://poster.place/relay --trust npub1…
 
 `--print-npub` prints the worker npub and exits. Key is stored in `~/.pcnode-agent/agent.key` (0600).
 
 ## ⚠️ Security
 Commands run as the service user with real shell access. Only add controllers you fully trust to
-`--trust`. `--claude-dangerous` runs Claude Code with `--dangerously-skip-permissions` (fully autonomous).
+`--trust`.

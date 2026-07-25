@@ -91,45 +91,17 @@ async def run_shell(command: str, timeout: int) -> dict:
             "summary": f"exit {proc.returncode}", "output": text, "exit": proc.returncode}
 
 
-async def run_claude(goal: str, cfg, dangerous: bool) -> dict:
-    if not cfg.claude:
-        return {"status": "error", "summary": "Claude Code agent not enabled on this worker", "output": "", "exit": None}
-    argv = list(cfg.claude_cmd.split()) + ["-p", goal]
-    if dangerous:
-        if not cfg.claude_dangerous:
-            return {"status": "error", "summary": "CI/CD dangerous mode not allowed on this worker", "output": "", "exit": None}
-        argv.append("--dangerously-skip-permissions")
-    proc = await asyncio.create_subprocess_exec(
-        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True,
-    )
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=cfg.step_timeout or None)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        return {"status": "error", "summary": f"claude timed out after {cfg.step_timeout}s", "output": "", "exit": None}
-    text = (out or b"").decode("utf-8", "replace")[-MAX_OUTPUT:]
-    return {"status": "done" if proc.returncode == 0 else "error",
-            "summary": text[-1500:] or f"claude exit {proc.returncode}", "output": text, "exit": proc.returncode}
-
-
 async def execute(params: dict, cfg) -> dict:
     mode = (params.get("mode") or "shell").lower()
-    dangerous = bool(params.get("dangerous"))
     if mode == "shell":
         cmd = params.get("command") or ""
         if not cmd:
             return {"status": "error", "summary": "empty command", "output": "", "exit": None}
         return await run_shell(cmd, cfg.step_timeout)
-    if mode == "claude":
-        return await run_claude(params.get("goal") or params.get("command") or "", cfg, dangerous)
     if mode == "agent":
         # The lightweight agent has no local LLM — the agentic loop runs on full app-workers.
         return {"status": "error",
-                "summary": "This worker runs shell + claude only (no local LLM for 'agent' mode). Use mode 'claude' or 'shell'.",
+                "summary": "This worker runs shell only (no local LLM for 'agent' mode). Use mode 'shell'.",
                 "output": "", "exit": None}
     return {"status": "error", "summary": f"unknown mode '{mode}'", "output": "", "exit": None}
 
@@ -242,12 +214,6 @@ def main():
     ap.add_argument("--trust", action="append", default=(os.environ.get("PCNODE_TRUST", "").split() or []),
                     help="controller npub allowed to command this worker (repeatable)")
     ap.add_argument("--data-dir", default=os.environ.get("PCNODE_DATA", os.path.expanduser("~/.pcnode-agent")))
-    ap.add_argument("--claude", action="store_true", default=os.environ.get("PCNODE_CLAUDE") == "1",
-                    help="allow the Claude Code CLI agent (mode:claude)")
-    ap.add_argument("--claude-cmd", default=os.environ.get("PCNODE_CLAUDE_CMD", "claude"))
-    ap.add_argument("--claude-dangerous", action="store_true",
-                    default=os.environ.get("PCNODE_CLAUDE_DANGEROUS") == "1",
-                    help="allow CI/CD mode (--dangerously-skip-permissions) — autonomous, no prompts")
     ap.add_argument("--step-timeout", type=int, default=int(os.environ.get("PCNODE_STEP_TIMEOUT", DEFAULT_STEP_TIMEOUT)))
     ap.add_argument("--print-npub", action="store_true", help="print this worker's npub and exit")
     cfg = ap.parse_args()

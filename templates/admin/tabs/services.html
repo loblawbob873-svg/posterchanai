@@ -181,21 +181,6 @@
             <textarea id="node_exec_trusted_npubs" name="node_exec_trusted_npubs" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
             <small>⚠️ A DEDICATED allowlist (separate from the shared-compute DVM peers). This host will execute commands ONLY from these signature-verified npubs. Running commands is a bigger grant than GPU-offload, so keep this tight.</small>
         </div>
-        <div class="form-group">
-            <label for="node_exec_claude_enabled">
-                <input type="checkbox" id="node_exec_claude_enabled" name="node_exec_claude_enabled"> Allow the Claude Code CLI agent on this worker
-            </label>
-            <small>Lets a task run the <strong>Claude Code CLI</strong> (needs it installed + authenticated on the worker) instead of the local model.</small>
-            <label for="node_exec_claude_dangerous" style="color:#c0392b">
-                <input type="checkbox" id="node_exec_claude_dangerous" name="node_exec_claude_dangerous"> ☠️ Allow CI/CD “dangerous” mode (<code>--dangerously-skip-permissions</code>)
-            </label>
-            <small style="color:#c0392b">⚠️ Runs Claude Code <strong>fully autonomously with no approval prompts</strong>. Only enable on a machine you're willing to let an agent modify unattended. Off by default; the UI checkbox is a second lock.</small>
-        </div>
-        <div class="form-group">
-            <label for="node_exec_claude_cmd">Claude CLI command</label>
-            <input type="text" id="node_exec_claude_cmd" name="node_exec_claude_cmd" placeholder="claude">
-            <small>Invocation used to launch Claude Code on the worker (path/flags added by the runner). Default: <code>claude</code>.</small>
-        </div>
 
         <hr>
         <div class="form-group">

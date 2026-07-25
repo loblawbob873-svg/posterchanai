@@ -56,7 +56,7 @@ DVM_KINDS = frozenset(list(_REQ_KIND.values()) + [k + 1000 for k in _REQ_KIND.va
 # Per-task wait budget (seconds) — the coordinator gives up and falls back to local/next after this.
 _JOB_TIMEOUT = {"chat": 180, "image": 300, "music": 600, "video": 900, "agent": 900}
 
-# node/agent tasks (kind 5300) run OS commands / Claude — a bigger grant than GPU offload, so they use a
+# node/agent tasks (kind 5300) run OS commands — a bigger grant than GPU offload, so they use a
 # DEDICATED allowlist (node_exec_trusted_npubs) and run ONE-AT-A-TIME (queued, never bounced to a peer:
 # the command must run on the addressed node). Serialized by this lock, created lazily in the loop.
 _agent_lock: "Optional[asyncio.Lock]" = None
@@ -609,40 +609,12 @@ async def _spawn_job(ev: dict) -> None:
     _track(asyncio.create_task(_handle_job(task, author, jid, ev)))
 
 
-async def _run_claude(s: dict, goal: str, dangerous: bool) -> dict:
-    """Run the Claude Code CLI on this worker. Double-locked: node_exec_claude_enabled must be on, and
-    dangerous (--dangerously-skip-permissions) needs node_exec_claude_dangerous too."""
-    if not _truthy(s.get("node_exec_claude_enabled", False)):
-        return {"error": "Claude Code agent is not enabled on this worker"}
-    argv = (s.get("node_exec_claude_cmd") or "claude").split() + ["-p", goal]
-    if dangerous:
-        if not _truthy(s.get("node_exec_claude_dangerous", False)):
-            return {"error": "CI/CD dangerous mode is not allowed on this worker"}
-        argv.append("--dangerously-skip-permissions")
-    proc = await asyncio.create_subprocess_exec(
-        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=_JOB_TIMEOUT["agent"])
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        return {"error": f"claude timed out after {_JOB_TIMEOUT['agent']}s"}
-    text = (out or b"").decode("utf-8", "replace")[-200_000:]
-    return {"status": "done" if proc.returncode == 0 else "error",
-            "summary": text[-1500:] or f"claude exit {proc.returncode}", "output": text, "exit": proc.returncode}
-
-
 async def _exec_agent(db, params: dict, ctx: Optional[dict] = None) -> dict:
     """Run a node/agent command LOCALLY on this worker (target 'local'). mode: shell (default) | agent
-    (LLM-driven, uses this node's model) | claude (Claude Code CLI). Serialized by _agent_lock."""
+    (LLM-driven, uses this node's model). Serialized by _agent_lock."""
     from app.services import node_service
     s = settings_store.all_settings()
     mode = (params.get("mode") or "shell").lower()
-    dangerous = bool(params.get("dangerous"))
-    if mode == "claude":
-        return await _run_claude(s, params.get("goal") or params.get("command") or "", dangerous)
     # Sandbox load-balancing: a `sandbox_uid` means the CONTROLLER placed this user's container on THIS
     # node — run the task inside `pcai-sbx-<uid>` here, not on the host. Requires the sandbox enabled +
     # Docker reachable on this worker; otherwise the container ops fail and we report a clear error.

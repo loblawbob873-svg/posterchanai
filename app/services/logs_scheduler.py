@@ -341,7 +341,7 @@ async def build_health_report(db, admin: User, notify=None) -> str:
                 # six subsystems with one read-only shell probe instead. The board is still distilled
                 # here on the controller, so such a node reports exactly like a full one; only the raw
                 # probe output (in a code block) is used if that distillation fails.
-                if summary and ("no local LLM" in summary or "shell + claude only" in summary):
+                if summary and "no local LLM" in summary:
                     raw = (await node_service.run_agent_over_nostr(target[6:], _HEALTH_SHELL, mode="shell") or "").strip()
                     summary = raw[:4000]
                     fallback = f"```\n{raw[:2500] or '(no output)'}\n```"

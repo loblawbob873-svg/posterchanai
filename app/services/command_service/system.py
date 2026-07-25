@@ -279,7 +279,7 @@ class _SystemMixin:
                 }
             return {"type": "text", "content": preview}
 
-        async def _dispatch_nostr(name: str, worker_pk: str, mode: str, text: str, dangerous: bool = False,
+        async def _dispatch_nostr(name: str, worker_pk: str, mode: str, text: str,
                                   sandbox_uid: str = None) -> dict:
             """Send a node/agent command to an npub-addressed worker over Nostr and render its result.
             No SSH — the worker runs it locally and returns an encrypted result (see docs/NODE_AGENT_NOSTR.md).
@@ -287,7 +287,7 @@ class _SystemMixin:
             if notify:
                 await notify(f"🛰️ dispatching to `{name}` over Nostr…" if not sandbox_uid
                              else "🛰️ running your sandbox on its placed node…")
-            params = {"mode": mode, "dangerous": bool(dangerous)}
+            params = {"mode": mode}
             params["command" if mode == "shell" else "goal"] = text
             if sandbox_uid:
                 params["sandbox_uid"] = str(sandbox_uid)

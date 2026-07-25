@@ -621,8 +621,9 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
 
     Uses the same tool-calling backend as opencode (chat_completion with tools -> generate_message),
     so the model emits structured run_command/finish calls instead of a fragile CMD:/DONE: text
-    protocol. Defaults to the agentic-tuned Claude-Code model; falls back to the configured default
-    when that gguf isn't present (resolve_model_path handles the fallback). `notify`, when given,
+    protocol. Defaults to Qwen3-Coder-30B-A3B-Instruct — the model that actually holds up over a long
+    tool-calling run; falls back to the configured default when that gguf isn't present
+    (resolve_model_path handles the fallback). `notify`, when given,
     streams each step to the originating channel (Telegram/web)."""
     import json as _json
     from app.services.inference_factory import get_inference_service
@@ -632,7 +633,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     # /v1 agentic path); fall back to the legacy `node_exec_agent_model` for back-compat, then the
     # tuned default. Empty/missing gguf -> backend falls back to the default model (resolve_model_path).
     model = (_get(db, "llm_tools_model", "").strip()
-             or _get(db, "node_exec_agent_model", "Qwen3.5-9B-Claude-Code-Q4_K_M.gguf").strip()) or None
+             or _get(db, "node_exec_agent_model", "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf").strip()) or None
     service = get_inference_service(db)
 
     _sys = _AGENT_SYSTEM.format(node=node)
@@ -924,10 +925,9 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
 
 
 async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent",
-                               report: bool = False, dangerous: bool = False,
-                               sandbox_uid: Optional[str] = None,
+                               report: bool = False, sandbox_uid: Optional[str] = None,
                                notify: Optional[Callable] = None) -> str:
-    """Dispatch an agent/shell/claude task to a Nostr WORKER (by pubkey) and return a summary string —
+    """Dispatch an agent/shell task to a Nostr WORKER (by pubkey) and return a summary string —
     the Nostr drop-in for a local run_agent. Shared by _node_command and the health report so a node
     migrated to the npub transport behaves the same everywhere. NIP-44 encrypted end to end (nostr_dvm).
     `sandbox_uid` (sandbox load-balancing): the worker runs the task INSIDE that user's Debian container
@@ -935,7 +935,7 @@ async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent
     `notify`: same callable a LOCAL run_agent takes — the worker's per-step updates are streamed into it,
     so a run placed on another node reports live instead of sitting silent until it finishes."""
     from app.services import nostr_dvm
-    params = {"mode": mode, "dangerous": bool(dangerous), "report": bool(report)}
+    params = {"mode": mode, "report": bool(report)}
     params["command" if mode == "shell" else "goal"] = text
     if sandbox_uid:
         params["sandbox_uid"] = str(sandbox_uid)
@@ -944,7 +944,7 @@ async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent
         return "⚠️ no response over Nostr (worker offline, not trusting this controller, or timed out)"
     if out.get("error"):
         return f"⚠️ {out['error']}"
-    # Field order is MODE-dependent. For agent/claude the worker's `summary` IS the report, so it wins.
+    # Field order is MODE-dependent. For `agent` the worker's `summary` IS the report, so it wins.
     # For `shell` the summary is only the status line (`exit 0`) and the command's text lives in `output`
     # — taking summary first there returned a bare "exit 0" and silently dropped the whole result (the
     # health board and the uptime header of every shell-only worker showed nothing else).
