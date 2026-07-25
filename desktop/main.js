@@ -11,7 +11,7 @@
  *   - the permission grants the client needs (camera/mic for calls, notifications, screen share)
  *   - auto-update (electron-updater, generic feed at https://poster.place/desktop/)
  */
-const { app, BrowserWindow, shell, session, Menu, dialog, ipcMain, desktopCapturer, systemPreferences } = require('electron');
+const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -124,6 +124,38 @@ function createWindow() {
     saveCfg();
   };
   win.on('close', remember);
+
+  // Right-click menu. Electron ships NO default context menu, so `spellcheck: true` above only ever drew
+  // the red underline — there was no way to act on it, and no cut/copy/paste either. Chromium hands us the
+  // suggestions in params.dictionarySuggestions; replaceMisspelling() applies one. Built per-event because
+  // the suggestions differ for every word.
+  win.webContents.on('context-menu', (_e, params) => {
+    const items = [];
+    if (params.misspelledWord) {
+      for (const s of params.dictionarySuggestions) {
+        items.push({ label: s, click: () => win.webContents.replaceMisspelling(s) });
+      }
+      if (!params.dictionarySuggestions.length) items.push({ label: 'No suggestions', enabled: false });
+      items.push({ type: 'separator' });
+      items.push({
+        label: 'Add to dictionary',
+        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+      items.push({ type: 'separator' });
+    }
+    // A link under the cursor: the client opens off-site links externally, so offer the same for copying.
+    if (params.linkURL) {
+      items.push({ label: 'Open link in browser', click: () => shell.openExternal(params.linkURL) });
+      items.push({ label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) });
+      items.push({ type: 'separator' });
+    }
+    const canEdit = params.isEditable;
+    items.push({ role: 'cut', enabled: canEdit && params.editFlags.canCut });
+    items.push({ role: 'copy', enabled: params.editFlags.canCopy });
+    items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
+    if (canEdit) items.push({ role: 'selectAll' });
+    Menu.buildFromTemplate(items).popup({ window: win });
+  });
 
   // Off-site links (and target=_blank to another host) belong in the user's real browser; the instance's
   // own pages — plus blob:/data: (media the client builds locally) — open as a normal app window.
