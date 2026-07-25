@@ -2150,7 +2150,9 @@
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
     if(VIEW==='messages' && v!=='messages') dmActive=null;
-    try{ _selectNote(null); }catch(_){ }   // a keyboard selection belongs to the feed we are leaving
+    // A keyboard selection belongs to the feed we are leaving; and if the cursor was parked in the nav
+    // rail, opening a view is exactly the moment to hand it back to the content.
+    try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -7784,6 +7786,7 @@
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
+      if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
       if(!_prefTouched.has('zapPresets') && pr.zapPresets!=null) ClientSettings.set('zapPresets', String(pr.zapPresets));   // user-defined amount presets follow across devices
@@ -12155,6 +12158,7 @@
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
@@ -12373,6 +12377,12 @@
         if(['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }; }
     // Data saver (tap-to-load images): per-device now (instant) + synced to Nostr so it follows devices.
+    { const vk=$('#set-vim'); if(vk) vk.onchange=()=>{
+        ClientSettings.set('vimKeys', vk.checked); _prefTouched.add('vimKeys');
+        saveClientPrefsNostr({ vimKeys: vk.checked });
+        _vimPane='feed';
+        toast(vk.checked ? 'vim keys on — hjkl to move, gg / G for top and bottom' : 'vim keys off');
+      }; }
     { const ni=$('#set-no-images'); if(ni) ni.onchange=()=>{
         NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: NO_IMAGES });
         toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
@@ -13256,11 +13266,15 @@
   function _shortcutHelp(){
     const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
+      +(_vimOn() ? '<div class="ks-sec">Vim movement</div><div class="ks-grid">'
+          +[['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],['gg','Top'],['G','Bottom']]
+            .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
+          +'</div>' : '')
       +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
       +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
-      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],['L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
+      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
   }
@@ -13365,7 +13379,7 @@
     return Math.max(1, n);
   }
   function _moveSel(dir){
-    const els=_noteEls(); if(!els.length) return false;
+    const els=_rows(); if(!els.length) return false;
     const cur=_selEl();
     if(!cur){ _selectNote(_topNote()||els[0]); return true; }
     const i=els.indexOf(cur);
@@ -13396,9 +13410,80 @@
     try{ document.body.focus({preventScroll:true}); }catch(_){ }
   }, true);
 
+  // ---------- vim movement (opt-in: Settings → "Vim keys") ----------
+  // Three columns, one cursor. h/l cross between the nav rail, the feed and the notifications rail; j/k
+  // move within whichever column holds the cursor. In a GRID (Files) h/l step through the grid first and
+  // only cross columns at its edge — "eventually", as asked.
+  let _vimPane='feed';       // 'nav' | 'feed' | 'rail'
+  let _gPending=0;           // `gg` = top; timestamp of a lone g
+  const _vimOn = () => !!ClientSettings.get('vimKeys', false);
+  const _vimShown = (el) => el.offsetParent!==null || getComputedStyle(el).position==='fixed';
+  function _paneRows(pane){
+    if(pane==='nav')  return [...document.querySelectorAll('.sidebar .nav-item')].filter(_vimShown);
+    if(pane==='rail') return [...document.querySelectorAll('#rb-list .notif')].filter(_vimShown);
+    return _noteEls();
+  }
+  const _rows = () => _paneRows(_vimPane);
+  // Move the cursor to another column. Refuses when that column has nothing on screen (a phone hides both
+  // rails), so h/l simply do nothing there rather than losing the selection into an invisible pane.
+  function _vimPaneTo(pane){
+    const rows=_paneRows(pane);
+    if(!rows.length) return false;
+    _vimPane=pane;
+    const cur=_selEl();
+    _selectNote(rows.includes(cur) ? cur : rows[0]);
+    return true;
+  }
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(!_vimOn()) return;
+      if(e.altKey||e.ctrlKey||e.metaKey) return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      const k=e.key;
+      if(!'hjklgG'.includes(k) || k.length!==1) return;
+      // Leaving a pane whose rows are gone (view switched under us) resets to the feed.
+      if(!_paneRows(_vimPane).length) _vimPane='feed';
+      const rows=_rows(); if(!rows.length) return;
+      const stride=(_vimPane==='feed') ? _rowStride(rows) : 1;
+      const cur=_selEl();
+      const i=rows.indexOf(cur);
+      const take=(n)=>{ e.preventDefault(); e.stopPropagation(); _selectNote(rows[Math.max(0,Math.min(rows.length-1,n))]); };
+      if(k==='G'){ take(rows.length-1); _gPending=0; return; }
+      if(k==='g'){
+        const now=Date.now();
+        if(_gPending && now-_gPending<700){ _gPending=0; take(0); }
+        else { _gPending=now; e.preventDefault(); e.stopPropagation(); }   // wait for the second g
+        return;
+      }
+      _gPending=0;
+      if(k==='j'){ take(i<0?0:i+stride); return; }
+      if(k==='k'){ take(i<0?0:i-stride); return; }
+      // Horizontal. Inside a grid, step through it until the edge; then cross columns.
+      const atLeft  = i<0 || stride<2 || (i%stride)===0;
+      const atRight = i<0 || stride<2 || ((i+1)%stride)===0 || i===rows.length-1;
+      if(k==='h'){
+        if(!atLeft){ take(i-1); return; }
+        e.preventDefault(); e.stopPropagation();
+        _vimPaneTo(_vimPane==='rail' ? 'feed' : 'nav');
+        return;
+      }
+      if(k==='l'){
+        if(!atRight){ take(i+1); return; }
+        e.preventDefault(); e.stopPropagation();
+        _vimPaneTo(_vimPane==='nav' ? 'feed' : 'rail');
+        return;
+      }
+    }, true);   // CAPTURE — vim movement must win over the single-letter post actions (l = react)
+  })();
+
   // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
   // client uses, and the text-field guard already keeps them out of anything being typed into.
-  const _POST_KEYS = { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
+  // `l` is react — until Vim keys are on, where l is MOVEMENT and react moves to f (favourite). The Alt+/
+  // sheet is generated from this, so whichever is live is what the sheet shows.
+  const _postKeys = () => _vimOn() ? { r:'reply', b:'repost', q:'quote', f:'react', z:'tip' }
+                                   : { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
   // A news item has its own two actions, and they are plain buttons in the card rather than the post
   // action row — so they are matched by class instead of data-a.
   const _NEWS_KEYS = { s:'.news-post', u:'.news-sum' };
@@ -13440,7 +13525,7 @@
         e.preventDefault(); nb.click();
         return;
       }
-      const a=_POST_KEYS[k]; if(!a) return;
+      const a=_postKeys()[k]; if(!a) return;
       const btn=el.querySelector('.act[data-a="'+a+'"]');
       if(!btn) return;                        // e.g. a poll card, which carries only reply + menu
       e.preventDefault();
@@ -13532,7 +13617,7 @@
         // suppressed outright (prefers-reduced-motion), which would read as the key doing nothing.
         f.scrollTo({top: e.key==='Home'?0:f.scrollHeight, behavior:'auto'});
         { const cur=_selEl();
-          if(cur && !cur.matches('.dm-peer')){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); } }
+          if(_vimPane==='feed' && cur && !cur.matches('.dm-peer')){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); } }
         return;
       }
       if(!dy) return;
@@ -13546,7 +13631,9 @@
       // visible row — which reads as the selection being stuck partway down the thread.
       if(e.key==='PageDown'||e.key==='PageUp'||e.key===' '||e.key==='Spacebar'){
         const cur=_selEl();
-        if(cur && !cur.matches('.dm-peer')){ const n=_topNote(); if(n) _selectNote(n); }
+        // Feed pane only: paging must not drag a cursor that is sitting in the nav or notifications
+        // column onto a post, and in Messages the scroller is the thread, not the list beside it.
+        if(_vimPane==='feed' && cur && !cur.matches('.dm-peer')){ const n=_topNote(); if(n) _selectNote(n); }
       }
     });
   })();

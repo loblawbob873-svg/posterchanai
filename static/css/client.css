@@ -3519,3 +3519,6 @@ body.modal-open .mobilenav{display:none}
   outline:2px solid var(--neon);outline-offset:2px}
 .news-card.sel{outline:2px solid var(--neon);outline-offset:2px}
 .file-card.sel{outline:2px solid var(--neon);outline-offset:2px}
+
+/* Vim cursor in the side columns. They are dense lists, so a left rule reads better than a full ring. */
+.sidebar .nav-item.sel,.rightbar .notif.sel{box-shadow:inset 3px 0 0 var(--neon);background:rgba(var(--accent-rgb),.10)}
