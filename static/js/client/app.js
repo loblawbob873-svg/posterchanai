@@ -8218,14 +8218,19 @@
       let media='';
       if(p.thumb_url){
         const isVid=/\.(webm|mp4|m4v|mov|ogg)$/i.test(p.image_url_direct||p.image_url||'');
-        media=`<a class="fc-post-thumb${isVid?' vid':''}" data-full="${enc(p.image_url||p.thumb_url)}" data-kind="${isVid?'video':'image'}">`
+        // tabindex + role: this is an <a> with no href, so Tab skipped it and the images in a thread could
+        // not be opened from the keyboard at all. Enter/Space are wired below.
+        media=`<a class="fc-post-thumb${isVid?' vid':''}" tabindex="0" role="button" aria-label="Open ${isVid?'video':'image'}" data-full="${enc(p.image_url||p.thumb_url)}" data-kind="${isVid?'video':'image'}">`
             + `<img src="${enc(p.thumb_url)}" loading="lazy" onerror="this.parentNode.style.display='none'">`
             + `${isVid?'<span class="fc-play">▶</span>':''}</a>`;
       }
       const body = p.com ? `<div class="fc-post-body">${enc(p.com)}</div>` : '';
       return `<div class="fc-post"><div class="fc-post-hd"><span class="fc-no">#${enc(String(p.no))}</span> <span class="fc-name">${enc(p.name||'Anonymous')}</span></div>${media}${body}</div>`;
     }).join('') : '<div class="empty">No posts.</div>';
-    $$('.fc-post-thumb',box).forEach(a=> a.onclick=()=> openLightbox(a.dataset.full, a.dataset.kind==='video'?'video':undefined));
+    $$('.fc-post-thumb',box).forEach(a=>{
+      a.onclick=()=> openLightbox(a.dataset.full, a.dataset.kind==='video'?'video':undefined);
+      a.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '||e.key==='Spacebar'){ e.preventDefault(); a.click(); } };
+    });
   }
 
   async function summarize4chan(board, id){
@@ -13474,7 +13479,8 @@
             .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
           +'</div>' : '')
       +'<div class="ks-sec">Anywhere</div><div class="ks-grid">'
-      +[['/','Search'],['Alt+Enter','This view’s main action (Go Live, Write article…)'],['Esc','Leave a text box / close a dialog']]
+      +[['/','Search'],['Alt+Enter','This view’s main action (Go Live, Write article…)'],
+        ['Alt+←','Back out of what you opened'],['Esc','Leave a text box / close a dialog']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">Tabs</div><div class="ks-grid">'
       +[['[','Previous tab'],[']','Next tab']]
@@ -13597,15 +13603,29 @@
     '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
     '#feed .file-card',                  // Files (a GRID — see _rowStride)
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
+    // AI Chat's splash — the starter cards you are greeted with, plus the `help` chip under them. They
+    // were real buttons, so Tab reached them, but only one at a time: twenty cards meant twenty presses
+    // and no cursor to show where you were. As rows they get the arrows, j/k, and h/l across the grid.
+    // All three card grids share one `repeat(auto-fit,minmax(190px,1fr))` template, so the column count
+    // measured off the first one is right for the others too (and is 1 on a phone).
+    '#feed .ai-welcome .aw-card, #feed .ai-welcome .ai-cmd',
     // AI Chat's transcript. A reply is a row like any other, and its bubble is full of things worth
     // reaching — the guided cards, the command chips, Copy/Reply/Post on generated media, 🔊 Read aloud.
     // None of them were reachable: the view had no selection model at all, so the cursor never entered
     // the transcript and Tab (which is scoped to a selected row) had nothing to scope to.
     '#feed .ai-msgs .ai-msg',
     '#dm-list .dm-peer[data-peer]',      // messages
+    // The DETAIL views you open INTO. The list that got you here was navigable, but what it opened was
+    // not: Markets' tickers, a 4chan thread's posts, a chat room's messages. Same rows, same keys.
+    '#feed .mkts-card',                  // Markets (NOT .mkt-card above — that is Shopping)
+    '#fc-posts .fc-post',                // an open 4chan thread
+    '#ch-msgs .chat-msg[data-mid]',      // an open chat room
   ];
   function _noteEls(){
-    for(const sel of _ROW_SEL){ const els=[...document.querySelectorAll(sel)]; if(els.length) return els; }
+    // HIDDEN rows are not rows. The splash's Agents card is display:none unless you have node access, and
+    // the cursor stopping on something invisible reads as the arrows having died. Same test the nav/rail
+    // panes already use. A list whose rows are all hidden correctly falls through to the next one.
+    for(const sel of _ROW_SEL){ const els=[...document.querySelectorAll(sel)].filter(_vimShown); if(els.length) return els; }
     return [];
   }
   const _rowKey = (el) => el && (el.dataset.tid || el.dataset.draft || el.dataset.id || el.dataset.peer || el.dataset.open || '');
@@ -13682,7 +13702,8 @@
   // is where you spend the whole session, and every Alt shortcut, Page Up/Down and the vim keys all bail on
   // a focused text field — so with no way out, reaching any of them meant picking up the mouse.
   // The search boxes are in here too, so `/` in and Escape out is a round trip like every other field.
-  const _ESC_FIELDS = new Set(['dm-in','grp-input','tl-cmp-ta','ai-input','nav-search-input','search-input']);
+  const _ESC_FIELDS = new Set(['dm-in','grp-input','tl-cmp-ta','ai-input','nav-search-input','search-input',
+                               'ch-input']);   // a chat room's box was the one message field still missing
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     const t=e.target;
@@ -13826,6 +13847,32 @@
     }, true);
   })();
 
+  // Alt+← goes BACK out of whatever you opened. Every detail view — an article, a 4chan thread, a chat
+  // room, a community, a stream, a listing, a DM — puts a "←" button in its header, and every one of them
+  // was mouse-only: you could open the thing from the keyboard and then had no way out of it.
+  // An explicit list rather than [id$="-back"], because that would also match #follow-all-back, which
+  // FOLLOWS EVERYONE BACK. le-back / ae-back are left out too: those read "← Cancel" and abandon an edit
+  // in progress, which is not something a navigation key should do by accident.
+  const _BACK_BTNS = ['#fc-back','#ch-back','#comm-back','#art-back','#st-back','#li-back','#dm-back',
+                      '#grp-back','#badm-back'];
+  function _backBtn(){
+    for(const sel of _BACK_BTNS){
+      const b=document.querySelector(sel);
+      if(b && b.offsetParent!==null) return b;
+    }
+    return null;
+  }
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.key!=='ArrowLeft' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      if(document.body.classList.contains('modal-open')) return;
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
+      const b=_backBtn(); if(!b) return;      // nothing open → leave Alt+← to the browser's own history
+      e.preventDefault();
+      b.click();
+    });
+  })();
+
   // Alt+Enter reaches the button a view puts ABOVE its content — Go Live in Streams, Write article, Add
   // torrent, Sell something, Announce a repo. Tab could not get there: while a card is selected Tab is
   // scoped to that card, and with nothing selected it walked the whole sidebar first. Same shape in every
@@ -13864,7 +13911,8 @@
   // profile-only because they are all just a row of buttons with one marked current; the marker is `on`
   // in some bars and `active` in others, so both are accepted.
   const _TAB_SEL = ['#feed .prof-tabs .prof-tab', '#feed .tl-tabs .tltab', '#feed .notif-tabs .ntab',
-                    '#feed .files-tabs .ftab', '#feed .np-tabs .np-tab'];
+                    '#feed .files-tabs .ftab', '#feed .np-tabs .np-tab',
+                    '#feed .us-tabs .us-tab'];       // Settings / User Settings
   function _tabGroup(){
     for(const sel of _TAB_SEL){
       const els=[...document.querySelectorAll(sel)].filter(el=>el.offsetParent!==null);

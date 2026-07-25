@@ -2149,6 +2149,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* toggle switch (matches the cyan→magenta neon accent) */
 .switch{position:relative;display:inline-block;width:46px;height:26px;flex-shrink:0;cursor:pointer}
 .switch input{opacity:0;width:0;height:0}
+/* The real checkbox is 0×0 and invisible, so Tab reached every toggle in Settings with NOTHING to show
+   for it — you could not tell which one you were on, or that focus was in the pane at all. Put the ring
+   on the visible slider instead. (Space still toggles it; that part always worked.) */
+.switch input:focus-visible+.slider{outline:2px solid var(--neon);outline-offset:3px}
 .switch .slider{position:absolute;inset:0;border-radius:26px;background:rgba(8,5,18,.8);border:1px solid var(--line);transition:.2s}
 .switch .slider::before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:var(--muted);transition:.2s}
 .switch input:checked+.slider{background:linear-gradient(135deg,var(--neon),var(--neon2));border-color:transparent;box-shadow:var(--glow)}
@@ -3532,6 +3536,15 @@ body.modal-open .mobilenav{display:none}
 /* AI Chat transcript rows. The bubble carries its own background, so mark the ROW with a rail rather than
    tinting it — a wash over an assistant bubble is invisible in the light themes. */
 .ai-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
+/* The splash's starter cards are a GRID, so the cursor is an outline round the whole card rather than a
+   left rail — a rail on a tile reads as a border glitch, not a selection. */
+.aw-card.sel,.ai-welcome .ai-cmd.sel{outline:2px solid var(--neon);outline-offset:2px}
+/* The detail views that are now navigable too: an open 4chan thread, a chat room, Markets' tickers. */
+.fc-post.sel,.chat-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
+.mkts-card.sel{outline:2px solid var(--neon);outline-offset:2px}
+/* A thread thumbnail is an <a> with no href — it only became reachable by being given a tabindex, so it
+   needs a ring to show for it. */
+.fc-post-thumb:focus-visible{outline:2px solid var(--neon);outline-offset:3px;border-radius:8px}
 
 /* Keyboard cursor in the Effects studio, matching how a picked chip already reads. */
 .fxs-chip.kb{outline:2px solid var(--neon);outline-offset:1px}
