@@ -451,6 +451,109 @@ def decode_download(output: str) -> tuple[Optional[bytes], str]:
         return None, f"could not decode the download payload: {e}"
 
 
+async def run_shell_on_target(db: Session, user: "User", node: str, target: str,
+                              command: str) -> tuple[Optional[str], Optional[str]]:
+    """Run ONE shell command on any node shape and return (output, error). Centralizes the
+    local-job / Nostr-worker / placed-sandbox routing so `get`, `backup` and anything else read
+    a target identically (the same three shapes `_node_command` resolves from the registry)."""
+    from app.services import nostr_dvm
+    try:
+        if target.startswith("sandboxnostr:"):        # placed sandbox → its worker, inside the container
+            _, _pk, _u = target.split(":", 2)
+            out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": command, "sandbox_uid": _u},
+                                             worker_pubkey=_pk)
+        elif target.startswith("nostr:"):             # full Nostr worker (runs on its host)
+            out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": command},
+                                             worker_pubkey=target[len("nostr:"):])
+        else:                                          # local host or local sandbox container
+            job = await run_to_completion(db, node, target, command, user_id=getattr(user, "id", None))
+            return job.output, None
+    except Exception as e:
+        return None, str(e)
+    if not out:
+        return None, "no response (worker offline, not trusting this controller, or timed out)"
+    if out.get("error"):
+        return None, out["error"]
+    return out.get("output"), None
+
+
+# --- directory archive: tar.gz a working dir OFF a node/sandbox, streamed back in chunks -----------
+# `node get` pulls ONE file; the far more useful thing is "give me everything the agent built". This
+# tars a directory (default the sandbox's persistent /workspace) to gzip ON THE TARGET, then streams
+# it back in _MAX_OUTPUT-safe windows — so it isn't bounded by the single-file 700 KB cap and can carry
+# a real project. The archive is staged to a temp file on the target (a stable name, because make/read/
+# clean run as SEPARATE processes), read offset-by-offset, then removed. Each chunk rides the same
+# PCAI_B64 transport decode_download already parses.
+_ARCHIVE_MAX = 25 * 1024 * 1024   # gzipped ceiling — beyond this, grab a subfolder instead
+_ARCHIVE_CHUNK = 512 * 1024       # raw bytes/read → base64 ≈ 683 KB, safely under _MAX_OUTPUT (1 MB)
+_ARCHIVE_PROG = (
+    "import sys,base64,os,tarfile\n"
+    "d=base64.b64decode(sys.argv[1]).decode('utf-8','surrogateescape')\n"
+    "op=sys.argv[2]; TMP='/tmp/pcai_ws_archive.tgz'\n"
+    "if op=='make':\n"
+    "    if not os.path.isdir(d): sys.stdout.write('PCAI_NODIR'); sys.exit(0)\n"
+    "    t=tarfile.open(TMP,'w:gz'); t.add(d,arcname='.'); t.close()\n"
+    "    sys.stdout.write('PCAI_SIZE:%d'%os.path.getsize(TMP))\n"
+    "elif op=='read':\n"
+    "    f=open(TMP,'rb'); f.seek(int(sys.argv[3])); b=f.read(int(sys.argv[4])); f.close()\n"
+    "    sys.stdout.write('PCAI_B64:'+base64.b64encode(b).decode('ascii'))\n"
+    "elif op=='clean':\n"
+    "    try: os.remove(TMP)\n"
+    "    except OSError: pass\n"
+    "    sys.stdout.write('PCAI_CLEAN')\n"
+)
+_ARCHIVE_PROG_B64 = base64.b64encode(_ARCHIVE_PROG.encode("utf-8")).decode("ascii")
+
+
+def _archive_cmd(directory: str, op: str, off: int = 0, n: int = 0) -> str:
+    d_b64 = base64.b64encode((directory or "").encode("utf-8")).decode("ascii")
+    args = f"'{d_b64}' '{op}'"
+    if op == "read":
+        args += f" '{int(off)}' '{int(n)}'"
+    return f"python3 -c \"$(printf %s '{_ARCHIVE_PROG_B64}' | base64 -d)\" {args}"
+
+
+async def archive_dir(db: Session, user: "User", node: str, target: str,
+                      directory: str) -> tuple[Optional[bytes], str]:
+    """tar.gz `directory` on the target and stream it back. Returns (bytes, "") or (None, reason)."""
+    async def _run(op, off=0, n=0):
+        return await run_shell_on_target(db, user, node, target, _archive_cmd(directory, op, off, n))
+
+    out, err = await _run("make")
+    if err:
+        return None, err
+    out = out or ""
+    if "PCAI_NODIR" in out:
+        return None, f"no such directory `{directory}` on the target."
+    m = re.search(r"PCAI_SIZE:(\d+)", out)
+    if not m:
+        return None, ("could not build the archive (the target may lack python3, or tar failed):\n"
+                      f"{tail(out, 400)}")
+    size = int(m.group(1))
+    if size <= 0:
+        return None, "the archive came out empty."
+    if size > _ARCHIVE_MAX:
+        await _run("clean")
+        return None, (f"archive is {size:,} bytes gzipped — over the {_ARCHIVE_MAX:,} limit. "
+                      "Back up a subfolder instead: `node backup <name> <path>`.")
+    buf = bytearray()
+    while len(buf) < size:
+        out, err = await _run("read", len(buf), _ARCHIVE_CHUNK)
+        if err:
+            await _run("clean")
+            return None, err
+        chunk, derr = decode_download(out)
+        if derr:
+            await _run("clean")
+            return None, derr
+        if not chunk:                    # no forward progress → never spin forever
+            await _run("clean")
+            return None, f"archive transfer stalled at {len(buf):,}/{size:,} bytes."
+        buf += chunk
+    await _run("clean")
+    return bytes(buf), ""
+
+
 def get_job(job_id: int, user_id: Optional[int] = None) -> Optional[Job]:
     """Fetch a job. If user_id is given, only return it when that user owns it
     (defense-in-depth so callers can't accidentally expose another user's job)."""

@@ -1710,6 +1710,37 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                         except Exception:
                                             pass
                                         return
+                                    # Background agent handed back FILES (e.g. its /workspace backup): save each blob
+                                    # to encrypted Blossom, append a download link, persist + push — the same store the
+                                    # `type:files` command path uses, so it survives reload and shows in AI files.
+                                    if isinstance(job, dict) and job.get("type") == "agent_files":
+                                        _ftext = (job.get("content") or "").strip()
+                                        _fdb = SessionLocal()
+                                        try:
+                                            _links = []
+                                            for _bf in job.get("files", []):
+                                                _bd = _bf.get("data")
+                                                if not _bd:
+                                                    continue
+                                                _bn = _bf.get("filename", "workspace.tar.gz")
+                                                _ext = (_bn.rsplit(".", 1)[-1] if "." in _bn else "bin")
+                                                _rel = await _save_artifact_blossom(_uid, _conv, _bd, _ext)
+                                                if _rel:
+                                                    _links.append(f"[⬇️ {_bn}](/api/files/{_q(_uname, safe='')}/{_conv}/{_q(Path(_rel).name)})")
+                                            if _links:
+                                                _ftext = (_ftext + "\n\n" + "\n".join(_links)).strip()
+                                            if _ftext:
+                                                _fc = _fdb.query(_Conv).filter(_Conv.id == _conv).first()
+                                                if _fc:   # don't resurrect a chat just for a backup; the result already did
+                                                    _fu = _fdb.query(User).filter(User.id == _uid).first()
+                                                    await chat_history.append(_fdb, _fu, _conv, "assistant", _ftext)
+                                                    await manager.send_json(_uid, {"type": "response", "data": {"type": "text", "content": _ftext}}, _conn, _conv)
+                                        except Exception as _e:
+                                            logger.warning(f"[node] webui agent-files save failed: {_e}")
+                                            _fdb.rollback()
+                                        finally:
+                                            _fdb.close()
+                                        return
                                     _icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
                                     _out = (job.output or "(no output)").strip()
                                     _text = f"{_icon} Job #{job.id} on `{job.node}` {job.status} (exit {job.exit_code})\n\n```\n{_tail(_out, _IL)}\n```"

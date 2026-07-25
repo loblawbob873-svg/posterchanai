@@ -22,6 +22,7 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     from app.services import node_service
     db = SessionLocal()
     sections = []
+    backups = []        # (name, tar.gz bytes) — a sandbox's /workspace, auto-archived so the user gets what it built
     multi = len(targets) > 1
     _stopped = (lambda: bool(stop and stop.is_set()))
     try:
@@ -68,6 +69,29 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
                         await sandbox_service.reap(target.split(":", 1)[1], force=False)  # polite: skip if another run holds it
                     except Exception:
                         pass
+        # Auto-backup: the agent builds things in the sandbox's persistent /workspace volume — archive it
+        # so the user gets what it made without a second command. The volume outlives the reap above, so
+        # this re-creates a throwaway container on it (then reaps that), or on a placed sandbox drives its
+        # worker over Nostr. Best-effort: a backup failure must never sink the run's actual result.
+        for name, target in targets:
+            if _stopped():
+                break
+            if not (target.startswith("sandbox:") or target.startswith("sandboxnostr:")):
+                continue   # only a sandbox has a /workspace worth keeping; a full host node doesn't
+            try:
+                _bdata, _berr = await node_service.archive_dir(db, u, name, target, "/workspace")
+                if _bdata:
+                    backups.append((name, _bdata))
+                elif _berr:
+                    logger.info(f"[node] workspace backup skipped for {name}: {_berr}")
+                if target.startswith("sandbox:"):   # reap the container archive_dir just re-created
+                    try:
+                        from app.services import sandbox_service
+                        await sandbox_service.reap(target.split(":", 1)[1], force=False)
+                    except Exception:
+                        pass
+            except Exception as _be:
+                logger.warning(f"[node] workspace backup failed for {name}: {_be}")
     finally:
         # A multi-minute agent run holds this session idle → Postgres closes the connection, and then
         # db.close() itself raises OperationalError. Left unguarded that propagates from the `finally`
@@ -102,6 +126,17 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             await notify({"type": "agent_result", "content": f"{content}\n\n{banner}"})
         except Exception as e:
             logger.warning(f"[node] background agent deliver failed: {e}")
+        # Then hand back what the agent BUILT: each sandbox's /workspace as a downloadable .tar.gz.
+        # Delivered as its own `agent_files` payload so each interface stores it its own way (web →
+        # encrypted Blossom + link, Telegram → a document) — the same split the `type:files` path uses.
+        for _bname, _bdata in backups:
+            try:
+                await notify({"type": "agent_files",
+                              "content": f"📦 `{_bname}` workspace backup ({len(_bdata):,} bytes, gzipped)",
+                              "files": [{"filename": f"{_bname}-workspace.tar.gz", "data": _bdata,
+                                         "content_type": "application/gzip"}]})
+            except Exception as e:
+                logger.warning(f"[node] workspace backup deliver failed for {_bname}: {e}")
 
 
 _AGENT_BG_BY_CONV: dict = {}   # conversation_id -> (task, sandbox_uids, stop_event), so deleting the chat stops the run
@@ -314,6 +349,7 @@ class _SystemMixin:
                 "- `node all <command>` — run a command on every node\n"
                 "- `node agent <name> <goal>` — let the AI run commands toward a goal\n"
                 "- `node get <name> <path>` — download a file from a node/sandbox (→ Blossom)\n"
+                "- `node backup <name> [dir]` — archive a working dir (default `/workspace`) → Blossom\n"
                 "- `node jobs` — list your recent jobs\n"
                 "- `node log <id>` — show a job's output\n"
                 "- `node kill <id>` — stop a running job\n\n"
@@ -360,33 +396,13 @@ class _SystemMixin:
             name, path = parts[1], parts[2].strip()
             if name not in _reg:
                 return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
-            target = _reg[name]
-            dl_cmd = node_service.download_command(path)
-            try:
-                if target.startswith("sandboxnostr:"):          # placed sandbox → its worker over Nostr
-                    _, _pk, _u = target.split(":", 2)
-                    out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": dl_cmd, "sandbox_uid": _u},
-                                                     worker_pubkey=_pk)
-                    raw = (out or {}).get("output") if out else None
-                    if out and out.get("error"):
-                        return {"type": "text", "content": f"⚠️ `{name}`: {out['error']}"}
-                elif target.startswith("nostr:"):               # full Nostr worker
-                    out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": dl_cmd},
-                                                     worker_pubkey=target[len("nostr:"):])
-                    raw = (out or {}).get("output") if out else None
-                    if out and out.get("error"):
-                        return {"type": "text", "content": f"⚠️ `{name}`: {out['error']}"}
-                else:                                            # local host or local sandbox
-                    job = await node_service.run_to_completion(self.db, name, target, dl_cmd,
-                                                               user_id=self.user.id if self.user else None)
-                    raw = job.output
-            except Exception as e:
-                return {"type": "text", "content": f"⚠️ Could not reach `{name}`: {e}"}
-            if raw is None:
-                return {"type": "text", "content": f"⚠️ No response from `{name}` (offline, not trusting this controller, or timed out)."}
-            data, err = node_service.decode_download(raw)
+            raw, err = await node_service.run_shell_on_target(self.db, self.user, name, _reg[name],
+                                                              node_service.download_command(path))
             if err:
-                return {"type": "text", "content": f"⚠️ `{path}` on `{name}`: {err}"}
+                return {"type": "text", "content": f"⚠️ `{name}`: {err}"}
+            data, derr = node_service.decode_download(raw or "")
+            if derr:
+                return {"type": "text", "content": f"⚠️ `{path}` on `{name}`: {derr}"}
             if not data:   # 0-byte file: the files/Blossom path drops empty blobs, so say so plainly
                 return {"type": "text", "content": f"📭 `{path}` on `{name}` is empty (0 bytes) — nothing to download."}
             fname = path.rstrip("/").rsplit("/", 1)[-1] or "file"
@@ -394,6 +410,33 @@ class _SystemMixin:
                 "type": "files",
                 "content": f"📦 `{path}` from `{name}` ({len(data):,} bytes)",
                 "files": [{"filename": fname, "data": data}],
+            }
+
+        # --- archive a whole working dir (default the sandbox /workspace) → one .tar.gz in Blossom ---
+        if sub == "backup":
+            if len(parts) < 2:
+                return {"type": "text", "content": "Usage: `node backup <name> [dir]` — archive a directory (default `/workspace`) → Blossom."}
+            name = parts[1]
+            if name not in _reg:
+                return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
+            target = _reg[name]
+            directory = parts[2].strip() if len(parts) >= 3 and parts[2].strip() else None
+            if not directory:
+                # /workspace is the sandbox's persistent volume; a host node has no default, so name one.
+                if "sandbox" in target:
+                    directory = "/workspace"
+                else:
+                    return {"type": "text", "content": f"Usage: `node backup {name} <dir>` — a host node has no default workspace, name the directory."}
+            if notify:
+                await notify(f"📦 archiving `{directory}` on `{name}`…")
+            data, err = await node_service.archive_dir(self.db, self.user, name, target, directory)
+            if err:
+                return {"type": "text", "content": f"⚠️ backup of `{directory}` on `{name}`: {err}"}
+            base = directory.rstrip("/").rsplit("/", 1)[-1] or "workspace"
+            return {
+                "type": "files",
+                "content": f"📦 `{directory}` from `{name}` ({len(data):,} bytes, gzipped)",
+                "files": [{"filename": f"{base}.tar.gz", "data": data, "content_type": "application/gzip"}],
             }
 
         # --- fan-out: run the same command on every node (local jobs + Nostr workers) ---

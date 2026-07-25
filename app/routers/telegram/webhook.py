@@ -37,6 +37,19 @@ def _make_tg_node_notify(telegram_service, chat_id):
             except Exception as e:
                 logger.warning(f"[node] telegram agent-result send failed: {e}")
             return
+        if isinstance(job, dict) and job.get("type") == "agent_files":
+            # Files the agent handed back (e.g. its /workspace backup) → deliver each as a document.
+            caption = (job.get("content") or "").strip()
+            for _bf in job.get("files", []):
+                _bd = _bf.get("data")
+                if not _bd:
+                    continue
+                try:
+                    await telegram_service.send_document_bytes(
+                        str(chat_id), _bd, _bf.get("filename", "workspace.tar.gz"), caption or None)
+                except Exception as e:
+                    logger.warning(f"[node] telegram agent-files send failed: {e}")
+            return
         from app.services.node_service import tail, INLINE_LIMIT
         icon = {"done": "✅", "failed": "❌", "killed": "🛑"}.get(job.status, "ℹ️")
         out = (job.output or "(no output)").strip()
