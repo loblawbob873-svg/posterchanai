@@ -1686,8 +1686,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    only way to close it — hiding it there would trap the user. :focus-within and .lb-keys cover the
    keyboard, which never hovers. */
 @media (hover:hover) and (pointer:fine){
+  /* .lightbox fills the viewport, so :hover on IT is always true and would never hide anything — the
+     reveal is driven by pointer MOVEMENT instead (.lb-hot, set in JS and cleared after a pause), the way
+     a video player shows its controls. Hovering the bar itself, tabbing to it, or using the keys hold it. */
   .lb-bar{opacity:0}
-  .lightbox:hover .lb-bar,.lightbox.lb-keys .lb-bar,.lb-bar:focus-within{opacity:1}
+  .lightbox.lb-hot .lb-bar,.lightbox.lb-keys .lb-bar,.lb-bar:hover,.lb-bar:focus-within{opacity:1}
 }
 /* tap-to-zoom: show the image at natural size and let the backdrop scroll */
 /* Lightbox gallery paging (multi-attachment posts): arrows + an n / N counter. */

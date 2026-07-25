@@ -6231,7 +6231,9 @@
       // A sheet with a search box (the Effects studio) still needs the caret keys while you type, so it
       // opts into a SUBSET. A bare popover has no text field and takes everything.
       const t=e.target;
-      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName||''))
+      // SELECT is in here for the Blossom picker's folder dropdown: the arrows CHANGE a select's value, so
+      // taking them for the grid cursor made the dropdown unusable from the keyboard.
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))
          && !(opts.inText||[]).includes(e.key)) return;
       const els=items(); if(!els.length) return;
       const k=e.key; let d=0;
@@ -13261,6 +13263,10 @@
     const onEsc=e=>{
       if(!box.isConnected){ document.removeEventListener('keydown', onEsc); return; }
       if(e.key!=='Escape' || e.defaultPrevented) return;
+      // An overlay ABOVE this one owns Escape. The lightbox is the one that actually bites: it mounts on
+      // <body>, not in #modal-root, so the lastElementChild test below cannot see it — without this,
+      // Escape over an image opened from inside a sheet closed the SHEET underneath as well.
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       // Only the TOP layer closes — a picker opened from inside a sheet must not take the sheet with it.
       if(layer && layer!==$('#modal-root').lastElementChild) return;
       e.preventDefault();
@@ -13543,7 +13549,7 @@
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open')) return;
-      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const box=_searchBox(); if(!box) return;                   // nothing to focus — leave the key alone
       e.preventDefault();                                        // ...or the "/" lands in the box
       try{ box.focus({preventScroll:true}); }catch(_){ try{ box.focus(); }catch(__){} }
@@ -13714,7 +13720,7 @@
       if(e.altKey||e.ctrlKey||e.metaKey) return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
-      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const k=e.key;
       if(!'hjklgG'.includes(k) || k.length!==1) return;
       // Leaving a pane whose rows are gone (view switched under us) resets to the feed.
@@ -13787,7 +13793,7 @@
     document.addEventListener('keydown', e=>{
       if(e.key!=='Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
       if(document.body.classList.contains('modal-open')) return;   // the modal trap owns Tab there
-      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const row=_selEl(); if(!row) return;
       const els=[...row.querySelectorAll(_FOCUSABLE)].filter(el=>el.offsetParent!==null);
       if(!els.length) return;
@@ -13820,7 +13826,7 @@
     document.addEventListener('keydown', e=>{
       if(e.key!=='Enter' || !e.altKey || e.ctrlKey || e.metaKey) return;
       if(document.body.classList.contains('modal-open')) return;
-      if(document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       const b=_viewAction(); if(!b) return;
@@ -13858,7 +13864,7 @@
       if(e.key!=='[' && e.key!==']') return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
-      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       if(_cycleTab(e.key===']' ? 1 : -1)){ e.preventDefault(); _selectNote(null); }   // new tab, new list
     });
   })();
@@ -13881,7 +13887,7 @@
       if(e.altKey||e.ctrlKey||e.metaKey) return;
       const t=e.target;
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
-      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.emoji-pop,.menu-pop')) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const k=(e.key||'').toLowerCase();
       if(k==='escape'){
         if(_selId){
@@ -14092,7 +14098,14 @@
     let idx = multi ? Math.max(0, Math.min(items.length-1, group.i||0)) : 0;
 
     const bg=document.createElement('div'); bg.className='lightbox';
-    const close=()=>{ try{ bg.remove(); }catch(_){} document.removeEventListener('keydown', onKey); };
+    // Reveal the actions on pointer MOVEMENT and let them fade again once you settle — see the .lb-bar
+    // rules. Nothing to undo on touch: the media query leaves the bar permanently visible there, so this
+    // only ever adds a class nobody is looking at.
+    let hotT=null;
+    const hot=()=>{ bg.classList.add('lb-hot'); clearTimeout(hotT);
+      hotT=setTimeout(()=>bg.classList.remove('lb-hot'), 2200); };
+    bg.addEventListener('mousemove', hot);
+    const close=()=>{ clearTimeout(hotT); try{ bg.remove(); }catch(_){} document.removeEventListener('keydown', onKey); };
     const onKey=(e)=>{
       if(e.ctrlKey||e.metaKey||e.altKey) return;
       // Any key means someone is driving this from the keyboard — hold the toolbar open, since on a
