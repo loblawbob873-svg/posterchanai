@@ -189,6 +189,7 @@
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
+        <button class="btn btn-ghost small" id="mb-clear" title="Remove every layer and start a fresh build">🧹 Clear all</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
         </select>
@@ -715,6 +716,15 @@
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
     // automatically on every drop, which made adjusting one clip rewrite the whole timeline.
     on('mb-arrange','click',()=>{ resequence(); save(); render(); toast('clips laid back-to-back'); });
+    // Start over. Only the LAYERS go — the canvas size/background you picked are settings, not content,
+    // and having them reset too would mean re-choosing the preset after every clear.
+    on('mb-clear','click',async ()=>{
+      if(!P.layers.length){ toast('nothing to clear'); return; }
+      if(!await uiConfirm(`Remove all ${P.layers.length} layer${P.layers.length===1?'':'s'}? This can’t be undone.`)) return;
+      stopPlay(true);
+      P.layers=[]; sel=null; save(); render();
+      toast('all layers cleared');
+    });
     on('mb-render','click',doRender);
     on('mb-play','click',togglePlay);
     on('mb-scrub','input',(e)=>seek(+e.target.value));
