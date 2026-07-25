@@ -209,6 +209,15 @@ _DIARRHEA_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/diarrhea.mp3",
 ]
 _DIARRHEA_DURATION = 8.5
+# `shrug` — the pointing-up "Whaddya gonna do?" meme still, set to a short "what are you
+# gonna do big mouth" audio clip (~1.7s). image_audio_to_video's -shortest ends the clip
+# with the audio; _SHRUG_DURATION just caps it a hair above the track length.
+_SHRUG_AUDIO_CANDIDATES = [
+    os.environ.get("SHRUG_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "shrug.mp3"),
+    "/var/lib/posterchanai/assets/shrug.mp3",
+]
+_SHRUG_DURATION = 2.7
 _SETH_AUDIO_CANDIDATES = [
     os.environ.get("SETH_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "seth.mp3"),
