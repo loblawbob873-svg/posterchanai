@@ -13534,35 +13534,33 @@
       const lbl=over ? POSTLBL[_VIM_ALT_POST[k]] : label;
       return `<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(lbl)}</span></div>`;
     };
+    // One helper instead of repeating the same .map() for every block — there are a dozen of them now.
+    const sec=(title, rows)=> !rows.length ? '' : `<div class="ks-sec">${enc(title)}</div><div class="ks-grid">`
+      + rows.map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
+      + '</div>';
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
-      +(_vimOn() ? '<div class="ks-sec">Vim movement</div><div class="ks-grid">'
-          +[['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],['gg','Top'],['G','Bottom']]
-            .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')
-          +'</div>' : '')
-      +'<div class="ks-sec">Anywhere</div><div class="ks-grid">'
-      +[['/','Search'],['Alt+Enter','This view’s main action (Go Live, Write article…)'],
-        ['Alt+←','Back out of what you opened'],['Esc','Leave a text box / close a dialog']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +'<div class="ks-sec">Tabs</div><div class="ks-grid">'
-      +[['[','Previous tab'],[']','Next tab']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +'<div class="ks-sec">On a selected file</div><div class="ks-grid">'
-      +[['O','Open'],['C','Copy the URL'],['M','Move to a folder'],['D','Delete'],['Enter','Open']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +'<div class="ks-sec">Viewing an image</div><div class="ks-grid">'
-      +[['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],['Esc','Close']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +'<div class="ks-sec">On a selected news item</div><div class="ks-grid">'
-      +[['S','Share (also Markets)'],['U','Summarize'],['Enter','Open the article']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
-      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['V','Play its video, or open its link'],['Enter','Open thread'],['Esc','Deselect']]
-        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
-      +(window.PC_NOSTR_ONLY ? '' : '<div class="ks-sec">In AI Chat</div><div class="ks-grid">'
-        +[['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box (shortcuts work again)'],
-          ['↑ / ↓','Your previous messages'],['Enter','Send'],['Shift+Enter','New line']]
-          .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>')
-      +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
+      +(_vimOn() ? sec('Vim movement', [['j','Down'],['k','Up'],['h','Left / nav rail'],['l','Right / notifications'],
+                                        ['gg','Top'],['G','Bottom'],['j / k','Also change a focused dropdown']]) : '')
+      +sec('Anywhere', [['/','Search'],['Alt+Enter','This view’s main action (Go Live, ＋ New, Write article…)'],
+                        ['Alt+←','Back out of what you opened'],['Esc','Leave a text box / close a dialog'],
+                        ['[  ]','Previous / next tab']])
+      +sec('Menus and pickers', [['↑ ↓ ← →','Move'+(_vimOn()?' (or h j k l)':'')],['Enter','Choose'],['Esc','Close']])
+      +sec('On the selected post', [['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],
+                                    ['Z','Tip'],['E','Effect'],['V','Play its video · open its image or link'],
+                                    ['Enter','Open thread'],['Esc','Deselect']])
+      +sec('On a selected file', [['O','Open'],['C','Copy the URL'],['M','Move to a folder'],['D','Delete'],
+                                  ['Enter','Open'],['↓ Load more','Is a row too — Enter keeps paging']])
+      +sec('On a selected news item', [['S','Share (also Markets)'],['U','Summarize'],['Enter','Open the article']])
+      +sec('Viewing an image', [['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],
+                                ['Esc','Close']])
+      +sec('Games', [['A – Z','Guess a letter (Hangman)'],['1 – 9','Play that square / drop that column'],
+                     ['Type a move','Chess']])
+      +(window.PC_NOSTR_ONLY ? '' : sec('In AI Chat',
+        [['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box — lands on the newest reply'],
+         ['↑ / ↓','Your previous messages'],['Page Up/Dn','Scroll the conversation while typing'],
+         ['Alt+Enter','Reach 🏠 Home · ＋ New · Agents'],['Enter','Send'],['Shift+Enter','New line']]))
+      +'<div class="muted small ks-foot">Arrow keys step through rows; Page Up/Down, Space and Home/End scroll — '
+      +'though Space plays/pauses a video once you have tabbed onto it.</div>');
   }
   // Which letter an Alt chord means. `e.key` alone is not enough: Android's keymap gives most letters NO
   // character while Alt is held (Generic.kcm: `ctrl, alt, meta: none`), so the tablet/APK sees key values
@@ -13822,6 +13820,15 @@
       if(!_vimOn()) return;
       if(e.altKey||e.ctrlKey||e.metaKey) return;
       const t=e.target;
+      // j/k drive a focused <select> the way ↑/↓ already do. Dropdowns are the one control a vim user
+      // cannot move with hjkl — the Blossom picker's folder chooser is a select, so changing directory
+      // meant reaching for the arrows. Only j/k: h/l would fight the caret in a combobox.
+      if(t && t.tagName==='SELECT' && (e.key==='j' || e.key==='k')){
+        e.preventDefault();
+        const n=Math.max(0, Math.min(t.options.length-1, t.selectedIndex + (e.key==='j'?1:-1)));
+        if(n!==t.selectedIndex){ t.selectedIndex=n; t.dispatchEvent(new Event('change',{bubbles:true})); }
+        return;
+      }
       if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const k=e.key;
@@ -13910,6 +13917,12 @@
       if(document.body.classList.contains('modal-open')) return;   // the modal trap owns Tab there
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
       const row=_selEl(); if(!row) return;
+      // Only claim Tab when the cursor is actually AT the row — on it, inside it, or nowhere yet. A
+      // selected row used to grab Tab no matter where focus was, so once Alt+Enter had put you on the AI
+      // toolbar, Tab yanked you back into the selected message instead of walking 🏠 → ＋ New → Agents.
+      { const a=document.activeElement;
+        const atRow = !a || a===document.body || a===document.documentElement || a===row || row.contains(a);
+        if(!atRow) return; }
       const els=[...row.querySelectorAll(_FOCUSABLE)].filter(el=>el.offsetParent!==null);
       if(!els.length) return;
       const i=els.indexOf(document.activeElement);
@@ -13966,7 +13979,8 @@
   }
   (function(){
     document.addEventListener('keydown', e=>{
-      if(e.key!=='ArrowLeft' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      if(!(e.key==='ArrowLeft' || e.code==='ArrowLeft')) return;   // e.code too — see the Alt+Enter note
+      if(!e.altKey || e.ctrlKey || e.metaKey) return;
       if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
@@ -13996,12 +14010,18 @@
   }
   (function(){
     document.addEventListener('keydown', e=>{
-      if(e.key!=='Enter' || !e.altKey || e.ctrlKey || e.metaKey) return;
+      // e.code as well as e.key, for the same reason _altChars exists: on an Android hardware keyboard the
+      // Alt layer can report key:"Unidentified" (see the Generic.kcm note), which is why this stayed dead
+      // on the tablet while working on a desktop.
+      if(!(e.key==='Enter' || e.code==='Enter' || e.code==='NumpadEnter')) return;
+      if(!e.altKey || e.ctrlKey || e.metaKey) return;
       if(e.defaultPrevented) return;   // an overlay handled it in capture (and may already have closed itself)
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.uiconfirm-bg,.emoji-pop,.menu-pop')) return;
-      const t=e.target;
-      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      // Deliberately NO text-field guard. The other Alt keys have one because Alt+<letter> and Alt+←/→ are
+      // real editing shortcuts on some platforms (macOS word-jumps), but Alt+Enter is not an editing
+      // shortcut anywhere — and the guard was the whole bug here: AI Chat's action bar (🏠 Home, ＋ New,
+      // Agents, 🔊, 🗑️) is unreachable exactly when you are typing, which in that view is always.
       const b=_viewAction(); if(!b) return;
       e.preventDefault();
       // First press moves the cursor there (so you can see what you are about to do); pressing it again
@@ -14109,7 +14129,16 @@
         // Data saver renders "▶️ tap to load video" instead of the real element — press that, then v again.
         const ph=el.querySelector('.vid-hold');
         if(ph){ e.preventDefault(); ph.click(); return; }
-        // No video → open the post's link. href^="http" is what separates a REAL outbound link from the
+        // No video → the post's IMAGE. Exactly the selector the feed's own click handler uses, and pressed
+        // by clicking it, so the lightbox opens through the same path and still gets its gallery group
+        // (←/→ page through a multi-image post). A link CARD's preview is .lc-img and deliberately not in
+        // this list, so a link share still opens its link rather than its thumbnail.
+        const im=el.querySelector('.txt img, .note-preview img, .media-row img, .media-grid img, .mc-item img');
+        if(im){ e.preventDefault(); im.click(); return; }
+        // …and under data saver the image is a "tap to load" placeholder rather than an <img>.
+        const ih=el.querySelector('.img-hold');
+        if(ih){ e.preventDefault(); ih.click(); return; }
+        // Otherwise open the post's link. href^="http" is what separates a REAL outbound link from the
         // app's own navigation: hashtags, mentions and quoted-note links are all href="#" and handled in
         // JS, so they can never be opened by mistake here. Clicking the anchor rather than window.open
         // keeps target/rel and counts as a user gesture, so the popup blocker allows it.
