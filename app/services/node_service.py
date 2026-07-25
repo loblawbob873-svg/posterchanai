@@ -137,10 +137,13 @@ def _job_timeout(db: Session) -> Optional[float]:
 
 
 def _max_steps(db: Session) -> int:
+    # 30, not the old 8. Eight was a context limit wearing a step limit's clothes: nothing ever
+    # shrank the transcript, so a longer run overran the model's window. _digest_old_results /
+    # _trim_to_budget fixed that, and a real task needs far more than eight tool calls.
     try:
-        return max(1, int(_get(db, "node_exec_agent_max_steps", "8")))
+        return max(1, int(_get(db, "node_exec_agent_max_steps", "30")))
     except ValueError:
-        return 8
+        return 30
 
 
 # How many times in a row the model may re-issue a command it has already run before we give up.
@@ -430,12 +433,25 @@ def kill_job(job_id: int, user_id: Optional[int] = None) -> bool:
 
 _AGENT_SYSTEM = """You are a systems administrator managing the host "{node}".
 
-Accomplish the user's goal by calling the run_command tool to execute non-interactive shell
-commands; each command's output (and exit code) is returned to you so you can decide the next step.
+Accomplish the user's goal with the tools below. Each tool's result is returned to you so you can
+decide the next step.
+
+- run_command — run a non-interactive shell command; returns its output and exit code.
+- read_file — read a file with line numbers (paged; use offset to continue).
+- edit_file — change part of a file by replacing an EXACT string.
+- write_file — create a file, or replace one wholesale.
+- grep — search file contents under a path.
+- finish — stop, with a summary.
 
 Rules:
-- Prefer read-only / diagnostic commands first; make changes only when the goal requires it.
-- Run one logical command per step and wait for its output before the next.
+- Prefer read-only / diagnostic steps first; make changes only when the goal requires it.
+- Use the FILE TOOLS for files. Do not `cat`/`sed` a file you can read_file, and never rewrite a
+  file with shell redirection to change a few lines — edit_file is what that is for.
+- Always read_file before you edit_file: old_string must match the file byte for byte, and text
+  retyped from memory will not match.
+- If an edit fails, read the file again and copy the text exactly. Do NOT retry the same edit, and
+  do NOT fall back to rewriting the whole file.
+- One logical step per turn; wait for its result before the next.
 - Never run interactive commands that wait for input (use flags like -y, --noninteractive).
 - When the goal is achieved, or cannot be, call the finish tool with a short summary."""
 
@@ -476,6 +492,70 @@ _NODE_TOOLS = [
         },
     },
 ]
+
+# Structured file tools (read/edit/write/grep) ride the same executor as run_command, so they act
+# on whichever machine the agent is managing — host, sandbox container, or a Nostr worker. See
+# agent_file_tools for why shelling out to heredocs was the agent's biggest source of wasted steps.
+from app.services import agent_file_tools  # noqa: E402  (after _NODE_TOOLS so the list reads top-down)
+
+_NODE_TOOLS = _NODE_TOOLS + agent_file_tools.FILE_TOOLS
+
+
+# --- context control -------------------------------------------------------------------------
+# The transcript grows by one tool result per step, each up to _TOOL_RESULT_CHARS. Nothing ever
+# shrank it, so a long run overran the model's context (the Arc is pinned at 32k) long before it
+# ran out of steps — which is why max_steps had to be 8 to be safe. Ageing old results out is what
+# makes a real step budget affordable.
+_TOOL_RESULT_CHARS = 4000    # how much of a FRESH tool result the model sees
+_KEEP_FULL_RESULTS = 3       # the most recent N results stay verbatim; older ones are digested
+_ELIDED = "… [older output elided — read the file or run it again if you still need it]"
+_TRIMMED_NOTE = ("\n\n[Earlier steps were dropped to fit the context window. Do not assume anything "
+                 "you can no longer see — check again with a tool if you need it.]")
+
+
+def _context_budget(db: Session) -> int:
+    """Character budget for the whole transcript (~4 chars/token). Deliberately conservative: the
+    model still needs room to generate, and the smallest node in the fleet sets the ceiling."""
+    try:
+        return max(4000, int(_get(db, "node_exec_agent_context_chars", "48000")))
+    except ValueError:
+        return 48000
+
+
+def _digest_old_results(messages: list, keep_full: int = _KEEP_FULL_RESULTS) -> None:
+    """Shrink tool results older than the last `keep_full`, in place. A step's full output matters
+    while the model is acting on it and is dead weight ten steps later, so keep the recent ones
+    verbatim and reduce the rest to their first line. Idempotent — already-digested messages carry
+    the _ELIDED marker and are skipped, so this can run every turn."""
+    idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    for i in (idxs[:-keep_full] if keep_full else idxs):
+        c = messages[i].get("content") or ""
+        if len(c) <= 220 or c.endswith(_ELIDED):
+            continue
+        messages[i]["content"] = c.split("\n", 1)[0][:160] + "\n" + _ELIDED
+
+
+def _trim_to_budget(messages: list, budget: int) -> int:
+    """Drop the OLDEST exchanges until the transcript fits `budget` chars; returns how many went.
+
+    Exchanges are dropped WHOLE (the assistant turn carrying tool_calls plus the tool results
+    answering it): a tool message orphaned from its assistant turn is a malformed conversation for
+    most backends, which would fail the request rather than merely lose history. The system prompt,
+    the goal, and the two most recent exchanges are always kept."""
+    def _size() -> int:
+        return sum(len(m.get("content") or "") for m in messages)
+
+    dropped = 0
+    while _size() > budget:
+        starts = [i for i, m in enumerate(messages)
+                  if i >= 2 and m.get("role") == "assistant" and m.get("tool_calls")]
+        if len(starts) <= 2:
+            break                      # only the goal and the last two exchanges remain
+        del messages[starts[0]:starts[1]]
+        dropped += 1
+    if dropped and len(messages) > 1 and _TRIMMED_NOTE not in (messages[1].get("content") or ""):
+        messages[1]["content"] = (messages[1].get("content") or "") + _TRIMMED_NOTE
+    return dropped
 
 
 async def run_agent(db: Session, user: "User", node: str, target: str, goal: str,
@@ -522,6 +602,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
     transcript = [] if report_mode else [f"## Agent on `{node}` — goal: {goal}\n"]
     cmds_run: list[str] = []   # for a footer on the stop/error paths so they're never blank
     cmd_outputs: dict[str, str] = {}   # command -> its last output, to detect/short-circuit repeats
+    files_read: set = set()    # paths read this run — edit_file is refused until its file is in here
     repeat_nudges = 0          # consecutive "you already ran this" nudges (reset by a fresh command)
     sig_counts: dict = {}      # command signature -> times attempted (see _cmd_signature): catches a model
                                # re-doing the same ACTION with a tweaked body, which repeat_nudges misses
@@ -543,6 +624,16 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
         tail_ref = f" Full output: `node log {last_job_id}`." if last_job_id is not None else ""
         return f"\nRan {len(cmds_run)} command(s): {cmds}.{tail_ref}"
 
+    async def _exec(cmd: str):
+        """Run one shell command on the target and return (exit_code, output). The file tools go
+        through this too, so they act on the managed machine (host / sandbox / worker), never on
+        the controller's filesystem."""
+        nonlocal last_job_id
+        job = await run_to_completion(db, node, target, cmd, user_id=getattr(user, "id", None),
+                                      timeout=_agent_step_timeout(db))
+        last_job_id = job.id
+        return job.exit_code, job.output
+
     for step in range(1, max_steps + 1):
         # Cooperative cancel: a delete/kill sets this. Checked between steps so the run ALWAYS ends even
         # when task.cancel() is swallowed by run_to_completion's shield (§3) — the current command finishes,
@@ -559,6 +650,10 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 await notify({"type": "agent_progress", "node": node, "step": step, "max": max_steps})
             except Exception:
                 pass
+        # Keep the transcript inside the model's context BEFORE asking for the next step: old
+        # results shrink to a line, and if that is still not enough the oldest exchanges go.
+        _digest_old_results(messages)
+        _trim_to_budget(messages, _context_budget(db))
         try:
             result = await service.chat_completion(
                 messages=messages, model=model,
@@ -677,10 +772,61 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                              "or strategy), or call finish and report what blocked you. "
                              f"This run stops after {_SIG_MAX} attempts at the same thing.")
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
-                                 "content": f"exit {job.exit_code}{_status}\n{tail(out, 4000)}{_warn}"})
-            else:
+                                 "content": f"exit {job.exit_code}{_status}\n"
+                                            f"{tail(out, _TOOL_RESULT_CHARS)}{_warn}"})
+                continue
+
+            if name in agent_file_tools.FILE_TOOL_NAMES:
+                _path = str(args.get("path") or "").strip()
+                _label = agent_file_tools.label_for(name, args)
+
+                # Read before edit. A model editing a file it has not seen this run is working from
+                # memory, and old_string will not match — so refuse with the fix rather than let it
+                # burn a step failing. write_file is exempt: creating a file needs no prior read.
+                if name == "edit_file" and _path and _path not in files_read:
+                    await _say(f"↩️ {_label} — refused: not read yet")
+                    messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                                     "content": f"You have not read {_path} in this run, so you cannot "
+                                                "know its exact contents. Call read_file on it first, "
+                                                "then edit using text copied verbatim from what you read."})
+                    continue
+
+                # Loop breaker for MUTATING file ops. Rewriting one file over and over is the exact
+                # spin _cmd_signature was written for, so it shares that counter; reads and greps are
+                # cheap and legitimately repeat (paging a big file), so they are not counted.
+                _warn = ""
+                if name not in agent_file_tools.READ_ONLY_TOOLS:
+                    _sig = f"{name} {_path}"
+                    sig_counts[_sig] = sig_counts.get(_sig, 0) + 1
+                    _tries = sig_counts[_sig]
+                    if _tries >= _SIG_MAX:
+                        _msg = f"the agent kept rewriting `{_path}` ({_tries}×) without converging."
+                        if report_mode:
+                            return f"⏹️ {_msg}"
+                        transcript.append(f"\n**⏹️ Stopped:** {_msg}{_footer()}")
+                        return "\n".join(transcript)
+                    if _tries >= _SIG_WARN:
+                        _warn = (f"\n\n[!] You have now changed `{_path}` {_tries} times. If it is still "
+                                 "not right, the approach is wrong — read the file and think again, or "
+                                 f"call finish and report what blocked you. This run stops after "
+                                 f"{_SIG_MAX} attempts at the same file.")
+
+                ok, body = await agent_file_tools.run_file_op(_exec, name, args)
+                if ok and name == "read_file" and _path:
+                    files_read.add(_path)      # an edit of this path is unlocked from here on
+                cmds_run.append(_label)
+                if report_mode:
+                    await _say(f"{'📄' if name in agent_file_tools.READ_ONLY_TOOLS else '✏️'} `{_label}`")
+                else:
+                    _ic = "📄" if name in agent_file_tools.READ_ONLY_TOOLS else "✏️"
+                    _ex = "" if ok else " ⚠️"
+                    await _say(f"**{_ic} `{_label}`**{_ex}\n```\n{tail(body, 700)}\n```")
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
-                                 "content": f"(unknown tool: {name})"})
+                                 "content": (body if ok else f"ERROR: {body}")[:_TOOL_RESULT_CHARS] + _warn})
+                continue
+
+            messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
+                             "content": f"(unknown tool: {name})"})
 
     if report_mode:
         return "⏹️ reached the step limit before finishing the health check."

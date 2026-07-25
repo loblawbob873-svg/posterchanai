@@ -149,8 +149,13 @@
         <div class="form-row">
             <div class="form-group">
                 <label for="node_exec_agent_max_steps">Agent Max Steps</label>
-                <input type="number" id="node_exec_agent_max_steps" name="node_exec_agent_max_steps" value="8" min="1" max="50">
-                <small>Max command iterations in agentic mode.</small>
+                <input type="number" id="node_exec_agent_max_steps" name="node_exec_agent_max_steps" value="30" min="1" max="200">
+                <small>Max tool-call iterations in agentic mode. Real tasks need dozens; the agent trims its own transcript, so this is no longer bounded by the model's context.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_agent_context_chars">Agent Context Budget (characters)</label>
+                <input type="number" id="node_exec_agent_context_chars" name="node_exec_agent_context_chars" value="48000" min="4000" step="1000">
+                <small>Roughly 4 characters per token. Once the run's transcript exceeds this, old tool output is shrunk to one line and the oldest steps are dropped. Lower it for a node with a small context window.</small>
             </div>
             <div class="form-group">
                 <label for="node_exec_job_timeout">Job Timeout (seconds)</label>
