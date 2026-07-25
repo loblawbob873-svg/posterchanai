@@ -7507,6 +7507,17 @@
         // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the
         // styled text IS the post). Only for plain top-level posts (the 🎨 button is hidden otherwise).
         if(_bgChoice && !reply && !quote){
+          // Last parity gap with the Social strip: it refuses at SEND when there are no words left to put
+          // on the card, rather than rendering a blank one. Reaching here is now unlikely (picking is
+          // guarded and typing the words away disarms it), but the two should fail the same way.
+          // Send already set committed=true and dropped the Escape hook (it was about to publish), so a
+          // bare return here would leave the composer unable to autosave the draft. Put both back — we are
+          // not posting after all.
+          if(!_BG_WORDS(text)){
+            committed=false; document.addEventListener('keydown', _escSave);
+            $('#cmp-status',root).textContent='nothing to put on the card — write something, or use 🤖 AI → 🖼️ Framed card to summarize the link';
+            return;
+          }
           const sb=$('#cmp-send',root); if(sb) sb.disabled=true; $('#cmp-status',root).textContent='rendering…';
           try{
             const built=await buildBgPost(text, _bgChoice, _bgFramed);
@@ -13504,7 +13515,7 @@
       +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
-      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['V','Play / pause its video'],['Enter','Open thread'],['Esc','Deselect']]
+      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['V','Play its video, or open its link'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +(window.PC_NOSTR_ONLY ? '' : '<div class="ks-sec">In AI Chat</div><div class="ks-grid">'
         +[['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box (shortcuts work again)'],
@@ -14045,7 +14056,13 @@
         if(vid){ e.preventDefault(); if(vid.paused) { const p=vid.play(); if(p&&p.catch) p.catch(()=>{}); } else vid.pause(); return; }
         // Data saver renders "▶️ tap to load video" instead of the real element — press that, then v again.
         const ph=el.querySelector('.vid-hold');
-        if(ph){ e.preventDefault(); ph.click(); }
+        if(ph){ e.preventDefault(); ph.click(); return; }
+        // No video → open the post's link. href^="http" is what separates a REAL outbound link from the
+        // app's own navigation: hashtags, mentions and quoted-note links are all href="#" and handled in
+        // JS, so they can never be opened by mistake here. Clicking the anchor rather than window.open
+        // keeps target/rel and counts as a user gesture, so the popup blocker allows it.
+        const a=el.querySelector('a[href^="http"]');
+        if(a){ e.preventDefault(); a.click(); }
         return;
       }
       if(e.key==='Enter'){
