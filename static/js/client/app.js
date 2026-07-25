@@ -14444,7 +14444,10 @@
     // Keep a copy on YOUR Blossom. Media in a feed lives on whatever host the author used and can vanish;
     // this re-hosts it under your own storage and hands back the link. Offered for video/audio too — the
     // blob path is identical and "save that clip" is the same wish as "save that image".
-    const blossomB=mkBtn('🌸','Save to Blossom  (B)', ()=>_lbToBlossom(items[idx].src));
+    // A MONOCHROME florette (U+2740), not the 🌸 emoji: the emoji keeps its own pink and clashes with the
+    // button's neon-gradient fill, where every other lb-btn is a clean white glyph. ︎ forces text (not
+    // emoji) presentation so it stays white on every platform.
+    const blossomB=mkBtn('❀︎','Save to Blossom  (B)', ()=>_lbToBlossom(items[idx].src));
     bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close  (Esc)', close));
     bg.appendChild(bar);
     // Tab stays on the toolbar instead of walking the page behind the image, and the buttons are then
