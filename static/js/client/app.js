@@ -13286,6 +13286,7 @@
     // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
     // up here without a second place to remember.
     '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
+    '#feed .file-card',                  // Files (a GRID — see _rowStride)
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
     '#dm-list .dm-peer[data-peer]',      // messages
   ];
@@ -13324,6 +13325,15 @@
     const sc=_keyScroller()||document.getElementById('feed'); if(!sc) return null;
     const top=sc.getBoundingClientRect().top;
     return _noteEls().find(n=>n.getBoundingClientRect().bottom > top+4) || null;
+  }
+  // How many rows sit on one LINE. Files is a grid, so ↑/↓ there should jump a row and ←/→ move one item;
+  // a list simply reports 1 and behaves as before. Measured from the elements themselves so it adapts to
+  // the column count the layout actually chose at this width.
+  function _rowStride(els){
+    if(!els || els.length<2) return 1;
+    const top=els[0].offsetTop; let n=0;
+    for(const el of els){ if(el.offsetTop!==top) break; n++; }
+    return Math.max(1, n);
   }
   function _moveSel(dir){
     const els=_noteEls(); if(!els.length) return false;
@@ -13447,7 +13457,7 @@
     return best;
   }
   (function(){
-    const KEYS=new Set(['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' ','Spacebar']);
+    const KEYS=new Set(['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','PageDown','PageUp','Home','End',' ','Spacebar']);
     const LINE=48;   // roughly a browser's own arrow-key step
     document.addEventListener('keydown', e=>{
       if(e.ctrlKey||e.metaKey||e.altKey) return;          // Ctrl+Home etc. stay the browser's
@@ -13468,8 +13478,15 @@
       // SELECTION FIRST, before asking whether anything scrolls. A short thread fits on screen, so there is
       // no scroller — and bailing here meant the arrows did nothing there, which in turn meant nothing was
       // ever selected and r/b/q were dead too.
-      if(e.key==='ArrowDown' || e.key==='ArrowUp'){
-        if(_moveSel(e.key==='ArrowDown'?1:-1)){ e.preventDefault(); return; }
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'||e.key==='ArrowLeft'||e.key==='ArrowRight'){
+        const sideways=(e.key==='ArrowLeft'||e.key==='ArrowRight');
+        const stride=_rowStride(_noteEls());
+        // ←/→ only mean something in a GRID (Files). In a list they would just duplicate ↑/↓ while taking
+        // the keys away from anything that scrolls horizontally, so leave them to the browser there.
+        if(sideways && stride<2) return;
+        const step=sideways ? 1 : stride;
+        if(_moveSel((e.key==='ArrowDown'||e.key==='ArrowRight') ? step : -step)){ e.preventDefault(); return; }
+        if(sideways) return;
       }
       const f=_keyScroller();
       if(!f) return;                                       // nothing to scroll — don't swallow the key

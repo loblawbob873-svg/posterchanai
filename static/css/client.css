@@ -3518,3 +3518,4 @@ body.modal-open .mobilenav{display:none}
 .stream-card.sel,.article-card.sel,.mkt-card.sel,.community-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
   outline:2px solid var(--neon);outline-offset:2px}
 .news-card.sel{outline:2px solid var(--neon);outline-offset:2px}
+.file-card.sel{outline:2px solid var(--neon);outline-offset:2px}
