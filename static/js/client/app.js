@@ -2711,6 +2711,7 @@
         st.textContent='rendering…';
         const built=await buildBgPost(text, _tlBg, _tlBgFramed);
         st.textContent='uploading…';
+        if(built.trimmed) toast('card shows the opening — the rest did not fit on it');
         // imeta from the CONTENT, not the bare image URL: the note may now also carry the source link,
         // which has no _MEDIA_META entry and is correctly skipped.
         const btags=[]; imetaTagsFor(built.content).forEach(t=>btags.push(t)); cwOf(btags);
@@ -7082,7 +7083,9 @@
   // source URL appended, and the two halves belong in different places.
   const _BG_WORDS = (t) => String(t||'').replace(/https?:\/\/\S+/g,' ')
     .replace(/[ \t]+/g,' ').replace(/ *\n */g,'\n').trim();
-  const _CARD_MAX = 240;   // what fits on a 1080² card at a size that still looks designed
+  // What fits on a 1080² card while the type stays big enough to look designed. Generous, because the
+  // card is now the ONLY place the words appear — the post underneath is just the link.
+  const _CARD_MAX = 420;
   // The opening HOOK, cut on a sentence boundary so the card never ends mid-word. Text that already fits
   // is returned untouched (newlines and all) — a short background post must keep behaving exactly as before.
   function _cardHook(s){
@@ -7097,18 +7100,21 @@
     cut=win.lastIndexOf(' ');
     return (cut>0 ? flat.slice(0,cut) : flat.slice(0,_CARD_MAX)).trim()+'…';
   }
-  // Render + upload the card and return the note content: the image, then whatever did not fit on it,
-  // then the links. A short plain background post yields JUST the image URL, exactly as it always did.
+  // Render + upload the card and return the note content: the image, then the links, LAST.
+  // The words are not repeated underneath — the card is a picture OF them, so posting them again is the
+  // same thing twice. The link goes at the end because that is the one part a reader has to be able to
+  // tap, and it is the only part a card cannot carry.
   async function buildBgPost(text, bg, framed){
     const urls=(String(text||'').match(/https?:\/\/\S+/g)||[]).map(u=>u.replace(/[)\].,>'"]+$/,''));
     const words=_BG_WORDS(text);
     const card=_cardHook(words);
     const blob=await renderBgPost(card||' ', bg, framed);
     const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
-    const rest=[];
-    if(words && words!==card) rest.push(words);        // the card only showed the hook — keep the rest
-    if(urls.length) rest.push(urls.join(' '));
-    return { url, content: url + (rest.length ? '\n\n'+rest.join('\n\n') : '') };
+    // `trimmed` = the card could not hold every word. Callers surface it, so a long draft losing its tail
+    // is never silent — for a link summary that is fine (the article link is right there), but it must
+    // still be said out loud rather than discovered after posting.
+    return { url, content: url + (urls.length ? '\n\n'+urls.join(' ') : ''),
+             trimmed: !!(words && words!==card) };
   }
   // `open` ('poll' | 'ai' | 'react') auto-opens one of the composer's tools after the modal renders. The
   // timeline's inline composer uses it to surface Poll/AI as first-class buttons without reimplementing
@@ -7369,6 +7375,7 @@
           try{
             const built=await buildBgPost(text, _bgChoice, _bgFramed);
             $('#cmp-status',root).textContent='uploading…';
+            if(built.trimmed) toast('card shows the opening — the rest did not fit on it');
             const url=built.content;   // the image, plus anything that did not fit on the card
             const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
             mentionTags(url).forEach(t=>{ if(!btags.some(x=>x[0]==='p'&&x[1]===t[1])) btags.push(t); });
@@ -7436,6 +7443,7 @@
                 if(!text){ st.textContent='write something first'; go.disabled=false; return; }
                 st.textContent='rendering…'; const _b=await buildBgPost(text, _bgChoice, _bgFramed);
                 st.textContent='uploading…'; content=_b.content;
+                if(_b.trimmed) toast('card shows the opening — the rest did not fit on it');
                 imetaTagsFor(content).forEach(t=>tags.push(t)); _applyCw(tags);
               } else {                                                       // plain text (incl. attached media URLs in the text)
                 if(!text){ st.textContent='write something to schedule'; go.disabled=false; return; }
