@@ -13504,7 +13504,7 @@
       +[['S','Share'],['U','Summarize'],['Enter','Open the article']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
-      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['Enter','Open thread'],['Esc','Deselect']]
+      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],[_vimOn()?'F':'L','React'],['Z','Tip'],['E','Effect'],['V','Play / pause its video'],['Enter','Open thread'],['Esc','Deselect']]
         .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
       +(window.PC_NOSTR_ONLY ? '' : '<div class="ks-sec">In AI Chat</div><div class="ks-grid">'
         +[['Alt+I','Open it / jump back into the message box'],['Esc','Leave the box (shortcuts work again)'],
@@ -14036,6 +14036,18 @@
         if(n){ e.preventDefault(); effectPost(n.id, n.pk); }
         return;
       }
+      // v plays/pauses the video in the selected row. NOT Space: Space already pages the feed (and
+      // Shift+Space pages back), and since arrowing through a timeline always leaves a row selected,
+      // taking it would hijack scrolling on exactly the posts you are most likely to be scrolling past.
+      // Works on anything that holds a video — a post, a thread node, a chat or AI message.
+      if(k==='v'){
+        const vid=el.querySelector('video');
+        if(vid){ e.preventDefault(); if(vid.paused) { const p=vid.play(); if(p&&p.catch) p.catch(()=>{}); } else vid.pause(); return; }
+        // Data saver renders "▶️ tap to load video" instead of the real element — press that, then v again.
+        const ph=el.querySelector('.vid-hold');
+        if(ph){ e.preventDefault(); ph.click(); }
+        return;
+      }
       if(e.key==='Enter'){
         e.preventDefault();
         // A post opens its thread; anything else (a conversation, a notification) is just clicked — that
@@ -14129,7 +14141,10 @@
       // for Page Down. (Excluding buttons outright is why the keys died after clicking "Social" but worked
       // when the same view was opened with Alt+E, where focus never moved.) Space is the one exception:
       // it ACTIVATES a focused button, so that keystroke still belongs to the control.
-      if((e.key===' '||e.key==='Spacebar') && /^(BUTTON|A|SUMMARY|OPTION)$/.test(tag)) return;
+      // VIDEO/AUDIO are in here for the same reason as BUTTON: Space is the player's OWN play/pause when
+      // one has focus, so paging the feed instead meant tabbing to a video and then being unable to start
+      // it. Tab already reaches it — the row-scoped Tab walks the selected row's controls.
+      if((e.key===' '||e.key==='Spacebar') && /^(BUTTON|A|SUMMARY|OPTION|VIDEO|AUDIO)$/.test(tag)) return;
       // A modal, the lightbox and the emoji/menu popovers own the keyboard while they are up — the lightbox
       // in particular pages through images with the arrows.
       if(document.body.classList.contains('modal-open')) return;
