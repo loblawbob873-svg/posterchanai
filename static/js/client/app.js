@@ -10891,6 +10891,17 @@
           if(files.length){ await aiAddFiles(files); toast(files.length+' file'+(files.length>1?'s':'')+' attached'); }
         });
       } }
+    // Enter / Space on a focused control in the transcript acts on it. Images are the reason this exists
+    // (they are the one thing here that is not a real button), but routing it through the SAME click path
+    // means anything else that ends up focusable behaves identically rather than growing a second handler.
+    $('#ai-msgs').addEventListener('keydown', e=>{
+      if(e.key!=='Enter' && e.key!==' ' && e.key!=='Spacebar') return;
+      if(e.ctrlKey||e.metaKey||e.altKey) return;
+      const t=e.target;
+      if(!t || t.tagName!=='IMG' || t.tabIndex<0) return;    // real buttons already do this themselves
+      e.preventDefault();
+      t.click();
+    });
     $('#ai-msgs').addEventListener('click',async e=>{
       // Guided card → open the studio for that command (no syntax to remember).
       const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); if(gc.dataset.open==='nodes'){ openNodePanel(); } else { openGenStudio(gc.dataset.gen); } return; }
@@ -11612,7 +11623,16 @@
       if(_ltSpeak) ltSpeak(translated, tgt);   // TTS in the target language's own voice
     }finally{ _ltBusy=false; }
   }
-  function aiScroll(){ const box=$('#ai-msgs'); if(box) box.scrollTop=box.scrollHeight; }
+  function aiScroll(){ const box=$('#ai-msgs'); if(!box) return; box.scrollTop=box.scrollHeight; _aiImgKeys(box); }
+  // An image in the transcript opens the lightbox when CLICKED, but an <img> takes no focus, so with the
+  // keyboard there was no way to open one at all. Stamping tabindex as messages land (rather than at build
+  // time) catches every path — a streamed reply, a generated image, a reloaded conversation.
+  function _aiImgKeys(box){
+    box.querySelectorAll('img:not([tabindex])').forEach(im=>{
+      im.tabIndex=0; im.setAttribute('role','button');
+      if(!im.getAttribute('aria-label')) im.setAttribute('aria-label', im.alt || 'Open image');
+    });
+  }
   function aiHandle(d){
     // Stale re-delivery: the server replays a queued `response` whose live push was missed (socket
     // dropped / user on another conversation). We reload the whole conversation from the DB on
@@ -13551,6 +13571,11 @@
     '#feed .news-card',                  // News (its own keys — see _NEWS_KEYS)
     '#feed .file-card',                  // Files (a GRID — see _rowStride)
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
+    // AI Chat's transcript. A reply is a row like any other, and its bubble is full of things worth
+    // reaching — the guided cards, the command chips, Copy/Reply/Post on generated media, 🔊 Read aloud.
+    // None of them were reachable: the view had no selection model at all, so the cursor never entered
+    // the transcript and Tab (which is scoped to a selected row) had nothing to scope to.
+    '#feed .ai-msgs .ai-msg',
     '#dm-list .dm-peer[data-peer]',      // messages
   ];
   function _noteEls(){
@@ -13760,7 +13785,10 @@
   // torrent, Sell something, Announce a repo. Tab could not get there: while a card is selected Tab is
   // scoped to that card, and with nothing selected it walked the whole sidebar first. Same shape in every
   // view, so one key does the lot.
-  const _ACTION_BAR = ['#feed .streams-top', '#feed .art-top'];
+  // ...and AI Chat's toolbar (🏠 Home, the conversation picker, ＋ New, Agents, 🔊, 🗑️), which had the same
+  // problem: real buttons, but only after Tab had walked the whole sidebar. Landing on it puts plain Tab
+  // on the rest of the row, since nothing is selected there.
+  const _ACTION_BAR = ['#feed .streams-top', '#feed .art-top', '#feed .ai-bar'];
   function _viewAction(){
     for(const sel of _ACTION_BAR){
       for(const bar of document.querySelectorAll(sel)){

@@ -3514,6 +3514,9 @@ body.modal-open .mobilenav{display:none}
    card inside it; .thread-hl (the post you arrived at) keeps its own ring and the two can coexist. */
 .thread-node.sel>.note{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
 .notif.sel{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
+/* AI Chat transcript rows. The bubble carries its own background, so mark the ROW with a rail rather than
+   tinting it — a wash over an assistant bubble is invisible in the light themes. */
+.ai-msg.sel{box-shadow:inset 3px 0 0 var(--neon);border-radius:8px}
 
 /* Keyboard cursor in the Effects studio, matching how a picked chip already reads. */
 .fxs-chip.kb{outline:2px solid var(--neon);outline-offset:1px}
