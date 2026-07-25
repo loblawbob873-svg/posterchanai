@@ -13181,25 +13181,59 @@
   // <body> never scrolls. A div with no tabindex cannot take keyboard focus, so ↓/↑/PageDown/PageUp/Space/
   // Home/End landed on <body>, which has nothing to scroll, and the feed sat still. Nothing was swallowing
   // the keys; they simply had nowhere to act. Route them to the feed instead.
+  // Which element the scroll keys should move. Usually #feed, but Messages / Chat / AI set overflow:hidden
+  // on it and scroll in their own pane — skipping those was why the keys did nothing in Messages. Ordered
+  // by what the user is actually reading: an open conversation beats the conversation list beside it.
+  // An ARRAY, queried one selector at a time: a combined querySelectorAll returns DOM order, not selector
+  // order, so the conversation LIST (which comes first in the markup) would win over the open thread.
+  const _KEY_PANES = ['.dm-msgs', '.ai-msgs', '.chatroom-msgs', '.dm-list'];
+  function _keyScroller(){
+    const f=document.getElementById('feed');
+    if(!f) return null;
+    const over=el=>{ const oy=getComputedStyle(el).overflowY; return oy==='auto'||oy==='scroll'; };
+    const can=el=>el && el.scrollHeight > el.clientHeight+4;
+    const shown=el=>el.offsetParent!==null || getComputedStyle(el).position==='fixed';
+    if(getComputedStyle(f).overflowY!=='hidden' && can(f)) return f;
+    // Named panes first, so the ambiguous cases resolve the way a reader expects — in Messages both the
+    // conversation LIST and the open thread scroll, and the thread is what you are reading.
+    for(const sel of _KEY_PANES){
+      for(const el of document.querySelectorAll(sel)){ if(shown(el) && can(el)) return el; }
+    }
+    // Otherwise find it GENERICALLY. Enumerating every view that owns its own pane (News, Markets,
+    // Torrents, Repos, 4chan…) would just be a list to forget to update — walk out from the feed instead
+    // and take the biggest visible scrollable box. Node-bounded: a scroller sits near the top of a view's
+    // subtree, and a keypress must not walk a thousand list rows to find one.
+    let best=null, bestH=0, budget=400;
+    const q=[...f.children];
+    while(q.length && budget-- > 0){
+      const el=q.shift();
+      if(!el || el.nodeType!==1 || !shown(el)) continue;
+      if(over(el) && can(el)){ if(el.clientHeight>bestH){ bestH=el.clientHeight; best=el; } continue; }
+      for(const c of el.children) q.push(c);
+    }
+    return best;
+  }
   (function(){
     const KEYS=new Set(['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' ','Spacebar']);
     const LINE=48;   // roughly a browser's own arrow-key step
     document.addEventListener('keydown', e=>{
       if(e.ctrlKey||e.metaKey||e.altKey) return;          // Ctrl+Home etc. stay the browser's
       if(!KEYS.has(e.key)) return;
-      const t=e.target;
-      // Never take a key off something being typed in or operated: the composer, a search box, a select,
-      // a focused button (Space activates it), or any custom control that has taken focus deliberately.
-      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON|OPTION|A)$/.test(t.tagName||''))) return;
+      const t=e.target, tag=(t && t.tagName)||'';
+      // Never take a key off something being typed in, or off a select (arrows change its value).
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tag))) return;
+      // A focused BUTTON/link must NOT block scrolling — browsers scroll the page happily with one focused,
+      // and clicking a sidebar item leaves focus on exactly that button, which is precisely when you reach
+      // for Page Down. (Excluding buttons outright is why the keys died after clicking "Social" but worked
+      // when the same view was opened with Alt+E, where focus never moved.) Space is the one exception:
+      // it ACTIVATES a focused button, so that keystroke still belongs to the control.
+      if((e.key===' '||e.key==='Spacebar') && /^(BUTTON|A|SUMMARY|OPTION)$/.test(tag)) return;
       // A modal, the lightbox and the emoji/menu popovers own the keyboard while they are up — the lightbox
       // in particular pages through images with the arrows.
       if(document.body.classList.contains('modal-open')) return;
       if(document.querySelector('.lightbox,.menu-pop,.emoji-pop')) return;
-      const f=document.getElementById('feed');
-      // Views that scroll INSIDE the feed (DM, chat, AI) set overflow:hidden on it and own their own
-      // scroller; leave those alone rather than fighting them.
-      if(!f || getComputedStyle(f).overflowY==='hidden') return;
-      if(f.scrollHeight <= f.clientHeight+4) return;       // nothing to scroll — don't swallow the key
+      const f=_keyScroller();
+      if(!f) return;                                       // nothing to scroll — don't swallow the key
       const page=Math.max(120, f.clientHeight-64);
       let dy=0;
       if(e.key==='ArrowDown') dy=LINE;
