@@ -3136,7 +3136,7 @@
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
       <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
-      <div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.gallery}
+      ${mp.mediaFirst?mp.gallery:''}<div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.mediaFirst?'':mp.gallery}
       <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}">↩ Reply</button></div>
       ${kids}</div>`;
   }
@@ -5393,8 +5393,15 @@
   // to render a DIFFERENT element once you ask for it.
   function _holdOnerr(html){ const m=/\sonerror="([^"]*)"/i.exec(html||''); return m ? m[1] : ''; }
   function _hold(html, url, kind, cls){ return NO_IMAGES ? _phold(enc(url), kind, cls, _holdOnerr(html)) : html; }
+  const _isMediaUrl=(u)=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)
+    || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
   function mediaParts(raw){
     const media=[];
+    // Media is LIFTED OUT of the text and rendered as its own row, so whatever text remains would always
+    // sit above it — a card post ("<image>\n\n<link>") showed its link ABOVE the picture. When the content
+    // LEADS with media, that ordering is backwards: honour the author's order and put the row first.
+    const _lead=(raw||'').trim().match(/^(https?:\/\/[^\s<]+)/);
+    const mediaFirst=!!(_lead && _isMediaUrl(_lead[1].replace(/[)\].,!?]+$/,'')));
     const text=(raw||'').replace(/(https?:\/\/[^\s<]+)/g,(url)=>{
       const u=url.replace(/[)\].,!?]+$/,''); const tail=url.slice(u.length); const E=enc(u);
       if(/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)){ media.push(_media(E)); return tail; }
@@ -5407,10 +5414,10 @@
     // `items` = the bare <img>/<video> html, no wrapper — callers that re-grid the media (the profile
     // Media tab) use it directly instead of regex-stripping the wrapper off `gallery`, which silently
     // broke the moment that wrapper stopped always being <div class="media-row">.
-    if(!media.length) return { text, gallery:'', items:media };
-    if(media.length===1) return { text, gallery:`<div class="media-row">${media[0]}</div>`, items:media };
+    if(!media.length) return { text, gallery:'', items:media, mediaFirst };
+    if(media.length===1) return { text, gallery:`<div class="media-row">${media[0]}</div>`, items:media, mediaFirst };
     const n=media.length;
-    return { text, items:media, gallery:`<div class="media-car" data-n="${n}">`
+    return { text, items:media, mediaFirst, gallery:`<div class="media-car" data-n="${n}">`
       +`<div class="mc-track">${media.map(m=>`<div class="mc-item">${m}</div>`).join('')}</div>`
       +`<button class="mc-nav mc-prev" aria-label="Previous" disabled>‹</button>`
       +`<button class="mc-nav mc-next" aria-label="Next">›</button>`
@@ -5550,10 +5557,11 @@
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
           <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
+        ${mp.mediaFirst?mp.gallery:''}
         <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
         ${longTxt?`<button class="txt-more" onclick="event.stopPropagation();var t=this.previousElementSibling;t.classList.toggle('clamp');this.textContent=t.classList.contains('clamp')?'Show more ↓':'Show less ↑';">Show more ↓</button>`:''}
         ${xmrTipBadge(ev)}
-        ${mp.gallery}
+        ${mp.mediaFirst?'':mp.gallery}
         ${linkCardHtml(mp.text)}
         ${quoteHtml(ev)}
         ${cw?`</div></div>`:''}
@@ -5613,8 +5621,9 @@
     const mp = mediaParts(o.content);
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      ${mp.mediaFirst?mp.gallery:''}
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
-      ${mp.gallery}</div>`; }
+      ${mp.mediaFirst?'':mp.gallery}</div>`; }
   // NIP-10 parent e-tag of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
   // Returns the WHOLE tag so its relay hint (t[2]) can be used to fetch an off-relay parent.
   function replyParentTag(ev){
@@ -7055,21 +7064,30 @@
     ctx.restore();
   }
   async function renderBgPost(text, bg, framed){
-    const W=1080,H=1080, pad=W*(framed?0.135:0.11), maxW=W-pad*2,   // the frame eats into the text box
+    const W=1080, t=String(text||'');
+    // A FULL article summary does not belong on a square. Squeezing it there is what makes the type tiny
+    // and the card look cheap, so grow the canvas instead: 1:1 for a punchy line, then the standard tall
+    // social formats (4:5, then 2:3) as the text gets longer. Both still preview well in a feed.
+    const H = t.length>760 ? 1620 : t.length>320 ? 1350 : 1080;
+    const LONG = t.length>320;
+    const pad=W*(framed?0.115:0.095), maxW=W-pad*2,   // the frame eats into the text box
           maxH=(H-pad*2)*(bg.deco?(framed?0.78:0.82):1);   // leave room for deco rows
     const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
     _bgFill(ctx,W,H,bg);
     if(bg.deco) _bgDeco(ctx,W,H,bg.deco,framed);
     // Before the text, so a descender can never be crossed by the rule.
     if(framed) _bgFrame(ctx,W,H,bg);
-    ctx.fillStyle=bg.fg||'#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    // Centred type is right for a headline and wrong for paragraphs — a long summary set centred reads as
+    // a poem. Long cards go left-aligned, which is what makes them look like a designed article card.
+    ctx.fillStyle=bg.fg||'#fff'; ctx.textAlign=LONG?'left':'center'; ctx.textBaseline='middle';
     const font=s=>`800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
-    let fs=112, lines=[];
-    for(; fs>=30; fs-=4){ ctx.font=font(fs); lines=_bgWrap(ctx,text,maxW); const lh=fs*1.22;
+    const floor=LONG?26:30;
+    let fs=LONG?64:112, lines=[];
+    for(; fs>=floor; fs-=2){ ctx.font=font(fs); lines=_bgWrap(ctx,t,maxW); const lh=fs*(LONG?1.34:1.22);
       if(lines.length*lh<=maxH && lines.every(l=>ctx.measureText(l).width<=maxW)) break; }
-    const lh=fs*1.22, y0=H/2 - (lines.length*lh)/2 + lh/2;
+    const lh=fs*(LONG?1.34:1.22), y0=H/2 - (lines.length*lh)/2 + lh/2, x=LONG?pad:W/2;
     ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=fs*0.12; ctx.shadowOffsetY=Math.max(1,fs*0.03);
-    lines.forEach((l,i)=>ctx.fillText(l, W/2, y0+i*lh));
+    lines.forEach((l,i)=>ctx.fillText(l, x, y0+i*lh));
     return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
   }
   // ---- Turning a draft into a background/framed post ----
@@ -7079,9 +7097,10 @@
   // source URL appended, and the two halves belong in different places.
   const _BG_WORDS = (t) => String(t||'').replace(/https?:\/\/\S+/g,' ')
     .replace(/[ \t]+/g,' ').replace(/ *\n */g,'\n').trim();
-  // What fits on a 1080² card while the type stays big enough to look designed. Generous, because the
-  // card is now the ONLY place the words appear — the post underneath is just the link.
-  const _CARD_MAX = 420;
+  // How much the card can carry. High, because the card is the ONLY place the words appear (the post
+  // underneath is just the link) and renderBgPost now grows the canvas rather than shrinking the type —
+  // a whole AI summary lands well inside this, so it is drawn in full instead of cut to a teaser.
+  const _CARD_MAX = 1100;
   // The opening HOOK, cut on a sentence boundary so the card never ends mid-word. Text that already fits
   // is returned untouched (newlines and all) — a short background post must keep behaving exactly as before.
   function _cardHook(s){

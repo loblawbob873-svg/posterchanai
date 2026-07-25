@@ -2847,8 +2847,8 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    swatches, with the box above it staying an ordinary editor. */
 .cmp-cardprev{ display:flex; flex-direction:column; gap:5px; margin:8px 0 0; }
 .cmp-cardprev.hidden{ display:none; }
-.cmp-cardprev-img{ width:190px; max-width:56%; aspect-ratio:1/1; border-radius:12px;
-  border:1px solid var(--line); background:var(--panel2); object-fit:cover; }
+.cmp-cardprev-img{ width:190px; max-width:56%; height:auto; border-radius:12px;
+  border:1px solid var(--line); background:var(--panel2); }   /* card is 1:1, 4:5 or 2:3 — let it be */
 /* 🖼️ Framed card (AI menu): preview the border the rendered PNG will carry. currentColor, not a fixed
    white — the textarea's colour is already the background's own fg, so this stays visible on the light
    swatches (`gold` has a dark fg, where a white ring would disappear). */
