@@ -563,6 +563,21 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _diarrhea_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into a short MP4 set to the diarrhea clip: `diarrhea`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `diarrhea`."}
+
+        import asyncio
+        from app.services.effects_service import diarrhea_attachments
+
+        outputs, summary = await asyncio.to_thread(diarrhea_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _seth_command(self, attachments: Optional[list]) -> dict:
         """Turn an attached image into a short MP4 set to the seth clip: `seth`."""
         from app.services.media_service import is_image
