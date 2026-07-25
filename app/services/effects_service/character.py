@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, logger, os
+from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, _SHRUG_AUDIO_CANDIDATES, _SHRUG_DURATION, logger, os
 
 def _character_path(name: str) -> str:
     """Resolve a character name (or alias) to an existing asset path ("" if unknown/missing)."""
@@ -172,8 +172,31 @@ def add_would(data: bytes, caption: str = "WOULD") -> bytes:
 
 def add_shrug(data: bytes, caption: str = "Whaddya gonna do?") -> bytes:
     """`shrug` — resigned rabbi, palms up, saying "Whaddya gonna do?". Same character+dialogue renderer;
-    the shrug.png pose means no pointing arrow is drawn (has_pose)."""
+    the shrug.png pose means no pointing arrow is drawn (has_pose). Returns the STILL JPEG frame; the
+    video (with the shrug audio clip) is built in shrug_attachments — mirrors add_diarrhea's split."""
     return _add_pointing_meme(data, "shrug", caption, fallback="would")
+
+
+def _shrug_audio_path() -> str:
+    """First existing shrug mp3 from the candidate list ("" if none). Exposing this makes `shrug`
+    auto-discovered by meme_builder_service.sound_names()."""
+    for p in _SHRUG_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_shrug_video(data: bytes, caption: str = "Whaddya gonna do?",
+                    source_filename: str = "image.jpg") -> bytes:
+    """Render the shrug meme still, then loop it under the shrug audio clip → MP4 bytes.
+    Mirrors add_diarrhea (image → image_audio_to_video); the branding end-card is appended
+    later by CommandService._brand_effect_videos, same as the other MOTION_EFFECTS videos."""
+    from app.services.media_service import image_audio_to_video
+    still = add_shrug(data, caption)
+    audio = _shrug_audio_path()
+    if not audio:
+        raise RuntimeError("Shrug audio (assets/shrug.mp3) is missing on the server")
+    return image_audio_to_video(still, "shrug.jpg", audio, duration=_SHRUG_DURATION)
 
 
 def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
@@ -314,4 +337,24 @@ def would_attachments(attachments):
 
 
 def shrug_attachments(attachments):
-    return _pointing_attachments(attachments, "shrug", "Whaddya gonna do?", add_shrug)
+    """Render the shrug meme on the first image and set it to the shrug audio clip → MP4.
+    Unlike theraped/would (still images), shrug carries audio, so its output is video/mp4 —
+    mirrors diarrhea_attachments (whoabuddy-style video output)."""
+    from ._common import _human_size, is_image
+    images = [(f, d, ct) for f, d, ct in (attachments or []) if is_image(f, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_shrug_video(data, source_filename=filename)
+        out: OutputFile = {
+            "filename": f"{stem}_shrug.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤷 Whaddya gonna do?\n\n🤷 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"shrug failed for {filename}: {e}", exc_info=True)
+        return [], f"Could not apply shrug to {filename}: {e}"
