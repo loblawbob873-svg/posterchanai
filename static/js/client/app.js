@@ -2452,6 +2452,9 @@
     const v=(ta.value||'').trim();
     if(!v){ toast('write something first'); return; }
     if(v.length>_BG_MAX){ setSt(`a framed card needs ${_BG_MAX} characters or fewer`); return; }
+    // Same rule as the background it is drawn on: the card renders your TEXT, so a link in the box would
+    // become a picture of a URL.
+    if(/https?:\/\/|\/blossom\/|!\[/i.test(v)){ setSt('a framed card is text only — remove the link or attached media'); return; }
     const on=!o.framed;
     o.set(on);
     if(!on){ setSt('framed card off'); return; }
@@ -2566,7 +2569,7 @@
     const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(Math.max(ta.scrollHeight,54),_taMax())+'px'; };
     // Declared before reset() so it can disarm the 🎨 choice: clearing only the button's .on class
     // would leave a background armed and silently style the NEXT post too.
-    let _tlBg=null, _tlBgClear=()=>{};
+    let _tlBg=null, _tlBgClear=()=>{}, _tlBgPreview=()=>{};
     let _tlBgFramed=false;   // 🖼️ Framed card (AI menu) — a border on the 🎨 background post
     // Clear the PANELS too, not just the text — a posted poll leaving its options behind would silently
     // attach them to the next thing you wrote.
@@ -2635,7 +2638,7 @@
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
           else if(a==='card') _aiFramedCard(ta, setSt, {
-            framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; },
+            framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; _tlBgPreview(); },
             reveal: ()=>{ if(bgsRow && bgsRow.classList.contains('hidden')) toggleBg(); } });
           else if(a==='translate') composeTranslate(ta, ab); }); }; }
     // 🎨 Background post — same swatches and renderer the modal uses (CMP_BGS/renderBgPost are
@@ -2647,12 +2650,33 @@
         const none=document.createElement('button'); none.type='button'; none.className='cmp-swatch cmp-swatch-none on';
         none.title='no background'; none.textContent='✕'; bgsRow.appendChild(none);
         const marks=[none];
-        const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); };
+        // Show the chosen background (and its frame) IN the box, exactly as the modal composer does.
+        // Without this, arming a background here changed nothing on screen — you only found out what you
+        // had made after posting it.
+        _tlBgPreview=()=>{
+          if(_tlBg){ ta.classList.add('cmp-bg-on'); ta.style.background=_bgCss(_tlBg); ta.style.color=_tlBg.fg||'#fff'; }
+          else { ta.classList.remove('cmp-bg-on'); ta.style.background=''; ta.style.color=''; }
+          ta.classList.toggle('cmp-bg-framed', !!(_tlBg && _tlBgFramed));
+          grow();
+        };
+        const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); _tlBgPreview(); };
         none.onclick=()=>pick(none,null);
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
+        // A background post renders the TEXT onto an image, so a link or attached media in the box gets
+        // drawn as the card's wording — you post a picture of a URL. The modal composer already refused
+        // that; this one only checked length, which is how it happened here.
+        const _hasLink=()=>/https?:\/\/|\/blossom\/|!\[/i.test(ta.value||'');
+        const _bgWhyNot=()=>_hasLink() ? 'a background post is text only — remove the link or attached media'
+          : (ta.value.trim().length>_BG_MAX ? `background needs ${_BG_MAX} characters or fewer` : '');
         CMP_BGS.forEach(bg=>{ const s=document.createElement('button'); s.type='button'; s.className='cmp-swatch';
-          s.title=bg.id; s.style.background=_bgCss(bg); bgsRow.appendChild(s); marks.push(s);
-          s.onclick=()=>{ if(ta.value.trim().length>_BG_MAX){ st.textContent=`background needs ${_BG_MAX} characters or fewer`; return; } pick(s,bg); }; });
+          s.title=bg.id; s.style.background=_bgCss(bg);
+          if(bg.deco) s.textContent=bg.deco[0];   // holiday swatches are recognisable, as in the modal
+          bgsRow.appendChild(s); marks.push(s);
+          s.onclick=()=>{ const why=_bgWhyNot(); if(why){ st.textContent=why; return; } pick(s,bg); }; });
+        // …and drop it again if the text later grows a link, rather than silently rendering one.
+        ta.addEventListener('input', ()=>{ if(_tlBg && _bgWhyNot()){ pick(none,null);
+          st.textContent='background removed — '+_bgWhyNot();
+          setTimeout(()=>{ if(st.textContent.startsWith('background removed')) st.textContent=''; }, 2800); } });
         toggleBg=()=>{ const show=bgsRow.classList.toggle('hidden')===false;
           if(!show && _tlBg) pick(none,null);   // collapsing the row must not leave a hidden background armed
         };

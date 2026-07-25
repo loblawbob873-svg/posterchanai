@@ -2841,17 +2841,20 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media(hover:hover){ .cmp-swatch:hover{ transform:scale(1.1); } }
 .cmp-swatch.on{ border-color:var(--neon); box-shadow:0 0 0 2px var(--bg), 0 0 9px var(--neon); }
 .cmp-swatch-none{ background:var(--panel2); color:var(--text); border:2px solid var(--line); font-weight:800; font-size:15px; }
-/* live preview: the composer shows the chosen background with big centered text (the render is exact). */
-textarea#cmp.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-height:180px; border-radius:14px;
+/* live preview: the composer shows the chosen background with big centered text (the render is exact).
+   Keyed on the CLASS, not `textarea#cmp` — the timeline's inline composer uses the same swatches and the
+   same renderer, so it gets the same preview. Without this it armed a background and showed you nothing
+   until after you posted. Its own `background:transparent` is beaten by the inline style the JS sets. */
+textarea.cmp-bg-on{ text-align:center; font-weight:800; font-size:21px; min-height:180px; border-radius:14px;
   text-shadow:0 1px 6px rgba(0,0,0,.28); padding:38px 22px; border-color:transparent; }
 /* 🖼️ Framed card (AI menu): preview the border the rendered PNG will carry. currentColor, not a fixed
    white — the textarea's colour is already the background's own fg, so this stays visible on the light
    swatches (`gold` has a dark fg, where a white ring would disappear). */
-textarea#cmp.cmp-bg-on.cmp-bg-framed{ box-shadow:inset 0 0 0 3px currentColor; padding:46px 30px; }
+textarea.cmp-bg-on.cmp-bg-framed{ box-shadow:inset 0 0 0 3px currentColor; padding:46px 30px; }
 @media(max-width:480px){
   .cmp-swatch{ width:34px; height:34px; font-size:16px; }
-  textarea#cmp.cmp-bg-on{ font-size:18px; min-height:150px; padding:28px 18px; }
-  textarea#cmp.cmp-bg-on.cmp-bg-framed{ padding:34px 24px; }
+  textarea.cmp-bg-on{ font-size:18px; min-height:150px; padding:28px 18px; }
+  textarea.cmp-bg-on.cmp-bg-framed{ padding:34px 24px; }
 }
 
 /* Data saver — tap-to-load image placeholder (User Settings → "don't auto-load images"). Nothing is
