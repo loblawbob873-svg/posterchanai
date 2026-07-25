@@ -3490,3 +3490,8 @@ body.modal-open .mobilenav{display:none}
 /* The updater row in the RIGHT RAIL. The feed version's flush 3px rule collides with the rail's 2px
    gutter, so give it a little room and round the inner edge; everything else it inherits. */
 .rightbar .upd-notif{padding-left:9px;padding-right:6px;border-radius:0 8px 8px 0}
+
+/* Keyboard-selected post. An inset ring rather than an outline: .note is a full-bleed feed row with a
+   bottom rule, so an outline would draw outside it and clash with the row above. */
+.note.sel{background:rgba(var(--accent-rgb),.07);box-shadow:inset 3px 0 0 var(--neon)}
+.ks-sec{margin:14px 0 2px;font-weight:700;font-size:13px;color:var(--text)}

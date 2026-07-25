@@ -2150,6 +2150,7 @@
     // thread). The profile "message @user" action sets dmActive THEN calls switchView (from a non-messages
     // view), so this guard won't wipe it. Without it, fix for the mobile thread-overlay would auto-open.
     if(VIEW==='messages' && v!=='messages') dmActive=null;
+    try{ _selectNote(null); }catch(_){ }   // a keyboard selection belongs to the feed we are leaving
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -13177,7 +13178,10 @@
   function _shortcutHelp(){
     const row=([k,,label])=>`<div class="ks-row"><kbd>Alt</kbd><span class="ks-plus">+</span><kbd>${enc(k.toUpperCase())}</kbd><span class="ks-lbl">${enc(label)}</span></div>`;
     modal('<h3>⌨️ Keyboard shortcuts</h3><div class="ks-grid">'+SHORTCUTS.map(row).join('')+'</div>'
-      +'<div class="muted small ks-foot">Arrow keys, Page Up/Down, Space and Home/End scroll the timeline.</div>');
+      +'<div class="ks-sec">On the selected post</div><div class="ks-grid">'
+      +[['R','Reply'],['B','Boost (repost)'],['Q','Quote'],['L','React'],['Z','Tip'],['Enter','Open thread'],['Esc','Deselect']]
+        .map(([k,l])=>`<div class="ks-row"><kbd>${enc(k)}</kbd><span class="ks-lbl">${enc(l)}</span></div>`).join('')+'</div>'
+      +'<div class="muted small ks-foot">Arrow keys step through posts; Page Up/Down, Space and Home/End scroll.</div>');
   }
   (function(){
     const MAP=new Map(SHORTCUTS.map(([k,v])=>[k,v]));
@@ -13192,6 +13196,79 @@
       if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox')) return;
       e.preventDefault();
       _runShortcut(MAP.get(k));
+    });
+  })();
+
+  // The page must be able to RECEIVE keys before it has been clicked. On a fresh launch (most visibly in
+  // the desktop shell, where the window opens with the menu bar/chrome holding focus) document.activeElement
+  // is not in the page, so keydown never reaches these handlers and every shortcut looked dead until you
+  // clicked something. body needs tabindex to be focusable at all — -1 keeps it out of the Tab order.
+  (function(){
+    const grab=()=>{ try{
+      const ae=document.activeElement;
+      if(ae && ae!==document.body && ae!==document.documentElement) return;   // something real has focus
+      document.body.tabIndex=-1; document.body.focus({preventScroll:true});
+    }catch(_){ } };
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', grab, {once:true});
+    else grab();
+    window.addEventListener('focus', grab);   // re-focusing the window must not need a click either
+  })();
+
+  // ---------- keyboard post selection ----------
+  // Arrow/Page keys move a SELECTION through the timeline, so the action keys below have something to act
+  // on. The actions deliberately click the note's own .act button rather than calling doRepost/compose
+  // directly: that row already carries the guest guard, the already-reposted check, the counts and the
+  // toasts, and a second path into them would be a second place for those to drift.
+  let _selId=null;
+  const _noteEls = () => [...document.querySelectorAll('#feed article.note[data-id]')];
+  function _selEl(){
+    if(!_selId) return null;
+    const el=_noteEls().find(n=>n.dataset.id===_selId);
+    if(el && !el.classList.contains('sel')) el.classList.add('sel');   // survived a re-render → re-mark it
+    return el||null;
+  }
+  function _selectNote(el){
+    document.querySelectorAll('#feed article.note.sel').forEach(n=>n.classList.remove('sel'));
+    if(!el){ _selId=null; return; }
+    _selId=el.dataset.id; el.classList.add('sel');
+    el.scrollIntoView({block:'nearest'});
+  }
+  // The note at the top of what you are looking at — where a selection should START, and where it should
+  // land again after a page jump.
+  function _topNote(){
+    const sc=_keyScroller()||document.getElementById('feed'); if(!sc) return null;
+    const top=sc.getBoundingClientRect().top;
+    return _noteEls().find(n=>n.getBoundingClientRect().bottom > top+4) || null;
+  }
+  function _moveSel(dir){
+    const els=_noteEls(); if(!els.length) return false;
+    const cur=_selEl();
+    if(!cur){ _selectNote(_topNote()||els[0]); return true; }
+    const i=els.indexOf(cur);
+    if(i<0){ _selectNote(_topNote()||els[0]); return true; }
+    const j=i+dir;
+    if(j<0 || j>=els.length) return false;   // at an end → fall through to a normal scroll
+    _selectNote(els[j]);
+    return true;
+  }
+  // Act on the selected post by pressing its own button. Bare letters (no Alt): they are what every other
+  // client uses, and the text-field guard already keeps them out of anything being typed into.
+  const _POST_KEYS = { r:'reply', b:'repost', q:'quote', l:'react', z:'tip' };
+  (function(){
+    document.addEventListener('keydown', e=>{
+      if(e.altKey||e.ctrlKey||e.metaKey) return;
+      const t=e.target;
+      if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''))) return;
+      if(document.body.classList.contains('modal-open') || document.querySelector('.lightbox')) return;
+      const k=(e.key||'').toLowerCase();
+      if(k==='escape'){ if(_selId){ e.preventDefault(); _selectNote(null); } return; }
+      const el=_selEl(); if(!el) return;      // nothing selected → these keys mean nothing yet
+      if(e.key==='Enter'){ e.preventDefault(); renderThread(el.dataset.id); return; }
+      const a=_POST_KEYS[k]; if(!a) return;
+      const btn=el.querySelector('.act[data-a="'+a+'"]');
+      if(!btn) return;                        // e.g. a poll card, which carries only reply + menu
+      e.preventDefault();
+      btn.click();
     });
   })();
 
@@ -13265,11 +13342,19 @@
         // Instant, like the browser's own Home/End on a page — and a smooth animation here can be
         // suppressed outright (prefers-reduced-motion), which would read as the key doing nothing.
         f.scrollTo({top: e.key==='Home'?0:f.scrollHeight, behavior:'auto'});
+        if(_selId){ const els=_noteEls(); if(els.length) _selectNote(e.key==='Home'?els[0]:els[els.length-1]); }
         return;
       }
       if(!dy) return;
       e.preventDefault();
+      // In a timeline, an ARROW should step from post to post — that is what gives the action keys (r/b/q)
+      // something to act on. Only when there are no posts, or the selection is already at an end, does it
+      // fall through to a plain pixel scroll (settings, files, a thread's tail).
+      if((e.key==='ArrowDown'||e.key==='ArrowUp') && _moveSel(e.key==='ArrowDown'?1:-1)) return;
       f.scrollBy({top:dy, behavior:'auto'});   // auto, not smooth: held-down arrows must not queue up
+      // A page jump leaves the selection off-screen; move it to whatever is now at the top, so the action
+      // keys stay pointed at what you are actually looking at.
+      if(_selId){ const n=_topNote(); if(n) _selectNote(n); }
     });
   })();
   // Every image/video in the gallery `im` belongs to, so the lightbox can step through a multi-image post

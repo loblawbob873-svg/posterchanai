@@ -125,6 +125,15 @@ function createWindow() {
   };
   win.on('close', remember);
 
+  // Give the PAGE keyboard focus on launch. The window itself is focused, but its webContents is not
+  // necessarily — with a visible menu bar the first keystroke can go to the chrome instead, which is why
+  // no shortcut or scroll key worked until you clicked inside the page. Also on every window focus, so
+  // alt-tabbing back does not need a click either.
+  const focusPage = () => { if (win && !win.isDestroyed()) win.webContents.focus(); };
+  win.webContents.on('did-finish-load', focusPage);
+  win.on('focus', focusPage);
+  win.once('ready-to-show', focusPage);
+
   // Right-click menu. Electron ships NO default context menu, so `spellcheck: true` above only ever drew
   // the red underline — there was no way to act on it, and no cut/copy/paste either. Chromium hands us the
   // suggestions in params.dictionarySuggestions; replaceMisspelling() applies one. Built per-event because
