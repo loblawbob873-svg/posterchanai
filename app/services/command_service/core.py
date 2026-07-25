@@ -86,6 +86,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
+        "diarrhea": "Turn an attached image into a short MP4 set to the explosive diarrhea clip: diarrhea",
         "seth": "Turn an attached image into a short MP4 set to the seth clip: seth",
         "robocop": "Turn an attached image into a short MP4 set to the robocop clip: robocop",
         "titan": "Turn an attached image into a short MP4 set to the titan clip: titan",
@@ -165,7 +166,7 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "seth", "robocop", "titan", "terminator", "reze",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse",
@@ -619,6 +620,8 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._retard_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
+        elif command == "diarrhea":
+            return await self._diarrhea_command(attachments)
         elif command == "seth":
             return await self._seth_command(attachments)
         elif command == "robocop":
