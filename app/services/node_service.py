@@ -16,6 +16,7 @@ Config lives in admin Settings:
   node_exec_job_timeout        per-job timeout in seconds (0 = no timeout)
 """
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -391,6 +392,60 @@ async def run_to_completion(db: Session, node: str, target: str, command: str,
         except asyncio.CancelledError:
             pass
     return job
+
+
+# --- file download: pull a file's raw bytes OFF a node/sandbox/worker ------------------------------
+# The agent can BUILD things in its sandbox (a script, a checkout, a whole project), but its /workspace
+# is a Docker volume on the worker — the user had no way to get a produced file back out. `node get`
+# closes that loop: it runs a tiny reader ON THE TARGET (same executor as run_command / the file tools,
+# so it works identically on the host, in a sandbox, and on a Nostr worker), and the caller hands the
+# bytes to the chat's `type:files` path → an encrypted Blossom artifact + a download link.
+#
+# The reader base64-encodes the file so no byte of content is ever seen by the shell (same discipline
+# as agent_file_tools), and REFUSES anything above _DOWNLOAD_MAX up front: a job retains at most
+# _MAX_OUTPUT (1 MB), and base64 inflates ~4/3, so a larger file would be silently truncated -> corrupt.
+# 700 KB * 4/3 ≈ 933 KB stays safely under the cap. (Bigger files: read them in the sandbox, or split.)
+_DOWNLOAD_MAX = 700 * 1024
+_DOWNLOAD_PROG = (
+    "import sys,base64,os\n"
+    "p=base64.b64decode(sys.argv[1]).decode('utf-8','surrogateescape')\n"
+    "if not os.path.isfile(p):\n"
+    "    sys.stdout.write('PCAI_NOFILE'); sys.exit(0)\n"
+    f"if os.path.getsize(p)>{_DOWNLOAD_MAX}:\n"
+    "    sys.stdout.write('PCAI_TOOBIG:%d'%os.path.getsize(p)); sys.exit(0)\n"
+    "sys.stdout.write('PCAI_B64:'+base64.b64encode(open(p,'rb').read()).decode('ascii'))\n"
+)
+_DOWNLOAD_PROG_B64 = base64.b64encode(_DOWNLOAD_PROG.encode("utf-8")).decode("ascii")
+
+
+def download_command(path: str) -> str:
+    """Shell command that emits `PCAI_B64:<base64>` for `path` on the target (or PCAI_NOFILE /
+    PCAI_TOOBIG). Program and path are both base64, so the shell never touches the file content
+    or the path's own quoting."""
+    _path_b64 = base64.b64encode((path or "").encode("utf-8")).decode("ascii")
+    return f"python3 -c \"$(printf %s '{_DOWNLOAD_PROG_B64}' | base64 -d)\" '{_path_b64}'"
+
+
+def decode_download(output: str) -> tuple[Optional[bytes], str]:
+    """Parse `download_command`'s output into (bytes, "") on success, or (None, reason)."""
+    out = output or ""
+    idx = out.find("PCAI_B64:")
+    if idx < 0:
+        if "PCAI_NOFILE" in out:
+            return None, "no such file (it's missing, or a directory) on the target."
+        m = re.search(r"PCAI_TOOBIG:(\d+)", out)
+        if m:
+            return None, (f"file is {int(m.group(1)):,} bytes — too large to fetch in one go "
+                          f"(limit {_DOWNLOAD_MAX:,}). Split it, or read it in the sandbox.")
+        return None, ("could not read the file — the target may lack python3, or the command "
+                      f"errored:\n{tail(out, 400)}")
+    m = re.match(r"[A-Za-z0-9+/=]+", out[idx + len("PCAI_B64:"):].strip())
+    if not m:
+        return None, "the download payload was empty or malformed."
+    try:
+        return base64.b64decode(m.group(0)), ""
+    except Exception as e:
+        return None, f"could not decode the download payload: {e}"
 
 
 def get_job(job_id: int, user_id: Optional[int] = None) -> Optional[Job]:

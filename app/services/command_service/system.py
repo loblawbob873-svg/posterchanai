@@ -313,6 +313,7 @@ class _SystemMixin:
                 "- `node <name> <command>` — run a command (long ones run in the background)\n"
                 "- `node all <command>` — run a command on every node\n"
                 "- `node agent <name> <goal>` — let the AI run commands toward a goal\n"
+                "- `node get <name> <path>` — download a file from a node/sandbox (→ Blossom)\n"
                 "- `node jobs` — list your recent jobs\n"
                 "- `node log <id>` — show a job's output\n"
                 "- `node kill <id>` — stop a running job\n\n"
@@ -348,6 +349,50 @@ class _SystemMixin:
                 return {"type": "text", "content": f"Job #{parts[1]} not found."}
             ok = node_service.kill_job(int(parts[1]), user_id=_uid)
             return {"type": "text", "content": f"{'🛑 Killed' if ok else 'Could not kill (already finished?)'} job #{parts[1]}."}
+
+        # --- pull a file OFF a node/sandbox → an encrypted Blossom artifact + download link ---
+        # The agent builds things in its sandbox /workspace (a Docker volume on the worker); this is how
+        # a human gets one back out. Reuses the chat's `type:files` path, so the bytes land in Blossom
+        # (encrypted) and come back as a download link in the web UI or a document on Telegram.
+        if sub == "get":
+            if len(parts) < 3 or not parts[2].strip():
+                return {"type": "text", "content": "Usage: `node get <name> <path>` — fetch a file from a node/sandbox."}
+            name, path = parts[1], parts[2].strip()
+            if name not in _reg:
+                return {"type": "text", "content": f"Unknown node `{name}`.\n\n{_fmt_nodes()}"}
+            target = _reg[name]
+            dl_cmd = node_service.download_command(path)
+            try:
+                if target.startswith("sandboxnostr:"):          # placed sandbox → its worker over Nostr
+                    _, _pk, _u = target.split(":", 2)
+                    out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": dl_cmd, "sandbox_uid": _u},
+                                                     worker_pubkey=_pk)
+                    raw = (out or {}).get("output") if out else None
+                    if out and out.get("error"):
+                        return {"type": "text", "content": f"⚠️ `{name}`: {out['error']}"}
+                elif target.startswith("nostr:"):               # full Nostr worker
+                    out = await nostr_dvm.run_remote("agent", {"mode": "shell", "command": dl_cmd},
+                                                     worker_pubkey=target[len("nostr:"):])
+                    raw = (out or {}).get("output") if out else None
+                    if out and out.get("error"):
+                        return {"type": "text", "content": f"⚠️ `{name}`: {out['error']}"}
+                else:                                            # local host or local sandbox
+                    job = await node_service.run_to_completion(self.db, name, target, dl_cmd,
+                                                               user_id=self.user.id if self.user else None)
+                    raw = job.output
+            except Exception as e:
+                return {"type": "text", "content": f"⚠️ Could not reach `{name}`: {e}"}
+            if raw is None:
+                return {"type": "text", "content": f"⚠️ No response from `{name}` (offline, not trusting this controller, or timed out)."}
+            data, err = node_service.decode_download(raw)
+            if err:
+                return {"type": "text", "content": f"⚠️ `{path}` on `{name}`: {err}"}
+            fname = path.rstrip("/").rsplit("/", 1)[-1] or "file"
+            return {
+                "type": "files",
+                "content": f"📦 `{path}` from `{name}` ({len(data):,} bytes)",
+                "files": [{"filename": fname, "data": data}],
+            }
 
         # --- fan-out: run the same command on every node (local jobs + Nostr workers) ---
         if sub == "all":
