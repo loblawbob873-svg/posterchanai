@@ -1249,6 +1249,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .media-row img,.media-row video{max-height:300px;max-width:100%;width:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
 .thread-hl .media-row img,.thread-hl .media-row video{max-height:420px}
+/* A LONE image gets far more room than the 300px thumbnail cap. That cap is sized for a row of several
+   attachments; applied to a single image it was the binding constraint on how big anything could ever
+   appear — a text card was scaled down until its type was ~8px. With one attachment there is nothing to
+   sit beside it, so let it take the column: width is bound by max-width:100%, height follows the aspect.
+   Multi-image rows and carousels keep the compact size. */
+.media-row img:only-child,.media-row video:only-child{max-height:560px}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 .media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}

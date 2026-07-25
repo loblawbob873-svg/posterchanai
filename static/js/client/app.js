@@ -7072,11 +7072,11 @@
     // roughly 8px — unreadable. Holding the height at 1080 and widening keeps the display scale fixed while
     // giving each line far more room, so the card fills the column instead of shrinking away from it.
     const H = 1080;
-    // Two shapes only. Square for a punchy line (it reads as a statement); 16:9 for anything longer,
-    // because at the feed's 300px height cap a 16:9 image is 533px wide — it FILLS a column, where 4:3
-    // stops at 400px. Same height, more room per line, bigger effective type. Wider is strictly better
-    // here; the middle tier just made cards that were smaller for no reason.
-    const W = t.length>320 ? 1920 : 1080;
+    // Two shapes. Square for a punchy line (it reads as a statement); 4:3 for anything longer.
+    // 4:3 rather than 16:9 now that a lone image may be 560px tall: width is bound by the column either
+    // way, so the squarer shape is simply BIGGER — 550×412 against 550×309 — which also buys the type
+    // more room. (While the cap was 300px, 16:9 was the widest thing that could fit; it no longer is.)
+    const W = t.length>320 ? 1440 : 1080;
     const LONG = t.length>320;
     const pad=Math.min(W,H)*(framed?0.115:0.095), maxW=W-pad*2,   // the frame eats into the text box
           maxH=(H-pad*2)*(bg.deco?(framed?0.78:0.82):1);   // leave room for deco rows
