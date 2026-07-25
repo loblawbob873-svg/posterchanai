@@ -13085,7 +13085,36 @@
   }
 
   // ---------- modal + toast ----------
-  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); if(onMount)onMount(bg.querySelector('.modal')); }
+  // Everything Tab can land on, in DOM order.
+  const _FOCUSABLE='a[href],button:not([disabled]),textarea:not([disabled]),'
+    +'input:not([disabled]):not([type=hidden]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  // Keep Tab INSIDE an open dialog. Without this, focus was never moved into the sheet when it opened, so
+  // Tab walked the page BEHIND it — invisibly, since the backdrop covers everything. That is the whole of
+  // "New Post: Tab stops at the Write tab and never goes anywhere": the Write tab only LOOKS focused
+  // (.cmp-tab.active is its own styling), and every Tab after it moved through the sidebar underneath.
+  function _trapFocus(box){
+    if(!box) return;
+    const vis=el=>el.offsetParent!==null || getComputedStyle(el).position==='fixed';
+    const items=()=>[...box.querySelectorAll(_FOCUSABLE)].filter(vis);
+    // Land in the TEXT box when the dialog is one you type into (the composer), otherwise on the sheet
+    // itself. Focusing the first input regardless would throw up the on-screen keyboard every time a phone
+    // user opened, say, the Effects studio.
+    const ta=box.querySelector('textarea:not([disabled])');
+    if(ta && vis(ta)){ try{ ta.focus({preventScroll:true}); const n=(ta.value||'').length; ta.setSelectionRange(n,n); }catch(_){ } }
+    else { box.tabIndex=-1; try{ box.focus({preventScroll:true}); }catch(_){ } }
+    const onKey=e=>{
+      if(e.key!=='Tab') return;
+      if(!box.isConnected){ document.removeEventListener('keydown', onKey, true); return; }
+      const els=items(); if(!els.length) return;
+      const i=els.indexOf(document.activeElement);
+      e.preventDefault();
+      const n = e.shiftKey ? (i<=0 ? els.length-1 : i-1)
+                           : (i<0 || i>=els.length-1 ? 0 : i+1);
+      try{ els[n].focus(); }catch(_){ }
+    };
+    document.addEventListener('keydown', onKey, true);
+  }
+  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box); }
   function closeModal(){ $('#modal-root').innerHTML=''; document.body.classList.remove('modal-open'); }
   // In-app confirm — a themed replacement for native window.confirm(). WHY it exists: a native dialog in
   // the Electron desktop shell blurs the renderer and the browser→renderer re-focus handshake goes stale,
