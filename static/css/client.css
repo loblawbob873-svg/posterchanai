@@ -3608,6 +3608,22 @@ body.modal-open .mobilenav{display:none}
   border:1px solid var(--line);border-radius:8px}
 .mb-frow{display:flex;gap:8px}
 .mb-frow .mb-f{flex:1 1 0}
+/* Visual clip trimmer (video layer): the source video IS the scrubber. Bright band = kept, dark = trimmed,
+   neon bars = drag handles. Theme vars only for the frame; the dim/handles are fixed so they read on any clip. */
+.mb-trim{position:relative;width:100%;background:#000;border:1px solid var(--line);border-radius:8px;overflow:hidden;touch-action:none}
+.mb-trim-vid{display:block;width:100%;max-height:220px;object-fit:contain;background:#000;pointer-events:none}
+.mb-trim-track{position:absolute;inset:0;touch-action:none}
+.mb-trim-dim{position:absolute;top:0;bottom:0;background:rgba(0,0,0,.58);pointer-events:none}
+.mb-trim-dim-l{left:0;width:0}
+.mb-trim-dim-r{right:0;left:100%;width:0}
+.mb-trim-sel{position:absolute;top:0;bottom:0;left:0;width:100%;box-sizing:border-box;
+  border:2px solid var(--neon);box-shadow:0 0 0 9999px transparent;pointer-events:none}
+.mb-trim-h{position:absolute;top:0;bottom:0;width:20px;margin-left:-10px;cursor:ew-resize;z-index:2;
+  display:flex;align-items:center;justify-content:center;touch-action:none}
+.mb-trim-h::before{content:'';width:5px;height:56%;border-radius:3px;background:var(--neon);
+  box-shadow:0 0 0 1px rgba(0,0,0,.65),0 0 6px rgba(0,0,0,.5)}
+.mb-trim-lbl{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-top:5px}
+.mb-trim-len{color:var(--neon);font-weight:700}
 .mb-check{flex-direction:row;align-items:center;gap:8px}
 .mb-order{display:flex;gap:8px}
 .mb-order .btn{margin:0;flex:1}

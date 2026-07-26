@@ -370,12 +370,14 @@
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
         </div>
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Size the whole photo to the canvas — nothing is cut off">⛶ Fill the canvas</button><button class="btn btn-cyan small" id="mb-fill" title="Crop the edges so there are no bars">✂ Crop to fill</button></div>
-        ${l.type==='video' ? `<label class="mb-f"><span>Trim from (s)</span><input class="input" type="number" id="mb-f-trim" min="0" step="0.1" value="${l.trim}"></label>
+        ${l.type==='video' ? trimWidget(l) + `
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
-      <div class="mb-frow">
+      ${l.type==='video'
+        ? `<div class="muted small mb-dbg">Drag the clip on the timeline below to set when it appears in the meme.</div>`
+        : `<div class="mb-frow">
         <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
         <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
-      </div>
+      </div>`}
       <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
         ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
       </select></label>
@@ -397,6 +399,28 @@
 
   const srcName = (u) => { try{ return decodeURIComponent(String(u).split('/').pop()).slice(0,18) || 'clip'; }catch(_){ return 'clip'; } };
   function enc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // Visual clip trimmer for a VIDEO layer — replaces the old "Trim from (s)" / "Length (s)" number boxes
+  // you had to guess at. The source video IS the scrubber: the bright band is what plays, the dark ends are
+  // trimmed off, and dragging a neon handle seeks the frame so you can SEE where you're cutting. It writes
+  // l.trim (in-point) and l.dur (length = out-point − in-point); bindTrim() wires the drag. The natural
+  // duration is read from the element's metadata, so the "what do I even type" problem goes away.
+  function trimWidget(l){
+    return `
+      <div class="mb-f"><span>Clip — drag the ends to pick what plays</span>
+        <div class="mb-trim" id="mb-trim">
+          <video class="mb-trim-vid" src="${enc(l.src)}#t=${(+l.trim||0).toFixed(2)}" muted playsinline preload="metadata"></video>
+          <div class="mb-trim-track" id="mb-trim-track">
+            <div class="mb-trim-dim mb-trim-dim-l"></div>
+            <div class="mb-trim-dim mb-trim-dim-r"></div>
+            <div class="mb-trim-sel"></div>
+            <div class="mb-trim-h mb-trim-in" title="Start of the clip"></div>
+            <div class="mb-trim-h mb-trim-out" title="End of the clip"></div>
+          </div>
+        </div>
+        <div class="mb-trim-lbl"><span class="mb-trim-tin">0:00</span><span class="mb-trim-len">${(+l.dur||0).toFixed(1)}s</span><span class="mb-trim-tout">0:00</span></div>
+      </div>`;
+  }
 
 
   // ---------- Blossom ----------
@@ -864,6 +888,7 @@
       save(); render(); toast(_alignOf(l)==='center' ? 'caption centred' : 'caption free-positioned');
     });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
+    if(l.type==='video') bindTrim(root, l);
     num('mb-f-size','size',8,400);
     on('mb-f-text','input',(e)=>{ l.text=e.target.value; save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.childNodes[0].nodeValue=l.text;
@@ -892,6 +917,74 @@
     });
     on('mb-front','click',()=>{ const i=P.layers.indexOf(l); if(i>-1){ P.layers.splice(i,1); P.layers.push(l); save(); render(); } });
     on('mb-back','click',()=>{ const i=P.layers.indexOf(l); if(i>0){ P.layers.splice(i,1); P.layers.unshift(l); save(); render(); } });
+  }
+
+  // Wire the visual trimmer (trimWidget) for a video layer: two draggable handles over the source video set
+  // the in-point (l.trim) and out-point (l.trim+l.dur). Dragging seeks the <video> so the frame you'll cut on
+  // is on screen. Natural duration comes from the element's metadata — no guessing a number.
+  function bindTrim(root, l){
+    const wrap=root.querySelector('#mb-trim'); if(!wrap) return;
+    const vid=wrap.querySelector('.mb-trim-vid');
+    const track=wrap.querySelector('#mb-trim-track');
+    const inH=wrap.querySelector('.mb-trim-in'), outH=wrap.querySelector('.mb-trim-out');
+    const selEl=wrap.querySelector('.mb-trim-sel');
+    const dimL=wrap.querySelector('.mb-trim-dim-l'), dimR=wrap.querySelector('.mb-trim-dim-r');
+    const tin=root.querySelector('.mb-trim-tin'), tout=root.querySelector('.mb-trim-tout'), tlen=root.querySelector('.mb-trim-len');
+    let D=0;   // natural duration of the source, once metadata loads
+    const fmt=(s)=>{ s=Math.max(0,s||0); const m=Math.floor(s/60), ss=Math.floor(s%60); return m+':'+String(ss).padStart(2,'0'); };
+    function paint(){
+      if(!D) return;
+      const inT=clamp(l.trim,0,D), outT=clamp((+l.trim||0)+(+l.dur||0),0,D);
+      const a=inT/D*100, b=outT/D*100;
+      inH.style.left=a+'%'; outH.style.left=b+'%';
+      selEl.style.left=a+'%'; selEl.style.width=Math.max(0,b-a)+'%';
+      dimL.style.width=a+'%'; dimR.style.left=b+'%'; dimR.style.width=Math.max(0,100-b)+'%';
+      if(tin) tin.textContent=fmt(inT);
+      if(tout) tout.textContent=fmt(outT);
+      if(tlen) tlen.textContent=(outT-inT).toFixed(1)+'s';
+    }
+    function ready(){
+      D=vid.duration||0;
+      if(!D || !isFinite(D)) return;
+      // A trim/length carried over from a different (or mis-measured) source can point past the end — pull it
+      // back into range so the handles are always on the bar and the render can't ask ffmpeg for empty frames.
+      if((+l.trim||0)>=D){ l.trim=0; }
+      if((+l.trim||0)+(+l.dur||0)>D || !(+l.dur>0)){ l.dur=+(D-(+l.trim||0)).toFixed(2); save(); }
+      paint();
+    }
+    if(vid.readyState>=1 && vid.duration) ready();
+    else vid.addEventListener('loadedmetadata', ready, {once:true});
+
+    function grab(handle, isIn){
+      handle.addEventListener('pointerdown',(e)=>{
+        if(!D) return;
+        e.preventDefault();
+        try{ handle.setPointerCapture(e.pointerId); }catch(_){}
+        const rect=track.getBoundingClientRect();
+        const move=(ev)=>{
+          let t=clamp((ev.clientX-rect.left)/rect.width,0,1)*D;
+          if(isIn){
+            const out=(+l.trim||0)+(+l.dur||0);
+            t=Math.max(0, Math.min(t, out-0.1));   // in-point stays left of the out-point
+            l.trim=+t.toFixed(2); l.dur=+(out-t).toFixed(2);
+          } else {
+            t=Math.min(D, Math.max(t, (+l.trim||0)+0.1)); // out-point stays right of the in-point
+            l.dur=+(t-(+l.trim||0)).toFixed(2);
+          }
+          try{ vid.currentTime=t; }catch(_){}   // show the frame under the handle
+          paint();
+        };
+        const up=()=>{
+          document.removeEventListener('pointermove',move);
+          document.removeEventListener('pointerup',up);
+          save();
+          repaint('timeline');   // the clip bar + project length reflect the new duration
+        };
+        document.addEventListener('pointermove',move);
+        document.addEventListener('pointerup',up);
+      });
+    }
+    grab(inH, true); grab(outH, false);
   }
 
   function render(){
