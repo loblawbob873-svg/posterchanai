@@ -48,10 +48,18 @@ git push github master:main || echo "[sync] WARN: github push (Android APK build
 # hook), so the script self-skips on a proxy node — which is why it is invoked BOTH here and inside
 # the nas.lan block below: whichever node hosts does the work, the other prints "skipping".
 # See docs/GIT_OVER_NOSTR.md; provisioning/announcing is scripts/grasp_selfhost.py.
+# WHO owns the mirrored nostr repo. The owner pubkey IS the clone-URL path segment, so this decides
+# which hosted directory the mirror pushes to. It is stated HERE, explicitly and in version control,
+# rather than via a setting: grasp_mirror.py also honours `grasp_mirror_owner`, but a standalone script
+# cannot persist a write to the operator-signed settings doc, so setting it from a script read back
+# EMPTY and the mirror silently kept updating the node-owned copy while the real repo drifted.
+# Empty = fall back to the hosting node's own operator key.
+_GRASP_OWNER="npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr"
+
 _grasp_mirror() {
     for _py in venv-unified/bin/python venv/bin/python; do
         if [ -x "$_py" ]; then
-            "$_py" scripts/grasp_mirror.py || echo "[sync] WARN: GRASP nostr mirror failed"
+            "$_py" scripts/grasp_mirror.py --owner "$_GRASP_OWNER" || echo "[sync] WARN: GRASP nostr mirror failed"
             return
         fi
     done
@@ -114,7 +122,7 @@ git reset --hard origin/master
 # signed 30618 to is still up. Best-effort — a mirror failure must never break the deploy.
 for _py in venv-unified/bin/python venv/bin/python; do
     if [ -x \"\$_py\" ]; then
-        \"\$_py\" scripts/grasp_mirror.py || echo \"[sync] WARN: GRASP nostr mirror failed on nas\"
+        \"\$_py\" scripts/grasp_mirror.py --owner 'npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr' || echo \"[sync] WARN: GRASP nostr mirror failed on nas\"
         break
     fi
 done
