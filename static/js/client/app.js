@@ -3721,6 +3721,7 @@
       <div class="rv-tabs" role="tablist">
         <button class="rv-tab active" data-tab="readme">📖 README</button>
         ${isGrasp?`<button class="rv-tab" data-tab="files">📁 Files</button>`:''}
+        ${isGrasp?`<button class="rv-tab" data-tab="commits">🕘 Commits</button>`:''}
         <button class="rv-tab" data-tab="issues">🐛 Issues <span class="rv-count" id="rv-c-issues"></span></button>
         <button class="rv-tab" data-tab="patches">🩹 Patches <span class="rv-count" id="rv-c-patches"></span></button>
       </div>
@@ -3728,6 +3729,7 @@
         <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
       </div>
       ${isGrasp?`<div class="rv-panel" data-panel="files" hidden><div class="fb" id="rv-files"><div class="spinner"></div></div></div>`:''}
+      ${isGrasp?`<div class="rv-panel" data-panel="commits" hidden><div class="fb" id="rv-commits"><div class="spinner"></div></div></div>`:''}
       <div class="rv-panel" data-panel="issues" hidden>
         <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
         <div class="rv-collab" id="rv-issues"><div class="spinner"></div></div>
@@ -3743,11 +3745,12 @@
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
     // Files is lazy-loaded on first open (a git ls-tree round-trip).
-    let _filesLoaded=false;
+    let _filesLoaded=false, _commitsLoaded=false;
     $$('.rv-tab',feed).forEach(tb=> tb.onclick=()=>{
       $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x===tb));
       $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!==tb.dataset.tab);
       if(tb.dataset.tab==='files' && !_filesLoaded){ _filesLoaded=true; _loadRepoFiles(feed, cloneUrl, ''); }
+      if(tb.dataset.tab==='commits' && !_commitsLoaded){ _commitsLoaded=true; _loadRepoCommits(feed, cloneUrl); }
     });
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
@@ -3807,6 +3810,29 @@
         };
       });
   }
+  // ---------- Commits (self-hosted GRASP repos) ----------
+  async function _loadRepoCommits(feed, cloneUrl){
+    const box=$('#rv-commits',feed); if(!box) return;
+    box.innerHTML='<div class="spinner"></div>';
+    let j={}; try{ j=await fetch('/client/git/log?url='+encodeURIComponent(cloneUrl)+'&limit=100').then(r=>r.json()); }catch(_){}
+    if(VIEW!=='repo') return;
+    if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t read the commit history.</div>'; return; }
+    const cs=j.commits||[];
+    if(!cs.length){ box.innerHTML='<div class="rv-empty muted small">No commits yet.</div>'; return; }
+    box.innerHTML=`<div class="cm-list">${cs.map(c=>`<div class="cm-row">
+        <div class="cm-main">
+          <div class="cm-subj">${enc(c.subject||'(no message)')}</div>
+          <div class="cm-meta"><span class="cm-by">${enc(c.author||'unknown')}</span>
+            <span class="cm-when" title="${enc(new Date((c.at||0)*1000).toLocaleString())}">${enc(c.at?timeAgo(c.at):'')}</span></div>
+        </div>
+        <button class="cm-sha" data-sha="${enc(c.sha||'')}" title="copy full sha">${enc(c.short||'')}</button>
+      </div>`).join('')}</div>
+      <div class="muted small" style="padding:10px 2px">${cs.length} most recent commit${cs.length===1?'':'s'}</div>`;
+    $$('.cm-sha',box).forEach(b=> b.onclick=async()=>{
+      try{ await navigator.clipboard.writeText(b.dataset.sha); toast('commit sha copied'); }
+      catch(_){ window.prompt('Commit:', b.dataset.sha); }
+    });
+  }
   // ---------- Files browser (self-hosted GRASP repos) ----------
   function _fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   async function _loadRepoFiles(feed, cloneUrl, path){
@@ -3820,9 +3846,20 @@
     const rows=(j.entries||[]).map(en=>{
       const ico=en.type==='tree'?'📁':'📄';
       const sz=en.type==='blob'?`<span class="fb-size">${_fmtBytes(en.size)}</span>`:'';
-      return `<div class="fb-row" data-type="${en.type}" data-path="${enc(en.path)}"><span class="fb-ico">${ico}</span><span class="fb-name">${enc(en.name)}</span>${sz}</div>`;
+      // Last commit that touched this entry — the message + relative date every forge shows. The
+      // host only scans recent history, so an untouched-for-ages file legitimately has none.
+      const c=en.commit;
+      const msg=c?`<span class="fb-cmsg" title="${enc(c.subject||'')} — ${enc(c.author||'')}">${enc(c.subject||'')}</span>`:'<span class="fb-cmsg"></span>';
+      const when=c&&c.at?`<span class="fb-cwhen" title="${enc(new Date(c.at*1000).toLocaleString())}">${enc(timeAgo(c.at))}</span>`:'<span class="fb-cwhen"></span>';
+      return `<div class="fb-row" data-type="${en.type}" data-path="${enc(en.path)}"><span class="fb-ico">${ico}</span><span class="fb-name">${enc(en.name)}</span>${msg}${when}${sz}</div>`;
     }).join('');
-    box.innerHTML=`<div class="fb-crumbs">${crumbs}</div><div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
+    // Tip-commit bar, like the one above a GitHub/Gitea file list.
+    const h=j.head;
+    const headBar=h?`<div class="fb-headbar"><span class="fb-hsha">${enc(h.short||'')}</span>
+      <span class="fb-hmsg">${enc(h.subject||'')}</span>
+      <span class="fb-hby">${enc(h.author||'')}</span>
+      <span class="fb-hwhen" title="${enc(new Date((h.at||0)*1000).toLocaleString())}">${enc(h.at?timeAgo(h.at):'')}</span></div>`:'';
+    box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
     $$('.fb-crumb',box).forEach(a=> a.onclick=()=>_loadRepoFiles(feed,cloneUrl,a.dataset.p));
     $$('.fb-row',box).forEach(r=> r.onclick=()=>{
       if(r.dataset.type==='tree') _loadRepoFiles(feed,cloneUrl,r.dataset.path);

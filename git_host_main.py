@@ -183,6 +183,13 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._read_gate_ok(owner_hex, repo_id):
                 return self._deny(401, "authentication required (private repo)", auth=True)
             return self._serve_tree(owner_hex, repo_id, rest[5:] if rest.startswith("tree/") else "")
+        # LOG (history):  GET /<owner>/<id>.git/log/<ref>[/<path>]?limit=N  ->  `git log` JSON.
+        # Read-gated like a clone.
+        if method == "GET" and (rest == "log" or rest.startswith("log/")):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_log(owner_hex, repo_id,
+                                   rest[4:] if rest.startswith("log/") else "", parsed.query)
         service = _wants_service(parsed.path, parsed.query, method)
         if service is None:
             return self._deny(404, "not found")
@@ -227,6 +234,111 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    # Max commits walked to label a directory listing. A listing must stay cheap, and the entries a
+    # browser shows are almost always touched recently; anything older just renders without a date
+    # rather than making the request crawl through the whole history of a big repo.
+    _TREE_LOG_SCAN = 400
+
+    def _last_commits(self, repo_dir: str, ref: str, entries: list, subdir: str) -> dict:
+        """Stamp each tree entry with the last commit that touched it (the 'date modified' column
+        every git forge shows) and return the tip commit for the listing header.
+
+        ONE `git log --name-only` walk for the whole directory, not `git log -1` per entry — a
+        subprocess per file turns a 60-file directory into 60 forks. Entries not touched within
+        _TREE_LOG_SCAN commits simply keep commit=None."""
+        import json as _json   # noqa: F401  (kept local, mirroring _serve_tree's import style)
+        want = {}
+        for e in entries:
+            e["commit"] = None
+            want[e["path"].rstrip("/")] = e
+        head = None
+        args = ["git", "--git-dir", repo_dir, "log", "--format=%x01%H%x00%ct%x00%an%x00%s",
+                "--name-only", "--max-count=%d" % self._TREE_LOG_SCAN, ref]
+        if subdir:
+            args += ["--", subdir.rstrip("/") + "/"]
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=20)
+        except Exception:
+            return None
+        if proc.returncode != 0:
+            return None
+        remaining = set(want)
+        for block in (proc.stdout or b"").decode("utf-8", "ignore").split("\x01")[1:]:
+            meta, _, files = block.partition("\n")
+            bits = meta.split("\x00")
+            if len(bits) < 4:
+                continue
+            sha, ts, author, subject = bits[0], bits[1], bits[2], bits[3]
+            commit = {"sha": sha, "short": sha[:7], "author": author,
+                      "at": int(ts) if ts.isdigit() else 0, "subject": subject}
+            if head is None:
+                head = commit
+            if not remaining:
+                continue
+            for fp in files.splitlines():
+                fp = fp.strip()
+                if not fp:
+                    continue
+                for key in list(remaining):
+                    # a file entry matches exactly; a directory matches anything beneath it
+                    if fp == key or fp.startswith(key + "/"):
+                        want[key]["commit"] = commit
+                        remaining.discard(key)
+        return head
+
+    def _serve_log(self, owner_hex: str, repo_id: str, refpath: str, query: str = ""):
+        """Commit history: GET /<owner>/<id>.git/log/<ref>[/<path>] -> {ref, path, commits:[…]}.
+        The repo browser had no history at all — no commit list, and no date on anything — which is
+        the first thing anyone looks for in a forge."""
+        import re as _re
+        import json as _json
+        refpath = (refpath or "").strip("/")
+        ref, _, path = refpath.partition("/")
+        if not ref:
+            ref = "HEAD"
+        if not _re.match(r"^[A-Za-z0-9_./-]{1,120}$", ref) or ".." in path.split("/") or len(path) > 512:
+            return self._deny(400, "bad ref/path")
+        repo_dir = ghs.repo_dir(owner_hex, repo_id)
+        if not repo_dir or not os.path.isdir(repo_dir):
+            return self._deny(404, "no such repo")
+        try:
+            limit = int(parse_qs(query or "").get("limit", ["50"])[0])
+        except Exception:
+            limit = 50
+        limit = max(1, min(limit, 200))
+        args = ["git", "--git-dir", repo_dir, "log",
+                "--format=%H%x00%ct%x00%an%x00%ae%x00%s%x00%b%x02", "--max-count=%d" % limit, ref]
+        if path:
+            args += ["--", path]
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=20)
+        except Exception:
+            return self._deny(500, "read failed")
+        if proc.returncode != 0:
+            return self._deny(404, "not found")
+        commits = []
+        for rec in (proc.stdout or b"").decode("utf-8", "ignore").split("\x02"):
+            rec = rec.strip("\n")
+            if not rec:
+                continue
+            bits = rec.split("\x00")
+            if len(bits) < 5:
+                continue
+            commits.append({"sha": bits[0], "short": bits[0][:7],
+                            "at": int(bits[1]) if bits[1].isdigit() else 0,
+                            "author": bits[2], "email": bits[3], "subject": bits[4],
+                            "body": (bits[5].strip() if len(bits) > 5 else "")})
+        body = _json.dumps({"ref": ref, "path": path, "commits": commits}).encode("utf-8")
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def _serve_tree(self, owner_hex: str, repo_id: str, refpath: str):
         """List a directory with `git ls-tree -l <ref> [<subdir>/]` -> JSON {ref, path, entries:[{name,
         type, size, path}]}. type is 'tree' (dir) or 'blob' (file). Read-gated by the caller."""
@@ -264,7 +376,9 @@ class _Handler(BaseHTTPRequestHandler):
                             "size": (int(size) if size.isdigit() else 0), "path": path})
         # dirs first, then files, each alphabetical
         entries.sort(key=lambda e: (e["type"] != "tree", e["name"].lower()))
-        body = _json.dumps({"ref": ref, "path": subdir, "entries": entries}).encode("utf-8")
+        head = self._last_commits(repo_dir, ref, entries, subdir)
+        body = _json.dumps({"ref": ref, "path": subdir, "entries": entries,
+                            "head": head}).encode("utf-8")
         try:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

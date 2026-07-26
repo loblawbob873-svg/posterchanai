@@ -1927,7 +1927,10 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .art-by .name{cursor:pointer;color:var(--text)}.art-by .name:hover{color:var(--neon)}
 .article-view{padding:20px 22px 60px;max-width:none;margin:0 auto;animation:fade .25s}   /* wide format — fill the column, like Markets/News (not a centered reading column) */
 /* NIP-34 repo detail (README + issues + patches) */
-.repo-view{padding:20px 22px 60px;animation:fade .25s;max-width:900px}
+/* Fill the column like Markets / Streams / Articles (max-width:none), not a 900px reading column.
+   A forge view is tables and file lists — code lines, paths, commit rows — and those were wrapping
+   inside a narrow box with dead space beside them on a wide screen. */
+.repo-view{padding:20px 22px 60px;animation:fade .25s;max-width:none}
 .rv-head{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:10px 0 6px;
   background:linear-gradient(180deg,rgba(var(--accent2-rgb),.05),transparent)}
 .rv-headrow{display:flex;align-items:center;gap:12px}
@@ -1975,8 +1978,36 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .fb-row:last-child{border-bottom:none}
 .fb-row:hover{background:rgba(var(--accent2-rgb),.07)}
 .fb-ico{flex:none}
-.fb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
+.fb-name{flex:0 1 auto;min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
 .fb-size{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+/* Forge-style file row: name · last commit message · when · size. The message takes the slack so
+   the date and size stay right-aligned in a column, like GitHub/Gitea. */
+.fb-cmsg{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--muted);font-size:12.5px}
+.fb-row:hover .fb-cmsg{color:var(--text)}
+.fb-cwhen{flex:none;width:62px;text-align:right;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.fb-headbar{display:flex;align-items:center;gap:10px;padding:9px 14px;margin:0 0 -1px;
+  background:var(--panel2);border:1px solid var(--line);border-radius:12px 12px 0 0;font-size:12.5px}
+.fb-headbar+.fb-list{border-radius:0 0 12px 12px}
+.fb-hsha{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--cyan)}
+.fb-hmsg{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-hby,.fb-hwhen{flex:none;color:var(--muted)}
+/* Commits list */
+.cm-list{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cm-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.cm-row:last-child{border-bottom:none}
+.cm-row:hover{background:rgba(var(--accent2-rgb),.07)}
+.cm-main{flex:1;min-width:0}
+.cm-subj{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.cm-meta{display:flex;gap:8px;color:var(--muted);font-size:12px;margin-top:2px}
+.cm-sha{flex:none;cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--cyan);
+  border-radius:8px;padding:4px 9px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:.15s}
+.cm-sha:hover{color:var(--neon);border-color:var(--neon)}
+/* Phones: drop the commit-message column, keep name + date (a 360px row can't hold four columns). */
+@media(max-width:600px){
+  .fb-name{max-width:none;flex:1 1 auto}
+  .fb-cmsg,.fb-hby{display:none}
+}
 .fb-fileview{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .fb-fvhd{padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;background:rgba(var(--accent2-rgb),.06)}
 .fb-fileview .markdown{padding:16px 20px}

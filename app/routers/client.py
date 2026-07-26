@@ -1510,6 +1510,31 @@ async def git_tree(url: str, path: str = "", ref: str = "HEAD"):
     return JSONResponse({"ok": True, **data})
 
 
+@router.get("/git/log")
+async def git_log(url: str, path: str = "", ref: str = "HEAD", limit: int = 50):
+    """Commit history for a self-hosted GRASP repo (the Commits view + a file's history). Proxies the
+    git host's log route. Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    host_base, owner_seg, rid = tgt
+    path = (path or "").strip("/")
+    if ".." in path.split("/"):
+        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
+    u = "%s/%s/%s.git/log/%s%s?limit=%d" % (host_base, owner_seg, rid, ref,
+                                            ("/" + path) if path else "", max(1, min(int(limit or 50), 200)))
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0)) as c:
+            r = await c.get(u)
+            if r.status_code != 200:
+                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+            data = r.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    return JSONResponse({"ok": True, **data})
+
+
 @router.get("/git/blob")
 async def git_blob(url: str, path: str, ref: str = "HEAD"):
     """One file's content from a self-hosted GRASP repo (Files browser). Text -> {ok, text}; binary or
