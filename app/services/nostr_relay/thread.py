@@ -120,6 +120,22 @@ def _git_event_for_hosted_repo(ev: dict) -> bool:
     except (ValueError, TypeError):
         return False
 
+
+async def _collab_repo_announced(ev: dict, store) -> bool:
+    """True if a NIP-34 collab event a-tags a repo whose PUBLIC 30617 announcement is on THIS relay's
+    store — so a client reading a PEER/PROXY relay (which doesn't itself host the repo) still ingests the
+    repo's issues + patches from the firehose. Private repos have no 30617, so they never match."""
+    try:
+        for t in (ev.get("tags") or []):
+            if len(t) >= 2 and t[0] == "a" and isinstance(t[1], str):
+                parts = t[1].split(":")
+                if len(parts) == 3 and parts[0] in ("30617", "30618"):
+                    if await store.is_repo_announced(parts[1], parts[2]):
+                        return True
+    except Exception:
+        return False
+    return False
+
 # Per-connection protocol limits (constants — tune in code, not user-facing). Generous so
 # feature-rich clients (which open many simultaneous subscriptions for feed/notifs/profiles)
 # don't hit the cap and get a CLOSED, which some clients render as an unhealthy/red relay.
@@ -661,10 +677,12 @@ async def _main(cfg: dict) -> None:
             # a patch only when it references a repo we host), so this isn't an open spam firehose.
             pass
         elif _kind in _GIT_COLLAB_KINDS:
-            # GRASP git collaboration (patch/issue/reply/status/state). Accept from ANY author, but
-            # ONLY when it references a repo THIS node publicly hosts (repo-scoped exemption — not an
-            # open spam firehose, and private repos are excluded so their titles/content never leak).
-            if not _git_event_for_hosted_repo(ev):
+            # GRASP git collaboration (patch/issue/reply/status/state). Accept from ANY author, but ONLY
+            # when it references a repo THIS node publicly HOSTS **or** a repo whose PUBLIC 30617 is on
+            # this relay — the latter lets a client reading a peer/proxy relay see issues + patches for
+            # repos hosted elsewhere. Repo-scoped either way (private repos have no 30617 → never matched),
+            # so it's not an open spam firehose.
+            if not (_git_event_for_hosted_repo(ev) or await _collab_repo_announced(ev, store)):
                 return
         elif not gate.is_member(ev.get("pubkey", "")):
             return

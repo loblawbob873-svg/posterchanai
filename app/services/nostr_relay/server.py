@@ -458,6 +458,19 @@ class RelayServer:
                 return True
         return False
 
+    async def _collab_for_known_repo(self, ev) -> bool:
+        """True if a NIP-34 git collaboration event (patch/issue/reply/status) a-tags a repo whose PUBLIC
+        30617 announcement is on THIS relay. Scopes issue/patch acceptance to KNOWN public repos (private
+        repos have no 30617, so they never match). Low-volume kinds + a 60s cache on the store lookup, so
+        this costs no per-event DB round-trip in steady state."""
+        for t in ev.get("tags", []):
+            if len(t) >= 2 and t[0] == "a" and isinstance(t[1], str):
+                parts = t[1].split(":")
+                if len(parts) == 3 and parts[0] in ("30617", "30618"):
+                    if await self.store.is_repo_announced(parts[1], parts[2]):
+                        return True
+        return False
+
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
             return
@@ -608,6 +621,16 @@ class RelayServer:
             # verified above and these are kept forever (store._GIT_KINDS). Patches/issues (1617/1621/…)
             # stay WoT-gated until repo-scoped acceptance lands, so this isn't an open spam firehose.
             pass
+        elif kind in (1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633):
+            # NIP-34 git COLLABORATION: patch (1617), issue (1621), replies (1622/1623), status
+            # (1630-1633). Accept from ANY author, but ONLY when the event a-tags a repo whose PUBLIC
+            # announcement (30617) is on THIS relay — so issues/patches show up in the client for repos
+            # this relay knows about (incl. a repo HOSTED on a peer node, since scoping is by the
+            # announcement, not by who hosts it), without opening an unbounded spam firehose. Private
+            # repos have no 30617, so they're never matched (no title/content leak). Signature verified above.
+            if _wot and not await self._collab_for_known_repo(ev):
+                self._send(conn, ["OK", eid, False, "blocked: git patch/issue references an unknown repo"])
+                return
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return

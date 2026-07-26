@@ -191,6 +191,34 @@ class RelayStore:
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
         self._fts = True     # Postgres always has full-text search (to_tsvector)
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._repo_ann_cache: dict = {}   # (owner_hex, repo_id) -> (bool, expiry_ts): 30617 present?
+
+    async def is_repo_announced(self, owner_hex: str, repo_id: str) -> bool:
+        """True iff a PUBLIC NIP-34 repo announcement (kind 30617) for owner/repo exists on THIS relay.
+        Private repos are NEVER announced (grasp_selfhost --private skips 30617), so a present 30617 ==
+        public — this is what scopes issue/patch (1617/1621/…) acceptance to KNOWN repos WITHOUT leaking
+        private ones, and without requiring this node to HOST the repo (so a proxy node whose relay the
+        client reads still accepts collaboration for repos hosted on a peer). Cached (60s) so the collab
+        gate never hits the DB per event."""
+        owner = (owner_hex or "").strip().lower()
+        rid = (repo_id or "").strip().lower()
+        if rid.endswith(".git"):
+            rid = rid[:-4]
+        if len(owner) != 64 or not rid:
+            return False
+        key = (owner, rid)
+        now = time.time()
+        hit = self._repo_ann_cache.get(key)
+        if hit and hit[1] > now:
+            return hit[0]
+        try:
+            rows = await self.query([{"kinds": [30617], "authors": [owner], "#d": [rid], "limit": 1}],
+                                    hard_cap=1)
+            ok = bool(rows)
+        except Exception:
+            ok = False
+        self._repo_ann_cache[key] = (ok, now + 60.0)
+        return ok
 
     # --- lifecycle ----------------------------------------------------------
 
