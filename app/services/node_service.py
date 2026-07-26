@@ -1269,4 +1269,12 @@ async def run_agent_over_nostr(worker_pubkey: str, text: str, mode: str = "agent
         code = out.get("exit")
         if body:
             return body if code in (0, None) else f"{body}\n[exit {code}]"
-    return (out.get("summary") or out.get("output") or "").strip()
+    body = (out.get("summary") or out.get("output") or "").strip()
+    # The worker's NON-report transcript begins with its own "## Agent on `<node>` — goal: …" header
+    # (its local run_agent, report_mode=False, labels the node by ITS OWN name — "sandbox"/"local"…).
+    # Every caller here re-wraps the body with an authoritative "## Agent on `<name>`" header using the
+    # CONTROLLER's node name, so the worker's copy is redundant: leaving it in rendered TWO identical
+    # "Agent on sandbox" sections for a Nostr-placed sandbox run (the reported bug). Strip that one
+    # leading header so exactly one survives. A report=True summary carries no header → this is a no-op.
+    body = re.sub(r"^## Agent on `[^`]*` — goal:[^\n]*\n+", "", body, count=1)
+    return body
