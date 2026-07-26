@@ -1409,6 +1409,7 @@
     if(!window.__pcClickLoadBound){ window.__pcClickLoadBound = true;
       // YouTube facade → load the real player iframe on click (kept out of the timeline until then
       // for performance), and don't let the click bubble up to open the note thread.
+      // CAPTURE phase — see the .img-hold note below for why bubbling is too late.
       document.addEventListener('click', e=>{
         const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
         e.preventDefault(); e.stopPropagation();
@@ -1418,9 +1419,17 @@
         // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
         f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
         yt.replaceWith(f);
-      });
+      }, true);
       // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
       // downloaded until now). data-kind picks the element; data-cls restores the layout class.
+      // MUST be CAPTURE phase. Bound on the bubble phase this ran LAST — after every handler between
+      // the placeholder and document. #feed's own click handler is one of them, and .img-hold isn't in
+      // its "skip these" list, so a tap opened the post: renderThread() wipes the feed (feed.innerHTML=
+      // spinner) SYNCHRONOUSLY, detaching the placeholder, and the replaceWith below then swapped an
+      // element that was no longer in the document — "tap to load does nothing" / a flash and back.
+      // stopPropagation() couldn't save it either: on `document` the bubble is already over. Capture
+      // runs before every one of those handlers, so stopping here genuinely stops them (same trick the
+      // carousel nav uses, and why the YouTube facade above needed it too).
       document.addEventListener('click', e=>{
         const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
         const src=h.dataset.src; if(!src) return;
@@ -1439,7 +1448,7 @@
         }
         if(h.dataset.cls) el.className=h.dataset.cls;
         h.replaceWith(el);
-      });
+      }, true);
     }
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
