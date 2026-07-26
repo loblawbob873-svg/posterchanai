@@ -459,8 +459,16 @@ def _spec_sig(bot_dict: dict, base_env: dict) -> str:
     profile name/nip05/picture, …) and command (modes). When it changes, the running bot must be
     restarted so UI edits (e.g. a new display name → NOSTR_PROFILE_NAME → republished kind-0) take
     effect; otherwise the live process keeps the stale env and the change never lands."""
-    blob = json.dumps({"env": _build_env(bot_dict, base_env), "cmd": _cmd_for(bot_dict)},
-                      sort_keys=True, default=str)
+    env = _build_env(bot_dict, base_env)
+    # Only the manager's OWN overlay counts — the keys it derives from the bot row + the bots_*
+    # settings. Everything inherited from this process's os.environ is excluded, because that is
+    # not config: importing torch-XPU/oneAPI or OpenCV mutates LD_LIBRARY_PATH and QT_QPA_* in the
+    # live app, so hashing the whole env meant the FIRST image or effect render silently changed
+    # every bot's signature and the next reconcile restarted all of them. In production that killed
+    # a Nostr `geni` 3s in — the image finished, the listener that would have replied was gone.
+    # Restarts are for real edits; ambient library churn must not be able to trigger one.
+    overlay = {k: v for k, v in env.items() if base_env.get(k) != v}
+    blob = json.dumps({"env": overlay, "cmd": _cmd_for(bot_dict)}, sort_keys=True, default=str)
     return hashlib.sha1(blob.encode()).hexdigest()
 
 
