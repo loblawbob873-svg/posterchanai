@@ -177,6 +177,12 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._read_gate_ok(owner_hex, repo_id):
                 return self._deny(401, "authentication required (private repo)", auth=True)
             return self._serve_raw(owner_hex, repo_id, rest[4:])
+        # TREE listing (Files browser):  GET /<owner>/<id>.git/tree/<ref>[/<subdir>]  ->  `git ls-tree`
+        # JSON of the directory's entries. Read-gated like a clone.
+        if method == "GET" and (rest == "tree" or rest.startswith("tree/")):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_tree(owner_hex, repo_id, rest[5:] if rest.startswith("tree/") else "")
         service = _wants_service(parsed.path, parsed.query, method)
         if service is None:
             return self._deny(404, "not found")
@@ -218,6 +224,54 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _serve_tree(self, owner_hex: str, repo_id: str, refpath: str):
+        """List a directory with `git ls-tree -l <ref> [<subdir>/]` -> JSON {ref, path, entries:[{name,
+        type, size, path}]}. type is 'tree' (dir) or 'blob' (file). Read-gated by the caller."""
+        import re as _re
+        import json as _json
+        refpath = (refpath or "").strip("/")
+        ref, _, subdir = refpath.partition("/")
+        if not ref:
+            ref = "HEAD"
+        if not _re.match(r"^[A-Za-z0-9_./-]{1,120}$", ref) or ".." in subdir.split("/") or len(subdir) > 512:
+            return self._deny(400, "bad ref/path")
+        repo_dir = ghs.repo_dir(owner_hex, repo_id)
+        if not repo_dir or not os.path.isdir(repo_dir):
+            return self._deny(404, "no such repo")
+        args = ["git", "--git-dir", repo_dir, "ls-tree", "-l", ref]
+        if subdir:
+            args.append(subdir.rstrip("/") + "/")
+        try:
+            proc = subprocess.run(args, capture_output=True, timeout=15)
+        except Exception:
+            return self._deny(500, "read failed")
+        if proc.returncode != 0:
+            return self._deny(404, "not found")
+        entries = []
+        for line in (proc.stdout or b"").decode("utf-8", "ignore").splitlines():
+            # "<mode> <type> <sha> <size>\t<path>"
+            meta, tab, path = line.partition("\t")
+            if not tab:
+                continue
+            parts = meta.split()
+            if len(parts) < 4:
+                continue
+            typ, size = parts[1], parts[3]
+            entries.append({"name": path.rstrip("/").split("/")[-1], "type": typ,
+                            "size": (int(size) if size.isdigit() else 0), "path": path})
+        # dirs first, then files, each alphabetical
+        entries.sort(key=lambda e: (e["type"] != "tree", e["name"].lower()))
+        body = _json.dumps({"ref": ref, "path": subdir, "entries": entries}).encode("utf-8")
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
 

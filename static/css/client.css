@@ -1961,6 +1961,21 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .collab-meta{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
 .collab-av{width:20px;height:20px;border-radius:50%;object-fit:cover}
 .collab-meta .name{color:var(--text);cursor:pointer}.collab-meta .name:hover{color:var(--neon)}
+/* Files browser */
+.fb-crumbs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:13px}
+.fb-crumb{color:var(--cyan);cursor:pointer}.fb-crumb:hover{color:var(--neon);text-decoration:underline}
+.fb-sep{color:var(--muted)}
+.fb-list{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.fb-row{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;border-bottom:1px solid var(--line);transition:background .12s}
+.fb-row:last-child{border-bottom:none}
+.fb-row:hover{background:rgba(var(--accent2-rgb),.07)}
+.fb-ico{flex:none}
+.fb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
+.fb-size{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.fb-fileview{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.fb-fvhd{padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;background:rgba(var(--accent2-rgb),.06)}
+.fb-fileview .markdown{padding:16px 20px}
+.fb-code{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;white-space:pre;color:var(--text)}
 .av-banner{width:100%;max-height:340px;object-fit:cover;border-radius:16px;border:1px solid var(--line);margin:16px 0;box-shadow:0 0 30px rgba(var(--accent2-rgb),.18)}
 .av-title{font-size:32px;line-height:1.15;margin:12px 0;font-weight:800;letter-spacing:.3px;
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}

@@ -3003,8 +3003,18 @@
   function _mdUrl(u){ u=(u||'').trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : ''; }
   function mdInline(s){
     s=s.replace(/`([^`]+)`/g,(m,c)=>`<code>${c}</code>`);
-    s=s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,alt,url)=>{ const u=_mdUrl(url); return u?`<img src="${u}" alt="${alt}" loading="lazy">`:m; });
-    s=s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,txt,url)=>{ const u=_mdUrl(url); return u?`<a href="${u}" target="_blank" rel="noopener">${txt}</a>`:m; });
+    // Escaped inline HTML from the source markdown (GitHub-style READMEs use <div align=center>, <img>,
+    // <br>, <picture>…): render a SAFE subset rather than show the escaped tag as literal text.
+    s=s.replace(/&lt;br\s*\/?&gt;/gi,'<br>');
+    s=s.replace(/&lt;img\b(?:(?!&gt;)[\s\S])*?&gt;/gi,(m)=>{ const sm=m.match(/src=&quot;([\s\S]*?)&quot;/i); const u=sm?_mdUrl(sm[1].replace(/&amp;/g,'&')):''; return u?`<img src="${u}" loading="lazy">`:''; });
+    s=s.replace(/&lt;\/?(?:div|center|p|span|picture|source|summary|details|small|sub|sup|nobr|font|h[1-6]|table|thead|tbody|tr|td|th|ul|ol|li)\b(?:(?!&gt;)[\s\S])*?&gt;/gi,'');
+    // Linked image  [![alt](img)](link)  → the <img> wrapped in the link (badge rows). Do BEFORE the
+    // plain image/link rules so the nested form isn't mangled.
+    s=s.replace(/\[!\[([^\]]*)\]\(([^)\s]+)[^)]*\)\]\(([^)\s]+)[^)]*\)/g,(m,alt,img,link)=>{ const iu=_mdUrl(img); const lu=_mdUrl(link); const it=iu?`<img src="${iu}" alt="${alt}" loading="lazy">`:enc(alt); return lu?`<a href="${lu}" target="_blank" rel="noopener">${it}</a>`:it; });
+    s=s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,alt,url)=>{ const u=_mdUrl(url); return u?`<img src="${u}" alt="${alt}" loading="lazy">`:alt; });
+    // Plain link. A RELATIVE / blocked URL (repo file paths like docs/x.md, #anchors) can't resolve in
+    // the client, so drop the syntax and keep the TEXT rather than leaving literal [text](url).
+    s=s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*)?\)/g,(m,txt,url)=>{ const u=_mdUrl(url); return u?`<a href="${u}" target="_blank" rel="noopener">${txt}</a>`:txt; });
     s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/__([^_]+)__/g,'<b>$1</b>');
     s=s.replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g,'$1<i>$2</i>');
     s=s.replace(/(^|\s)_([^_\s][^_]*?)_(?=\s|$)/g,'$1<i>$2</i>');
@@ -3655,6 +3665,9 @@
     const wurl=_mdUrl(web[0]||'');
     const readmeSrc=clone[0]||web[0]||'';   // clone URL preferred (points straight at the forge)
     const cloneUrl=clone[0]||'';
+    // Files browser only for a self-hosted (Nostr-owned) repo — the clone path has an npub/hex owner
+    // before <id>.git; a plain forge clone URL (GitHub/Gitea) has no readable file API here.
+    const isGrasp=(()=>{ try{ const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean); const gi=sg.findIndex(s=>s.endsWith('.git')); return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1])); }catch(_){ return false; } })();
     feed.innerHTML=`<div class="repo-view">
       <button class="btn btn-ghost small" id="repo-back">← Repos</button>
       <div class="rv-head">
@@ -3675,12 +3688,14 @@
       </div>
       <div class="rv-tabs" role="tablist">
         <button class="rv-tab active" data-tab="readme">📖 README</button>
+        ${isGrasp?`<button class="rv-tab" data-tab="files">📁 Files</button>`:''}
         <button class="rv-tab" data-tab="issues">🐛 Issues <span class="rv-count" id="rv-c-issues"></span></button>
         <button class="rv-tab" data-tab="patches">🩹 Patches <span class="rv-count" id="rv-c-patches"></span></button>
       </div>
       <div class="rv-panel" data-panel="readme">
         <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
       </div>
+      ${isGrasp?`<div class="rv-panel" data-panel="files" hidden><div class="fb" id="rv-files"><div class="spinner"></div></div></div>`:''}
       <div class="rv-panel" data-panel="issues" hidden>
         <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
         <div class="rv-collab" id="rv-issues"><div class="spinner"></div></div>
@@ -3694,10 +3709,13 @@
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', cb.dataset.clone); } }; }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
-    // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below.
+    // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
+    // Files is lazy-loaded on first open (a git ls-tree round-trip).
+    let _filesLoaded=false;
     $$('.rv-tab',feed).forEach(tb=> tb.onclick=()=>{
       $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x===tb));
       $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!==tb.dataset.tab);
+      if(tb.dataset.tab==='files' && !_filesLoaded){ _filesLoaded=true; _loadRepoFiles(feed, cloneUrl, ''); }
     });
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
@@ -3756,6 +3774,41 @@
           }catch(err){ st.textContent='failed: '+((err&&err.message)||err); }
         };
       });
+  }
+  // ---------- Files browser (self-hosted GRASP repos) ----------
+  function _fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+  async function _loadRepoFiles(feed, cloneUrl, path){
+    const box=$('#rv-files',feed); if(!box) return;
+    box.innerHTML='<div class="spinner"></div>';
+    let j={}; try{ j=await fetch('/client/git/tree?url='+encodeURIComponent(cloneUrl)+'&path='+encodeURIComponent(path||'')).then(r=>r.json()); }catch(_){}
+    if(VIEW!=='repo') return;
+    if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t list files.</div>'; return; }
+    const parts=(path||'').split('/').filter(Boolean);
+    const crumbs=['<a class="fb-crumb" data-p="">🏠 root</a>'].concat(parts.map((seg,i)=>`<a class="fb-crumb" data-p="${enc(parts.slice(0,i+1).join('/'))}">${enc(seg)}</a>`)).join('<span class="fb-sep">/</span>');
+    const rows=(j.entries||[]).map(en=>{
+      const ico=en.type==='tree'?'📁':'📄';
+      const sz=en.type==='blob'?`<span class="fb-size">${_fmtBytes(en.size)}</span>`:'';
+      return `<div class="fb-row" data-type="${en.type}" data-path="${enc(en.path)}"><span class="fb-ico">${ico}</span><span class="fb-name">${enc(en.name)}</span>${sz}</div>`;
+    }).join('');
+    box.innerHTML=`<div class="fb-crumbs">${crumbs}</div><div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
+    $$('.fb-crumb',box).forEach(a=> a.onclick=()=>_loadRepoFiles(feed,cloneUrl,a.dataset.p));
+    $$('.fb-row',box).forEach(r=> r.onclick=()=>{
+      if(r.dataset.type==='tree') _loadRepoFiles(feed,cloneUrl,r.dataset.path);
+      else _viewRepoFile(feed,cloneUrl,r.dataset.path);
+    });
+  }
+  async function _viewRepoFile(feed, cloneUrl, path){
+    const fv=$('#rv-fileview',feed); if(!fv) return;
+    fv.innerHTML='<div class="spinner"></div>'; fv.scrollIntoView({block:'nearest'});
+    let j={}; try{ j=await fetch('/client/git/blob?url='+encodeURIComponent(cloneUrl)+'&path='+encodeURIComponent(path)).then(r=>r.json()); }catch(_){}
+    if(VIEW!=='repo') return;
+    const name=path.split('/').pop();
+    if(!j||!j.ok){ fv.innerHTML='<div class="rv-empty muted small">Couldn’t open the file.</div>'; return; }
+    if(j.binary){ fv.innerHTML=`<div class="fb-fileview"><div class="fb-fvhd">📄 ${enc(name)}</div><div class="muted small">Binary file · ${_fmtBytes(j.size||0)} — clone the repo to view it.</div></div>`; return; }
+    const isMd=/\.(md|markdown)$/i.test(name);
+    const body=isMd?`<div class="markdown">${mdToHtml(j.text||'')}</div>`:`<pre class="fb-code">${enc(j.text||'')}</pre>`;
+    fv.innerHTML=`<div class="fb-fileview"><div class="fb-fvhd">📄 ${enc(name)}</div>${body}</div>`;
+    if(isMd) fv.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
   }
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }

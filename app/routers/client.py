@@ -1440,6 +1440,77 @@ async def git_readme(url: str):
     return JSONResponse(result)
 
 
+def _grasp_host_target(clone_url: str):
+    """(host_base, owner_seg, repo_id) for a Nostr/GRASP clone url, else None. host_base is the git host
+    this node reaches — the peer we proxy to (git_server_proxy_url) or localhost on a hosting node."""
+    from urllib.parse import urlparse
+    import re as _re
+    pu = urlparse(clone_url or "")
+    segs = [s for s in pu.path.split("/") if s]
+    gi = next((i for i, s in enumerate(segs) if s.endswith(".git")), None)
+    if gi is None or gi < 1:
+        return None
+    owner_seg, rid = segs[gi - 1], segs[gi][:-4]
+    if not (owner_seg.startswith("npub1") or _re.fullmatch(r"[0-9a-fA-F]{64}", owner_seg)):
+        return None
+    proxy = (settings_store.get("git_server_proxy_url", "") or "").strip().rstrip("/")
+    host_base = proxy or ("http://127.0.0.1:%s" % (settings_store.get("git_server_port", "3053") or "3053"))
+    return host_base, owner_seg, rid
+
+
+@router.get("/git/tree")
+async def git_tree(url: str, path: str = "", ref: str = "HEAD"):
+    """List a directory in a self-hosted GRASP repo (the Files browser). Proxies the git host's tree route
+    (git ls-tree). Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    host_base, owner_seg, rid = tgt
+    path = (path or "").strip("/")
+    if ".." in path.split("/"):
+        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
+    u = "%s/%s/%s.git/tree/%s%s" % (host_base, owner_seg, rid, ref, ("/" + path) if path else "")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as c:
+            r = await c.get(u)
+            if r.status_code != 200:
+                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+            data = r.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    return JSONResponse({"ok": True, **data})
+
+
+@router.get("/git/blob")
+async def git_blob(url: str, path: str, ref: str = "HEAD"):
+    """One file's content from a self-hosted GRASP repo (Files browser). Text -> {ok, text}; binary or
+    >1 MB -> {ok, binary:true, size} (the client shows a note/download instead of rendering)."""
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    host_base, owner_seg, rid = tgt
+    path = (path or "").strip("/")
+    if not path or ".." in path.split("/"):
+        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
+    u = "%s/%s/%s.git/raw/%s/%s" % (host_base, owner_seg, rid, ref, path)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as c:
+            r = await c.get(u)
+            if r.status_code != 200:
+                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+            content = r.content
+    except Exception:
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    if len(content) > 1024 * 1024:
+        return JSONResponse({"ok": True, "binary": True, "size": len(content)})
+    try:
+        return JSONResponse({"ok": True, "text": content.decode("utf-8")})
+    except UnicodeDecodeError:
+        return JSONResponse({"ok": True, "binary": True, "size": len(content)})
+
+
 _nip05_cache: dict[str, tuple[float, dict]] = {}   # "domain|name" -> (expires, data)
 _NIP05_TTL = 600.0
 
