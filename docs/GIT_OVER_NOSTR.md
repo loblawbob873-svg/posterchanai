@@ -55,6 +55,67 @@ receive-pack path, created_at ±60s, signer ∈ maintainers).
 The decision lives in `git_auth.decide_push_ref(...)` — a pure function unit-tested with crafted
 events (see `tests/test_git_push_auth.py`).
 
+## Browse + write API (what the web UI renders from)
+
+Beyond the three smart-HTTP endpoints, `git_host_main.py` serves a small read API — all **read-gated
+exactly like a clone** (private repos need NIP-98) — plus **one** write route:
+
+| Route | Returns |
+|---|---|
+| `GET …/raw/<ref>/<path>` | one file's bytes (2 MB cap — it exists to render a README) |
+| `GET …/download/<ref>/<path>` | the same bytes as an attachment, streamed from `git cat-file`, 64 MB cap |
+| `GET …/tree/<ref>[/<dir>]` | directory listing + each entry's last commit |
+| `GET …/log/<ref>[/<path>]?limit=N` | commit history |
+| `GET …/refs` | branches + tags + the default branch (the UI's ref switcher) |
+| `GET …/commit/<sha>` | one commit: metadata, per-file `+/-` stats and patch (bounded, `truncated` flag) |
+| `POST …/edit` | **write**: commit one file add/change/delete |
+
+Every route also accepts **`?ref=`**, which overrides the ref in the path — a branch named
+`feature/x` cannot be expressed as a single path segment. Refs are validated by `_valid_ref()`
+(must start alphanumeric, so a ref can never be read as a `git` option; no `..`, `@{`, `//`).
+
+`git diff-tree` runs with `--root -m --first-parent` (so the first commit and merges both show a
+diff) and deliberately **without `-M`**: rename detection makes `--numstat` emit a combined
+`dir/{a => b}` field that never matches the `diff --git` path, so stats and patch would key
+differently and one rename would render as three rows.
+
+### The web editor's write path (`POST …/edit`)
+
+Authorization is the SAME primitive as a push, so the editor can't exceed `git push`:
+
+1. A **NIP-98** (kind-27235) header, signature re-verified here, bound to `<id>.git/edit` (a
+   read-scoped or other-repo header is refused), method-matched, fresh, and signed by a key in the
+   **maintainer ACL** read from `30617:<owner>:<id>` — identical ACL code (`git_auth.load_maintainers`)
+   to `pre-receive`. No DSN ⇒ owner only (fail-closed).
+2. The commit is built with plumbing against a **temporary index** (`GIT_INDEX_FILE` + `read-tree` →
+   `update-index --index-info` → `write-tree` → `commit-tree`), never a work tree — a bare repo has
+   none. Staging uses `--index-info` for BOTH add and delete because `--force-remove`/`--cacheinfo`
+   demand a work tree.
+3. `base` (the sha the editor opened) is a **compare-and-swap**: mismatch ⇒ **409**, and
+   `update-ref <ref> <new> <old>` re-checks at the git level, so a concurrent push can't be clobbered.
+4. Committing to a tag is refused; symlinks are refused; the author is recorded as `<npub>@nostr`.
+5. `receive-pack` hooks do NOT run for this path, so it publishes the operator **30618 witness**
+   itself (`git_host_service.publish_state_witness`, shared with `post-receive`) and returns
+   `state_tags_30618` for the CLIENT to sign+publish — the maintainer's own 30618 stays the
+   push-authorization authority, so a web commit leaves the repo as Nostr-attested as a push does.
+
+App-side proxies (`/client/git/{tree,log,refs,commit,blob,download,edit}` in `app/routers/client.py`)
+just forward to the host — `/edit` passes the caller's `Authorization` header through and holds **no**
+authority of its own.
+
+## Chunked request bodies (the "400 Bad request syntax" push bug)
+
+git switches to `Transfer-Encoding: chunked` as soon as a pack exceeds `http.postBuffer` (1 MB by
+default), so this is the normal shape of a **first full push**. The host used to read `Content-Length`
+only: the body was never consumed, the leftover chunk framing was parsed as the next request line, and
+the push died with `400 Bad request syntax` (worked around per-node with
+`git config http.postBuffer 524288000`).
+
+`_read_chunked_body()` now de-frames the body (chunk sizes, extensions, trailers — consuming it
+*exactly*, which is what keeps the connection parseable) into a spool file on the repo volume, then
+hands `git-http-backend` a real `CONTENT_LENGTH`. Receive-pack needs the whole pack anyway, so
+spooling costs nothing in practice; `_MAX_BODY` (2 GiB) is enforced while de-framing.
+
 ## Private repos — READ gate (security-critical)
 
 A repo can be marked **private** at create time (`private=true`; default configurable via
@@ -167,6 +228,11 @@ already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequ
 - `tests/test_git_push_e2e.py` — a real `git push` through git-http-backend → pre-receive → real
   Postgres: accept on matching maintainer-signed 30618, reject with no/mismatched state, and confirms
   a rejected push does not move the ref (objects discarded).
+- `tests/test_git_host_browse_edit.py` — 47 checks on the browse API + web editor + chunked push:
+  refs/tree/log/commit shapes (incl. root + merge commits), `?ref=` with a slashed branch, download
+  headers, hostile refs/paths refused, all four `/edit` authorization refusals, commit/delete/exec-bit/
+  new-file/CAS-409 behaviour, and a real 4 MB `git push` with `http.postBuffer=16k` (chunked) that
+  lands the right sha and leaves the repo fsck-clean.
 - `tests/test_git_proxy.py` — the reverse-proxy path: proxy-disabled ⇒ 404; public proxied `info/refs`
   is byte-identical to hitting the host directly; a private repo through the proxy 401s anonymously and
   200s with a forwarded reader NIP-98 header (auth stays on the host). Uses `httpx` (already a dep,

@@ -58,12 +58,18 @@ async def delete_conversation(db, user, conv_id: int) -> int:
     from . import artifact_store
     sk = user_storage_seckey(db, user)
     port = _port(db)
-    # remove referenced artifact blobs (generated images etc.) from Blossom
+    # Remove referenced artifact blobs from Blossom. An artifact is referenced in one of TWO places
+    # and only the first used to be cleaned: a generated IMAGE lands in `image_path`, but generated or
+    # derived MEDIA (an extracted MP3, a rendered song/video, an agent's workspace backup, a captured
+    # command output) is appended into the message CONTENT as a markdown link. So every one of those
+    # survived its own chat's deletion, unreferenced and unlistable — that is where a multi-GB pile of
+    # orphaned private blobs came from. Scan both, exactly like the Files listing does.
     for m in await get_messages(db, user, conv_id):
-        mm = _re.search(r'enc_([0-9a-f]{64})', m.get("image_path") or "")
-        if mm:
+        shas = set(_re.findall(r'enc_([0-9a-f]{64})', m.get("image_path") or ""))
+        shas |= set(_re.findall(r'enc_([0-9a-f]{64})', m.get("content") or ""))
+        for sha in shas:
             try:
-                await artifact_store.delete_blob(db, mm.group(1))
+                await artifact_store.delete_blob(db, sha)
             except Exception:
                 pass
     docs = await store.list_docs(port, f"{store.NS_MSG}{conv_id}:", seckey=sk, encrypt=False)

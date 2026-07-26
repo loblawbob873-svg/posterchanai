@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 # inline threshold is delivered as a .txt attachment rather than truncated in the chat.
 _MAX_OUTPUT = 1024 * 1024  # 1 MB retained per job
 INLINE_LIMIT = 3500  # chars shown inline; longer output is also attached as a file
+# Per-STEP cap for an agent run's play-by-play. Same idea as INLINE_LIMIT (and safely under Telegram's
+# 4096-char message limit once the ``` fence and header are added); anything longer rides along as a
+# .txt attachment rather than being thrown away.
+STEP_INLINE_LIMIT = 3000
 
 # In-memory job registry, shared across the process (guarded by _lock).
 _lock = threading.Lock()
@@ -117,6 +121,12 @@ def sandbox_allowed(db: Session, user: Optional["User"]) -> bool:
     and admins can opt into it too. Docker availability is checked lazily at run time (sandbox_service)."""
     from app.services import sandbox_service
     return sandbox_service.enabled() and has_ai_access(user)
+
+
+def _out_filename(label: str) -> str:
+    """A safe .txt name for an attached step output, derived from the command/file label."""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", (label or "output").strip())[:48].strip("-") or "output"
+    return f"{base}.txt"
 
 
 def tail(text: str, limit: int) -> str:
@@ -888,6 +898,28 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
             except Exception:
                 pass
 
+    async def _say_output(header: str, body: str, filename: str):
+        """Report ONE step's output. Long output is shown up to STEP_INLINE_LIMIT chars AND attached in
+        full as a .txt, instead of being silently cut to a few hundred characters.
+
+        The old 700-char tail was the whole bug: the agent had the full output (it goes into the model's
+        context), the job kept 1 MB of it, but the human watching the run could only ever see the last
+        700 characters and had to know to type `node log <id>` — so a failure whose cause was 800 chars
+        up simply wasn't visible. The attachment path already exists (`agent_files`, the same one
+        workspace backups ride) and each interface stores it its own way, so nothing new is needed to
+        deliver the rest."""
+        body = body or "(no output)"
+        await _say(f"{header}\n```\n{tail(body, STEP_INLINE_LIMIT)}\n```")
+        if notify and len(body) > STEP_INLINE_LIMIT:
+            try:
+                await notify({"type": "agent_files",
+                              "content": f"📄 full output of `{filename}` ({len(body):,} chars)",
+                              "files": [{"filename": _out_filename(filename),
+                                         "data": body.encode("utf-8", "replace"),
+                                         "content_type": "text/plain"}]})
+            except Exception as e:
+                logger.warning(f"[node] full-output attach failed: {e}")
+
     def _footer() -> str:
         # The happy path returns the model's summary; on stop/error the concise transcript would
         # otherwise be empty, so point the user at what actually ran and where to find the output.
@@ -1062,7 +1094,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     await _say(f"⚙️ `{cmd}`")
                 else:
                     _ex = "" if job.exit_code == 0 else f" ⚠️ exit {job.exit_code}"
-                    await _say(f"**⚙️ `{cmd}`**{_ex}\n```\n{tail(out, 700)}\n```")
+                    await _say_output(f"**⚙️ `{cmd}`**{_ex}", out, cmd)
                 cmds_run.append(cmd)
                 cmd_outputs[cmd] = out
                 if job.exit_code == 0:
@@ -1137,7 +1169,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                     _ans = f"(helper agent failed: {e})"
                 _ans = (_ans or "(no answer)").strip()
                 cmds_run.append(f"helper: {_q[:60]}")
-                await _say(f"**🔎 Helper answered**\n{tail(_ans, 700)}")
+                await _say_output("**🔎 Helper answered**", _ans, "helper-answer")
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": _ans[:_TOOL_RESULT_CHARS]})
                 continue
@@ -1194,7 +1226,7 @@ async def run_agent(db: Session, user: "User", node: str, target: str, goal: str
                 else:
                     _ic = "📄" if name in agent_file_tools.READ_ONLY_TOOLS else "✏️"
                     _ex = "" if ok else " ⚠️"
-                    await _say(f"**{_ic} `{_label}`**{_ex}\n```\n{tail(body, 700)}\n```")
+                    await _say_output(f"**{_ic} `{_label}`**{_ex}", body, _path or name)
                 messages.append({"role": "tool", "tool_call_id": tcid, "name": name,
                                  "content": (body if ok else f"ERROR: {body}")[:_TOOL_RESULT_CHARS] + _warn})
                 continue

@@ -272,6 +272,68 @@ def repo_head(owner_hex: str, repo_id: str) -> str:
     return (r.stdout or "").strip()
 
 
+def state_tags(owner_hex: str, repo_id: str, refs: dict | None = None, head: str | None = None) -> list:
+    """NIP-34 kind-30618 ("repository state") tags for a repo's CURRENT refs: d, HEAD, every
+    refs/… -> sha, and an `a` link back to the 30617 announcement.
+
+    ONE builder for every producer of a 30618 — the post-receive witness, the web-editor commit, and
+    the announce endpoint — because git_auth.decide_push_ref authorizes a push by SHA-matching these
+    tags. Two hand-rolled copies that drift in tag shape would mean pushes that mysteriously fail."""
+    rid = sanitize_repo_id(repo_id) or repo_id
+    if refs is None:
+        refs = repo_refs(owner_hex, rid)
+    if head is None:
+        head = repo_head(owner_hex, rid)
+    tags = [["d", rid]]
+    if head:
+        tags.append(["HEAD", "ref: " + head])
+    for name, sha in sorted((refs or {}).items()):
+        tags.append([name, sha])
+    tags.append(["a", "30617:%s:%s" % (owner_hex, rid)])
+    return tags
+
+
+def publish_state_witness(owner_hex: str, repo_id: str) -> bool:
+    """Publish an OPERATOR-signed kind-30618 mirroring the repo's on-disk refs to the LOCAL relay.
+
+    Best-effort and always safe to call: any failure returns False rather than raising, because no
+    ref-moving operation should fail on account of a relay hiccup. PRIVATE repos are skipped (they
+    must not publish any public 30617/30618).
+
+    Runs its own event loop, so call it from a plain thread or a one-shot process (the git host
+    subprocess, a git hook) — NEVER from inside the app's running loop; use nostr_store.publish_event
+    directly there."""
+    import asyncio
+    rid = sanitize_repo_id(repo_id)
+    if not rid or not repo_exists(owner_hex, rid) or is_private(owner_hex, rid):
+        return False
+    try:
+        from app.services import keystore
+        op_nsec = keystore.get_operator_nsec()
+        if not op_nsec:
+            return False
+        from app.services.nostr import nostr_service
+        from app.services.nostr.event import build_event
+        from app.services import nostr_store
+        ev = build_event(nostr_service.decode_seckey(op_nsec), 30618, "",
+                         tags=state_tags(owner_hex, rid))
+        port = int(os.environ.get("GRASP_RELAY_PORT", "3052"))
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            ok, msg = loop.run_until_complete(nostr_store.publish_event(port, ev, timeout=6.0))
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+        if not ok:
+            logger.warning("[git-host] 30618 witness not published for %s/%s: %s",
+                           owner_hex[:12], rid, msg)
+        return bool(ok)
+    except Exception as e:
+        logger.warning("[git-host] 30618 witness publish failed for %s/%s: %s", owner_hex[:12], rid, e)
+        return False
+
+
 def dir_size_bytes(path: str) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):

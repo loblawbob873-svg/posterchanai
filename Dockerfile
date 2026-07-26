@@ -113,6 +113,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # the `docker` CLI (docker-outside-of-docker). It is NOT installed here to keep the image lean — add
 # `docker.io` (or docker-ce-cli) to the list below AND mount /var/run/docker.sock + `group_add` in
 # docker-compose.yml if you want the sandbox inside the container deployment. Bare-metal: ./install.sh --sandbox.
+# `git` is not just a build tool here: the built-in GRASP git server (POSTERCHANAI_GIT=1) execs
+# `git-http-backend` (shipped by the same package, at /usr/lib/git-core on Debian/Ubuntu) and runs
+# git plumbing for the web file browser/editor. Removing it from this list breaks docs/GIT.md.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-dev python3-pip \
         build-essential cmake git pkg-config patchelf \
@@ -247,7 +250,8 @@ COPY --from=streamdl /mediamtx /app/streamserver/mediamtx
 # Runtime data lives on a volume: uploads, downloaded models, HF caches, and /app/data
 # (the keyfile). Durable app/relay state is in PostgreSQL (the compose `postgres` service).
 RUN mkdir -p /var/lib/posterchanai/models /var/lib/posterchanai/torrents \
-             /var/lib/posterchanai/tor /var/lib/posterchanai/tor2 /var/lib/posterchanai/hf /app/data
+             /var/lib/posterchanai/tor /var/lib/posterchanai/tor2 /var/lib/posterchanai/hf \
+             /var/lib/posterchanai/git_repos /app/data
 VOLUME ["/var/lib/posterchanai", "/app/data"]
 
 # Runtime config (LATE so changing a default is a cheap rebuild). HF_HOME caches

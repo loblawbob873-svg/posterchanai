@@ -1486,67 +1486,95 @@ def _grasp_host_target(clone_url: str):
     return host_base, owner_seg, rid
 
 
+def _grasp_url(clone_url: str, route: str, path: str = "", *, ref: str = "HEAD", extra: str = ""):
+    """Build the git host URL for one browse route, or None if this isn't a self-hosted repo / the path
+    is unsafe. `ref` always rides as `?ref=` (a branch name may contain slashes, which the path segment
+    after the route can't express) while the path segment stays HEAD."""
+    from urllib.parse import quote
+    tgt = _grasp_host_target(clone_url)
+    if not tgt:
+        return None
+    host_base, owner_seg, rid = tgt
+    path = (path or "").strip("/")
+    if ".." in path.split("/"):
+        return None
+    q = "ref=%s" % quote(ref or "HEAD", safe="")
+    if extra:
+        q += "&" + extra
+    return "%s/%s/%s.git/%s/HEAD%s?%s" % (host_base, owner_seg, rid, route,
+                                          ("/" + quote(path)) if path else "", q)
+
+
+async def _grasp_json(u: str, timeout: float = 10.0):
+    """GET one of the git host's JSON browse routes -> (payload, error_response). The three read
+    endpoints below differ only in URL and timeout, so the fetch/erroring lives here once."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=4.0)) as c:
+            r = await c.get(u)
+            if r.status_code != 200:
+                return None, JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+            return r.json(), None
+    except Exception:
+        return None, JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+
+
 @router.get("/git/tree")
 async def git_tree(url: str, path: str = "", ref: str = "HEAD"):
     """List a directory in a self-hosted GRASP repo (the Files browser). Proxies the git host's tree route
     (git ls-tree). Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
-    tgt = _grasp_host_target(url)
-    if not tgt:
+    u = _grasp_url(url, "tree", path, ref=ref)
+    if not u:
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    host_base, owner_seg, rid = tgt
-    path = (path or "").strip("/")
-    if ".." in path.split("/"):
-        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
-    u = "%s/%s/%s.git/tree/%s%s" % (host_base, owner_seg, rid, ref, ("/" + path) if path else "")
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as c:
-            r = await c.get(u)
-            if r.status_code != 200:
-                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
-            data = r.json()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
-    return JSONResponse({"ok": True, **data})
+    data, err = await _grasp_json(u, 10.0)
+    return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/log")
 async def git_log(url: str, path: str = "", ref: str = "HEAD", limit: int = 50):
     """Commit history for a self-hosted GRASP repo (the Commits view + a file's history). Proxies the
     git host's log route. Only Nostr-owned (npub/hex) repos we host/proxy — everything else 400s."""
+    u = _grasp_url(url, "log", path, ref=ref,
+                   extra="limit=%d" % max(1, min(int(limit or 50), 200)))
+    if not u:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    data, err = await _grasp_json(u, 20.0)
+    return err or JSONResponse({"ok": True, **data})
+
+
+@router.get("/git/refs")
+async def git_refs(url: str):
+    """Branches + tags of a self-hosted GRASP repo — what the repo view's ref switcher is built from."""
     tgt = _grasp_host_target(url)
     if not tgt:
         return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    host_base, owner_seg, rid = tgt
-    path = (path or "").strip("/")
-    if ".." in path.split("/"):
-        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
-    u = "%s/%s/%s.git/log/%s%s?limit=%d" % (host_base, owner_seg, rid, ref,
-                                            ("/" + path) if path else "", max(1, min(int(limit or 50), 200)))
-    try:
-        import httpx
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0)) as c:
-            r = await c.get(u)
-            if r.status_code != 200:
-                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
-            data = r.json()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
-    return JSONResponse({"ok": True, **data})
+    data, err = await _grasp_json("%s/%s/%s.git/refs" % tgt, 10.0)
+    return err or JSONResponse({"ok": True, **data})
+
+
+@router.get("/git/commit")
+async def git_commit(url: str, sha: str):
+    """One commit with its per-file stats and patch — "what changed in this commit". The host bounds
+    the patch size and flags `truncated`, so a giant commit can't be used to pull an unbounded body."""
+    import re as _re
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    if not _re.fullmatch(r"[0-9a-fA-F]{7,40}", (sha or "").strip()):
+        return JSONResponse({"ok": False, "error": "bad sha"}, status_code=400)
+    data, err = await _grasp_json("%s/%s/%s.git/commit/%s" % (*tgt, sha.strip()), 25.0)
+    return err or JSONResponse({"ok": True, **data})
 
 
 @router.get("/git/blob")
 async def git_blob(url: str, path: str, ref: str = "HEAD"):
     """One file's content from a self-hosted GRASP repo (Files browser). Text -> {ok, text}; binary or
     >1 MB -> {ok, binary:true, size} (the client shows a note/download instead of rendering)."""
-    tgt = _grasp_host_target(url)
-    if not tgt:
-        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
-    host_base, owner_seg, rid = tgt
-    path = (path or "").strip("/")
-    if not path or ".." in path.split("/"):
+    if not (path or "").strip("/"):
         return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
-    u = "%s/%s/%s.git/raw/%s/%s" % (host_base, owner_seg, rid, ref, path)
+    u = _grasp_url(url, "raw", path, ref=ref)
+    if not u:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
     try:
         import httpx
         async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as c:
@@ -1562,6 +1590,88 @@ async def git_blob(url: str, path: str, ref: str = "HEAD"):
         return JSONResponse({"ok": True, "text": content.decode("utf-8")})
     except UnicodeDecodeError:
         return JSONResponse({"ok": True, "binary": True, "size": len(content)})
+
+
+@router.get("/git/download")
+async def git_download(url: str, path: str, ref: str = "HEAD"):
+    """Download one file from a self-hosted GRASP repo as an attachment — streamed straight through
+    from the git host so a large file never lands in this process's memory. Binary-safe (unlike /blob,
+    which exists to RENDER text), which is what "save this file" needs."""
+    from fastapi.responses import StreamingResponse
+    if not (path or "").strip("/"):
+        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
+    u = _grasp_url(url, "download", path, ref=ref)
+    if not u:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    name = (path or "").strip("/").split("/")[-1] or "file"
+    safe = re.sub(r'[^A-Za-z0-9._-]', "_", name)[:100] or "file"
+    import httpx
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=4.0))
+    try:
+        req = client.build_request("GET", u)
+        resp = await client.send(req, stream=True)
+    except Exception:
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    if resp.status_code != 200:
+        await resp.aclose()
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+
+    async def _body():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    headers = {"Content-Disposition": 'attachment; filename="%s"' % safe}
+    if resp.headers.get("Content-Length"):
+        headers["Content-Length"] = resp.headers["Content-Length"]
+    return StreamingResponse(_body(), media_type="application/octet-stream", headers=headers)
+
+
+class GitEditReq(BaseModel):
+    url: str                       # the repo's clone URL (identifies owner + repo id)
+    path: str                      # file to write, repo-relative
+    ref: str = "HEAD"              # branch to commit on
+    content: str = ""              # new file content (ignored when delete=true)
+    message: str = ""              # commit message
+    base: str = ""                 # commit sha the editor started from (compare-and-swap)
+    delete: bool = False
+    auth: str                      # NIP-98 `Nostr <base64>` header value, signed by a maintainer
+
+
+@router.post("/git/edit")
+async def git_edit(data: GitEditReq):
+    """Commit a single file change to a self-hosted GRASP repo from the web editor.
+
+    This endpoint holds NO authority: it forwards the caller's NIP-98 header to the git host, which
+    verifies the signature against the repo's maintainer ACL (owner ∪ 30617 `maintainers`) exactly as
+    the push hook does. So a web edit is authorized by the same Nostr key that authorizes a push, and
+    this proxy can't grant anything a `git push` couldn't."""
+    tgt = _grasp_host_target(data.url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    if not (data.auth or "").strip().lower().startswith("nostr "):
+        return JSONResponse({"ok": False, "error": "a signed NIP-98 header is required"}, status_code=400)
+    body = {"ref": data.ref, "path": data.path, "content": data.content,
+            "message": data.message, "base": data.base, "delete": bool(data.delete)}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=4.0)) as c:
+            r = await c.post("%s/%s/%s.git/edit" % tgt, json=body,
+                             headers={"Authorization": data.auth})
+    except Exception as e:
+        logger.warning("[client] git edit proxy failed: %s", e)
+        return JSONResponse({"ok": False, "error": "the git host did not answer"}, status_code=502)
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"ok": r.status_code == 200,
+                   "error": (r.text or "").strip()[:200] or "edit failed"}
+    return JSONResponse(payload, status_code=r.status_code)
 
 
 _nip05_cache: dict[str, tuple[float, dict]] = {}   # "domain|name" -> (expires, data)
@@ -2516,7 +2626,79 @@ async def ai_files(data: AiFileReq, db: Session = Depends(get_db)):
                      "generated file" if mime == "application/pdf" else "generated image")
             out.append({"url": f"/client/file/{np}/{conv}/{m.group(1)}",
                         "name": label, "mime": mime, "sha": m.group(2), "kind": "generated"})
-    return JSONResponse({"ok": True, "files": out})
+    # ORPHANS. Everything above is found by walking the user's relay DOCS, so an artifact whose
+    # referencing message is gone (a deleted chat, before the cleanup covered content links) became
+    # invisible AND undeletable — the blob just sat there. Blossom's own listing excluded private blobs
+    # entirely (`include_private` had no callers), so nothing in the product could see them. Ownership
+    # is already proved above, so list them here with their sizes and let the owner clean them up.
+    orphans, orphan_bytes = [], 0
+    try:
+        from app.services import blossom_service
+        from app.services.nostr import bip340
+        storage_pub = bip340.pubkey_from_seckey(sk).hex()
+        known = {f["sha"] for f in out}
+        for blob in blossom_service.list_for_pubkey(db, storage_pub, include_private=True):
+            if not blob.private or blob.sha256 in known:
+                continue
+            orphan_bytes += int(blob.size or 0)
+            orphans.append({"sha": blob.sha256, "size": int(blob.size or 0),
+                            "uploaded": int(blob.created_at or 0), "kind": "orphan",
+                            "name": "unreferenced artifact", "mime": blob.mime or "",
+                            # No URL: /client/file needs a conversation to decrypt against, and this
+                            # blob's chat is gone. It can be sized and deleted, not viewed.
+                            "url": ""})
+        orphans.sort(key=lambda o: o["size"], reverse=True)
+    except Exception as e:
+        logger.warning("[client] orphan artifact scan failed: %s", e)
+    return JSONResponse({"ok": True, "files": out, "orphans": orphans,
+                         "orphan_bytes": orphan_bytes})
+
+
+@router.post("/ai-files-prune")
+async def ai_files_prune(data: AiFileReq, db: Session = Depends(get_db)):
+    """Delete EVERY unreferenced private artifact blob of this user (the `orphans` that /ai-files
+    reports). Signed self-auth, same proof as the listing.
+
+    Safety: a blob is only removed when NO live doc of this user references its sha — the two places a
+    reference can live (an NS_UPLOAD ref, or an NS_MSG record's `image_path`/content) are both scanned
+    first, and only blobs under the caller's OWN storage pubkey are considered."""
+    import re
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        return JSONResponse({"ok": True, "deleted": 0, "bytes": 0})
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+    keep: set = set()
+    for ref in (await store.list_docs(port, store.NS_UPLOAD, seckey=sk)).values():
+        if isinstance(ref, dict) and ref.get("sha256"):
+            keep.add(ref["sha256"])
+    for rec in (await store.list_docs(port, store.NS_MSG, seckey=sk)).values():
+        if not isinstance(rec, dict):
+            continue
+        keep |= set(re.findall(r'enc_([0-9a-f]{64})', rec.get("image_path") or ""))
+        keep |= set(re.findall(r'enc_([0-9a-f]{64})', rec.get("content") or ""))
+    from app.services import blossom_service, artifact_store
+    from app.services.nostr import bip340
+    storage_pub = bip340.pubkey_from_seckey(sk).hex()
+    deleted, freed = 0, 0
+    for blob in blossom_service.list_for_pubkey(db, storage_pub, include_private=True):
+        if not blob.private or blob.sha256 in keep:
+            continue
+        size = int(blob.size or 0)
+        try:
+            if await artifact_store.delete_blob(db, blob.sha256):
+                deleted += 1
+                freed += size
+        except Exception as e:
+            logger.warning("[client] orphan prune failed for %s: %s", blob.sha256[:12], e)
+    logger.info("[client] pruned %d orphaned artifact(s) (%d bytes) for %s", deleted, freed, pk[:12])
+    return JSONResponse({"ok": True, "deleted": deleted, "bytes": freed})
 
 
 

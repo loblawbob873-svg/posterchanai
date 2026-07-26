@@ -71,11 +71,19 @@ still sign the 30618 that authorizes each push). The `grasp_mirror_owner` settin
 `grasp_mirror.py` which owner to target — without it the mirror defaults to the operator key and would
 keep updating the node-owned copy while the real repo drifts.
 
-**Gotcha — a big push needs `http.postBuffer`.** `git_host_main.py` reads a `Content-Length` body only.
-Git switches to `Transfer-Encoding: chunked` once a pack exceeds `http.postBuffer` (1 MB default), and
-the leftover chunk header is then parsed as the next request → `400 Bad request syntax`. Incremental
-mirrors are small enough to never hit it; a first full push does. Worked around with
-`git config http.postBuffer 524288000` on the hosting node — the real fix is chunked support in the host.
+**Big pushes are chunked, and that's now handled.** Git switches to `Transfer-Encoding: chunked` once a
+pack exceeds `http.postBuffer` (1 MB default) — the shape of any first full push. `git_host_main.py`
+used to read `Content-Length` only, so the leftover chunk framing was parsed as the next request →
+`400 Bad request syntax`; it now de-frames the body into a spool file and gives git-http-backend a real
+`CONTENT_LENGTH` (`_read_chunked_body`, covered by `tests/test_git_host_browse_edit.py`). The old
+per-node `git config http.postBuffer 524288000` workaround is harmless but no longer needed.
+
+**Web git UI** (Discover → Git): the repo view browses a hosted repo — files, commit diffs, a branch/tag
+switcher, per-file download, and an EDITOR that commits. Writes go `client → /client/git/edit → the git
+host`, authorized by a **NIP-98 header verified against the repo's 30617 maintainers** (the same ACL as
+`pre-receive`), with a `base`-sha compare-and-swap; the host then publishes the operator 30618 witness
+and returns the 30618 tags for the client to sign. See `docs/GIT.md` (user guide) and
+`docs/GIT_OVER_NOSTR.md` (internals).
 
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 

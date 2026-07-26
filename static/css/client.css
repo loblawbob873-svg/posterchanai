@@ -1473,6 +1473,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 
 /* blossom files */
 .files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:18px}
+/* Leftover artifacts from deleted chats: a size + a one-tap clean-up. Wraps on a phone. */
+.files-orphans{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 18px 0;padding:10px 13px;
+  border:1px dashed var(--line);border-radius:12px;font-size:13px;background:rgba(var(--accent2-rgb),.05)}
+.files-orphans .btn{margin-left:auto}
+@media(max-width:600px){ .files-orphans{margin:12px 10px 0} .files-orphans .btn{margin-left:0;width:100%} }
 .file-card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2);position:relative}
 .file-card img,.file-card video{width:100%;height:140px;object-fit:cover;display:block;background:#120c24}
 .file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
@@ -2009,9 +2014,55 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
   .fb-cmsg,.fb-hby{display:none}
 }
 .fb-fileview{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.fb-fvhd{padding:10px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;background:rgba(var(--accent2-rgb),.06)}
+.fb-fvhd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);
+  font-weight:700;font-size:13.5px;background:rgba(var(--accent2-rgb),.06)}
+.fb-fvname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all}
+.fb-fvacts{flex:none;display:flex;gap:6px;flex-wrap:wrap}
 .fb-fileview .markdown{padding:16px 20px}
 .fb-code{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;white-space:pre;color:var(--text)}
+/* Branch / tag switcher */
+.rv-refbar{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.rv-refbtn{font-family:var(--mono,monospace);font-size:12.5px}
+.fb-tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.rv-scope{padding:8px 12px;margin-bottom:10px;border:1px dashed var(--line);border-radius:10px}
+/* Web editor: one monospace box, sized so a phone keyboard still leaves usable text visible. */
+.fb-edit{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.fb-editor{width:100%;min-height:46vh;resize:vertical;font-family:var(--mono,monospace);font-size:12.5px;
+  line-height:1.5;white-space:pre;overflow-wrap:normal;overflow-x:auto;tab-size:4}
+.fb-editacts{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.fb-editbtns{display:flex;gap:8px;flex:none}
+/* Commit view (one commit + its diff) */
+.cmv-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.cmv-subj{margin:0 0 6px;font-size:17px;line-height:1.35;word-break:break-word}
+.cmv-body{margin:0 0 10px;padding:10px 12px;background:rgba(var(--accent2-rgb),.06);border-radius:10px;
+  font-family:var(--mono,monospace);font-size:12.5px;line-height:1.5;white-space:pre-wrap;color:var(--muted)}
+.cmv-meta{margin-bottom:14px}
+.df{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden}
+.df-hd{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;background:var(--panel2);font-size:12.5px}
+.df-hd::-webkit-details-marker{display:none}
+.df-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all;
+  font-family:var(--mono,monospace)}
+.df-stat{flex:none;display:flex;gap:8px;font-variant-numeric:tabular-nums}
+.df-add{color:#3fb950}.df-del{color:#f85149}.df-bin{color:var(--muted)}
+.df-body{overflow-x:auto;font-family:var(--mono,monospace);font-size:12px;line-height:1.45;background:var(--panel)}
+/* One diff line = [old no][new no][text]. Grid keeps the gutters aligned without a table, and the text
+   column sets its own width so a long line scrolls the file box rather than the page. */
+.dl{display:grid;grid-template-columns:44px 44px 1fr;min-width:max-content}
+.dl .dn{padding:0 6px;text-align:right;color:var(--muted);opacity:.65;user-select:none;
+  border-right:1px solid var(--line);font-variant-numeric:tabular-nums}
+.dl .dt{padding:0 12px;white-space:pre}
+.dl-add{background:rgba(63,185,80,.12)}.dl-add .dt{color:#7ee787}
+.dl-del{background:rgba(248,81,73,.12)}.dl-del .dt{color:#ffa198}
+.dl-hunk{background:rgba(var(--accent2-rgb),.12)}.dl-hunk .dt{color:var(--cyan)}
+.dl-meta .dt{color:var(--muted)}
+@media(max-width:600px){
+  /* Phones: one gutter (the new-file line numbers) — two 44px columns eat a third of a 360px screen. */
+  .dl{grid-template-columns:34px 1fr}
+  .dl .dn:first-child{display:none}
+  .df-body{font-size:11.5px}
+  .fb-editor{min-height:38vh;font-size:12px}
+  .fb-fvacts{width:100%}
+}
 .av-banner{width:100%;max-height:340px;object-fit:cover;border-radius:16px;border:1px solid var(--line);margin:16px 0;box-shadow:0 0 30px rgba(var(--accent2-rgb),.18)}
 .av-title{font-size:32px;line-height:1.15;margin:12px 0;font-weight:800;letter-spacing:.3px;
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -3439,9 +3490,22 @@ body.modal-open .mobilenav{display:none}
 .np-saved-row{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(8,5,18,.4);font-size:13px}
 .np-saved-name{flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-weight:600}
 .np-saved-tgt{flex:none;white-space:nowrap}
+/* Editing one saved task, in place of its row. */
+.np-saved-edit{display:flex;flex-direction:column;gap:9px;padding:11px;border:1px solid var(--neon);
+  border-radius:10px;background:rgba(var(--accent-rgb),.07)}
+.np-saved-edit .fld{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted)}
+.np-saved-edit textarea{resize:vertical;min-height:62px}
+.np-saved-edit .np-row.hidden{display:none}
 /* phones / APK: full-width Run, bigger tap targets, no keyboard hint (no Ctrl+Enter on touch) */
 @media(max-width:600px){
   .np-hint{display:none}
+  /* A saved task is name + target + three buttons — too much for one 360px line, so the actions
+     drop to their own full-width row (the same treatment .nj-acts gets for job rows). */
+  .np-saved-row{flex-wrap:wrap}
+  .np-saved-row .nj-acts{width:100%;justify-content:flex-end;margin-top:4px}
+  .np-saved{max-height:46vh}
+  .np-saved-edit .np-modes{flex-direction:column}
+  .np-saved-edit .np-run .btn{flex:1;min-width:0}
   .np-run{justify-content:stretch}
   .np-run .btn{flex:1;min-width:0}
   .np-mode{padding:11px 6px}

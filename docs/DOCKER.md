@@ -126,6 +126,22 @@ The app boots fine without the AI libraries (every ML import is lazy); the AI ta
 `POSTERCHANAI_NOSTR_ONLY=1`. You can switch a node to a full GPU profile later without losing data
 (same volumes).
 
+## Git server (git-over-nostr)
+
+The built-in git host is off by default. Turn it on with one flag:
+
+```bash
+POSTERCHANAI_GIT=1 POSTERCHANAI_GIT_PUBLIC_BASE=https://your-domain/git \
+  docker compose --profile cuda up -d
+```
+
+That enables the host on **:3053** (bound `0.0.0.0` so the published port works) and puts the public
+base into the clone URLs it hands out. Repos live on the `pc-data` volume
+(`/var/lib/posterchanai/git_repos`), and `git` + `git-http-backend` are already in the image.
+
+In production don't publish 3053 — front it with nginx `location /git/` (see [NGINX.md](NGINX.md)) so
+clones/pushes go over TLS. Full walkthrough: [GIT.md](GIT.md).
+
 ## Production (HTTPS / TLS)
 
 The container serves plain HTTP/WS — front it with **nginx** to get HTTPS, your own domain, and a

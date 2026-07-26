@@ -87,17 +87,26 @@ fi
 # Add-on: verify the built-in GRASP git host deps. No packages to install — it uses stdlib http.server
 # + psycopg2 (already required) + `git`/`git-http-backend` (ship together with the git package). This
 # just confirms git-http-backend is present at the expected path.
-if [ "$1" = "--git-host" ]; then
+# Prerequisite check for the built-in git server. Also run (non-fatally) by the main install so a
+# fresh box learns whether the git host will work BEFORE someone flips it on in Admin.
+check_git_host() {
     echo "Checking GRASP git host prerequisites..."
     if command -v git >/dev/null 2>&1; then echo "  git: $(git --version)"; else
-        echo "  MISSING: git — install it (Debian/Ubuntu: apt-get install git)"; exit 1; fi
+        echo "  MISSING: git — install it (Debian/Ubuntu: apt-get install git)"; return 1; fi
+    GITBK=""
     for p in /usr/libexec/git-core/git-http-backend /usr/lib/git-core/git-http-backend; do
-        if [ -x "$p" ]; then echo "  git-http-backend: $p"; FOUND=1; fi
+        if [ -x "$p" ]; then echo "  git-http-backend: $p"; GITBK="$p"; fi
     done
-    if [ -z "$FOUND" ]; then
-        echo "  MISSING: git-http-backend (ships with git; check /usr/libexec/git-core or /usr/lib/git-core)"; exit 1; fi
-    echo "OK — enable the host in Admin → Services (git_server_enabled). No extra packages needed."
-    exit 0
+    if [ -z "$GITBK" ]; then
+        echo "  MISSING: git-http-backend (ships with git; check /usr/libexec/git-core or /usr/lib/git-core)"; return 1; fi
+    echo "OK — enable the host in Admin → Services (git_server_enabled) and set its public base URL."
+    echo "     Repos will live under <Storage Path>/git_repos. Guide: docs/GIT.md"
+    return 0
+}
+
+if [ "$1" = "--git-host" ]; then
+    check_git_host
+    exit $?
 fi
 
 # =============================================================================
@@ -266,6 +275,11 @@ main() {
     # calls are turnkey (no separate ./install.sh --turn step). Non-fatal — a missing Go toolchain just leaves
     # calls on STUN-only until built later with ./install.sh --turn.
     setup_turn_server || print_warning "TURN relay build skipped (Go toolchain missing?); build later with ./install.sh --turn"
+
+    # Step 9f: Verify the built-in git server's prerequisites (git + git-http-backend). Nothing to
+    # install — it's stdlib + the git package — so this only reports, and the host still ships OFF
+    # (Admin → Services). Non-fatal: a box without git simply can't host repos.
+    check_git_host || print_warning "Git host prerequisites missing; docs/GIT.md explains what to install"
 
     # Step 10: Setup XPU image instance for Intel Arc
     setup_xpu_image_instance

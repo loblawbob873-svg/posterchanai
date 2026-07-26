@@ -3686,6 +3686,29 @@
       <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
     </div>`;
   }
+  // ---------- self-hosted (GRASP) repo state ----------
+  // ONE object holds what every panel of an open repo needs: which repo, which ref is selected, and
+  // whether this user may write. The panels read it instead of closing over a cloneUrl, so changing
+  // branch re-renders all of them consistently instead of only whichever one knew about the change.
+  let _rv=null;
+  // Writers = the repo's own maintainer ACL from its NIP-34 announcement (owner ∪ `maintainers`) — the
+  // SAME set the git host enforces on the signed request. This only decides whether to draw the Edit
+  // buttons; the host re-checks every write against the relay, so a forged UI can't gain anything.
+  function _rvCanWrite(ev){
+    if(GUEST || !ME || !ev) return false;
+    if(ev.pubkey===ME.pubkey) return true;
+    return (ev.tags||[]).some(t=>t[0]==='maintainers' && t.slice(1).includes(ME.pubkey));
+  }
+  // May THIS user commit to what is currently selected? Maintainer AND a branch (a tag is a snapshot;
+  // the host refuses a commit onto one, so offering an Edit button there would only ever fail).
+  function _rvMayEdit(){ return !!(_rv && _rv.canWrite && !_rv.isTag); }
+  function _rvUrl(route, params){
+    const q=new URLSearchParams({url:_rv.cloneUrl, ref:_rv.ref, ...(params||{})});
+    return `/client/git/${route}?${q}`;
+  }
+  async function _rvJson(route, params){
+    try{ return await fetch(_rvUrl(route,params)).then(r=>r.json()); }catch(_){ return {ok:false}; }
+  }
   function openRepo(e){
     if(!e) return;
     VIEW='repo'; _clearNav(); $('#view-title').textContent='Repo';
@@ -3700,6 +3723,8 @@
     // Files browser only for a self-hosted (Nostr-owned) repo — the clone path has an npub/hex owner
     // before <id>.git; a plain forge clone URL (GitHub/Gitea) has no readable file API here.
     const isGrasp=(()=>{ try{ const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean); const gi=sg.findIndex(s=>s.endsWith('.git')); return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1])); }catch(_){ return false; } })();
+    _rv = isGrasp ? {ev:e, cloneUrl, ref:'HEAD', refName:'', refs:null, canWrite:_rvCanWrite(e),
+                     filesLoaded:false, commitsLoaded:false, path:''} : null;
     feed.innerHTML=`<div class="repo-view">
       <button class="btn btn-ghost small" id="repo-back">← Repos</button>
       <div class="rv-head">
@@ -3717,6 +3742,10 @@
           <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
           ${wurl?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Web</a>`:''}
         </div>`:(wurl?`<div class="rv-clone"><a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a></div>`:'')}
+        ${isGrasp?`<div class="rv-refbar">
+          <button class="btn btn-ghost small rv-refbtn" id="rv-refpick" title="Switch branch or tag">⎇ <span id="rv-refname">default</span> ▾</button>
+          <span class="muted small" id="rv-refnote"></span>
+        </div>`:''}
       </div>
       <div class="rv-tabs" role="tablist">
         <button class="rv-tab active" data-tab="readme">📖 README</button>
@@ -3744,14 +3773,15 @@
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', cb.dataset.clone); } }; }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
-    // Files is lazy-loaded on first open (a git ls-tree round-trip).
-    let _filesLoaded=false, _commitsLoaded=false;
+    // Files/Commits are lazy-loaded on first open (a git round-trip each).
     $$('.rv-tab',feed).forEach(tb=> tb.onclick=()=>{
       $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x===tb));
       $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!==tb.dataset.tab);
-      if(tb.dataset.tab==='files' && !_filesLoaded){ _filesLoaded=true; _loadRepoFiles(feed, cloneUrl, ''); }
-      if(tb.dataset.tab==='commits' && !_commitsLoaded){ _commitsLoaded=true; _loadRepoCommits(feed, cloneUrl); }
+      if(!_rv) return;
+      if(tb.dataset.tab==='files' && !_rv.filesLoaded){ _rv.filesLoaded=true; _loadRepoFiles(feed, ''); }
+      if(tb.dataset.tab==='commits' && !_rv.commitsLoaded){ _rv.commitsLoaded=true; _loadRepoCommits(feed); }
     });
+    if(isGrasp) _rvLoadRefs(feed);
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
       const box=$('#rv-readme',feed); if(!box) return;
@@ -3810,16 +3840,53 @@
         };
       });
   }
+  // ---------- Branch / tag switcher (self-hosted GRASP repos) ----------
+  // Every browse route takes a ref, but nothing told the UI which refs EXIST, so the browser was stuck
+  // on one branch. One /refs read fills the picker and names the real default branch.
+  async function _rvLoadRefs(feed){
+    const j=await _rvJson('refs');
+    if(!_rv || VIEW!=='repo') return;
+    const btn=$('#rv-refpick',feed), lbl=$('#rv-refname',feed), note=$('#rv-refnote',feed);
+    if(!j || !j.ok){ if(note) note.textContent='branches unavailable'; return; }
+    _rv.refs=j;
+    if(_rv.ref==='HEAD'){ _rv.refName=j.default||''; }
+    if(lbl) lbl.textContent=_rv.refName||j.default||'HEAD';
+    const nb=(j.branches||[]).length, nt=(j.tags||[]).length;
+    if(note) note.textContent=`${nb} branch${nb===1?'':'es'}${nt?` · ${nt} tag${nt===1?'':'s'}`:''}`;
+    if(btn) btn.onclick=()=>{
+      const items=[]
+        .concat((j.branches||[]).map(b=>[ 'b:'+b.name, `⎇ ${b.name}` ]))
+        .concat((j.tags||[]).map(t=>[ 't:'+t.name, `🏷 ${t.name}` ]));
+      if(!items.length){ toast('this repo has no branches yet'); return; }
+      openMenuPopover(btn, items, pick=>{
+        const name=pick.slice(2), isTag=pick[0]==='t';
+        _rvSetRef(feed, isTag ? 'refs/tags/'+name : name, (isTag?'🏷 ':'')+name, isTag);
+      });
+    };
+  }
+  // Switching ref invalidates BOTH lazy panels — reload whichever is on screen now and let the other
+  // reload when it's next opened, so the two can never show different revisions of the same repo.
+  function _rvSetRef(feed, ref, label, isTag){
+    if(!_rv) return;
+    // A tag is a snapshot, not a branch — the host refuses a commit onto one, so don't offer editing.
+    _rv.ref=ref; _rv.refName=label||ref; _rv.path=''; _rv.isTag=!!isTag;
+    const lbl=$('#rv-refname',feed); if(lbl) lbl.textContent=_rv.refName;
+    const active=($('.rv-tab.active',feed)||{}).dataset||{};
+    _rv.filesLoaded=false; _rv.commitsLoaded=false;
+    if(active.tab==='files'){ _rv.filesLoaded=true; _loadRepoFiles(feed,''); }
+    else if(active.tab==='commits'){ _rv.commitsLoaded=true; _loadRepoCommits(feed); }
+  }
   // ---------- Commits (self-hosted GRASP repos) ----------
-  async function _loadRepoCommits(feed, cloneUrl){
-    const box=$('#rv-commits',feed); if(!box) return;
+  async function _loadRepoCommits(feed, path){
+    const box=$('#rv-commits',feed); if(!box || !_rv) return;
     box.innerHTML='<div class="spinner"></div>';
-    let j={}; try{ j=await fetch('/client/git/log?url='+encodeURIComponent(cloneUrl)+'&limit=100').then(r=>r.json()); }catch(_){}
-    if(VIEW!=='repo') return;
+    const j=await _rvJson('log', Object.assign({limit:'100'}, path?{path}:{}));
+    if(VIEW!=='repo' || !_rv) return;
     if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t read the commit history.</div>'; return; }
     const cs=j.commits||[];
-    if(!cs.length){ box.innerHTML='<div class="rv-empty muted small">No commits yet.</div>'; return; }
-    box.innerHTML=`<div class="cm-list">${cs.map(c=>`<div class="cm-row">
+    const scope=path?`<div class="rv-scope muted small">🕘 history of <code>${enc(path)}</code> · <a class="fb-crumb" role="button" tabindex="0" id="cm-allhist">show all commits</a></div>`:'';
+    if(!cs.length){ box.innerHTML=scope+'<div class="rv-empty muted small">No commits yet.</div>'; }
+    else box.innerHTML=scope+`<div class="cm-list">${cs.map(c=>`<div class="cm-row" data-sha="${enc(c.sha||'')}" title="View this commit’s changes">
         <div class="cm-main">
           <div class="cm-subj">${enc(c.subject||'(no message)')}</div>
           <div class="cm-meta"><span class="cm-by">${enc(c.author||'unknown')}</span>
@@ -3827,19 +3894,89 @@
         </div>
         <button class="cm-sha" data-sha="${enc(c.sha||'')}" title="copy full sha">${enc(c.short||'')}</button>
       </div>`).join('')}</div>
-      <div class="muted small" style="padding:10px 2px">${cs.length} most recent commit${cs.length===1?'':'s'}</div>`;
-    $$('.cm-sha',box).forEach(b=> b.onclick=async()=>{
+      <div class="muted small" style="padding:10px 2px">${cs.length} most recent commit${cs.length===1?'':'s'} on ${enc(_rv.refName||_rv.ref)}</div>`;
+    { const a=$('#cm-allhist',box); if(a){ a.onclick=()=>_loadRepoCommits(feed); a.onkeydown=ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); a.click(); } }; } }
+    // Copying the sha must not also open the diff — the button is inside the clickable row.
+    $$('.cm-sha',box).forEach(b=> b.onclick=async ev=>{
+      ev.stopPropagation();
       try{ await navigator.clipboard.writeText(b.dataset.sha); toast('commit sha copied'); }
-      catch(_){ window.prompt('Commit:', b.dataset.sha); }
+      catch(_){ await uiPrompt('Commit:', {value:b.dataset.sha}); }
     });
+    $$('.cm-row',box).forEach(r=> r.onclick=()=>_openRepoCommit(feed, r.dataset.sha));
+  }
+  // ---------- One commit's changes (the diff view) ----------
+  // Renders a unified diff per file. The host bounds the patch it sends and flags `truncated`, so this
+  // never has to defend against a multi-megabyte commit itself.
+  function _diffBody(patch){
+    const lines=(patch||'').split('\n');
+    // Drop git's file header (diff --git / index / mode / ---,+++) by cutting to the first hunk rather
+    // than filtering by prefix: a REMOVED line that itself began with "-- " renders as "--- " and a
+    // prefix filter would silently eat it.
+    let i=lines.findIndex(l=>l.startsWith('@@'));
+    if(i<0){
+      const bin=lines.find(l=>/^Binary files /.test(l));
+      return `<div class="dl dl-meta">${enc(bin||'(no textual changes)')}</div>`;
+    }
+    let oldNo=0, newNo=0, out=[];
+    for(; i<lines.length; i++){
+      const l=lines[i];
+      if(l.startsWith('@@')){
+        const m=/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+        if(m){ oldNo=+m[1]; newNo=+m[2]; }
+        out.push(`<div class="dl dl-hunk"><span class="dn"></span><span class="dn"></span><span class="dt">${enc(l)}</span></div>`);
+        continue;
+      }
+      const c=l[0];
+      if(c==='\\'){ out.push(`<div class="dl dl-meta"><span class="dn"></span><span class="dn"></span><span class="dt">${enc(l)}</span></div>`); continue; }
+      const cls = c==='+'?'dl-add' : c==='-'?'dl-del' : 'dl-ctx';
+      const on = c==='+' ? '' : String(oldNo++);
+      const nn = c==='-' ? '' : String(newNo++);
+      out.push(`<div class="dl ${cls}"><span class="dn">${on}</span><span class="dn">${nn}</span><span class="dt">${enc(l||' ')}</span></div>`);
+    }
+    return out.join('');
+  }
+  async function _openRepoCommit(feed, sha){
+    const box=$('#rv-commits',feed); if(!box || !sha || !_rv) return;
+    box.innerHTML='<div class="spinner"></div>';
+    let j={}; try{ j=await fetch(`/client/git/commit?url=${encodeURIComponent(_rv.cloneUrl)}&sha=${encodeURIComponent(sha)}`).then(r=>r.json()); }catch(_){}
+    if(VIEW!=='repo' || !_rv) return;
+    if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t load that commit.</div>'; _loadRepoCommits(feed); return; }
+    const files=j.files||[];
+    // Big diffs stay collapsed: opening a 4000-line file dump is a choice, not a default.
+    const BIG=400;
+    const filesHtml=files.map((f,ix)=>{
+      const n=(f.patch||'').split('\n').length;
+      const open = (!f.binary && n<=BIG) ? ' open' : '';
+      return `<details class="df"${open}><summary class="df-hd">
+          <span class="df-path">${enc(f.path||'')}</span>
+          <span class="df-stat">${f.binary?'<span class="df-bin">binary</span>':`<span class="df-add">+${f.additions|0}</span><span class="df-del">−${f.deletions|0}</span>`}</span>
+        </summary><div class="df-body" data-ix="${ix}">${f.binary?'<div class="dl dl-meta">Binary file — download it to inspect.</div>':_diffBody(f.patch)}</div></details>`;
+    }).join('');
+    box.innerHTML=`<div class="cmv">
+      <div class="cmv-top"><button class="btn btn-ghost small" id="cmv-back">← Commits</button>
+        <button class="btn btn-ghost small" id="cmv-copy" title="Copy the full sha"><code>${enc(j.short||'')}</code> ⧉</button></div>
+      <h3 class="cmv-subj">${enc(j.subject||'(no message)')}</h3>
+      ${j.body?`<pre class="cmv-body">${enc(j.body)}</pre>`:''}
+      <div class="cmv-meta muted small">${enc(j.author||'unknown')} · ${enc(j.at?new Date(j.at*1000).toLocaleString():'')}
+        · <span class="df-add">+${j.additions|0}</span> <span class="df-del">−${j.deletions|0}</span>
+        · ${j.file_count|0} file${(j.file_count|0)===1?'':'s'}${(j.parents||[]).length>1?' · merge':''}</div>
+      ${j.truncated?'<div class="rv-scope muted small">⚠️ This diff is large and has been shortened — clone the repo to see all of it.</div>':''}
+      ${filesHtml||'<div class="rv-empty muted small">This commit changed nothing.</div>'}
+    </div>`;
+    $('#cmv-back',box).onclick=()=>_loadRepoCommits(feed);
+    $('#cmv-copy',box).onclick=async()=>{
+      try{ await navigator.clipboard.writeText(j.sha||sha); toast('commit sha copied'); }
+      catch(_){ await uiPrompt('Commit:', {value:j.sha||sha}); }
+    };
   }
   // ---------- Files browser (self-hosted GRASP repos) ----------
   function _fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(1)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
-  async function _loadRepoFiles(feed, cloneUrl, path){
-    const box=$('#rv-files',feed); if(!box) return;
+  async function _loadRepoFiles(feed, path){
+    const box=$('#rv-files',feed); if(!box || !_rv) return;
+    _rv.path=path||'';
     box.innerHTML='<div class="spinner"></div>';
-    let j={}; try{ j=await fetch('/client/git/tree?url='+encodeURIComponent(cloneUrl)+'&path='+encodeURIComponent(path||'')).then(r=>r.json()); }catch(_){}
-    if(VIEW!=='repo') return;
+    const j=await _rvJson('tree', {path:path||''});
+    if(VIEW!=='repo' || !_rv) return;
     if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t list files.</div>'; return; }
     const parts=(path||'').split('/').filter(Boolean);
     // role/tabindex because these are href-less <a>s: without them Tab skipped the breadcrumbs entirely,
@@ -3862,28 +3999,146 @@
       <span class="fb-hmsg">${enc(h.subject||'')}</span>
       <span class="fb-hby">${enc(h.author||'')}</span>
       <span class="fb-hwhen" title="${enc(new Date((h.at||0)*1000).toLocaleString())}">${enc(h.at?timeAgo(h.at):'')}</span></div>`:'';
-    box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
+    const tools = _rvMayEdit()
+      ? `<div class="fb-tools"><button class="btn btn-ghost small" id="fb-new">＋ New file</button></div>` : '';
+    box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${tools}${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
     $$('.fb-crumb',box).forEach(a=>{
-      a.onclick=()=>_loadRepoFiles(feed,cloneUrl,a.dataset.p);
+      a.onclick=()=>_loadRepoFiles(feed,a.dataset.p);
       a.onkeydown=ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); a.click(); } };
     });
     $$('.fb-row',box).forEach(r=> r.onclick=()=>{
-      if(r.dataset.type==='tree') _loadRepoFiles(feed,cloneUrl,r.dataset.path);
-      else _viewRepoFile(feed,cloneUrl,r.dataset.path);
+      if(r.dataset.type==='tree') _loadRepoFiles(feed,r.dataset.path);
+      else _viewRepoFile(feed,r.dataset.path);
     });
+    { const nb=$('#fb-new',box); if(nb) nb.onclick=async()=>{
+        const dir=(path||'');
+        const name=await uiPrompt('New file path', {value:dir?dir+'/':'', placeholder:'docs/notes.md'});
+        if(name===null) return;
+        const p=(name||'').trim().replace(/^\/+/,'');
+        if(!p){ toast('a path is required'); return; }
+        _editRepoFile(feed, p, '', {isNew:true});
+      }; }
   }
-  async function _viewRepoFile(feed, cloneUrl, path){
-    const fv=$('#rv-fileview',feed); if(!fv) return;
+  // ---------- One file: view / download / edit / history ----------
+  async function _viewRepoFile(feed, path){
+    const fv=$('#rv-fileview',feed); if(!fv || !_rv) return;
     fv.innerHTML='<div class="spinner"></div>'; fv.scrollIntoView({block:'nearest'});
-    let j={}; try{ j=await fetch('/client/git/blob?url='+encodeURIComponent(cloneUrl)+'&path='+encodeURIComponent(path)).then(r=>r.json()); }catch(_){}
-    if(VIEW!=='repo') return;
+    const j=await _rvJson('blob', {path});
+    if(VIEW!=='repo' || !_rv) return;
     const name=path.split('/').pop();
     if(!j||!j.ok){ fv.innerHTML='<div class="rv-empty muted small">Couldn’t open the file.</div>'; return; }
-    if(j.binary){ fv.innerHTML=`<div class="fb-fileview"><div class="fb-fvhd">📄 ${enc(name)}</div><div class="muted small">Binary file · ${_fmtBytes(j.size||0)} — clone the repo to view it.</div></div>`; return; }
-    const isMd=/\.(md|markdown)$/i.test(name);
-    const body=isMd?`<div class="markdown">${mdToHtml(j.text||'')}</div>`:`<pre class="fb-code">${enc(j.text||'')}</pre>`;
-    fv.innerHTML=`<div class="fb-fileview"><div class="fb-fvhd">📄 ${enc(name)}</div>${body}</div>`;
-    if(isMd) fv.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
+    // "Download" is a plain link to the streaming endpoint, so the browser (and the app's WebView) uses
+    // its own save flow — fetching the bytes into JS just to re-offer them would break on big files.
+    const dl=_rvUrl('download',{path});
+    const acts=`<span class="fb-fvacts">
+        <a class="btn btn-ghost small" href="${enc(dl)}" download="${enc(name)}" title="Download this file">⬇ Download</a>
+        <button class="btn btn-ghost small" id="fv-hist" title="Commits that touched this file">🕘 History</button>
+        ${(_rvMayEdit() && !j.binary)?`<button class="btn btn-neon small" id="fv-edit">✏️ Edit</button>`:''}
+        ${_rvMayEdit()?`<button class="btn btn-ghost small" id="fv-del" style="color:var(--danger,#e0245e)">🗑 Delete</button>`:''}
+      </span>`;
+    const hd=`<div class="fb-fvhd">📄 <span class="fb-fvname">${enc(name)}</span>${acts}</div>`;
+    if(j.binary){
+      fv.innerHTML=`<div class="fb-fileview">${hd}<div class="muted small" style="padding:14px">Binary file · ${_fmtBytes(j.size||0)} — download it or clone the repo to inspect it.</div></div>`;
+    }else{
+      const isMd=/\.(md|markdown)$/i.test(name);
+      const body=isMd?`<div class="markdown">${mdToHtml(j.text||'')}</div>`:`<pre class="fb-code">${enc(j.text||'')}</pre>`;
+      fv.innerHTML=`<div class="fb-fileview">${hd}${body}</div>`;
+      if(isMd) fv.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
+    }
+    { const h=$('#fv-hist',fv); if(h) h.onclick=()=>{
+        $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x.dataset.tab==='commits'));
+        $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!=='commits');
+        _rv.commitsLoaded=true; _loadRepoCommits(feed, path);
+      }; }
+    { const e=$('#fv-edit',fv); if(e) e.onclick=()=>_editRepoFile(feed, path, j.text||'', {}); }
+    { const d=$('#fv-del',fv); if(d) d.onclick=async()=>{
+        if(!await uiConfirm(`Delete ${name} from ${_rv.refName||_rv.ref}?`)) return;
+        await _commitRepoFile(feed, {path, delete:true, base:'', message:'delete '+path});
+      }; }
+  }
+  // The editor. A plain monospace textarea on purpose: it has to work identically in the PWA, the
+  // desktop shell and on a phone keyboard, and a code-editor library would be a large dependency the
+  // relay-only client deliberately does without.
+  async function _editRepoFile(feed, path, text, opts){
+    const fv=$('#rv-fileview',feed); if(!fv || !_rv) return;
+    const o=opts||{};
+    const name=path.split('/').pop();
+    // Pin the branch tip as it is NOW: the commit is sent with it as `base`, so if someone else pushes
+    // while this editor is open the write is refused (409) instead of quietly reverting their work. It
+    // must be the tip of the whole ref — the file listing's header commit is only the newest commit that
+    // touched the directory being listed, which for a subdirectory is usually much older.
+    _rv.base='';
+    try{ const t=await _rvJson('log',{limit:'1'});
+      if(t && t.ok && (t.commits||[]).length) _rv.base=t.commits[0].sha||''; }catch(_){}
+    if(VIEW!=='repo' || !_rv) return;
+    fv.innerHTML=`<div class="fb-fileview fb-editing">
+      <div class="fb-fvhd">✏️ <span class="fb-fvname">${enc(path)}</span>
+        <span class="muted small">on ${enc(_rv.refName||_rv.ref)}</span></div>
+      <div class="fb-edit">
+        <textarea class="input fb-editor" id="fe-text" spellcheck="false" autocapitalize="off" autocorrect="off">${enc(text||'')}</textarea>
+        <input class="input" id="fe-msg" maxlength="200" placeholder="${o.isNew?`create ${enc(name)}`:`update ${enc(name)}`}">
+        <div class="fb-editacts">
+          <span class="muted small" id="fe-status">Signed with your Nostr key — the same authority as a push.</span>
+          <span class="fb-editbtns">
+            <button class="btn btn-ghost small" id="fe-cancel">Cancel</button>
+            <button class="btn btn-neon small" id="fe-save">✓ Commit</button>
+          </span>
+        </div>
+      </div></div>`;
+    fv.scrollIntoView({block:'nearest'});
+    const ta=$('#fe-text',fv);
+    // Tab inserts a tab instead of leaving the box — in a code editor that is what the key means.
+    ta.addEventListener('keydown',ev=>{
+      if(ev.key==='Tab'){ ev.preventDefault();
+        const s=ta.selectionStart, e=ta.selectionEnd;
+        ta.value=ta.value.slice(0,s)+'\t'+ta.value.slice(e); ta.selectionStart=ta.selectionEnd=s+1; }
+      if((ev.ctrlKey||ev.metaKey)&&ev.key==='Enter'){ ev.preventDefault(); $('#fe-save',fv).click(); }
+    });
+    setTimeout(()=>{ try{ ta.focus(); }catch(_){} },30);
+    $('#fe-cancel',fv).onclick=()=>{ if(o.isNew) fv.innerHTML=''; else _viewRepoFile(feed, path); };
+    $('#fe-save',fv).onclick=()=>_commitRepoFile(feed, {path, content:ta.value,
+      message:($('#fe-msg',fv).value||'').trim() || ((o.isNew?'create ':'update ')+path)});
+  }
+  // The write itself. Authorization is a NIP-98 (kind-27235) event signed by the user and bound to THIS
+  // repo's write route; the git host re-verifies it against the repo's NIP-34 maintainer list, so the
+  // web editor has exactly the authority of `git push` and no more. On success the host hands back the
+  // kind-30618 tags naming the new tip and we publish them signed by the user — that event is what
+  // authorizes the NEXT push, so skipping it would leave the repo's signed state behind reality.
+  async function _commitRepoFile(feed, body){
+    if(GUEST || !ME){ _guestPrompt(); return; }
+    if(!_rv) return;
+    const st=$('#fe-status',feed) || null;
+    const say=t=>{ if(st) st.textContent=t; else toast(t); };
+    say('signing…');
+    let auth;
+    try{
+      const u=_rv.cloneUrl.replace(/\/+$/,'')+'/edit';
+      auth='Nostr '+btoa(JSON.stringify(await sign(27235,'',[['u',u],['method','POST']])));
+    }catch(err){ say('couldn’t sign: '+((err&&err.message)||err)); return; }
+    say('committing…');
+    let j={};
+    try{
+      j=await fetch('/client/git/edit',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({url:_rv.cloneUrl, ref:_rv.ref==='HEAD'?(_rv.refName||'HEAD'):_rv.ref,
+          path:body.path, content:body.content||'', message:body.message||'',
+          // `base` guards an EDIT (opened minutes ago); a delete was just confirmed, so it relies on
+          // the host's own read-then-update-ref CAS instead of a stale editor-session base.
+          base:(body.base!==undefined?body.base:(_rv.base||'')), delete:!!body.delete, auth})}).then(r=>r.json());
+    }catch(err){ say('the server didn’t answer'); return; }
+    if(!j || !j.ok){
+      const msg = j && (j.detail||j.error) || 'commit failed';
+      say(j && j.error==='stale' ? 'The branch moved — reopen the file and re-apply your change.' : msg);
+      return;
+    }
+    if(Array.isArray(j.state_tags_30618) && j.state_tags_30618.length){
+      try{ await publish(30618,'',j.state_tags_30618); }
+      catch(_){ /* the commit landed; a failed state publish is reported by the next push, not here */ }
+    }
+    toast(j.unchanged?'no changes to commit':('committed '+(j.short||'')));
+    // Re-render from the server rather than from what we just typed, so what's on screen is what landed.
+    _rv.commitsLoaded=false;
+    await _loadRepoFiles(feed, _rv.path||'');
+    if(!body.delete) _viewRepoFile(feed, body.path);
   }
   // ---------- live streams (NIP-53 Live Activities, kind 30311) ----------
   function streamStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'').toLowerCase(); }
@@ -9341,25 +9596,47 @@
   window.__ensureFileAuth = ensureFileAuth;   // used by the image error path below
 
   async function renderAiFiles(pane){
-    let files=[], err='';
+    let files=[], orphans=[], orphanBytes=0, err='';
     await ensureFileAuth();          // the thumbnails below hit /client/file — cookie must exist first
     try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
       const r=await fetch('/client/ai-files',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
       if(r && r.ok===false) err=r.error||'request failed';
-      files=(r&&r.files)||[]; }catch(e){ err=e.message||'sign/fetch failed'; }
+      files=(r&&r.files)||[]; orphans=(r&&r.orphans)||[]; orphanBytes=(r&&r.orphan_bytes)||0; }catch(e){ err=e.message||'sign/fetch failed'; }
+    // Unreferenced artifacts: blobs whose chat is gone, so nothing can show or open them. They still
+    // occupy storage (this pile reached GBs unnoticed), so report the size and offer one clean-up.
+    const orphanBar = orphans.length
+      ? `<div class="files-orphans">🧹 <b>${orphans.length}</b> unreferenced artifact${orphans.length===1?'':'s'} · ${_fmtBytes(orphanBytes)}
+           <span class="muted small">left over from deleted chats — nothing can open them</span>
+           <button class="btn btn-red small" id="orphan-prune">Clean up</button></div>` : '';
     // Always show the section so it's discoverable. Surface errors/empty rather than vanishing.
     if(!files.length){
-      pane.innerHTML=`<div class="empty" style="margin:16px">${err?('Couldn\'t load: '+enc(err)):'No AI chat files yet — upload a file or generate an image in PosterChan AI.'}</div>`;
+      pane.innerHTML=orphanBar+`<div class="empty" style="margin:16px">${err?('Couldn\'t load: '+enc(err)):'No AI chat files yet — upload a file or generate an image in PosterChan AI.'}</div>`;
+      _wireOrphanPrune(pane);
       return;
     }
-    pane.innerHTML=`<div class="files-grid">${files.map(f=>{
+    pane.innerHTML=orphanBar+`<div class="files-grid">${files.map(f=>{
         const isImg=/^image\//.test(f.mime)||f.kind==='generated';
         const thumb=isImg?`<img src="${enc(thumbUrl(f.url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
         return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
       }).join('')}</div>`;
     $$('.del',pane).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
     $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    _wireOrphanPrune(pane);
+  }
+  function _wireOrphanPrune(pane){
+    const b=$('#orphan-prune',pane); if(!b) return;
+    b.onclick=async()=>{
+      if(!await uiConfirm('Delete every unreferenced artifact? They belong to chats that no longer exist and cannot be opened.')) return;
+      b.disabled=true; b.textContent='Cleaning…';
+      try{ const auth=await sign(27235,'ai-files',[['p',ME.pubkey]]);
+        const r=await fetch('/client/ai-files-prune',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+        if(r&&r.ok) toast(`freed ${_fmtBytes(r.bytes||0)} (${r.deleted||0} file${r.deleted===1?'':'s'})`);
+        else toast('clean-up failed');
+      }catch(_){ toast('clean-up failed'); }
+      renderBlossom();
+    };
   }
   async function delAiFile(sha){
     if(!await uiConfirm('Delete this AI file?')) return;
@@ -11161,18 +11438,56 @@
         $$('.np-tab',root).forEach(x=>x.classList.toggle('active',x===t));
         $$('.np-tabpanel',root).forEach(p=>p.classList.toggle('hidden', p.dataset.panel!==t.dataset.tab));
       });
-      // --- saved tasks: render, run, delete ---
+      // --- saved tasks: render, run, EDIT, delete ---
+      // A saved task was write-once: you could run or delete it, but a typo in the command (or wanting
+      // it pointed at a different node) meant deleting it and building it again from scratch. `editIdx`
+      // swaps that one row for a real editor — every field a task has, in the same modal, no dialogs.
       const savedBox=$('#np-saved',root);
-      const renderSaved=()=>{ const list=_agentSavedGet();
+      const renderSaved=(editIdx)=>{ const list=_agentSavedGet();
         if(!list.length){ savedBox.innerHTML='<p class="muted small">No saved tasks yet. Set up a task above and hit ⭐ Save task.</p>'; return; }
-        savedBox.innerHTML=list.map((t,i)=>`<div class="np-saved-row">
+        const rowHtml=(t,i)=>`<div class="np-saved-row">
           <span class="nj-ic">${t.mode==='agent'?'🤖':'⌨️'}</span>
           <span class="np-saved-name" title="${enc(_agentTaskCmd(t))}">${enc(t.name||t.text)}</span>
           <span class="np-saved-tgt muted small">${enc(t.all?'all':(t.node||'local'))}</span>
-          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-red small nps-del" data-i="${i}">🗑</button></span>
-        </div>`).join('');
+          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-ghost small nps-edit" data-i="${i}" title="Edit this task">✏️</button><button class="btn btn-red small nps-del" data-i="${i}" title="Delete this task">🗑</button></span>
+        </div>`;
+        const editHtml=(t,i)=>`<div class="np-saved-edit" data-i="${i}">
+          <label class="fld">Name<input class="input" id="nse-name" value="${enc(t.name||'')}" placeholder="e.g. Nightly disk check"></label>
+          <div class="np-modes">
+            <label class="np-mode${t.mode==='agent'?' active':''}"><input type="radio" name="nse-mode" value="agent"${t.mode==='agent'?' checked':''}> 🤖 Ask the agent</label>
+            <label class="np-mode${t.mode==='agent'?'':' active'}"><input type="radio" name="nse-mode" value="cmd"${t.mode==='agent'?'':' checked'}> ⌨️ Run a command</label>
+          </div>
+          <div class="np-row${oneNode?' hidden':''}">
+            <label class="np-lbl">Node</label>
+            <select class="input" id="nse-node">${nodes.map(n=>`<option value="${enc(n)}"${n===(t.node||_defNode)?' selected':''}>${enc(n)}</option>`).join('')}</select>
+            <label class="np-all"><input type="checkbox" id="nse-all"${t.all?' checked':''}> All nodes</label>
+          </div>
+          <textarea class="input" id="nse-text" rows="3" placeholder="What should this task do?">${enc(t.text||'')}</textarea>
+          <div class="np-run"><button class="btn btn-ghost small" id="nse-cancel">Cancel</button><button class="btn btn-neon small" id="nse-save">✓ Save</button></div>
+        </div>`;
+        savedBox.innerHTML=list.map((t,i)=> i===editIdx ? editHtml(t,i) : rowHtml(t,i)).join('');
         savedBox.querySelectorAll('.nps-run').forEach(b=> b.onclick=()=>{ const t=_agentSavedGet()[+b.dataset.i]; if(t) _nodeRun(_agentTaskCmd(t), true); });
+        savedBox.querySelectorAll('.nps-edit').forEach(b=> b.onclick=()=>renderSaved(+b.dataset.i));
         savedBox.querySelectorAll('.nps-del').forEach(b=> b.onclick=async()=>{ const list=_agentSavedGet(); const t=list[+b.dataset.i]; if(t&&await uiConfirm(`Delete saved task “${t.name||t.text}”?`)){ list.splice(+b.dataset.i,1); _agentSavedSet(list); renderSaved(); } });
+        const ed=$('.np-saved-edit',savedBox);
+        if(ed){
+          $$('.np-mode',ed).forEach(l=> l.addEventListener('change',()=>$$('.np-mode',ed).forEach(x=>x.classList.toggle('active',x.querySelector('input').checked))));
+          $('#nse-cancel',ed).onclick=()=>renderSaved();
+          $('#nse-save',ed).onclick=()=>{
+            const txt=($('#nse-text',ed).value||'').trim();
+            if(!txt){ toast('The task can’t be empty'); $('#nse-text',ed).focus(); return; }
+            // Re-read the list at SAVE time: it may have changed under an open editor (another row
+            // deleted), and writing back a stale copy would resurrect what was deleted.
+            const cur=_agentSavedGet(); const i=+ed.dataset.i;
+            if(!cur[i]){ toast('That task is gone'); renderSaved(); return; }
+            cur[i]={name:(($('#nse-name',ed).value||'').trim()||txt),
+                    mode:(($('input[name="nse-mode"]:checked',ed)||{}).value)||'agent',
+                    node:$('#nse-node',ed)?$('#nse-node',ed).value:(cur[i].node||_defNode),
+                    all:!!($('#nse-all',ed)&&$('#nse-all',ed).checked), text:txt};
+            _agentSavedSet(cur); renderSaved(); toast('Task updated');
+          };
+          setTimeout(()=>{ try{ $('#nse-name',ed).focus(); }catch(_){} },30);
+        }
       };
       renderSaved();
       $('#np-save-cur',root).onclick=async()=>{ const text=inp.value.trim(); if(!text){ inp.focus(); toast('Fill in the task first, then save it'); return; }

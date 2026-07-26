@@ -46,6 +46,10 @@ x-common: &common
     # app, so only needed for direct use); 8189/udp = WebRTC media (forward this for remote phones).
     - "${POSTERCHANAI_STREAM_WEBRTC_PORT:-8889}:8889/tcp"
     - "${POSTERCHANAI_STREAM_WEBRTC_UDP_PORT:-8189}:8189/udp"
+    # Built-in GRASP git server (only used with POSTERCHANAI_GIT=1). Publish it only if git clients
+    # hit the container directly; the usual setup fronts it with nginx `location /git/` and leaves
+    # this port on the LAN. See docs/GIT.md.
+    - "${POSTERCHANAI_GIT_PORT:-3053}:3053"
   environment:
     - POSTERCHANAI_PORT=3051
     # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
@@ -59,6 +63,11 @@ x-common: &common
     # Blossom at /blossom (same port as the app; front with TLS). Blobs default to the storage
     # server (proxy) and fall back to local on the data volume. See docs/BLOSSOM.md.
     - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+    # Turnkey git server: set POSTERCHANAI_GIT=1 and the app enables the built-in git-over-nostr
+    # host on :3053 (bound 0.0.0.0 so the published port is reachable). Set the public base URL too
+    # or the clone URLs it hands out come back empty. Repos live on the data volume. See docs/GIT.md.
+    - POSTERCHANAI_GIT=${POSTERCHANAI_GIT:-0}
+    - POSTERCHANAI_GIT_PUBLIC_BASE=${POSTERCHANAI_GIT_PUBLIC_BASE:-}
     # Turnkey save-to-Blossom stream recording: set POSTERCHANAI_STREAM_RECORD=1 (needs POSTERCHANAI_STREAM=1).
     # Records to POSTERCHANAI_STREAM_RECORD_DIR (default /tmp/posterchanai-streams) then uploads to Blossom;
     # mount that path as tmpfs if you want it RAM-backed. Per-user opt-in still applies. See docs/STREAMING.md.
@@ -155,6 +164,8 @@ services:
       # Public base URL auto-derives from the request (works out of the box on the LAN IP); set
       # blossom_public_url in Admin → Blossom to a real https domain in production.
       - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-1}
+      - POSTERCHANAI_GIT=${POSTERCHANAI_GIT:-0}
+      - POSTERCHANAI_GIT_PUBLIC_BASE=${POSTERCHANAI_GIT_PUBLIC_BASE:-}
       - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
       - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
@@ -221,6 +232,8 @@ services:
       - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
       - POSTERCHANAI_NOSTR_ONLY=${POSTERCHANAI_NOSTR_ONLY:-0}
       - POSTERCHANAI_BLOSSOM=${POSTERCHANAI_BLOSSOM:-0}
+      - POSTERCHANAI_GIT=${POSTERCHANAI_GIT:-0}
+      - POSTERCHANAI_GIT_PUBLIC_BASE=${POSTERCHANAI_GIT_PUBLIC_BASE:-}
       - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
       - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 

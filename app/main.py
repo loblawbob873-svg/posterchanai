@@ -347,6 +347,25 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding Blossom settings: {e}")
 
+        # Turnkey Docker git host: when POSTERCHANAI_GIT=1, enable the built-in GRASP git server and
+        # bind 0.0.0.0 so the published container port is reachable (127.0.0.1 inside a container is
+        # not). Mirrors the relay's seeding: FORCE the enable flag (a declarative deployment directive
+        # must win on an existing volume where apply_defaults already wrote "false"), seed the rest
+        # only if absent so admin tuning survives.
+        if os.environ.get("POSTERCHANAI_GIT", "0") in ("1", "true"):
+            try:
+                from app.services import settings_store as _ss
+                _ss.put("git_server_enabled", "true")
+                if not _ss.exists("git_server_bind"):
+                    _ss.put("git_server_bind", "0.0.0.0")
+                _gbase = os.environ.get("POSTERCHANAI_GIT_PUBLIC_BASE")
+                if _gbase and not _ss.exists("git_server_public_base"):
+                    # Clone URLs are built from this, so a wrong/missing value produces unusable ones.
+                    _ss.put("git_server_public_base", _gbase.rstrip("/"))
+                logging.info("Git host seeded from POSTERCHANAI_GIT env")
+            except Exception as e:
+                logging.error(f"Error seeding git host settings: {e}")
+
         # (Turnkey out-of-box config — proxy/tor/torrent on + wired, blossom backend local, upstream
         # relays populated, timeline backfill on — lives in app/database.py default_settings, seeded
         # on first run for EVERY install path: install.sh, Docker, manual. No install-type-specific
