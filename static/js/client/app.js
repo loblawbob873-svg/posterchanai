@@ -3660,11 +3660,11 @@
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
-        ${CFG.git_host_base?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
-        <button class="btn ${CFG.git_host_base?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
+        ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
+        <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
       </div>
-      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). '+(CFG.git_host_base?'Create one ↑':'Announce yours ↑')+'</div>'}</div>`;
+      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). '+(_gitHostBase()?'Create one ↑':'Announce yours ↑')+'</div>'}</div>`;
     $('#repo-new').onclick=()=>publishRepo();
     { const cb=$('#repo-create'); if(cb) cb.onclick=()=>createRepo(); }
     // Card wiring is re-applied after every filter render, since filtering replaces the cards.
@@ -3691,6 +3691,14 @@
       q.oninput=apply;
       q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; apply(); } };
     }
+  }
+  // The GRASP git host base for creating a repo from THIS node: the operator's public_base if set, else
+  // (on a git-PROXY node — e.g. the one serving /client — that has no local base) this client's own
+  // origin + /git. '' when the node neither hosts nor proxies git → the Create button stays hidden.
+  function _gitHostBase(){
+    if(CFG.git_host_base) return String(CFG.git_host_base).replace(/\/+$/,'');
+    if(CFG.git_create_available){ try{ return (self.location.origin||'').replace(/\/+$/,'')+'/git'; }catch(_){ } }
+    return '';
   }
   // Slugify a repo id to the git host's allowlist (^[a-z0-9][a-z0-9._-]{0,99}$) so a bad id is rejected
   // client-side and the create clone URL always matches what the host will accept.
@@ -3727,7 +3735,7 @@
   // tutorial. Provision is NIP-98-signed by the owner and re-verified by the git host (owner+allowlist).
   function createRepo(){
     if(GUEST || !ME){ _guestPrompt(); return; }
-    if(!CFG.git_host_base){ toast('this node has no git host configured'); return; }
+    if(!_gitHostBase()){ toast('this node has no git host configured'); return; }
     modal(`<h3>🌱 Create a repo on ${enc(CFG.name||'this node')}</h3>
       <p class="muted small">Provisions an empty repo hosted here you can <code>git push</code> to, then announces it (NIP-34).</p>
       <label class="fld">Repo id <span class="muted small">(letters, digits, . _ - — e.g. my-app)</span><input class="input" id="cr-d" placeholder="my-app"></label>
@@ -3749,7 +3757,7 @@
     const d=_repoSlug(v('cr-d')), name=v('cr-name'), desc=v('cr-desc');
     const priv=!!(($('#cr-private',root)||{}).checked);
     if(!d){ st.textContent='A repo id is required (letters, digits, . _ -).'; return; }
-    const base=(CFG.git_host_base||'').replace(/\/+$/,'');
+    const base=_gitHostBase();
     let npub; try{ npub=NT().nip19.npubEncode(ME.pubkey); }catch(_){ st.textContent='no key to own the repo.'; return; }
     const clone=`${base}/${npub}/${d}.git`;
     st.textContent='signing…';

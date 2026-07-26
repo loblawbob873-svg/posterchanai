@@ -168,11 +168,14 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
-        # GRASP git host: the public clone-URL base (e.g. https://poster.place/git) and whether the
-        # host is on. The client uses these ONLY to decide whether to offer "Create a hosted repo" and
-        # to build the clone URL it signs — /client/git/create re-verifies the NIP-98 + allowlist.
-        "git_host_base": (_setting(db, "git_server_public_base", "") if
-                          _setting(db, "git_server_enabled", "false").lower() == "true" else ""),
+        # GRASP git host for the client's "Create repo" flow. A node can HOST git (git_server_enabled)
+        # OR PROXY it to the hosting node (git_server_proxy_url) — the node serving /client is usually the
+        # PROXY (e.g. server1 → nas), which has no local public_base. So expose the base when known AND a
+        # "can create here" flag; the client falls back to its own origin + /git when the base is blank.
+        # /client/git/create re-verifies the NIP-98 + the allowlist on the hosting node regardless.
+        "git_host_base": _setting(db, "git_server_public_base", ""),
+        "git_create_available": (_setting(db, "git_server_enabled", "false").lower() == "true"
+                                 or bool(_setting(db, "git_server_proxy_url", ""))),
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
         # Fresh install with no admin yet → the client offers first-run "become admin" setup
