@@ -1116,6 +1116,171 @@ async def link_preview(url: str):
     return JSONResponse(data)
 
 
+# ---------- NIP-34 git repo README bridge ----------
+# Discover → Git Repos lists kind-30617 repo announcements. Until a native Nostr git host exists,
+# the README is fetched from the repo's existing forge (Gitea/Forgejo/GitHub/GitLab) given its
+# clone/web URL. Best-effort over many forges; SSRF-guarded; size-capped.
+_readme_cache: dict[str, tuple[float, dict]] = {}   # url -> (expires, {ok, markdown, source})
+_README_TTL = 600.0
+_README_MAX = 524288   # 512 KB cap on the fetched body
+_git_creds_cache: dict[str, object] = {"t": 0.0, "map": {}}
+
+
+def _git_host_creds() -> dict:
+    """HTTP basic-auth creds for the node's OWN git host, parsed from this checkout's git remotes
+    (e.g. an `origin` like https://user:token@git.example.com/...). Used ONLY to read a README from
+    that exact host when it is sign-in-gated — the creds are never attached to any other host, so
+    this can't leak them via SSRF. Cached for 5 min."""
+    now = time.time()
+    cached = _git_creds_cache.get("map") or {}
+    if cached and now - float(_git_creds_cache.get("t") or 0) < 300:
+        return cached   # type: ignore[return-value]
+    import subprocess
+    from urllib.parse import urlparse, unquote
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    out: dict = {}
+    try:
+        res = subprocess.run(["git", "-C", root, "remote", "-v"],
+                             capture_output=True, text=True, timeout=5)
+        for line in (res.stdout or "").splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            p = urlparse(parts[1])
+            if p.scheme in ("http", "https") and p.username and p.password and p.hostname:
+                out[p.hostname.lower()] = (unquote(p.username), unquote(p.password))
+    except Exception as e:
+        logger.debug("[client] git remote creds parse failed: %s", e)
+    _git_creds_cache["t"] = now
+    if out:
+        _git_creds_cache["map"] = out
+    return out
+
+
+def _readme_candidates(url: str) -> list:
+    """Derive candidate raw-README URLs from a clone/web URL across common forges. Returns a list of
+    (url, kind) where kind is 'raw' (plain markdown body) or 'api' (JSON with base64 `content`)."""
+    from urllib.parse import urlparse
+    url = (url or "").strip()
+    if not url:
+        return []
+    web = url[:-4] if url.endswith(".git") else url    # strip trailing .git → web base
+    web = web.rstrip("/")
+    p = urlparse(web)
+    host = (p.hostname or "").lower()
+    scheme = p.scheme or "https"
+    origin = f"{scheme}://{p.netloc}"
+    segs = [s for s in p.path.split("/") if s]
+    owner = segs[0] if len(segs) >= 1 else ""
+    repo = segs[1] if len(segs) >= 2 else ""
+    branches = ["main", "master"]
+    names = ["README.md", "readme.md", "README", "readme"]
+    cands: list = []
+    if owner and repo:
+        if host == "github.com":
+            cands.append((f"https://api.github.com/repos/{owner}/{repo}/readme", "api"))
+        else:
+            # Gitea/Forgejo readme API (base64) — best-effort; not on every version.
+            cands.append((f"{origin}/api/v1/repos/{owner}/{repo}/readme", "api"))
+    if host == "github.com" and owner and repo:
+        for b in branches:
+            for n in names:
+                cands.append((f"https://raw.githubusercontent.com/{owner}/{repo}/{b}/{n}", "raw"))
+    if "gitlab" in host and owner and repo:
+        for b in branches:
+            for n in names:
+                cands.append((f"{web}/-/raw/{b}/{n}", "raw"))
+    # Gitea/Forgejo raw (both path shapes) + a generic <web>/raw/<b>/<name>.
+    for b in branches:
+        for n in names:
+            cands.append((f"{web}/raw/branch/{b}/{n}", "raw"))
+    for b in branches:
+        for n in names:
+            cands.append((f"{web}/raw/{b}/{n}", "raw"))
+    seen: set = set()
+    out: list = []
+    for c in cands:
+        if c[0] in seen:
+            continue
+        seen.add(c[0])
+        out.append(c)
+    return out
+
+
+def _looks_like_html_page(text: str) -> bool:
+    """A forge that requires sign-in serves an HTML login page (200) instead of the raw file — reject
+    it so a login page never masquerades as a README. Real markdown may contain inline HTML, but a
+    full document starts with a doctype / <html>."""
+    head = (text or "").lstrip()[:200].lower()
+    return head.startswith("<!doctype html") or head.startswith("<html")
+
+
+@router.get("/git/readme")
+async def git_readme(url: str):
+    """Fetch a repo's README markdown from its forge given a clone/web URL — powers Discover → Git
+    Repos' repo-detail view. Public helper (mirrors /preview): SSRF-guarded, size-capped, best-effort
+    across Gitea/Forgejo/GitHub/GitLab. Returns {ok, markdown, source} or {ok:false, error}."""
+    from urllib.parse import urlparse
+    from app.services import rss_service
+    if not url or not url.startswith(("http://", "https://")):
+        return JSONResponse({"ok": False, "error": "bad url"}, status_code=400)
+    now = time.time()
+    hit = _readme_cache.get(url)
+    if hit and hit[0] > now:
+        return JSONResponse(hit[1])
+    creds = _git_host_creds()
+    result = {"ok": False, "error": "no README found"}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0), follow_redirects=False,
+                                     headers={"User-Agent": "PosterChanBot/1.0",
+                                              "Accept": "application/vnd.github.raw, text/plain, */*"}) as client:
+            for cand_url, kind in _readme_candidates(url):
+                if not rss_service.looks_fetchable(cand_url):
+                    continue
+                host = (urlparse(cand_url).hostname or "").lower()
+                # The node's OWN git forge is deliberately self-hosted (often on the LAN), so it fails
+                # the resolve-based private-IP guard. Trust ONLY the exact host(s) we hold git creds for
+                # (mirrors search_service's trusted_domains); every other host keeps the strict SSRF check.
+                trusted = host in creds
+                if not trusted and not await asyncio.to_thread(rss_service.is_safe_host, cand_url):
+                    continue
+                auth = httpx.BasicAuth(creds[host][0], creds[host][1]) if trusted else None
+                try:
+                    async with client.stream("GET", cand_url, auth=auth) as resp:
+                        if resp.status_code != 200:
+                            continue
+                        body = b""
+                        async for chunk in resp.aiter_bytes():
+                            body += chunk
+                            if len(body) > _README_MAX:
+                                break
+                    text = body.decode("utf-8", "ignore")
+                except Exception:
+                    continue
+                if kind == "api":
+                    try:
+                        obj = json.loads(text)
+                        enc = (obj.get("encoding") or "").lower()
+                        content = obj.get("content") or ""
+                        md = base64.b64decode(content).decode("utf-8", "ignore") if enc == "base64" else content
+                    except Exception:
+                        continue
+                else:
+                    md = text
+                if not md or not md.strip() or _looks_like_html_page(md):
+                    continue
+                result = {"ok": True, "markdown": md[:_README_MAX], "source": cand_url}
+                break
+    except Exception as e:
+        logger.debug("[client] git readme fetch failed for %s: %s", url, e)
+        result = {"ok": False, "error": "fetch failed"}
+    _readme_cache[url] = (now + _README_TTL, result)
+    if len(_readme_cache) > 500:
+        _readme_cache.clear()
+    return JSONResponse(result)
+
+
 _nip05_cache: dict[str, tuple[float, dict]] = {}   # "domain|name" -> (expires, data)
 _NIP05_TTL = 600.0
 
