@@ -281,6 +281,11 @@ class _Handler(BaseHTTPRequestHandler):
         if info is None:
             return self._deny(404, "not found")
         owner_hex, repo_id, rest = info
+        # CREATE is the one POST allowed when the repo does NOT exist yet — a NIP-98-authorized
+        # provision (the web "New repo" button). Handled before the repo_exists gate below; it is
+        # idempotent (creating an existing repo just returns its clone URL + announce tags).
+        if method == "POST" and rest == "create":
+            return self._serve_create(owner_hex, repo_id)
         if not ghs.repo_exists(owner_hex, repo_id):
             return self._deny(404, "no such repo")        # never auto-create on read/GET
         # RAW single-file read (README + file browsing in the client's repo view):
@@ -698,6 +703,80 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --- write: commit one file change (the web editor) -----------------------------------------
     _EDIT_MAX = 2 * 1024 * 1024      # a text editor's file, not an asset upload
+
+    def _serve_create(self, owner_hex: str, repo_id: str):
+        """POST /<owner>/<id>.git/create — provision a bare repo, authorized by a NIP-98 header signed
+        by the OWNER whose npub is on git_server_allowlist. Body (JSON): {name?, description?, private?}.
+
+        Idempotent (re-creating an existing repo just returns its URLs). Returns the clone URL + the
+        suggested NIP-34 30617 tags for the CLIENT to sign+publish — the announcement is the user's own
+        event, exactly like the web "Announce a repo" flow, so this endpoint never signs on their behalf."""
+        from app.services.nostr import nostr_service
+        # WRITE-strength NIP-98: must be signed by the owner (allowed={owner}) and bound to THIS create
+        # route, so a header scoped to another repo/route can't be replayed to provision.
+        signer = git_auth.verify_nip98(self.headers.get("Authorization", ""), "POST",
+                                       "%s.git/create" % repo_id, {owner_hex},
+                                       max_skew=int(_CONFIG.get("write_skew", 120)), require_method=True)
+        if not signer:
+            return self._deny(401, "a NIP-98 signature from the repo owner is required", auth=True)
+        # Provisioning gate: the owner npub must be on git_server_allowlist (admins add it in Admin →
+        # Services). An empty allowlist means "nobody self-provisions" — fail closed with a clear note.
+        allow = set()
+        for tok in (_CONFIG.get("allowlist", "") or "").replace(",", "\n").split():
+            h = nostr_service.to_pubkey_hex(tok.strip())
+            if h:
+                allow.add(h)
+        if owner_hex not in allow:
+            return self._deny(403, "your npub is not allowed to create repos here — ask the operator "
+                                   "to add it to git_server_allowlist")
+        try:
+            clen = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._deny(400, "bad content-length")
+        body = {}
+        if clen > 0:
+            if clen > 64 * 1024:
+                return self._deny(413, "create body too large")
+            try:
+                body = json.loads(self.rfile.read(clen).decode("utf-8"))
+            except Exception:
+                return self._deny(400, "bad json body")
+            if not isinstance(body, dict):
+                return self._deny(400, "bad json body")
+        # IDEMPOTENT + SAFE: if the repo already exists, do NOT re-run create_repo. create_repo
+        # re-applies pcai.private / pcai.readers config on EVERY call, so a second "create" (a network
+        # retry, or reusing an id) would flip a PRIVATE repo public and WIPE its readers ACL — the web
+        # proxy sends no `readers` and defaults `private` to false. Return the existing repo's URLs/tags
+        # using its ACTUAL stored private state, changing nothing on disk. (Same wipe class as the
+        # replaceable-list / blossom-whitelist bugs: never rebuild an ACL from an empty request.)
+        if ghs.repo_exists(owner_hex, repo_id):
+            created, private = False, ghs.is_private(owner_hex, repo_id)
+        else:
+            res = ghs.create_repo(owner_hex, repo_id, private=bool(body.get("private")))
+            if not res.get("ok"):
+                return self._deny(400, res.get("error", "create failed"))
+            created, private = bool(res.get("created")), bool(body.get("private"))
+
+        base = (_CONFIG.get("public_base", "") or "").rstrip("/")
+        npub = nostr_service.npub_of(owner_hex) or owner_hex
+        clone = "%s/%s/%s.git" % (base, npub, repo_id) if base else ""
+        out = {"ok": True, "owner": owner_hex, "npub": npub, "repo_id": repo_id,
+               "private": private, "clone": clone, "created": created}
+        if not private:
+            # Public repos: hand back the 30617 tags for the client to sign. Private repos are never
+            # announced (no 30617/30618), matching grasp_selfhost --private + create_repo(private=True).
+            tags = [["d", repo_id]]
+            if body.get("name"):
+                tags.append(["name", str(body["name"])[:200]])
+            if body.get("description"):
+                tags.append(["description", str(body["description"])[:1000]])
+            if clone:
+                tags.append(["clone", clone])
+            tags.append(["maintainers", owner_hex])
+            tags.append(["alt", "git repository: %s" % str(body.get("name") or repo_id)[:80]])
+            out["announce_tags_30617"] = tags
+        log.info("[git-host] create %s/%s by %s (private=%s)", npub[:12], repo_id, signer[:12], private)
+        return self._json_out(out)
 
     def _serve_edit(self, owner_hex: str, repo_id: str):
         """POST /<owner>/<id>.git/edit — commit a single file add/change/delete, authorized by a

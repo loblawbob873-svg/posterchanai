@@ -3660,11 +3660,13 @@
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
-        <button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button>
+        ${CFG.git_host_base?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
+        <button class="btn ${CFG.git_host_base?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
       </div>
-      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>'}</div>`;
+      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). '+(CFG.git_host_base?'Create one ↑':'Announce yours ↑')+'</div>'}</div>`;
     $('#repo-new').onclick=()=>publishRepo();
+    { const cb=$('#repo-create'); if(cb) cb.onclick=()=>createRepo(); }
     // Card wiring is re-applied after every filter render, since filtering replaces the cards.
     const wire=()=>{
       decorateProfiles();
@@ -3689,6 +3691,89 @@
       q.oninput=apply;
       q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; apply(); } };
     }
+  }
+  // Slugify a repo id to the git host's allowlist (^[a-z0-9][a-z0-9._-]{0,99}$) so a bad id is rejected
+  // client-side and the create clone URL always matches what the host will accept.
+  function _repoSlug(s){
+    s=(s||'').trim().toLowerCase().replace(/\.git$/,'').replace(/[^a-z0-9._-]+/g,'-').replace(/^[-.]+/,'').replace(/-+/g,'-');
+    return s.slice(0,100);
+  }
+  // First-commit quick start (like GitHub/Gitea show on an empty repo): the exact git commands for the
+  // first push, with the real clone URL filled in. Reused by the post-create dialog + an empty repo view.
+  function _repoQuickStartHtml(clone, repoId){
+    const blk=(label,cmds)=>`<div class="qs-block"><div class="qs-head"><span class="muted small">${enc(label)}</span><button class="btn btn-ghost small qs-copy" data-cmd="${enc(cmds)}">⧉ Copy</button></div><pre class="qs-pre">${enc(cmds)}</pre></div>`;
+    const first=`echo "# ${repoId}" >> README.md\ngit init\ngit add README.md\ngit commit -m "first commit"\ngit branch -M master\ngit remote add origin ${clone}\ngit push -u origin master`;
+    const exist=`git remote add origin ${clone}\ngit branch -M master\ngit push -u origin master`;
+    return `<div class="qs">
+      <div class="qs-clone"><span class="muted small">Clone URL</span> <code class="rv-clone-url">${enc(clone)}</code> <button class="btn btn-neon small qs-copy" data-cmd="${enc(clone)}">⧉ Copy</button></div>
+      <p class="muted small">Pushing is authorized by a maintainer's Nostr signature (your key) — use an <b>ngit</b>-aware client, or the built-in web editor to make the first commit right here.</p>
+      ${blk('…create a new repository on the command line', first)}
+      ${blk('…or push an existing repository', exist)}
+    </div>`;
+  }
+  function _wireQuickStart(root){
+    $$('.qs-copy',root).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.cmd); toast('copied'); }catch(_){ await uiPrompt('Copy', {value:b.dataset.cmd}); } });
+  }
+  function _showRepoQuickStart(clone, repoId, ev){
+    modal(`<h3>🚀 ${enc(repoId)} — get started</h3>${_repoQuickStartHtml(clone, repoId)}
+      <div class="set-actions"><button class="btn btn-neon small" id="qs-open">Open repo →</button><button class="btn btn-ghost small" id="qs-done">Done</button></div>`,
+      root=>{
+        _wireQuickStart(root);
+        $('#qs-done',root).onclick=closeModal;
+        $('#qs-open',root).onclick=()=>{ closeModal(); if(ev) openRepo(ev); else switchView('repos'); };
+      });
+  }
+  // Create a NEW self-hosted repo on THIS node, then announce it (public) + show the first-commit
+  // tutorial. Provision is NIP-98-signed by the owner and re-verified by the git host (owner+allowlist).
+  function createRepo(){
+    if(GUEST || !ME){ _guestPrompt(); return; }
+    if(!CFG.git_host_base){ toast('this node has no git host configured'); return; }
+    modal(`<h3>🌱 Create a repo on ${enc(CFG.name||'this node')}</h3>
+      <p class="muted small">Provisions an empty repo hosted here you can <code>git push</code> to, then announces it (NIP-34).</p>
+      <label class="fld">Repo id <span class="muted small">(letters, digits, . _ - — e.g. my-app)</span><input class="input" id="cr-d" placeholder="my-app"></label>
+      <label class="fld">Name<input class="input" id="cr-name" placeholder="My App"></label>
+      <label class="fld">Description<textarea class="input" id="cr-desc" rows="2"></textarea></label>
+      <label class="fld fld-check"><input type="checkbox" id="cr-private"> <span>Private — only you (+ readers) can clone; not announced</span></label>
+      <div class="set-actions"><button class="btn btn-neon small" id="cr-go">Create</button><button class="btn btn-ghost small" id="cr-cancel">Cancel</button></div>
+      <div class="muted small" id="cr-status"></div>`,
+      root=>{
+        $('#cr-d',root).focus();
+        $('#cr-cancel',root).onclick=closeModal;
+        root.addEventListener('keydown',ev=>{ if(ev.key==='Enter' && (ev.target.tagName||'').toLowerCase()!=='textarea'){ ev.preventDefault(); $('#cr-go',root).click(); } });
+        $('#cr-go',root).onclick=()=>_doCreateRepo(root);
+      });
+  }
+  async function _doCreateRepo(root){
+    const st=$('#cr-status',root);
+    const v=id=>($('#'+id,root).value||'').trim();
+    const d=_repoSlug(v('cr-d')), name=v('cr-name'), desc=v('cr-desc');
+    const priv=!!(($('#cr-private',root)||{}).checked);
+    if(!d){ st.textContent='A repo id is required (letters, digits, . _ -).'; return; }
+    const base=(CFG.git_host_base||'').replace(/\/+$/,'');
+    let npub; try{ npub=NT().nip19.npubEncode(ME.pubkey); }catch(_){ st.textContent='no key to own the repo.'; return; }
+    const clone=`${base}/${npub}/${d}.git`;
+    st.textContent='signing…';
+    let auth;
+    try{ auth='Nostr '+btoa(JSON.stringify(await sign(27235,'',[['u',clone+'/create'],['method','POST']]))); }
+    catch(err){ st.textContent='couldn’t sign: '+((err&&err.message)||err); return; }
+    st.textContent='creating on the host…';
+    let j={};
+    try{ j=await fetch('/client/git/create',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({url:clone, name, description:desc, private:priv, auth})}).then(r=>r.json()); }
+    catch(_){ st.textContent='the git host didn’t answer.'; return; }
+    if(!j || !j.ok){ st.textContent='host: '+((j&&j.error)||'create failed'); return; }
+    const cloneUrl=j.clone||clone;
+    let ev=null;
+    if(!priv && Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length){
+      st.textContent='announcing…';
+      try{ const r=await publish(30617,'',j.announce_tags_30617);
+        if(r && r.ok===false){ st.textContent='created ✓ but announce was rejected: '+(r.msg||''); return; } }
+      catch(e){ st.textContent='created ✓ but announce failed: '+((e&&e.message)||e); return; }
+      ev={ kind:30617, pubkey:ME.pubkey, created_at:Math.floor(Date.now()/1000), tags:j.announce_tags_30617, content:'', id:'' };
+    }
+    closeModal();
+    toast(priv?'private repo created':'repo created + announced');
+    _showRepoQuickStart(cloneUrl, d, ev);   // the first-commit tutorial, like other git platforms
   }
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
@@ -3883,6 +3968,12 @@
         if(VIEW!=='repo') return;
         if(j && j.ok && j.markdown){ box.innerHTML=mdToHtml(j.markdown);
           box.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src)); }
+        else if(_rv && _rv.cloneUrl){
+          // Self-hosted repo with no README — usually a freshly-created EMPTY repo. Show the first-commit
+          // quick start right here (like GitHub/Gitea), so the repo tells you how to make the first push.
+          box.innerHTML=`<div class="rv-empty"><h2 class="rv-empty-h">🚀 Quick start</h2>${_repoQuickStartHtml(_rv.cloneUrl, _repoTag(e,'d')||'repo')}</div>`;
+          _wireQuickStart(box);
+        }
         else box.innerHTML=`<div class="muted small">No README found${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`;
       }catch(_){ if(VIEW==='repo') box.innerHTML=`<div class="muted small">Couldn’t load the README${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`; }
     })();

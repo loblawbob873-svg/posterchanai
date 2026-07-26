@@ -168,6 +168,11 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
+        # GRASP git host: the public clone-URL base (e.g. https://poster.place/git) and whether the
+        # host is on. The client uses these ONLY to decide whether to offer "Create a hosted repo" and
+        # to build the clone URL it signs — /client/git/create re-verifies the NIP-98 + allowlist.
+        "git_host_base": (_setting(db, "git_server_public_base", "") if
+                          _setting(db, "git_server_enabled", "false").lower() == "true" else ""),
         "operator_npub": op_npub,
         "admin_npubs": admin_npubs,
         # Fresh install with no admin yet → the client offers first-run "become admin" setup
@@ -1643,6 +1648,14 @@ class GitEditReq(BaseModel):
     auth: str                      # NIP-98 `Nostr <base64>` header value, signed by a maintainer
 
 
+class GitCreateReq(BaseModel):
+    url: str                       # INTENDED clone URL: <git_host_base>/<owner-npub>/<repo_id>.git
+    name: str = ""
+    description: str = ""
+    private: bool = False
+    auth: str                      # NIP-98 header signed by the repo owner, bound to <url>/create
+
+
 @router.post("/git/edit")
 async def git_edit(data: GitEditReq):
     """Commit a single file change to a self-hosted GRASP repo from the web editor.
@@ -1671,6 +1684,37 @@ async def git_edit(data: GitEditReq):
     except Exception:
         payload = {"ok": r.status_code == 200,
                    "error": (r.text or "").strip()[:200] or "edit failed"}
+    return JSONResponse(payload, status_code=r.status_code)
+
+
+@router.post("/git/create")
+async def git_create(data: GitCreateReq):
+    """Provision a new self-hosted GRASP repo from the web "New repo" button.
+
+    Like /git/edit this endpoint holds NO authority: it forwards the caller's NIP-98 header to the git
+    host (the hosting node — the peer this node proxies to, or localhost when we ARE the host), which
+    re-verifies the signature is the repo owner's AND that the owner is on git_server_allowlist before
+    creating anything. So a web "create" is authorized by the same Nostr key that would `git push`, and
+    the response hands back the 30617 tags for the CLIENT to sign+publish (we never sign for the user)."""
+    tgt = _grasp_host_target(data.url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo URL"}, status_code=400)
+    if not (data.auth or "").strip().lower().startswith("nostr "):
+        return JSONResponse({"ok": False, "error": "a signed NIP-98 header is required"}, status_code=400)
+    body = {"name": data.name, "description": data.description, "private": bool(data.private)}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=4.0)) as c:
+            r = await c.post("%s/%s/%s.git/create" % tgt, json=body,
+                             headers={"Authorization": data.auth})
+    except Exception as e:
+        logger.warning("[client] git create proxy failed: %s", e)
+        return JSONResponse({"ok": False, "error": "the git host did not answer"}, status_code=502)
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"ok": r.status_code == 200,
+                   "error": (r.text or "").strip()[:200] or "create failed"}
     return JSONResponse(payload, status_code=r.status_code)
 
 

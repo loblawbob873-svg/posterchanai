@@ -1917,6 +1917,15 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .repo-card:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 20px rgba(var(--accent2-rgb),.18);transform:translateY(-3px)}
 /* keyboard-selected card (j/k navigation) — same affordance as hover, but sticky + a visible ring */
 .repo-card.kb-sel{border-color:var(--neon);box-shadow:0 0 0 2px var(--neon),0 0 22px rgba(var(--accent-rgb),.30);transform:translateY(-2px)}
+/* inline checkbox row inside a modal form (Create repo → Private) */
+.fld-check{display:flex;flex-direction:row;align-items:center;gap:8px;cursor:pointer}
+.fld-check input{width:auto;margin:0}
+/* first-commit quick-start (Create repo dialog + empty-repo view) */
+.qs{display:flex;flex-direction:column;gap:12px}
+.qs-clone{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qs-block{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.qs-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--panel2)}
+.qs-pre{margin:0;padding:10px 12px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em;white-space:pre;line-height:1.5}
 .repo-kbhint{margin-left:auto;opacity:.6;white-space:nowrap;font-size:.82em}
 @media(max-width:620px){.repo-kbhint{display:none}}
 .repo-card-hd{display:flex;align-items:baseline;gap:8px;min-width:0}
