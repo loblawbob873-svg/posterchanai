@@ -41,6 +41,23 @@ git push origin master
 # on unrelated deploys. NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
 git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 
+# Third mirror: the NOSTR repo on the built-in GRASP host (git-over-nostr, NIP-34) — so the
+# self-hosted repo tracks origin instead of drifting. Best-effort, never blocks a deploy.
+# The mirror must run on the node that HOSTS the repo (push auth is a maintainer signature and only
+# the hosting node's operator key owns it, and only that node's relay is read by the pre-receive
+# hook), so the script self-skips on a proxy node — which is why it is invoked BOTH here and inside
+# the nas.lan block below: whichever node hosts does the work, the other prints "skipping".
+# See docs/GIT_OVER_NOSTR.md; provisioning/announcing is scripts/grasp_selfhost.py.
+_grasp_mirror() {
+    for _py in venv-unified/bin/python venv/bin/python; do
+        if [ -x "$_py" ]; then
+            "$_py" scripts/grasp_mirror.py || echo "[sync] WARN: GRASP nostr mirror failed"
+            return
+        fi
+    done
+}
+_grasp_mirror
+
 # Mirror the freshly-built APK to a local path so poster.place/apk serves the bytes DIRECTLY from this
 # server (behind Cloudflare — a nearby CDN edge, with Range/resume), which downloads far more reliably on
 # slow/throttled mobile links than bouncing to GitHub's distant CDN. The CI build takes ~2-3 min, so do it
@@ -92,6 +109,15 @@ _wait_gpu_free() {
 cd ~/posterchanai
 git fetch origin
 git reset --hard origin/master
+# Mirror the freshly-reset tree to the nostr repo (this node hosts the GRASP repos; on a node that
+# doesn't, the script just prints 'skipping'). Runs BEFORE the restart so the relay it publishes the
+# signed 30618 to is still up. Best-effort — a mirror failure must never break the deploy.
+for _py in venv-unified/bin/python venv/bin/python; do
+    if [ -x \"\$_py\" ]; then
+        \"\$_py\" scripts/grasp_mirror.py || echo \"[sync] WARN: GRASP nostr mirror failed on nas\"
+        break
+    fi
+done
 _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai
 # nas is cut over: its bots now run via the in-app manager (botframework/ + Admin → Bots).

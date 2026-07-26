@@ -39,6 +39,29 @@ git push                     # or ./sync.sh — origin/production first
 git push github master:main  # mirror, same commits, every time
 ```
 
+**Third target — the NOSTR repo** (the built-in GRASP git-over-nostr host, see
+`docs/GIT_OVER_NOSTR.md`). Every commit that reaches `origin` is also mirrored to the self-hosted
+repo `npub19q5ezl…/posterchanai` (clone: `https://poster.place/git/<npub>/posterchanai.git`), so it
+tracks production instead of drifting. `sync.sh` does this automatically via
+`scripts/grasp_mirror.py` — no extra command when you deploy with `./sync.sh`.
+
+Push authorization is a **Nostr signature, not a connection**: only a maintainer of
+`30617:<owner>:posterchanai` can move a ref, and the `pre-receive` hook reads the **hosting node's**
+relay Postgres. So the mirror only works **on the node that hosts the repo** (`nas.lan` here — its
+operator key owns it); `sync.sh` calls the script on both server1 and nas and the non-hosting one
+prints `skipping`. The script publishes a maintainer-signed **30618** naming the new tip and pushes
+with a **NIP-98** header (either proof alone authorizes it), and is idempotent + best-effort — a
+mirror failure prints a WARN and never breaks a deploy.
+
+If you push by hand instead of `./sync.sh`, mirror it too:
+
+```
+ssh nas.lan 'cd ~/posterchanai && git fetch origin && git reset --hard origin/master \
+             && venv/bin/python scripts/grasp_mirror.py'
+```
+
+(Provisioning/announcing a repo is a different script — `scripts/grasp_selfhost.py`.)
+
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 
 The standalone `~/posterchan` bot framework now lives **in this repo** under `botframework/`
