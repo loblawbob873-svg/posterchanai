@@ -3578,8 +3578,69 @@
     return [t('name'),t('d'),t('description'),t('clone'),t('web'),
             p.name||'',p.display_name||'',p.nip05||''].join(' ').toLowerCase();
   }
+  // ---- keyboard / vim navigation for the Git views (repos list + repo detail) ----
+  // One document-level handler, bound once and gated on VIEW, so the Git views are fully drivable
+  // from the keyboard: j/k move, o/Enter open, g/G jump, / search, n new, 1-5 switch detail tabs,
+  // h/Esc back. It NEVER hijacks keys while a text field is focused (except Enter/Esc in the search).
+  let _kbSel=-1, _gitKbBound=false;
+  function _kbCards(feed){ return $$('.repo-card',feed); }
+  function _kbPaint(feed){
+    const cards=_kbCards(feed);
+    cards.forEach((c,i)=>c.classList.toggle('kb-sel', i===_kbSel));
+    const c=cards[_kbSel]; if(c) c.scrollIntoView({block:'nearest'});
+  }
+  function _kbMove(feed,d){
+    const n=_kbCards(feed).length; if(!n) return;
+    _kbSel = _kbSel<0 ? (d>0?0:n-1) : Math.max(0, Math.min(n-1, _kbSel+d));
+    _kbPaint(feed);
+  }
+  function _typingInField(el){
+    if(!el) return false;
+    const t=(el.tagName||'').toLowerCase();
+    return t==='input' || t==='textarea' || t==='select' || el.isContentEditable;
+  }
+  function _gitKeydown(ev){
+    if(VIEW!=='repos' && VIEW!=='repo') return;
+    if(ev.altKey||ev.ctrlKey||ev.metaKey) return;   // leave OS/browser chords alone
+    const feed=$('#feed'); if(!feed) return;
+    // ----- repos LIST -----
+    if(VIEW==='repos'){
+      const q=$('#repo-q',feed);
+      if(_typingInField(document.activeElement)){
+        // In the search box: Enter jumps to the results, Escape (input's own handler) clears. Type freely.
+        if(ev.key==='Enter'){ ev.preventDefault(); if(_kbCards(feed).length){ _kbSel=0; _kbPaint(feed); } if(q) q.blur(); }
+        return;
+      }
+      switch(ev.key){
+        case 'j': case 'ArrowDown': ev.preventDefault(); _kbMove(feed,1); break;
+        case 'k': case 'ArrowUp':   ev.preventDefault(); _kbMove(feed,-1); break;
+        case 'g': ev.preventDefault(); _kbSel=0; _kbPaint(feed); break;
+        case 'G': ev.preventDefault(); _kbSel=_kbCards(feed).length-1; _kbPaint(feed); break;
+        case 'o': case 'Enter': { ev.preventDefault(); const c=_kbCards(feed)[_kbSel]; if(c){ const e=Store.get(c.dataset.id); if(e) openRepo(e); } break; }
+        case '/': ev.preventDefault(); if(q){ q.focus(); if(q.select) q.select(); } break;
+        case 'n': ev.preventDefault(); publishRepo(); break;
+        case 'Escape': if(_kbSel>=0){ _kbSel=-1; _kbPaint(feed); } break;
+      }
+      return;
+    }
+    // ----- repo DETAIL -----
+    if(_typingInField(document.activeElement)) return;   // don't fight the issue/edit forms
+    const tabs=$$('.rv-tab',feed);
+    switch(ev.key){
+      case 'h': case 'Escape': ev.preventDefault(); switchView('repos'); break;
+      case '1': case '2': case '3': case '4': case '5': {
+        const i=(+ev.key)-1; if(tabs[i]){ ev.preventDefault(); tabs[i].click(); } break;
+      }
+    }
+  }
+  function _gitKbBind(){
+    if(_gitKbBound) return;
+    _gitKbBound=true;
+    document.addEventListener('keydown', _gitKeydown);
+  }
   async function renderRepos(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    _kbSel=-1; _gitKbBind();   // reset keyboard selection on (re)entry; bind the vim-style handler once
     // 80 was fine for a grid you scroll. Once it is a SEARCHABLE list the cap becomes a correctness
     // problem: searching a truncated set reports "no match" for a repo that is really on the relay.
     let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:500 }]); }catch(_){}
@@ -3588,10 +3649,11 @@
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
-        <button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button>
+        <button class="btn btn-neon small" id="repo-new">＋ New repo</button>
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
+        <span class="muted small repo-kbhint" title="j/k move · o or Enter open · / search · n new · G bottom">⌨ j/k · o open · / search · n new</span>
       </div>
-      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>'}</div>`;
+      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Create yours ↑</div>'}</div>`;
     $('#repo-new').onclick=()=>publishRepo();
     // Card wiring is re-applied after every filter render, since filtering replaces the cards.
     const wire=()=>{
@@ -3711,7 +3773,7 @@
   }
   function openRepo(e){
     if(!e) return;
-    VIEW='repo'; _clearNav(); $('#view-title').textContent='Repo';
+    VIEW='repo'; _clearNav(); _gitKbBind(); $('#view-title').textContent='Repo';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const name=_repoTag(e,'name')||_repoTag(e,'d')||'(unnamed repo)';
     const desc=_repoTag(e,'description');
