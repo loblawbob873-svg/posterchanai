@@ -84,6 +84,22 @@ if [ "$1" = "--sandbox" ]; then
     exit $?
 fi
 
+# Add-on: verify the built-in GRASP git host deps. No packages to install — it uses stdlib http.server
+# + psycopg2 (already required) + `git`/`git-http-backend` (ship together with the git package). This
+# just confirms git-http-backend is present at the expected path.
+if [ "$1" = "--git-host" ]; then
+    echo "Checking GRASP git host prerequisites..."
+    if command -v git >/dev/null 2>&1; then echo "  git: $(git --version)"; else
+        echo "  MISSING: git — install it (Debian/Ubuntu: apt-get install git)"; exit 1; fi
+    for p in /usr/libexec/git-core/git-http-backend /usr/lib/git-core/git-http-backend; do
+        if [ -x "$p" ]; then echo "  git-http-backend: $p"; FOUND=1; fi
+    done
+    if [ -z "$FOUND" ]; then
+        echo "  MISSING: git-http-backend (ships with git; check /usr/libexec/git-core or /usr/lib/git-core)"; exit 1; fi
+    echo "OK — enable the host in Admin → Services (git_server_enabled). No extra packages needed."
+    exit 0
+fi
+
 # =============================================================================
 # Install mode: Full (AI + Nostr) vs Nostr-only (relay + Nostr web client, NO AI)
 # =============================================================================

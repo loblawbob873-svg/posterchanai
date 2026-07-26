@@ -21,6 +21,7 @@ from app.auth import get_current_user_optional, get_current_user, create_access_
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api
 from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets
+from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
@@ -204,6 +205,7 @@ app.include_router(youtube_thumb.router)
 app.include_router(bots.router)
 app.include_router(calls.router)  # /api/calls/turn-credentials (ICE config for voice/video calls)
 app.include_router(streams.router)  # /api/streams/* (OBS streaming: MediaMTX auth hook, ingest info, HLS proxy)
+app.include_router(git_router.router)  # /api/git/* (GRASP git host: provision/list/announce; 404 unless git_server_enabled)
 app.include_router(storage.router)
 app.include_router(telegram_router)
 app.include_router(misskey_router)
@@ -440,6 +442,15 @@ async def startup():
                 start_nostr_relay()
             except Exception as e:
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
+
+            try:
+                # Supervise the built-in GRASP git-over-nostr host (subprocess; no-op unless
+                # git_server_enabled). MUST start AFTER the relay: the push-auth hook reads the
+                # relay's Postgres for maintainer-signed 30618 state.
+                from app.services.git_http_service import start_git_http
+                start_git_http()
+            except Exception as e:
+                logging.error(f"Error starting git host: {e}", exc_info=True)
 
             try:
                 # Supervise the built-in Pion TURN relay for voice/video calls (subprocess; no-op unless
@@ -760,6 +771,13 @@ async def shutdown():
         try:
             from app.services.nostr_relay import stop_nostr_relay
             stop_nostr_relay()
+        except Exception:
+            pass
+
+        # Stop the built-in GRASP git host supervisor + terminate the git-http subprocess
+        try:
+            from app.services.git_http_service import stop_git_http
+            stop_git_http()
         except Exception:
             pass
 

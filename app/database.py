@@ -227,6 +227,10 @@ def init_db():
             # The relay (and thus the app's datastore) runs on PostgreSQL — no SQLite. libpq DSN.
             "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
                 "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
+            # Built-in git-over-nostr host (GRASP). OFF by default — the supervisor spawns nothing and
+            # the /api/git endpoints 404 until an admin enables it. Other knobs fall back to schema
+            # defaults in app/schemas.py:SettingsResponse. See docs/GIT_OVER_NOSTR.md.
+            "git_server_enabled": "false",
             # NB: the old chat_/settings_/users_/bots_/records_backend flags are gone — the relay
             # (encrypted Nostr events) is now the ONE datastore unconditionally; the Postgres tables
             # are just a hydrated read-cache. No sqlite/table-authoritative mode anymore.
