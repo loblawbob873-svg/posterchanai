@@ -8069,7 +8069,7 @@
   // dropping 6 clips meant 6 prompts and felt like "uploading is super slow". BUD-01 lets one auth commit to
   // MANY blobs via repeated `x` tags, and our server checks membership (`sha256 in xs`), so we can pre-hash
   // the batch and sign once. Set for the duration of a batch, always cleared in a finally.
-  let _uploadBatchAuth = null;   // { ev, hashes:Set<string> }
+  let _uploadBatchAuth = null;   // Array<{ ev, hashes:Set<string> }> — chunked so the auth header stays small
   async function _signUploadBatch(files){
     try{
       const hashes=[];
@@ -8080,10 +8080,20 @@
         hashes.push(await sha256hex(buf)); prepped.push(c);
       }
       if(hashes.length<2) return null;             // a single file gains nothing — skip the extra work
-      const tags=[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]];
-      hashes.forEach(h=>tags.push(['x',h]));
-      const ev=await sign(24242,'Upload '+hashes.length+' files',tags);
-      _uploadBatchAuth={ ev, hashes:new Set(hashes) };
+      // CHUNK the batch: one auth event per ~50 files. A single 24242 event with hundreds of `x` tags
+      // makes an Authorization header tens of KB, which the nginx in front of the Blossom host rejects
+      // BEFORE the app (its response carries no CORS header, so the browser reports it as a bogus CORS
+      // error) — that's the "folder with subfolders / 368 files all fail, no error" bug. ~50 hashes keeps
+      // each header a few KB; the only cost is one signer prompt per chunk instead of one for the import.
+      const CHUNK=50, chunks=[];
+      for(let i=0;i<hashes.length;i+=CHUNK){
+        const slice=hashes.slice(i,i+CHUNK);
+        const tags=[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]];
+        slice.forEach(h=>tags.push(['x',h]));
+        const ev=await sign(24242,'Upload '+slice.length+' files',tags);
+        chunks.push({ ev, hashes:new Set(slice) });
+      }
+      _uploadBatchAuth=chunks;
       return prepped;                              // upload the SAME bytes we hashed
     }catch(_){ _uploadBatchAuth=null; return null; }
   }
@@ -8105,8 +8115,9 @@
     // batch — the difference between one Amber prompt and one per clip. If the hash isn't covered (e.g.
     // compressImage changed the bytes after the batch was signed) we fall back to signing this file alone,
     // so a mismatch costs an extra prompt instead of failing the upload.
-    const auth=(_uploadBatchAuth && _uploadBatchAuth.hashes.has(hash)) ? _uploadBatchAuth.ev
-      : await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+    const _batchEv=Array.isArray(_uploadBatchAuth) ? (_uploadBatchAuth.find(c=>c.hashes.has(hash))||{}).ev : null;
+    const auth=_batchEv
+      || await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
     if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
     let res;
