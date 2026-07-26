@@ -3594,6 +3594,15 @@
     _kbSel = _kbSel<0 ? (d>0?0:n-1) : Math.max(0, Math.min(n-1, _kbSel+d));
     _kbPaint(feed);
   }
+  // Columns in the RESPONSIVE repo grid = the number of cards sharing the first row's offsetTop. j/k
+  // (and ↑/↓) move a whole ROW by this stride, h/l (←/→) move one card — so movement matches the 2-D
+  // grid instead of marching through flat DOM order (which made every key look like it went one way).
+  function _kbCols(feed){
+    const c=_kbCards(feed); if(c.length<2) return 1;
+    const top=c[0].offsetTop; let n=1;
+    for(let i=1;i<c.length;i++){ if(c[i].offsetTop===top) n++; else break; }
+    return Math.max(1,n);
+  }
   function _typingInField(el){
     if(!el) return false;
     const t=(el.tagName||'').toLowerCase();
@@ -3612,8 +3621,10 @@
         return;
       }
       switch(ev.key){
-        case 'j': case 'ArrowDown': ev.preventDefault(); _kbMove(feed,1); break;
-        case 'k': case 'ArrowUp':   ev.preventDefault(); _kbMove(feed,-1); break;
+        case 'j': case 'ArrowDown': ev.preventDefault(); _kbMove(feed, _kbCols(feed)); break;   // down a row
+        case 'k': case 'ArrowUp':   ev.preventDefault(); _kbMove(feed, -_kbCols(feed)); break;   // up a row
+        case 'l': case 'ArrowRight':ev.preventDefault(); _kbMove(feed, 1); break;                // next card
+        case 'h': case 'ArrowLeft': ev.preventDefault(); _kbMove(feed, -1); break;               // prev card
         case 'g': ev.preventDefault(); _kbSel=0; _kbPaint(feed); break;
         case 'G': ev.preventDefault(); _kbSel=_kbCards(feed).length-1; _kbPaint(feed); break;
         case 'o': case 'Enter': { ev.preventDefault(); const c=_kbCards(feed)[_kbSel]; if(c){ const e=Store.get(c.dataset.id); if(e) openRepo(e); } break; }
@@ -3649,11 +3660,10 @@
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
-        <button class="btn btn-neon small" id="repo-new">＋ New repo</button>
+        <button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button>
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
-        <span class="muted small repo-kbhint" title="j/k move · o or Enter open · / search · n new · G bottom">⌨ j/k · o open · / search · n new</span>
       </div>
-      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Create yours ↑</div>'}</div>`;
+      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>'}</div>`;
     $('#repo-new').onclick=()=>publishRepo();
     // Card wiring is re-applied after every filter render, since filtering replaces the cards.
     const wire=()=>{
