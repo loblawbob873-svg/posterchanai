@@ -41,7 +41,9 @@ git push github master:main  # mirror, same commits, every time
 
 **Third target — the NOSTR repo** (the built-in GRASP git-over-nostr host, see
 `docs/GIT_OVER_NOSTR.md`). Every commit that reaches `origin` is also mirrored to the self-hosted
-repo `npub19q5ezl…/posterchanai` (clone: `https://poster.place/git/<npub>/posterchanai.git`), so it
+repo `npub1fdtthaq…/posterchanai` — owned by the AUTHOR's npub, with the hosting node's operator key
+kept in `maintainers` so it can still sign mirror pushes (clone:
+`https://poster.place/git/<owner-npub>/posterchanai.git`) — so it
 tracks production instead of drifting. `sync.sh` does this automatically via
 `scripts/grasp_mirror.py` — no extra command when you deploy with `./sync.sh`.
 
@@ -61,6 +63,19 @@ ssh nas.lan 'cd ~/posterchanai && git fetch origin && git reset --hard origin/ma
 ```
 
 (Provisioning/announcing a repo is a different script — `scripts/grasp_selfhost.py`.)
+
+**Who owns the mirrored repo.** The owner pubkey IS the clone-URL path segment, so it decides which
+directory the mirror pushes to. `grasp_selfhost.py` announces under the NODE's operator key; this repo
+was later re-announced under the author's npub with the operator kept in `maintainers` (so the node can
+still sign the 30618 that authorizes each push). The `grasp_mirror_owner` setting tells
+`grasp_mirror.py` which owner to target — without it the mirror defaults to the operator key and would
+keep updating the node-owned copy while the real repo drifts.
+
+**Gotcha — a big push needs `http.postBuffer`.** `git_host_main.py` reads a `Content-Length` body only.
+Git switches to `Transfer-Encoding: chunked` once a pack exceeds `http.postBuffer` (1 MB default), and
+the leftover chunk header is then parsed as the next request → `400 Bad request syntax`. Incremental
+mirrors are small enough to never hit it; a first full push does. Worked around with
+`git config http.postBuffer 524288000` on the hosting node — the real fix is chunked support in the host.
 
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 

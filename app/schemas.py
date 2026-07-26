@@ -358,6 +358,10 @@ class SettingsResponse(BaseModel):
     git_server_total_gb: str = "20"            # global storage cap (daily reaper warns/repacks)
     git_server_allow_force: str = "true"       # allow maintainer-signed non-fast-forward (force) pushes
     git_server_nip98_push: str = "true"        # accept NIP-98-authenticated pushes (admin/sync.sh path)
+    grasp_mirror_owner: str = ""               # npub/hex that OWNS the mirrored nostr repo (empty = this
+    # node's operator key). Set it when the repo is owned by a human npub and the node is only a
+    # maintainer: the owner pubkey is the clone-URL path, so scripts/grasp_mirror.py would otherwise
+    # keep pushing to the node-owned copy and let the real repo drift.
     git_server_default_private: str = "false"  # default privacy for newly-provisioned/imported repos
     # Multi-node: when SET, this node runs NO local git subprocess — its git front reverse-proxies the
     # smart-HTTP requests to the hosting node here (like the Blossom storage proxy). Auth + repos + hooks

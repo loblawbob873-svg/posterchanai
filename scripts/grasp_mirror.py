@@ -87,9 +87,17 @@ def main():
     operator_hex = nostr_service.derive_pubkey(seckey)
 
     from app.services import git_host_service as ghs
-    owner_hex = ghs.owner_hex_from_npub(args.owner) if args.owner else operator_hex
+    # Owner resolution, in order: --owner, then the `grasp_mirror_owner` setting, then this node's
+    # operator key. The setting exists because the repo can be owned by a HUMAN npub while the node
+    # only holds a maintainer key: the owner pubkey is the clone-URL path segment, so re-owning a repo
+    # to its author changes which directory the mirror must push to. Defaulting to the operator key
+    # would then silently keep updating the node-owned copy and let the real repo go stale — which is
+    # exactly the drift this script exists to prevent.
+    _cfg_owner = (settings_store.get("grasp_mirror_owner", "") or "").strip()
+    _want = args.owner or _cfg_owner
+    owner_hex = ghs.owner_hex_from_npub(_want) if _want else operator_hex
     if not owner_hex:
-        _say("--owner %r is not a valid npub/hex" % args.owner)
+        _say("owner %r is not a valid npub/hex" % _want)
         return 1
     npub = nostr_service.npub_of(owner_hex)
 
