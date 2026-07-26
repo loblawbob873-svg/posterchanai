@@ -907,6 +907,101 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
                          "name": name, "dur": round(nominal, 2)})
 
 
+class MemeApplyEffectReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
+    url: str                     # the layer's source IMAGE url to transform
+    effect: str                  # a MOTION_EFFECTS / ANIMATED_EFFECTS name (glow, alive, nakedman, meme, …)
+    arg: str | None = None       # optional effect argument (caption text, motion modifier, …)
+
+
+@router.post("/meme/apply-effect")
+async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Session = Depends(get_db)):
+    """Apply a FULL effect to a Meme Builder layer's IMAGE — the SAME engine as the Effects studio and
+    Telegram (glow, alive, nakedman, meme, sopranos, diarrhea, …), so the Meme Builder never drifts from
+    what the rest of the app supports. Returns the resulting video URL; the client swaps the layer's
+    source to it. RAW effect output — no PosterChan branding end-card (that belongs on the finished meme,
+    not a sub-layer)."""
+    from app.services import blossom_service
+    from app.services.command_service import CommandService
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    if not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+
+    effect = (data.effect or "").strip().lower()
+    allowed = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
+    if effect not in allowed:
+        raise HTTPException(status_code=400, detail="unknown effect")
+
+    _now = time.monotonic()
+    if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one effect at a time — give the last render a moment")
+    _effect_cooldown[pk] = _now
+
+    # Fetch the layer image via the shared SSRF-guarded proxy fetch (same one /proxy-image uses).
+    from app.routers.chat import _proxy_fetch
+    try:
+        img, ct = await _proxy_fetch(data.url)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="could not fetch the layer image")
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    ext = "png" if "png" in (ct or "") else ("gif" if "gif" in (ct or "") else "jpg")
+    attachments = [(f"layer.{ext}", img, ct or "image/jpeg")]
+
+    try:
+        await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
+    try:
+        cs = CommandService(db)
+        # _execute_command_inner is the RAW effect (execute_command would append the branding outro, which
+        # we don't want on a compositing sub-layer). Allowlisted to effects above → only runs effects.
+        result = await cs._execute_command_inner(effect, (data.arg or "").strip(), None, None, attachments, None)
+    except Exception as e:
+        logger.warning("[meme] apply-effect %s failed for %s: %s", effect, pk[:12], e)
+        raise HTTPException(status_code=500, detail="effect render failed")
+    finally:
+        _meme_semaphore().release()
+
+    files = (result or {}).get("files") if isinstance(result, dict) else None
+    out = None
+    for f in (files or []):
+        if isinstance(f, dict) and f.get("data") and str(f.get("content_type") or "").startswith("video/"):
+            out = f
+            break
+    if not out:   # some effects (e.g. removebackground) hand back an image — fall back to the first file
+        out = next((f for f in (files or []) if isinstance(f, dict) and f.get("data")), None)
+    if not out:
+        raise HTTPException(status_code=500, detail="effect produced no output")
+
+    ct_out = str(out.get("content_type") or "video/mp4")
+    ext_out = "mp4" if "mp4" in ct_out else ((ct_out.split("/")[-1] or "mp4").split(";")[0])
+    desc = await blossom_service.save_blob(db, pk, out["data"], ct_out)
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext_out}"
+
+    dur = 0.0
+    try:
+        import subprocess as _sp
+        import tempfile as _tf
+        with _tf.NamedTemporaryFile(suffix="." + ext_out, delete=False) as tfh:
+            tfh.write(out["data"])
+            tp = tfh.name
+        p = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", tp], capture_output=True, timeout=20)
+        dur = float((p.stdout or b"0").strip() or 0)
+        os.unlink(tp)
+    except Exception:
+        dur = 0.0
+    return JSONResponse({"ok": True, "url": url, "dur": round(dur, 2), "effect": effect,
+                         "is_video": ct_out.startswith("video/")})
+
+
 @router.get("/proxy-image")
 async def client_proxy_image(url: str = Query(...)):
     """Same-origin image proxy for the Nostr web client (e.g. the Effects studio grabbing a post's

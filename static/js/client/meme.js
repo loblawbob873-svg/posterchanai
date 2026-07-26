@@ -42,12 +42,15 @@
   // dropdown simply shows 'None' on a node with no sound assets rather than breaking.
   let SOUNDS = [];
   fetch('/client/meme/sounds').then(r=>r.json()).then(j=>{ SOUNDS=(j&&j.sounds)||[]; if(document.getElementById('mb-inspector')) repaint('inspector'); }).catch(()=>{});
-  // Full effects that can be dropped in as a TRANSPARENT overlay layer (nakedman, shrug, characters).
-  // Rendered server-side onto an alpha canvas, stored to Blossom, then added as a normal video layer —
-  // so it gets position/scale/timing handles and its sound mixes into the final render. Fetched once;
-  // empty until it resolves, so the picker simply shows nothing to add on a node with no assets.
+  // The FULL effect catalogue — the same one the Effects studio + Telegram use (/client/effects), so the
+  // Meme Builder never drifts from what the app supports. An image layer's "Meme effect" dropdown lists
+  // all of these; picking one runs that effect ON the layer's image (glow, alive, nakedman, meme, sopranos,
+  // diarrhea, …) server-side and swaps the layer's source to the resulting clip. Fetched once.
   let EFFECTS = [];
-  fetch('/client/meme/effects').then(r=>r.json()).then(j=>{ EFFECTS=(j&&j.effects)||[]; }).catch(()=>{});
+  fetch('/client/effects').then(r=>r.json()).then(j=>{
+    const en=(j&&j.enhance)||[], fx=(j&&j.effects)||[];
+    EFFECTS = en.concat(fx).map(e=>({ name:e.name, label:e.name, desc:e.desc||'' }));
+  }).catch(()=>{});
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -373,9 +376,9 @@
       <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
         ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
       </select></label>
-      ${(l.type==='image'||l.type==='video') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
-        <option value="">— add over this layer —</option>
-        ${EFFECTS.map(e=>`<option value="${enc(e.name)}">${enc(e.label||e.name)}${e.audio?' 🔊':''}</option>`).join('')}
+      ${(l.type==='image') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
+        <option value="">— apply an effect to this image —</option>
+        ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
       </select></label>` : ''}
       <label class="mb-f"><span>Sound</span><select class="input" id="mb-f-snd">
         <option value="">None</option>
@@ -736,43 +739,35 @@
     });
   }
 
-  // Overlay a full effect (dancing man / shrug / a character) ON a specific image or video layer. The
-  // per-layer "Meme effect" dropdown is the SOURCE OF TRUTH (there is no separate "add effect" button):
-  // the server renders the effect onto a transparent VP9-alpha canvas, stores it to Blossom, and returns
-  // a URL we drop in as a video layer sized + timed to the base layer and drawn directly ON TOP of it —
-  // so the man dances over that image, and the effect's sound mixes into the final render. Guarded like
-  // doRender so a double-tap can't fire two renders.
+  // Apply a full effect (the app's whole effect engine — glow, alive, nakedman, meme, sopranos, …) TO an
+  // image layer. The per-layer "Meme effect" dropdown is the SOURCE OF TRUTH (there is no separate effect
+  // button): the server runs the effect on this layer's image and hands back the resulting clip, which we
+  // swap in as the layer's source — so the effect is applied ON that image, exactly like the Effects
+  // studio. Guarded like doRender so a double-tap can't fire two renders.
   let _fxBusy = false;
   async function applyMemeEffect(base, name){
-    if(!name || !base) return;
-    if(!EFFECTS.length){ toast('no effects available on this server'); return; }
+    if(!name || !base || !base.src){ toast('add an image to this layer first'); return; }
     if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
     _fxBusy = true;
     const st=document.getElementById('mb-status');
-    if(st) st.textContent='rendering '+name+'…';
+    if(st) st.textContent='applying '+name+'…';
     try{
       const auth = await selfProof();
-      const r = await fetch('/client/meme/effect',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, name }) });
+      const r = await fetch('/client/meme/apply-effect',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, url: base.src, effect: name }) });
       const j = await r.json().catch(()=>({}));
       if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
-      // Match the base layer's box + timeline slot so the effect sits OVER that image the whole time it's
-      // on screen (VP9 alpha can't carry audio, so its sound rides the layer's `sound` field — same as the
-      // sound dropdown — and mixes on render). Duration follows the base layer, not the raw clip length.
-      const dur = (+base.dur>0) ? +base.dur : ((+j.dur>0)? +j.dur : 4);
-      const ov = { id: nid(), type:'video', src:j.url, name:String(name).slice(0,24),
-        start:(+base.start||0), dur, trim:0, x:base.x, y:base.y, w:base.w, h:base.h,
-        opacity:1, effect:'none', volume:1, mute:false,
-        sound:j.sound||'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'' };
-      // Insert directly ABOVE the base layer (draws on top of it) but keep it BELOW any captions.
-      let at = P.layers.indexOf(base); if(at<0) at = P.layers.length-1;
-      at = at + 1;
-      const firstText = P.layers.findIndex(x=>x.type==='text');
-      if(firstText>=0 && at>firstText) at = firstText;
-      P.layers.splice(at, 0, ov);
-      sel = ov.id;
+      // The effect transforms the still into a clip — swap the layer's source IN PLACE (keep its box and
+      // timeline slot), so the effect lands on this image. It becomes a video layer; duration follows the
+      // effect clip so the whole thing plays.
+      base.src = j.url;
+      base.type = (j.is_video===false) ? 'image' : 'video';
+      if(+j.dur>0) base.dur = +j.dur;
+      base.name = String(name).slice(0,24);
+      base.trim = 0;
+      sel = base.id;
       save(); render();
-      toast('added '+name+' over the layer');
+      toast(name+' applied');
     }catch(err){ toast('effect failed: '+((err&&err.message)||err)); }
     finally{ _fxBusy = false; if(st) st.textContent=''; }
   }

@@ -34,12 +34,16 @@ logger = logging.getLogger(__name__)
 # it binds, and whether it instead PROXIES smart-HTTP to a peer that hosts (`git_server_proxy_url`),
 # are per-node topology facts — e.g. nas.lan hosts on 0.0.0.0:3053 (enabled=true) while server1 sets
 # proxy_url=http://nas.lan:3053, stays enabled=false, and runs no local host. If these hydrated from
-# the shared relay doc, one node's enable/proxy_url would leak onto every node. The POLICY keys
-# (allowlist/public_base/repo_max_mb/default_private/…) stay shareable/global — same repos + rules
-# on every node. Mirrors nostr_relay_enabled being plumbing.
+# the shared relay doc, one node's enable/proxy_url would leak onto every node. `git_server_public_base`
+# is per-node too: it's the PUBLIC url prefix external clients use to reach the repos THIS node hosts
+# (e.g. nas announces https://poster.place/git — reached via the server1 edge → proxy → nas), and a repo
+# hosted on a differently-fronted node would advertise a different base. The remaining POLICY keys
+# (allowlist/repo_max_mb/default_private/…) stay shareable/global — same repos + rules on every node.
+# Mirrors nostr_relay_enabled being plumbing.
 _PLUMBING_KEYS = frozenset({
     "nostr_relay_port", "nostr_relay_enabled", "nostr_relay_bind", "nostr_relay_pg_dsn",
     "git_server_enabled", "git_server_bind", "git_server_port", "git_server_proxy_url",
+    "git_server_public_base",
 })
 
 # Per-node RUNTIME-STATE settings (sync cursors / seen-sets) are advanced directly in SQLite by the
