@@ -599,6 +599,15 @@ class RelayServer:
             for _tag in ev.get("tags", []):
                 if len(_tag) >= 2 and _tag[0] == "p" and _tag[1]:
                     self._call_seen[_tag[1]] = _t
+        elif kind in (30617, 30618):
+            # NIP-34 git repo ANNOUNCEMENT (30617) + repo STATE (30618) are PUBLIC, browsable Discover
+            # content — accept from ANY author (the repo owner is a datastore operator key that typically
+            # isn't in the social WoT, and a repo hosted on one node must be discoverable on a peer node's
+            # relay where the client reads). This mirrors the firehose ingest exemption
+            # (nostr_relay/thread.py) + the "announcements stay broadly public" intent. Signature is still
+            # verified above and these are kept forever (store._GIT_KINDS). Patches/issues (1617/1621/…)
+            # stay WoT-gated until repo-scoped acceptance lands, so this isn't an open spam firehose.
+            pass
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._send(conn, ["OK", eid, False, "blocked: not in web of trust"])
             return
