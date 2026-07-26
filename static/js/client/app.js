@@ -3614,6 +3614,8 @@
   }
   function _gitKeydown(ev){
     if(VIEW!=='repos' && VIEW!=='repo') return;
+    // Don't act while a dialog/overlay is open over the Git view (a modal, confirm, lightbox, picker).
+    if(document.querySelector('.modal-bg,.uiconfirm-bg,.lightbox,.emoji-pop,.menu-pop,.pop-backdrop')) return;
     if(ev.altKey||ev.ctrlKey||ev.metaKey) return;   // leave OS/browser chords alone
     const feed=$('#feed'); if(!feed) return;
     // ----- repos LIST -----
@@ -3651,7 +3653,9 @@
   function _gitKbBind(){
     if(_gitKbBound) return;
     _gitKbBound=true;
-    document.addEventListener('keydown', _gitKeydown);
+    // CAPTURE phase: run before any other handler / the shell, so the desktop (Electron) app can't
+    // swallow j/k/arrows before they reach us — the reason they worked in Firefox but not the app.
+    document.addEventListener('keydown', _gitKeydown, true);
   }
   async function renderRepos(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
