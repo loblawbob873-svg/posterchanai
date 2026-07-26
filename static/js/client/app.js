@@ -3634,10 +3634,15 @@
   }
   function _collabRow(ev){
     const p=profOf(ev.pubkey); needProfile(ev.pubkey);
-    return `<div class="collab-row note" data-id="${ev.id}"><div class="body">
-      <div class="collab-title">${enc(_collabTitle(ev).slice(0,200))}</div>
-      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
-    </div></div>`;
+    const ico=ev.kind===1617?'🩹':'🐛';
+    const title=_collabTitle(ev).slice(0,200);
+    const body=(ev.content||'').trim();
+    const preview = body && body.slice(0,240)!==title ? body.slice(0,240) : '';
+    return `<div class="collab-row" data-id="${ev.id}" data-pk="${ev.pubkey}">
+      <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}</div>
+      ${preview?`<div class="collab-body">${enc(preview)}${body.length>240?'…':''}</div>`:''}
+      <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
+    </div>`;
   }
   function openRepo(e){
     if(!e) return;
@@ -3649,23 +3654,51 @@
     const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
     const wurl=_mdUrl(web[0]||'');
     const readmeSrc=clone[0]||web[0]||'';   // clone URL preferred (points straight at the forge)
+    const cloneUrl=clone[0]||'';
     feed.innerHTML=`<div class="repo-view">
       <button class="btn btn-ghost small" id="repo-back">← Repos</button>
-      <h1 class="rv-title">🌱 ${enc(name)}</h1>
-      <div class="rv-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
-      ${desc?`<div class="rv-desc">${enc(desc)}</div>`:''}
-      <div class="row rv-actions">${wurl?`<a class="btn btn-cyan small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a>`:''}${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Copy clone URL</button>`:''}</div>
-      <div class="search-section-title">README</div>
-      <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
-      <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
-      <div id="rv-issues"><div class="spinner"></div></div>
-      <div class="search-section-title">Patches</div>
-      <div id="rv-patches"><div class="spinner"></div></div>
+      <div class="rv-head">
+        <div class="rv-headrow">
+          <img class="rv-avatar" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}">
+          <div class="rv-headmain">
+            <h1 class="rv-title">🌱 ${enc(name)}</h1>
+            <div class="rv-by"><span class="muted small">maintained by</span> <span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+          </div>
+        </div>
+        ${desc?`<div class="rv-desc">${enc(desc)}</div>`:''}
+        ${cloneUrl?`<div class="rv-clone">
+          <span class="rv-clone-ico">⎇</span>
+          <code class="rv-clone-url">${enc(cloneUrl)}</code>
+          <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
+          ${wurl?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Web</a>`:''}
+        </div>`:(wurl?`<div class="rv-clone"><a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a></div>`:'')}
+      </div>
+      <div class="rv-tabs" role="tablist">
+        <button class="rv-tab active" data-tab="readme">📖 README</button>
+        <button class="rv-tab" data-tab="issues">🐛 Issues <span class="rv-count" id="rv-c-issues"></span></button>
+        <button class="rv-tab" data-tab="patches">🩹 Patches <span class="rv-count" id="rv-c-patches"></span></button>
+      </div>
+      <div class="rv-panel" data-panel="readme">
+        <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
+      </div>
+      <div class="rv-panel" data-panel="issues" hidden>
+        <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
+        <div class="rv-collab" id="rv-issues"><div class="spinner"></div></div>
+      </div>
+      <div class="rv-panel" data-panel="patches" hidden>
+        <div class="rv-collab-hd"><span class="search-section-title">Patches</span></div>
+        <div class="rv-collab" id="rv-patches"><div class="spinner"></div></div>
+      </div>
     </div>`;
     $('#repo-back',feed).onclick=()=>switchView('repos');
-    $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
+    $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', cb.dataset.clone); } }; }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
+    // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below.
+    $$('.rv-tab',feed).forEach(tb=> tb.onclick=()=>{
+      $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x===tb));
+      $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!==tb.dataset.tab);
+    });
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
       const box=$('#rv-readme',feed); if(!box) return;
@@ -3691,7 +3724,10 @@
     if(VIEW!=='repo') return;
     const box=$(sel,feed); if(!box) return;
     evs.sort((a,b)=>b.created_at-a.created_at);
-    box.innerHTML = evs.length ? evs.map(_collabRow).join('') : `<div class="muted small">${emptyMsg}</div>`;
+    box.innerHTML = evs.length ? evs.map(_collabRow).join('') : `<div class="rv-empty muted small">${emptyMsg}</div>`;
+    const cid = sel==='#rv-issues'?'#rv-c-issues':sel==='#rv-patches'?'#rv-c-patches':'';
+    if(cid){ const c=$(cid,feed); if(c) c.textContent = evs.length?String(evs.length):''; }
+    $$('.collab-row',box).forEach(r=> r.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(r.dataset.pk); return; } renderThread(r.dataset.id); });
     $$('[data-prof]',box).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     decorateProfiles();
   }
