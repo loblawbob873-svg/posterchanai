@@ -202,6 +202,7 @@ def init_db():
             # that rejects just logs a skip). Admin can edit/clear in Admin → Blossom.
             "blossom_mirror_servers": "https://blossom.primal.net",
             "blossom_blob_ttl_days": "0",
+            "agent_artifact_ttl_days": "14",
             "blossom_max_upload_mb": "100",
             # Single-node default: blobs live LOCALLY on the data volume. The "proxy" backend is
             # only for a multi-node setup with a shared storage server (set storage_server_url +

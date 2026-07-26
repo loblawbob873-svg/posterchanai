@@ -866,6 +866,12 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
         raise HTTPException(status_code=429, detail="one effect at a time — give the last render a moment")
     _effect_cooldown[pk] = _now
 
+    # Busy-overflow LB: if this node's render queue is full, run it on a peer instead.
+    _fwd = await _meme_lb_forward(request, "effect",
+                                  {"pubkey": data.pubkey, "auth": data.auth, "name": data.name, "dur": data.dur})
+    if _fwd is not None:
+        return _fwd
+
     # Cap the length the same spirit as the Meme Builder's own bounds — an effect layer is a short clip on
     # the shared GPU/CPU box, not a film.
     dur = None
@@ -940,6 +946,13 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
         raise HTTPException(status_code=429, detail="one effect at a time — give the last render a moment")
     _effect_cooldown[pk] = _now
+
+    # Busy-overflow LB: full local queue → run this effect on a peer node instead.
+    _fwd = await _meme_lb_forward(request, "apply-effect",
+                                  {"pubkey": data.pubkey, "auth": data.auth, "url": data.url,
+                                   "effect": data.effect, "arg": data.arg})
+    if _fwd is not None:
+        return _fwd
 
     # Fetch the layer image. OUR OWN media hosts (blossom_public_url) resolve to a PRIVATE LAN IP under
     # split-horizon DNS (media.poster.place -> 192.168.0.1 inside the LAN), so the SSRF guard rejects them
@@ -2906,13 +2919,56 @@ def _meme_semaphore() -> asyncio.Semaphore:
     if _meme_slots is None:
         _meme_slots = asyncio.Semaphore(_MEME_MAX_CONCURRENT)
     return _meme_slots
+
+
+_meme_rr = [0]   # round-robin cursor over peer nodes for render overflow
+
+
+async def _meme_lb_forward(request: "Request", subpath: str, body: dict):
+    """Busy-overflow load balancer for meme/effect RENDER jobs. When THIS node's render queue is already
+    full (all _MEME_MAX_CONCURRENT slots busy) and there are peer nodes, forward the same request to a
+    peer (round-robin) and return its Response — so multiple jobs run across the fleet at once instead of
+    piling onto one box (this is the ffmpeg-render analogue of the chat/image node LB). Returns None to
+    run LOCALLY: a request already forwarded to us (loop guard header), no peers, or a free local slot
+    (running local is lower-latency than a hop). Any peer error falls through to local."""
+    try:
+        if request is not None and request.headers.get("x-pcai-meme-fwd"):
+            return None   # already a forwarded job — run it here, never re-forward (loop guard)
+        if not _meme_semaphore().locked():
+            return None   # a local slot is free → handle here
+        from app.services import settings_store, video_factory
+        peers = video_factory.parse_video_server_urls(settings_store.get("chat_server_urls", "") or "")
+        if not peers:
+            return None
+        import httpx
+        start = _meme_rr[0] % len(peers); _meme_rr[0] += 1
+        for k in range(len(peers)):
+            peer = peers[(start + k) % len(peers)].rstrip("/")
+            url = "%s/client/meme/%s" % (peer, subpath)
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=8.0)) as c:
+                    r = await c.post(url, json=body, headers={"x-pcai-meme-fwd": "1"})
+                if r.status_code >= 500:
+                    continue   # peer busy/broke → try the next, else local
+                logger.info("[meme] overflow render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
+                ct = r.headers.get("content-type", "") or ""
+                if ct.startswith("application/json"):
+                    return JSONResponse(r.json(), status_code=r.status_code)
+                return Response(content=r.content, status_code=r.status_code,
+                                media_type=ct or "application/octet-stream")
+            except Exception as e:
+                logger.info("[meme] peer %s failed (%s) — trying next/local: %s", peer, subpath, e)
+                continue
+    except Exception as e:
+        logger.debug("[meme] lb forward skipped: %s", e)
+    return None
 # Layer sources are URLs the client already has (Blossom blobs it uploaded, or media already on the
 # timeline), which is why this only ever FETCHES — it never accepts uploaded bytes, so there is no new
 # upload surface. Every fetch goes through the rss_service SSRF guard, the same one the fediverse bridge
 # uses: without it an edit list would be a fully general "make the server request this URL" primitive
 # against the LAN.
 @router.post("/meme/render")
-async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
+async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depends(get_db)):
     import tempfile
     import httpx
     from urllib.parse import urlparse
@@ -2922,6 +2978,14 @@ async def meme_render(data: MemeRenderReq, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+
+    # Busy-overflow LB: if this node's render queue is full, run the whole project on a peer node and
+    # stream its MP4 back — so several memes render across the fleet at once (the ffmpeg analogue of the
+    # chat/image node LB). Loop-guarded by the x-pcai-meme-fwd header.
+    _fwd = await _meme_lb_forward(request, "render",
+                                  {"pubkey": data.pubkey, "auth": data.auth, "edit": data.edit})
+    if _fwd is not None:
+        return _fwd
 
     # ONE render at a time per user. Without this every extra Render click spawned ANOTHER full ffmpeg of the
     # same project — they pile up, each one slower than the last (software x264 when VAAPI is unavailable),

@@ -216,6 +216,11 @@
                 <small>Max tool-call iterations in agentic mode. Real tasks need dozens; the agent trims its own transcript, so this is no longer bounded by the model's context.</small>
             </div>
             <div class="form-group">
+                <label for="agent_artifact_ttl_days">Agent Artifact TTL (days)</label>
+                <input type="number" id="agent_artifact_ttl_days" name="agent_artifact_ttl_days" value="14" min="0" max="3650">
+                <small>Transient agent artifacts — the <code>/workspace</code> backups produced by a sandbox run — auto-expire from Blossom after this many days, so a run-every-time auto-archive can't fill storage. <b>0 = keep forever.</b> Chat-generated images/files are not affected.</small>
+            </div>
+            <div class="form-group">
                 <label for="node_exec_agent_context_chars">Agent Context Budget (characters)</label>
                 <input type="number" id="node_exec_agent_context_chars" name="node_exec_agent_context_chars" value="48000" min="4000" step="1000">
                 <small>Roughly 4 characters per token. Once the run's transcript exceeds this, old tool output is shrunk to one line and the oldest steps are dropped. Lower it for a node with a small context window.</small>

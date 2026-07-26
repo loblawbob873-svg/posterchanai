@@ -616,9 +616,11 @@ def _mirror_worker() -> None:
 
 
 async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True,
-                    private: bool = False) -> dict:
+                    private: bool = False, expires_days: int = 0) -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
-    (without `url`, which the router fills from the request base)."""
+    (without `url`, which the router fills from the request base). `expires_days` > 0 stamps an
+    explicit per-blob TTL (expires_at) so transient blobs — e.g. agent workspace backups — are swept
+    regardless of the global `blossom_blob_ttl_days`, instead of piling up forever."""
     cfg = _cfg(db)
     sha256 = await asyncio.to_thread(compute_sha256, data)
     size = len(data)
@@ -648,11 +650,12 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         storage = "local"
 
     now = int(time.time())
-    # expires_at is reserved for an explicit per-blob TTL (left NULL here); ordinary retention
-    # is driven live by the admin `blossom_blob_ttl_days` setting against created_at.
+    # expires_at: an explicit per-blob TTL when expires_days>0 (transient artifacts); else NULL, and
+    # ordinary retention is driven live by the admin `blossom_blob_ttl_days` setting against created_at.
+    _exp = (now + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
     blob = BlossomBlob(
         sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=None, storage=storage, path=path, private=bool(private),
+        expires_at=_exp, storage=storage, path=path, private=bool(private),
     )
     db.add(blob)
     try:

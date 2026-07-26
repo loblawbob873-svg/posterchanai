@@ -16,15 +16,18 @@ from . import blossom_service, blobcrypt
 logger = logging.getLogger(__name__)
 
 
-async def save_bytes(db, user, conv_id: int, data: bytes, ext: str) -> str | None:
-    """Encrypt + store an artifact in Blossom; return an image_path the chat references (+ serves)."""
+async def save_bytes(db, user, conv_id: int, data: bytes, ext: str, expires_days: int = 0) -> str | None:
+    """Encrypt + store an artifact in Blossom; return an image_path the chat references (+ serves).
+    `expires_days` > 0 gives the blob an explicit TTL — used for TRANSIENT agent artifacts (workspace
+    backups) so they auto-expire instead of accumulating; chat images pass 0 (persist with the chat)."""
     try:
         sk = user_storage_seckey(db, user)
         ct = blobcrypt.encrypt(sk, data)          # AES-256-GCM (handles large images/files)
         pub = bip340.pubkey_from_seckey(sk).hex()
         # private=True: an AI-generated artifact must never appear in the public BUD-02 listing —
         # that listing's sha256 is all /client/file needs to return the decrypted bytes.
-        desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream", private=True)
+        desc = await blossom_service.save_blob(db, pub, ct, "application/octet-stream", private=True,
+                                               expires_days=expires_days)
         sha = desc.get("sha256")
         if not sha:
             return None

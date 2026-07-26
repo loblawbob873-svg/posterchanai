@@ -121,11 +121,13 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
 MEDIA_ATTACHMENT_COMMANDS = ("bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "hag", "goon", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse")
 
 
-async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: str) -> str | None:
+async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: str,
+                                 expires_days: int = 0) -> str | None:
     """Encrypt + store an artifact in Blossom on a FRESH DB session (returns its image_path, or None).
     A long render (60-90s music/video, a big media command) idles the request's held DB txn past Postgres
     idle_in_transaction_session_timeout, so THAT connection is dead by save time. We use a fresh session
-    AND re-fetch the user on it (user.id, a PK, never expires) so nothing lazy-loads off the dead conn."""
+    AND re-fetch the user on it (user.id, a PK, never expires) so nothing lazy-loads off the dead conn.
+    `expires_days` > 0 sets a TTL — for transient agent workspace backups, so they don't fill storage."""
     from app.database import SessionLocal
     from app.models import User
     s = SessionLocal()
@@ -133,7 +135,7 @@ async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: s
         u = s.get(User, user_id)
         if not u:
             return None
-        return await artifact_store.save_bytes(s, u, conv_id, data, ext)
+        return await artifact_store.save_bytes(s, u, conv_id, data, ext, expires_days=expires_days)
     except Exception as e:
         logger.warning("[CHAT] artifact Blossom save failed: %s", e)
         return None
@@ -1716,6 +1718,14 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                     if isinstance(job, dict) and job.get("type") == "agent_files":
                                         _ftext = (job.get("content") or "").strip()
                                         _fdb = SessionLocal()
+                                        # Workspace backups are TRANSIENT snapshots — give them a bounded TTL
+                                        # (agent_artifact_ttl_days) so a run-every-time auto-archive can't fill
+                                        # storage. The download link works until it expires + gets swept.
+                                        try:
+                                            from app.services import settings_store as _ss_ttl
+                                            _art_ttl = int(_ss_ttl.get("agent_artifact_ttl_days", "14") or 14)
+                                        except Exception:
+                                            _art_ttl = 14
                                         try:
                                             _links = []
                                             for _bf in job.get("files", []):
@@ -1724,7 +1734,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                                                     continue
                                                 _bn = _bf.get("filename", "workspace.tar.gz")
                                                 _ext = (_bn.rsplit(".", 1)[-1] if "." in _bn else "bin")
-                                                _rel = await _save_artifact_blossom(_uid, _conv, _bd, _ext)
+                                                _rel = await _save_artifact_blossom(_uid, _conv, _bd, _ext, expires_days=_art_ttl)
                                                 if _rel:
                                                     _links.append(f"[⬇️ {_bn}](/api/files/{_q(_uname, safe='')}/{_conv}/{_q(Path(_rel).name)})")
                                             if _links:

@@ -327,6 +327,9 @@ class SettingsResponse(BaseModel):
     node_exec_sandbox_network: str = "bridge"  # "bridge" (internet for apt) or "none" (fully isolated)
     node_exec_sandbox_memory: str = "1g"       # per-container memory cap (docker --memory)
     node_exec_sandbox_cpus: str = "1"          # per-container CPU cap (docker --cpus)
+    agent_artifact_ttl_days: str = "14"  # per-blob TTL for TRANSIENT agent artifacts (workspace backups
+    # from a sandbox run): they auto-expire after this many days so a run-every-time auto-archive can't
+    # fill storage. 0 = keep forever. Chat-generated images/files are NOT affected (they persist).
     node_exec_agent_max_steps: str = "30"  # max tool-call iterations in agentic mode (was 8 — a context
     # limit in disguise; the agent now digests/trims its own transcript, so a real budget is affordable)
     node_exec_agent_context_chars: str = "48000"  # transcript budget (~4 chars/token) before old tool
