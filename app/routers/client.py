@@ -14,6 +14,7 @@ This router only:
 """
 import asyncio
 import base64
+import contextlib
 import glob
 import hashlib
 import hmac
@@ -884,11 +885,7 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
 
     # ffmpeg is blocking → a thread, and share the Meme Builder's render queue so effect renders can't
     # stack N ffmpegs alongside timeline renders and starve the single worker.
-    try:
-        await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
-    try:
+    async with _meme_slot():
         try:
             clip, has_audio = await asyncio.to_thread(mb.render_alpha_effect, name, dur)
         except ValueError as e:
@@ -896,8 +893,6 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
         except RuntimeError as e:
             logger.warning("[meme] effect render failed (%s) for %s: %s", name, pk[:12], e)
             raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _meme_semaphore().release()
 
     # Store under the acting user's pubkey (their generated content). save_blob is content-addressed and
     # dedups, so re-rolling the same effect twice costs nothing. VP9-alpha .webm: plays transparently in
@@ -993,20 +988,15 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     ext = "png" if "png" in (ct or "") else ("gif" if "gif" in (ct or "") else "jpg")
     attachments = [(f"layer.{ext}", img, ct or "image/jpeg")]
 
-    try:
-        await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
-    try:
-        cs = CommandService(db)
-        # _execute_command_inner is the RAW effect (execute_command would append the branding outro, which
-        # we don't want on a compositing sub-layer). Allowlisted to effects above → only runs effects.
-        result = await cs._execute_command_inner(effect, (data.arg or "").strip(), None, None, attachments, None)
-    except Exception as e:
-        logger.warning("[meme] apply-effect %s failed for %s: %s", effect, pk[:12], e)
-        raise HTTPException(status_code=500, detail="effect render failed")
-    finally:
-        _meme_semaphore().release()
+    async with _meme_slot():
+        try:
+            cs = CommandService(db)
+            # _execute_command_inner is the RAW effect (execute_command would append the branding outro, which
+            # we don't want on a compositing sub-layer). Allowlisted to effects above → only runs effects.
+            result = await cs._execute_command_inner(effect, (data.arg or "").strip(), None, None, attachments, None)
+        except Exception as e:
+            logger.warning("[meme] apply-effect %s failed for %s: %s", effect, pk[:12], e)
+            raise HTTPException(status_code=500, detail="effect render failed")
 
     files = (result or {}).get("files") if isinstance(result, dict) else None
     out = None
@@ -2924,6 +2914,25 @@ def _meme_semaphore() -> asyncio.Semaphore:
 
 
 _meme_rr = [0]   # round-robin cursor over peer nodes for render overflow
+_meme_busy = [0]  # local render jobs holding a slot right now — what the LB reads to decide "am I busy?"
+
+
+@contextlib.asynccontextmanager
+async def _meme_slot():
+    """Hold one of this node's _MEME_MAX_CONCURRENT ffmpeg render slots for the duration of the block
+    (503 if the queue doesn't drain within _MEME_QUEUE_WAIT_S). Also maintains `_meme_busy`, the count
+    the overflow LB reads: the semaphore's own free-slot count is private, and `locked()` only goes True
+    when EVERY slot is taken, which is a far rarer condition than "this node is already rendering"."""
+    try:
+        await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="the render queue is busy — try again in a moment")
+    _meme_busy[0] += 1
+    try:
+        yield
+    finally:
+        _meme_busy[0] -= 1
+        _meme_semaphore().release()
 
 
 _MEME_BLOB_RE = re.compile(r"/([0-9a-f]{64})(\.[A-Za-z0-9]{1,8})?(?:[?#]|$)")
@@ -2959,17 +2968,23 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
 
 
 async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):
-    """Busy-overflow load balancer for meme/effect RENDER jobs. When THIS node's render queue is already
-    full (all _MEME_MAX_CONCURRENT slots busy) and there are peer nodes, forward the same request to a
-    peer (round-robin) and return its Response — so multiple jobs run across the fleet at once instead of
-    piling onto one box (this is the ffmpeg-render analogue of the chat/image node LB). Returns None to
-    run LOCALLY: a request already forwarded to us (loop guard header), no peers, or a free local slot
-    (running local is lower-latency than a hop). Any peer error falls through to local."""
+    """Busy-overflow load balancer for meme/effect RENDER jobs. When THIS node is ALREADY rendering and
+    there are peer nodes, forward the same request to a peer (round-robin) and return its Response — so
+    concurrent jobs run across the fleet instead of piling onto one box (this is the ffmpeg-render
+    analogue of the chat/image node LB). Returns None to run LOCALLY: a request already forwarded to us
+    (loop guard header), no peers, or an IDLE node (a hop is pure latency when nothing is queued). Any
+    peer error falls through to local.
+
+    The gate is "is anything rendering here", NOT "are all _MEME_MAX_CONCURRENT slots full". Full is
+    nearly unreachable in practice — a pubkey may hold only one timeline render (`_meme_rendering`) and
+    may start an effect only every _EFFECT_COOLDOWN_S — so a per-user workload could never fill two
+    slots, the gate never opened, and every job ran on one node (which is exactly what it looked like
+    in production). Local still handles the first job; the fleet picks up the overlap."""
     try:
         if request is not None and request.headers.get("x-pcai-meme-fwd"):
             return None   # already a forwarded job — run it here, never re-forward (loop guard)
-        if not _meme_semaphore().locked():
-            return None   # a local slot is free → handle here
+        if _meme_busy[0] <= 0:
+            return None   # nothing rendering locally → local is the fastest path
         from app.services import settings_store, video_factory
         peers = video_factory.parse_video_server_urls(settings_store.get("chat_server_urls", "") or "")
         if not peers:
@@ -3096,15 +3111,8 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             # single-worker process) for the length of the render. Take a QUEUE slot first so only
             # _MEME_MAX_CONCURRENT renders run at once — the rest wait here instead of all piling onto the
             # CPU together. Bounded, so a wedged render can't leave this request hanging indefinitely.
-            try:
-                await asyncio.wait_for(_meme_semaphore().acquire(), timeout=_MEME_QUEUE_WAIT_S)
-            except asyncio.TimeoutError:
-                raise HTTPException(status_code=503,
-                                    detail="the render queue is busy — try again in a moment")
-            try:
+            async with _meme_slot():
                 out = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
-            finally:
-                _meme_semaphore().release()
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except RuntimeError as e:
