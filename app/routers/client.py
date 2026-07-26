@@ -1335,23 +1335,23 @@ def _looks_like_html_page(text: str) -> bool:
 
 
 async def _grasp_readme(clone_url: str) -> str | None:
-    """If clone_url points at THIS deployment's OWN GRASP git host (git_server_public_base), read the
-    README straight from the host's raw endpoint (<npub>/<id>.git/raw/HEAD/README.md) — our /git/ is
-    smart-HTTP (pack) only, so the forge-URL candidates never match it. Reaches the git host on the LAN
-    (the node we proxy to) or on localhost (a hosting node); it's our own service, so no SSRF surface.
-    Returns the markdown, or None when the url isn't ours / no README exists."""
+    """If clone_url is a Nostr/GRASP repo (…/<npub|hex>/<id>.git), read the README straight from THIS
+    node's git host raw endpoint (<npub>/<id>.git/raw/HEAD/README.md) — our /git/ is smart-HTTP (pack)
+    only, so the forge-URL candidates never match it. We reach the git host we PROXY to (git_server_proxy_url,
+    e.g. nas.lan:3053) or, on a hosting node, localhost:git_server_port. Scoped to npub/hex owners so it
+    never hijacks a normal forge (GitHub/Gitea owners are usernames); a repo we don't host just 404s and
+    the caller falls through to the forge candidates. Our own LAN/localhost service — no SSRF surface."""
     from urllib.parse import urlparse
+    import re as _re
     try:
-        base = (settings_store.get("git_server_public_base", "") or "").strip()
-        base_host = (urlparse(base).hostname or "").lower() if base else ""
         pu = urlparse(clone_url)
-        if not base_host or (pu.hostname or "").lower() != base_host:
-            return None
         segs = [s for s in pu.path.split("/") if s]
         gi = next((i for i, s in enumerate(segs) if s.endswith(".git")), None)
         if gi is None or gi < 1:
             return None
         owner_seg, rid = segs[gi - 1], segs[gi][:-4]
+        if not (owner_seg.startswith("npub1") or _re.fullmatch(r"[0-9a-fA-F]{64}", owner_seg)):
+            return None   # not a Nostr git owner → leave it to the forge candidates
         proxy = (settings_store.get("git_server_proxy_url", "") or "").strip().rstrip("/")
         host_base = proxy or ("http://127.0.0.1:%s" % (settings_store.get("git_server_port", "3053") or "3053"))
         import httpx
