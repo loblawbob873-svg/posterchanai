@@ -851,7 +851,12 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    if not blossom_service.is_enabled(db):
+    # A forwarded job renders here and hands the BYTES back — the node that took the user's request
+    # stores them. So a render peer needs ffmpeg, not a media store: `blossom_enabled` is per-node and
+    # is off on a node that only holds bytes for someone else's Blossom (nas), which used to 503 every
+    # forwarded effect straight back to local. See _meme_lb_forward.
+    _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
+    if not _fwded and not blossom_service.is_enabled(db):
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
     name = (data.name or "").strip().lower()
@@ -894,14 +899,23 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
             logger.warning("[meme] effect render failed (%s) for %s: %s", name, pk[:12], e)
             raise HTTPException(status_code=500, detail=str(e))
 
+    # A sensible default LENGTH for the timeline layer so the whole clip plays (nakedman is ~8s, the
+    # shrug clip ~2.7s, a static character 6s). The user trims from there like any layer.
+    nominal = dur or (8.0 if name == "nakedman" else 2.7 if name == "shrug" else 6.0)
+    if _fwded:
+        # Rendered on behalf of another node: hand back the raw clip + the metadata it can't recompute.
+        # That node stores it and builds the URL, so this one needs no blob store of its own.
+        return Response(content=clip, media_type="video/webm", headers={
+            "x-pcai-effect-audio": "1" if has_audio else "0",
+            "x-pcai-effect-name": name,
+            "x-pcai-effect-dur": str(round(nominal, 2)),
+        })
+
     # Store under the acting user's pubkey (their generated content). save_blob is content-addressed and
     # dedups, so re-rolling the same effect twice costs nothing. VP9-alpha .webm: plays transparently in
     # the browser preview AND composites in the render (decoded with libvpx-vp9 — see media_service).
     desc = await blossom_service.save_blob(db, pk, clip, "video/webm")
     url = f"{_blossom_url(request, db)}/{desc['sha256']}.webm"
-    # A sensible default LENGTH for the timeline layer so the whole clip plays (nakedman is ~8s, the
-    # shrug clip ~2.7s, a static character 6s). The user trims from there like any layer.
-    nominal = dur or (8.0 if name == "nakedman" else 2.7 if name == "shrug" else 6.0)
     # The clip is SILENT (audio would corrupt VP9 alpha). If the effect has a sound, hand back its name so
     # the client sets the layer's `sound` field — the render mixes it via the existing per-layer sound path.
     return JSONResponse({"ok": True, "url": url, "audio": bool(has_audio),
@@ -930,7 +944,9 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    if not blossom_service.is_enabled(db):
+    # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
+    _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
+    if not _fwded and not blossom_service.is_enabled(db):
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
     effect = (data.effect or "").strip().lower()
@@ -1011,8 +1027,6 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
 
     ct_out = str(out.get("content_type") or "video/mp4")
     ext_out = "mp4" if "mp4" in ct_out else ((ct_out.split("/")[-1] or "mp4").split(";")[0])
-    desc = await blossom_service.save_blob(db, pk, out["data"], ct_out)
-    url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext_out}"
 
     dur = 0.0
     try:
@@ -1027,6 +1041,15 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
         os.unlink(tp)
     except Exception:
         dur = 0.0
+
+    if _fwded:
+        return Response(content=out["data"], media_type=ct_out, headers={
+            "x-pcai-effect-name": effect,
+            "x-pcai-effect-dur": str(round(dur, 2)),
+        })
+
+    desc = await blossom_service.save_blob(db, pk, out["data"], ct_out)
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext_out}"
     return JSONResponse({"ok": True, "url": url, "dur": round(dur, 2), "effect": effect,
                          "is_video": ct_out.startswith("video/")})
 
@@ -2967,6 +2990,38 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
     return desc.get("sha256") == sha
 
 
+async def _meme_store_peer_media(request: "Request", db: Session, body: dict, subpath: str, r):
+    """Store an effect rendered BY A PEER into this node's Blossom and return the JSON the client
+    expects. The peer sends raw media plus x-pcai-effect-* headers precisely so that it never needs a
+    blob store of its own — the node holding the user's request owns the storage. Returns None if the
+    bytes are unusable, so the caller can fall back to rendering locally."""
+    from app.services import blossom_service
+    data = r.content
+    if not data:
+        return None
+    pk = nostr_service.to_pubkey_hex((body or {}).get("pubkey") or "")
+    if not pk:
+        return None
+    ct = (r.headers.get("content-type") or "video/mp4").split(";")[0].strip()
+    ext = "webm" if "webm" in ct else ("mp4" if "mp4" in ct else (ct.split("/")[-1] or "mp4"))
+    desc = await blossom_service.save_blob(db, pk, data, ct)
+    sha = desc.get("sha256")
+    if not sha:
+        return None
+    url = "%s/%s.%s" % (_blossom_url(request, db), sha, ext)
+    try:
+        dur = round(float(r.headers.get("x-pcai-effect-dur") or 0), 2)
+    except (TypeError, ValueError):
+        dur = 0.0
+    name = r.headers.get("x-pcai-effect-name") or ""
+    if subpath == "effect":
+        audio = (r.headers.get("x-pcai-effect-audio") or "0") == "1"
+        return JSONResponse({"ok": True, "url": url, "audio": audio,
+                             "sound": name if audio else None, "name": name, "dur": dur})
+    return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": name,
+                         "is_video": ct.startswith("video/")})
+
+
 async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):
     """Node load balancer for meme/effect RENDER jobs: hand the job to a peer (round-robin) and return
     its Response, so renders spread across the fleet instead of piling onto one box (this is the
@@ -3004,6 +3059,16 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
                     continue   # peer busy/broke → try the next, else local
                 logger.info("[meme] render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
                 ct = r.headers.get("content-type", "") or ""
+                # An effect peer answers with RAW MEDIA (it has ffmpeg, not necessarily a blob store):
+                # store it here, under this node's Blossom, and build the URL the client expects.
+                if subpath in ("effect", "apply-effect") and r.status_code < 400 \
+                        and not ct.startswith("application/json") and db is not None:
+                    stored = await _meme_store_peer_media(request, db, body, subpath, r)
+                    if stored is None:
+                        logger.warning("[meme] could not store %s media from %s — rendering locally",
+                                       subpath, peer)
+                        return None
+                    return stored
                 if ct.startswith("application/json"):
                     payload = r.json()
                     # The endpoints that answer with a Blossom URL (effect / apply-effect) stored their
