@@ -14,7 +14,9 @@ image gen, TTS/STT, email/news/torrents, a file manager, a **Nostr client + rela
 - Entry point: `python run.py` (uvicorn, **single worker**, port from `POSTERCHANAI_PORT`,
   default **3051**). On this deployment the Intel Arc box runs `posterchanai.service`
   (port 3051) + `posterchanai-xpu-image.service`; `nas.lan` runs `posterchanai`.
-- venv at `venv/` (`venv/bin/python`). Quick checks: `venv/bin/python -m py_compile <files>`.
+- venv at **`venv-unified/`** (`venv-unified/bin/python`) — there is no `venv/` on this deployment.
+  Quick checks: `venv-unified/bin/python -m py_compile <files>`, and `-m pyflakes` for undefined
+  names (what `sync.sh`'s pre-push gate runs).
 - Logs: `journalctl -u posterchanai.service` (the fediverse `[PROXY] CONNECT ... SOCKS5`
   errors are unrelated federation noise — ignore when debugging features).
 
