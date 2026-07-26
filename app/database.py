@@ -137,6 +137,22 @@ def _run_migrations():
             except Exception as e:
                 logger.warning(f"[MIGRATE] could not create index {idx.name}: {e}")
 
+    # Column TYPE widenings on existing tables (create_all + ADD COLUMN never change a column's type).
+    # blossom_blobs.size was INTEGER (32-bit, ~2.1 GB cap): a blob larger than that failed to insert
+    # (psycopg2 NumericValueOutOfRange), which ALSO wedged stream-VOD finalize in a 30s retry loop.
+    # Widen to BIGINT. Idempotent — skipped once the column is already a big int.
+    for _tbl, _col in (("blossom_blobs", "size"),):
+        try:
+            if not insp.has_table(_tbl):
+                continue
+            _cur = next((c["type"] for c in insp.get_columns(_tbl) if c["name"] == _col), None)
+            if _cur is not None and "big" not in str(_cur).lower():
+                with engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE "{_tbl}" ALTER COLUMN "{_col}" TYPE BIGINT'))
+                logger.info(f"[MIGRATE] widened {_tbl}.{_col} to BIGINT")
+        except Exception as e:
+            logger.warning(f"[MIGRATE] could not widen {_tbl}.{_col}: {e}")
+
 
 # The canonical default settings, populated by init_db() — settings_store seeds these into the
 # relay datastore on first boot (there is no SQL Setting table).

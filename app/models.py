@@ -253,7 +253,7 @@ class BlossomBlob(Base):
 
     sha256 = Column(String(64), primary_key=True)
     pubkey = Column(String(64), nullable=False)        # owning uploader (hex x-only)
-    size = Column(Integer, nullable=False)
+    size = Column(BigInteger, nullable=False)   # bytes — BigInteger: a >2.1 GB blob overflowed INT4
     mime = Column(String(120), nullable=True)
     created_at = Column(Integer, nullable=False)        # unix seconds
     expires_at = Column(Integer, nullable=True)         # unix seconds; 0/NULL = never
