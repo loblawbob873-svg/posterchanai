@@ -342,6 +342,24 @@ class SettingsResponse(BaseModel):
     node_exec_nostr_enabled: str = "false"  # dispatch node/agent tasks over Nostr instead of SSH
     node_exec_node_npubs: str = ""  # node addressing over Nostr: one per line `name npub1…` (name → worker npub)
     node_exec_trusted_npubs: str = ""  # controllers this WORKER will run commands from: one npub per line (signature-verified)
+    # Built-in git-over-nostr host (GRASP + NIP-34). Self-contained smart-HTTP git server run as a
+    # watchdogged subprocess (git_host_main.py) on the port-3051 instance; push is authorized by a
+    # maintainer-signed kind-30618 (no HTTP passwords). OFF BY DEFAULT — nothing spawns and the API
+    # 404s until an admin turns it on (shipping dormant makes a one-shot deploy safe). See docs/GIT_OVER_NOSTR.md.
+    git_server_enabled: str = "false"          # master switch; supervisor spawns nothing until on
+    git_server_port: str = "3053"              # localhost bind for the git-http subprocess
+    git_server_bind: str = "127.0.0.1"         # bind host (container turnkey may set 0.0.0.0)
+    git_server_public_base: str = ""           # e.g. https://poster.place/git — stamped into 30617 clone URLs
+    git_server_allowlist: str = ""             # npubs allowed to provision (empty ⇒ admins only)
+    git_server_repo_max_mb: str = "512"        # per-repo hard size cap (enforced in the pre-receive hook)
+    git_server_total_gb: str = "20"            # global storage cap (daily reaper warns/repacks)
+    git_server_allow_force: str = "true"       # allow maintainer-signed non-fast-forward (force) pushes
+    git_server_nip98_push: str = "true"        # accept NIP-98-authenticated pushes (admin/sync.sh path)
+    git_server_default_private: str = "false"  # default privacy for newly-provisioned/imported repos
+    # Multi-node: when SET, this node runs NO local git subprocess — its git front reverse-proxies the
+    # smart-HTTP requests to the hosting node here (like the Blossom storage proxy). Auth + repos + hooks
+    # + the 30617/30618 lookups stay on the hosting node. Empty ⇒ run the local host (per git_server_enabled).
+    git_server_proxy_url: str = ""             # e.g. http://nas.lan:3053 or https://nas.lan/git
     # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
     finance_api_base: str = "http://localhost:5001"
     # Screenshot: hosts allowed to bypass the SSRF private-IP guard (the operator's own

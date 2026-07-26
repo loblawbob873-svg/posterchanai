@@ -51,6 +51,75 @@ def _fh_mark(eid: str) -> None:
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+# --- GRASP git-over-nostr (P3): repo-SCOPED collaboration acceptance ---------------------------
+# Patches (1617) / issues (1621) / replies (1622/1623) / status (1630-1633) are accepted from ANY
+# author — but ONLY when they reference a repo THIS node actually hosts (an `a` tag 30617:<owner>:<id>
+# whose bare repo exists on disk, AND is not a PRIVATE repo — private repos never use the public Nostr
+# flow). 30618 (repo state) is scoped to a hosted repo by its own d-tag/pubkey. This keeps the WoT
+# exemption from becoming an open spam firehose. Announcements (30617) stay broadly public (Discover).
+_GIT_COLLAB_KINDS = frozenset({30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633})
+_GIT_REPOS_DIR = os.path.join(_REPO_ROOT, "data", "git_repos")
+_HOSTED_CACHE: dict = {}          # (owner_hex, repo_id) -> (is_hosted_public: bool, expires_at)
+_HOSTED_TTL = 30.0                 # cheap filesystem stat, cached so it's not per-event
+
+
+def _hosted_public_repo(owner_hex: str, repo_id: str) -> bool:
+    """True iff data/git_repos/<owner_hex>/<repo_id>.git exists AND is not marked private. Cached
+    (TTL) so the firehose doesn't stat per event. Any error -> False (don't accept)."""
+    import re as _re
+    if not (isinstance(owner_hex, str) and len(owner_hex) == 64):
+        return False
+    if not owner_hex.islower():
+        owner_hex = owner_hex.lower()
+    try:
+        bytes.fromhex(owner_hex)
+    except ValueError:
+        return False
+    rid = (repo_id or "").strip().lower()
+    if rid.endswith(".git"):
+        rid = rid[:-4]
+    if not rid or not _re.match(r"^[a-z0-9][a-z0-9._-]{0,99}$", rid):
+        return False
+    key = (owner_hex, rid)
+    now = time.time()
+    hit = _HOSTED_CACHE.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    d = os.path.join(_GIT_REPOS_DIR, owner_hex, rid + ".git")
+    ok = False
+    if os.path.isdir(d):
+        priv = False
+        try:
+            with open(os.path.join(d, "grasp.json")) as f:
+                priv = bool(json.load(f).get("private"))
+        except (OSError, ValueError):
+            priv = False
+        ok = not priv
+    _HOSTED_CACHE[key] = (ok, now + _HOSTED_TTL)
+    return ok
+
+
+def _git_event_for_hosted_repo(ev: dict) -> bool:
+    """Does this git collaboration event reference a repo THIS node publicly hosts?
+      - 30618 repo state: coordinate 30618:<pubkey>:<d> -> owner=pubkey, id=d-tag.
+      - 1617/1621/1622/1623/1630-1633: any `a` tag 30617:<owner>:<id>.
+    """
+    try:
+        kind = int(ev.get("kind", 0))
+        tags = ev.get("tags") or []
+        if kind == 30618:
+            d = next((t[1] for t in tags if len(t) >= 2 and t[0] == "d"), None)
+            return bool(d) and _hosted_public_repo(ev.get("pubkey", ""), d)
+        for t in tags:
+            if len(t) >= 2 and t[0] == "a" and isinstance(t[1], str):
+                parts = t[1].split(":")
+                if len(parts) == 3 and parts[0] in ("30617", "30618"):
+                    if _hosted_public_repo(parts[1], parts[2]):
+                        return True
+        return False
+    except (ValueError, TypeError):
+        return False
+
 # Per-connection protocol limits (constants — tune in code, not user-facing). Generous so
 # feature-rich clients (which open many simultaneous subscriptions for feed/notifs/profiles)
 # don't hit the cap and get a CLOSED, which some clients render as an unhealthy/red relay.
@@ -293,10 +362,12 @@ def _read_config() -> dict:
             # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
             # 30402 = NIP-99 classified listings (the Market/Store); 30017/30018 = NIP-15 marketplace
             # stalls/products — ingest + firehose them so the Discover → Market view sees WoT listings.
-            # 2003/2004 = NIP-35 torrents (+comments). NIP-34 git-over-nostr: 30617 repo announcement,
-            # 30618 repo state, 1617 patches, 1621 issues, 1622 replies/PRs, 1623 issue-status, 1630-1633
-            # status — the whole collaboration record, ingested+firehosed for the Discover → Git view and
-            # kept forever (see store._GIT_KINDS: never pruned, never expired).
+            # 2003/2004 = NIP-35 torrents (+comments), 30617 = NIP-34 git repo announcement — the
+            # Discover → Torrents / Git Repos views. GRASP git-over-nostr (NIP-34): 30618 repo state,
+            # 1617 patch, 1621 issue, 1622 reply, 1623 repo-reply, 1630-1633 issue/patch status —
+            # ingested+firehosed for the Discover → Git view. Collaboration kinds (1617/1621/…) are
+            # accepted repo-SCOPED (see _firehose_event) so it's NOT an open spam firehose. All git kinds
+            # are kept forever (see store._GIT_KINDS: never pruned, never expired).
             "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,6,7,40,42,1111,9735,10002,10050,2003,2004,30023,30311,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
             "author_batch": gi("nostr_relay_author_batch", 200),
@@ -589,6 +660,12 @@ async def _main(cfg: dict) -> None:
             # are NOT opened up here yet — they stay WoT-gated until repo-scoped acceptance lands (accept
             # a patch only when it references a repo we host), so this isn't an open spam firehose.
             pass
+        elif _kind in _GIT_COLLAB_KINDS:
+            # GRASP git collaboration (patch/issue/reply/status/state). Accept from ANY author, but
+            # ONLY when it references a repo THIS node publicly hosts (repo-scoped exemption — not an
+            # open spam firehose, and private repos are excluded so their titles/content never leak).
+            if not _git_event_for_hosted_repo(ev):
+                return
         elif not gate.is_member(ev.get("pubkey", "")):
             return
         eid = ev.get("id")
