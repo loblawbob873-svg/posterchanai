@@ -109,6 +109,27 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # ---- Git-over-Nostr smart-HTTP (git clone/push at https://example.com/git/<npub>/<id>.git) ----
+    # The GRASP git host runs as its OWN subprocess on 127.0.0.1:3053 (gated by the git_server_enabled
+    # admin setting) so all pack work stays off the app's event loop. Clone packfiles must stream
+    # (proxy_buffering off) and pushes can be large. The git host tolerates the /git/ prefix, so no URI
+    # rewrite is needed — a plain proxy_pass keeps the full path.
+    #
+    #   * HOSTING node  (git_server_proxy_url EMPTY): proxy straight to the git host → 127.0.0.1:3053.
+    #   * PROXY node    (git_server_proxy_url SET):    proxy to the APP → 127.0.0.1:3051 instead; the
+    #                                                  app's /git/ reverse-proxy forwards smart-HTTP to
+    #                                                  the hosting node (change 3053 → 3051 below).
+    # git_server_bind/port/proxy_url are PER-NODE settings (Admin → Services), so this one block serves
+    # both roles — only the upstream port differs by node.
+    location ^~ /git/ {
+        proxy_pass http://127.0.0.1:3053;    # PROXY node: use http://127.0.0.1:3051 (the app) instead
+        proxy_set_header Host $host;
+        proxy_buffering off;                 # stream clone packfiles
+        client_max_body_size 0;              # large pushes (bounded by git_server_repo_max_mb)
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
     # ---- Static assets (optional but recommended) --------------------------
     # The app serves /static fine, but PROXYING it means a brief "Loading failed for <script>" window
     # while the app restarts on deploy. If nginx is on the same host as the app, serve the files

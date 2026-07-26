@@ -40,6 +40,30 @@ Then:
 - **Large uploads / Blossom blobs / generated media:** `client_max_body_size 0` (set a cap if you
   want) and long (`3600s`) proxy timeouts for slow LLM/image/video generations.
 
+## Git-over-Nostr (GRASP) smart-HTTP
+
+If you enable the built-in git host (**Admin → Services → `git_server_enabled`**; see
+[GIT_OVER_NOSTR.md](GIT_OVER_NOSTR.md)), it runs as its **own subprocess on `127.0.0.1:3053`** so all
+pack work stays off the app's event loop. The template's `location ^~ /git/` block exposes it as
+`https://example.com/git/<npub>/<id>.git`, with `proxy_buffering off` (clones stream) and
+`client_max_body_size 0` (pushes can be large). The git host tolerates the `/git/` prefix, so no URI
+rewrite is needed.
+
+**Multi-node (host on one box, reach it from another).** `git_server_bind`, `git_server_port`, and
+`git_server_proxy_url` are **per-node** settings (each node's own Admin → Services), exactly like the
+relay's bind/port. Two roles:
+
+- **Hosting node** (`git_server_proxy_url` empty): holds the repos + hooks + auth. Set
+  `git_server_bind = 0.0.0.0` so peers can reach `:3053` over the LAN, and keep nginx's `/git/` block
+  pointing at `127.0.0.1:3053`.
+- **Proxy node** (`git_server_proxy_url = http://<host>:3053`): runs **no** local git host — its app
+  thin-reverse-proxies smart-HTTP (info/refs, upload-pack, receive-pack) to the hosting node,
+  forwarding the client's NIP-98 header untouched (no server-to-server key). Point that node's nginx
+  `/git/` block at the **app** instead: `proxy_pass http://127.0.0.1:3051;`.
+
+All authorization, storage, and the pre/post-receive hooks stay on the hosting node; the proxy is a
+dumb pass-through, the same shape as the Blossom storage proxy.
+
 ## Notes
 
 - **Relay on its own hostname:** prefer `wss://relay.example.com/`? Copy the `/relay` block into a

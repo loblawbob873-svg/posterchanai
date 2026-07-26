@@ -105,15 +105,42 @@ To run the git host on ONE node (e.g. `nas.lan`) and reach it from another (`ser
   node — provision on the hosting node.
 - **`git_server_proxy_url` empty** ⇒ run the local subprocess as normal (gated on `git_server_enabled`).
 
+**The hosting node must bind a reachable interface.** The git host defaults to `git_server_bind =
+127.0.0.1`, which a peer can't reach. On the hosting node (`nas.lan`) set **`git_server_bind =
+0.0.0.0`** (or its LAN IP) and restart so the subprocess re-binds `:3053`, then set the *proxy* node's
+`git_server_proxy_url = http://nas.lan:3053`. (LAN only — keep `:3053` firewalled off the public
+internet; the public edge reaches it through nginx `/git/`, never directly.)
+
+**nginx per role.** `location /git/` on the **hosting** node proxies to the git host
+(`proxy_pass http://127.0.0.1:3053;`); on the **proxy** node it proxies to the *app*
+(`proxy_pass http://127.0.0.1:3051;`), whose `git_smart_proxy` forwards to the host. See
+[NGINX.md](NGINX.md).
+
 Trust: `git_server_proxy_url` is admin-set config (same trust model as `storage_server_url`); an
 http(s):// scheme is required. Mount matches the recommended nginx `location /git/`.
 
-## Settings (all default-safe, relay-stored via settings_store `pcai:setting:<key>`)
+**Concrete example — this deployment (`nas.lan` hosts, `server1` proxies):**
+
+| node | `git_server_enabled` | `git_server_bind` | `git_server_proxy_url` | role |
+|------|------|------|------|------|
+| `nas.lan` | true | `0.0.0.0` | *(empty)* | hosts the repos on `:3053` |
+| `server1` | — | *(default)* | `http://nas.lan:3053` | proxies `/git/` → nas |
+
+## Settings (default-safe; Admin → Services)
 
 `git_server_enabled` (**false**), `git_server_port` (3053), `git_server_bind` (127.0.0.1),
 `git_server_public_base` (""), `git_server_allowlist` ("" ⇒ admins only), `git_server_repo_max_mb`
 (512), `git_server_total_gb` (20), `git_server_allow_force` (true), `git_server_nip98_push` (true),
 `git_server_default_private` (false), `git_server_proxy_url` ("" ⇒ local host).
+
+**Scope.** Most keys are **shareable/global** — relay-stored via settings_store `pcai:setting:<key>`,
+so the same repos + rules apply on every node. The three **transport** keys — `git_server_bind`,
+`git_server_port`, `git_server_proxy_url` — are **per-node** (local-only, in each node's
+`local_settings.json`, listed in `settings_store._PLUMBING_KEYS`), exactly like `nostr_relay_bind/port`.
+That's what lets one node host (`proxy_url` empty, `bind = 0.0.0.0`) while another proxies to it
+(`proxy_url = http://host:3053`) without the shared relay doc leaking one node's proxy_url onto the
+host. Editing a transport key in a node's Admin persists it to *that* node's JSON; editing a global
+key writes through to the relay for all nodes.
 
 Each key is (a) a typed field in `schemas.SettingsResponse`, (b) seeded in `database.py`
 `default_settings`, (c) an Admin → Services input with `id`==`name`==key (so `static/js/admin.js`
