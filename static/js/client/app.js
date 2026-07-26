@@ -3599,8 +3599,12 @@
   // grid instead of marching through flat DOM order (which made every key look like it went one way).
   function _kbCols(feed){
     const c=_kbCards(feed); if(c.length<2) return 1;
-    const top=c[0].offsetTop; let n=1;
-    for(let i=1;i<c.length;i++){ if(c[i].offsetTop===top) n++; else break; }
+    // Cards on the first ROW share ~the same offsetTop. Use a TOLERANCE, not strict ===: the desktop
+    // (Electron) app scales the page with body{zoom}, which makes same-row offsetTop values differ by a
+    // sub-pixel rounding under Chromium — strict equality then saw "1 column" and every key moved a
+    // single card (the "arrows go one direction" bug in the Windows app that Firefox, no zoom, dodged).
+    const top=c[0].offsetTop, tol=Math.max(6,(c[0].offsetHeight||0)/2); let n=1;
+    for(let i=1;i<c.length;i++){ if(Math.abs(c[i].offsetTop-top)<tol) n++; else break; }
     return Math.max(1,n);
   }
   function _typingInField(el){
