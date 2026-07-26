@@ -610,6 +610,22 @@ def update_settings(
                     logger.info("[Admin] relay store config reload requested (retention/max_events/mirror-retention, no restart)")
                 except Exception as e:
                     logger.warning(f"[Admin] relay store-config reload after settings save failed: {e}")
+        # Git-host topology changed (enable / bind / port / proxy_url — all per-node plumbing) →
+        # reconcile the running git-host subprocess so an Admin toggle takes effect WITHOUT a full app
+        # restart (symptom otherwise: "I enabled the git host but :3053 never comes up"). put() already
+        # wrote the new plumbing values to local_settings.json + the cache, and start_git_http re-reads
+        # them; if the node is now a proxy or disabled, start_git_http is a no-op.
+        _git_topology_keys = ("git_server_enabled", "git_server_bind", "git_server_port",
+                              "git_server_proxy_url")
+        if any(k in changed_keys for k in _git_topology_keys):
+            try:
+                from app.services.git_http_service import stop_git_http, start_git_http
+                stop_git_http()
+                start_git_http()
+                logger.info("[Admin] git host reconciled after settings change (%s)",
+                            ",".join(k for k in changed_keys if k in _git_topology_keys))
+            except Exception as e:
+                logger.warning(f"[Admin] git host reconcile after settings save failed: {e}")
         # Blossom mirror list / public URL / enable changed → re-advertise the operator's kind-10063
         # server list so clients pick up the new failover targets (off-thread; needs the relay + loop).
         if any(k in changed_keys for k in ("blossom_mirror_servers", "blossom_public_url", "blossom_enabled")):

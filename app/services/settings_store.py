@@ -29,16 +29,17 @@ logger = logging.getLogger(__name__)
 # Datastore-plumbing keys are always sourced from the local Setting cache, never hydrated/
 # written-through — so a stale relay copy can't change where/whether we connect to the relay.
 #
-# The git-host TRANSPORT keys (bind/port/proxy_url) are per-node for the SAME reason the relay's
-# are: which interface/port the git-host subprocess binds, and whether this node HOSTS the repos or
-# just PROXIES smart-HTTP to a peer that does (`git_server_proxy_url`), is a per-node topology fact —
-# e.g. nas.lan hosts on 0.0.0.0:3053 while server1 sets proxy_url=http://nas.lan:3053 and runs no
-# local host. If these hydrated from the shared relay doc, one node's proxy_url would leak onto the
-# host and stop it serving. The POLICY keys (git_server_enabled/allowlist/public_base/repo_max_mb/…)
-# stay shareable/global — same repos + same rules on every node.
+# The git-host TOPOLOGY keys (enabled/bind/port/proxy_url) are per-node for the SAME reason the
+# relay's (nostr_relay_enabled/bind/port) are: WHETHER this node runs a git host, which interface/port
+# it binds, and whether it instead PROXIES smart-HTTP to a peer that hosts (`git_server_proxy_url`),
+# are per-node topology facts — e.g. nas.lan hosts on 0.0.0.0:3053 (enabled=true) while server1 sets
+# proxy_url=http://nas.lan:3053, stays enabled=false, and runs no local host. If these hydrated from
+# the shared relay doc, one node's enable/proxy_url would leak onto every node. The POLICY keys
+# (allowlist/public_base/repo_max_mb/default_private/…) stay shareable/global — same repos + rules
+# on every node. Mirrors nostr_relay_enabled being plumbing.
 _PLUMBING_KEYS = frozenset({
     "nostr_relay_port", "nostr_relay_enabled", "nostr_relay_bind", "nostr_relay_pg_dsn",
-    "git_server_bind", "git_server_port", "git_server_proxy_url",
+    "git_server_enabled", "git_server_bind", "git_server_port", "git_server_proxy_url",
 })
 
 # Per-node RUNTIME-STATE settings (sync cursors / seen-sets) are advanced directly in SQLite by the

@@ -133,14 +133,18 @@ http(s):// scheme is required. Mount matches the recommended nginx `location /gi
 (512), `git_server_total_gb` (20), `git_server_allow_force` (true), `git_server_nip98_push` (true),
 `git_server_default_private` (false), `git_server_proxy_url` ("" ⇒ local host).
 
-**Scope.** Most keys are **shareable/global** — relay-stored via settings_store `pcai:setting:<key>`,
-so the same repos + rules apply on every node. The three **transport** keys — `git_server_bind`,
-`git_server_port`, `git_server_proxy_url` — are **per-node** (local-only, in each node's
-`local_settings.json`, listed in `settings_store._PLUMBING_KEYS`), exactly like `nostr_relay_bind/port`.
-That's what lets one node host (`proxy_url` empty, `bind = 0.0.0.0`) while another proxies to it
-(`proxy_url = http://host:3053`) without the shared relay doc leaking one node's proxy_url onto the
-host. Editing a transport key in a node's Admin persists it to *that* node's JSON; editing a global
-key writes through to the relay for all nodes.
+**Scope.** The **policy** keys (`git_server_allowlist`, `git_server_public_base`,
+`git_server_repo_max_mb`, `git_server_total_gb`, `git_server_allow_force`, `git_server_nip98_push`,
+`git_server_default_private`) are **shareable/global** — relay-stored via settings_store
+`pcai:setting:<key>`, so the same repos + rules apply on every node. The four **topology** keys —
+`git_server_enabled`, `git_server_bind`, `git_server_port`, `git_server_proxy_url` — are **per-node**
+(local-only, in each node's `local_settings.json`, listed in `settings_store._PLUMBING_KEYS`), exactly
+like `nostr_relay_enabled/bind/port`. That's what lets one node host (`enabled = true`, `proxy_url`
+empty, `bind = 0.0.0.0`) while another proxies to it (`enabled = false`, `proxy_url =
+http://host:3053`) without the shared relay doc leaking one node's enable/proxy_url onto every node.
+Editing a topology key in a node's Admin persists it to *that* node's JSON and **reconciles the running
+git-host subprocess in place** (no full restart — see `app/routers/admin.py`); editing a global key
+writes through to the relay for all nodes.
 
 Each key is (a) a typed field in `schemas.SettingsResponse`, (b) seeded in `database.py`
 `default_settings`, (c) an Admin → Services input with `id`==`name`==key (so `static/js/admin.js`
