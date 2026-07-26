@@ -3660,6 +3660,7 @@
       decorateProfiles();
       $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
       $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
+      $$('.repo-share',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.share); toast('project link copied'); }catch(_){ await uiPrompt('Project link', {value:b.dataset.share}); } });
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
       $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     };
@@ -3719,17 +3720,32 @@
     const clone=(e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean);
     const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
     const wurl=_mdUrl(web[0]||'');   // scheme-allowlist (http/https only) — a relay-supplied javascript: href must never become clickable
+    const share=_repoShareUrl(e);
     return `<article class="repo-card" data-id="${e.id}" data-pk="${e.pubkey}">
       <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span></div>
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
       <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
-      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${wurl?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
+      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()">🔗 Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
     </article>`;
   }
   // ---------- NIP-34 repo detail (README + issues + patches) ----------
   // Addressable coordinate a repo's collaboration events (issues 1621 / patches 1617) point at via `a`.
   function _repoAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return `30617:${e.pubkey}:${d}`; }
   function _repoTag(e,k){ return (e.tags.find(t=>t[0]===k)||[])[1]||''; }
+  // Shareable web link to a repo = poster.place/<naddr> for its 30617 coordinate. Opens the repo view
+  // directly (openNaddr routes kind-30617 → openRepo) for anyone, logged in or not — this is what
+  // "share this project" hands out. (A repo's own `web` tag is usually the generic client URL.)
+  function _repoShareUrl(e){
+    try{ const relays=[CFG&&CFG.relay_url].filter(Boolean);
+      return _webLink(NT().nip19.naddrEncode({identifier:_repoTag(e,'d'), pubkey:e.pubkey, kind:30617, relays})); }
+    catch(_){ return ''; }
+  }
+  // True only when a repo's `web` tag is a REAL external forge (GitHub/Gitea/…), not our own origin —
+  // "Web" on poster.place/client just reopens the generic app, so we hide it there in favour of Share.
+  function _repoWebExternal(wurl){
+    if(!wurl) return false;
+    try{ return new URL(wurl, location.href).origin !== _serverOrigin(); }catch(_){ return false; }
+  }
   // A collaboration event's human title: prefer a `subject` tag (NIP-34), else the first non-empty line.
   function _collabTitle(ev){
     const s=_repoTag(ev,'subject'); if(s) return s;
@@ -3782,6 +3798,7 @@
     const wurl=_mdUrl(web[0]||'');
     const readmeSrc=clone[0]||web[0]||'';   // clone URL preferred (points straight at the forge)
     const cloneUrl=clone[0]||'';
+    const shareUrl=_repoShareUrl(e);        // poster.place/<naddr> — the link to hand out for this project
     // Files browser only for a self-hosted (Nostr-owned) repo — the clone path has an npub/hex owner
     // before <id>.git; a plain forge clone URL (GitHub/Gitea) has no readable file API here.
     const isGrasp=(()=>{ try{ const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean); const gi=sg.findIndex(s=>s.endsWith('.git')); return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1])); }catch(_){ return false; } })();
@@ -3802,8 +3819,9 @@
           <span class="rv-clone-ico">⎇</span>
           <code class="rv-clone-url">${enc(cloneUrl)}</code>
           <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
-          ${wurl?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Web</a>`:''}
-        </div>`:(wurl?`<div class="rv-clone"><a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a></div>`:'')}
+          ${shareUrl?`<button class="btn btn-ghost small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project">🔗 Share</button>`:''}
+          ${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Web</a>`:''}
+        </div>`:`<div class="rv-clone">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project">🔗 Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a>`:''}</div>`}
         ${isGrasp?`<div class="rv-refbar">
           <button class="btn btn-ghost small rv-refbtn" id="rv-refpick" title="Switch branch or tag">⎇ <span id="rv-refname">default</span> ▾</button>
           <span class="muted small" id="rv-refnote"></span>
@@ -3833,6 +3851,7 @@
     $('#repo-back',feed).onclick=()=>switchView('repos');
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:cb.dataset.clone}); } }; }
+    { const sb=$('.rv-share',feed); if(sb) sb.onclick=async()=>{ try{ await navigator.clipboard.writeText(sb.dataset.share); toast('project link copied — share it anywhere'); }catch(_){ await uiPrompt('Project link', {value:sb.dataset.share}); } }; }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
     // Files/Commits are lazy-loaded on first open (a git round-trip each).
@@ -6202,6 +6221,7 @@
     // rendered a live broadcast as an ordinary post — the link "didn't point to the stream".
     if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev);
     else if(kind===30311) openStream(ev);
+    else if(kind===30617) openRepo(ev);   // a shared git repo (NIP-34) opens the repo view, not a thread
     else renderThread(ev.id);
   }
   function quoteHtml(ev){
