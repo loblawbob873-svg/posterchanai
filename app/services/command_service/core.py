@@ -476,6 +476,21 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
                     inner["files"] = files
                 return inner
 
+        # Node LB for ffmpeg effects. The Meme Builder balances its own renders in client.py, but
+        # this path — AI Chat and Telegram — used to run every effect on whichever node held the
+        # session while the rest of the fleet idled. Round-robin here, past the modifier parsing
+        # above, so a peer renders the BASE effect and the modifiers are applied to what comes back.
+        if ((command in self.MOTION_EFFECTS or command in self.ANIMATED_EFFECTS)
+                and attachments and not getattr(self, "_effects_no_forward", False)):
+            try:
+                from app.services import effects_factory, settings_store as _ss_fx
+                _fx = await effects_factory.run_effect_balanced(
+                    _ss_fx.get("chat_server_urls", "") or "", command, arg, attachments)
+                if _fx is not None:
+                    return _fx
+            except Exception as e:
+                logger.warning("[EFFECTS] LB skipped for %s: %s", command, e)
+
         if command == "help":
             return await self._help_command()
         elif command == "search":

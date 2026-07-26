@@ -75,6 +75,7 @@ _SERVER_URL_KEYS = ("bots_server_url", "bots_posterchanai_api_endpoint")
 _lock = threading.RLock()
 _procs = {}            # bot name -> subprocess.Popen (text bots; running children)
 _proc_sig = {}         # bot name -> spawn-spec signature (env+cmd); change ⇒ restart to apply edits
+_last_env = {}         # bot name -> the env it was last spawned with, so a restart can name what moved
 _restart_counts = {}   # bot name -> {"count": int, "first_restart": float}
 # Scheduled one-shot posters (image bots + text bots with auto_post_enabled). Keyed by bot
 # name -> {"next_run": float, "process": Popen|None, "offset": int, "day": int, "count": int}.
@@ -468,6 +469,7 @@ def _spawn(bot_dict: dict, base_env: dict) -> subprocess.Popen:
     env = _build_env(bot_dict, base_env)
     cmd = _cmd_for(bot_dict)
     _proc_sig[bot_dict["name"]] = _spec_sig(bot_dict, base_env)
+    _last_env[bot_dict["name"]] = dict(env)   # baseline for the "what changed" diff (KEYS are logged, never values — env holds the nsec)
     return subprocess.Popen(cmd, env=env, cwd=str(BOTFRAMEWORK_DIR))
 
 
@@ -561,7 +563,20 @@ def _reconcile_text(text_bots, base_env):
         if proc.poll() is None and _proc_sig.get(name) != _spec_sig(d, base_env):
             # config edited in the UI (e.g. display name / nip05 / avatar / modes) — restart so the
             # new env is applied and the bot republishes its kind-0 profile on startup.
-            logger.info("[BOTS] %s config changed; restarting to apply", name)
+            # Say WHICH keys moved. A restart kills whatever the bot is mid-way through (a Nostr
+            # `geni` that takes 30s comes back to no listener and the user never gets a reply), and
+            # in production every bot was restarting together every few minutes with no UI edit —
+            # a signature this opaque can't be told apart from a real edit without naming the delta.
+            try:
+                _new_env = _build_env(d, base_env)
+                _old_env = _last_env.get(name) or {}
+                _diff = sorted(k for k in set(_new_env) | set(_old_env)
+                               if _old_env.get(k) != _new_env.get(k))
+                logger.info("[BOTS] %s config changed; restarting to apply (changed: %s)",
+                            name, ", ".join(_diff[:12]) or "cmd/modes only")
+                _last_env[name] = _new_env
+            except Exception:
+                logger.info("[BOTS] %s config changed; restarting to apply", name)
             _terminate(name, proc)
             _procs[name] = _spawn(d, base_env)
             continue
