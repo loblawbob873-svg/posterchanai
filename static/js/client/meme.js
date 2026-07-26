@@ -278,8 +278,11 @@
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
     // object-fit must mirror the renderer: 'cover' fills the box and crops, 'contain' letterboxes.
     const ofit = (l.fit==='cover') ? 'cover' : 'contain';
+    // `#t=0.1` (a media fragment) makes the browser seek to 0.1s and DISPLAY that frame as a poster the
+    // moment the layer mounts — otherwise `preload` alone decodes nothing and the clip shows blank until
+    // you scrub/play (the "I have to render to see the effect" bug). preload=auto so the frame loads eagerly.
     const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}" muted playsinline preload="metadata" style="object-fit:${ofit}"></video>`
+      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}"></video>`
       : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}">`;
     return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${l.opacity}">${inner}<i class="mb-h"></i></div>`;
   }
@@ -304,7 +307,7 @@
       : (l.type==='audio'
         ? `<span class="mb-ttxt mb-taud">🎵 ${enc((l.name || srcName(l.src)).slice(0,16))}</span>`
         : l.type==='video'
-          ? `<video class="mb-tthumb" src="${enc(l.src)}" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
+          ? `<video class="mb-tthumb" src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
           : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
     return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
       <div class="mb-trackname" title="${enc(label)}">${thumb}
