@@ -941,16 +941,40 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
         raise HTTPException(status_code=429, detail="one effect at a time — give the last render a moment")
     _effect_cooldown[pk] = _now
 
-    # Fetch the layer image via the shared SSRF-guarded proxy fetch (same one /proxy-image uses).
-    from app.routers.chat import _proxy_fetch
+    # Fetch the layer image. OUR OWN media hosts (blossom_public_url) resolve to a PRIVATE LAN IP under
+    # split-horizon DNS (media.poster.place -> 192.168.0.1 inside the LAN), so the SSRF guard rejects them
+    # as private — which would refuse every Blossom blob the user just uploaded. Exempt them exactly like
+    # /meme/render does (these are URLs this node itself mints + serves, not an SSRF primitive); everything
+    # else still goes through the guard.
+    import httpx
+    from urllib.parse import urlparse
+    from app.services.rss_service import looks_fetchable, is_safe_host
+    u = (data.url or "").strip()
+    if urlparse(u).scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="bad image url")
+    own = set()
+    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
+        h = urlparse(_setting(db, key) or "").hostname
+        if h:
+            own.add(h.lower())
+    host = (urlparse(u).hostname or "").lower()
+    if host not in own:
+        if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
+            raise HTTPException(status_code=400, detail="refused image source")
     try:
-        img, ct = await _proxy_fetch(data.url)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0), follow_redirects=False) as c:
+            resp = await c.get(u)
+            resp.raise_for_status()
+            img = resp.content
+            ct = resp.headers.get("content-type", "") or "image/jpeg"
     except HTTPException:
         raise
     except Exception:
         raise HTTPException(status_code=502, detail="could not fetch the layer image")
     if not img:
         raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
     ext = "png" if "png" in (ct or "") else ("gif" if "gif" in (ct or "") else "jpg")
     attachments = [(f"layer.{ext}", img, ct or "image/jpeg")]
 
