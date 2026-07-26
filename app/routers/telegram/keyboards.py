@@ -414,7 +414,6 @@ def _help_main_keyboard() -> dict:
                 {"text": "📋 Logs",        "callback_data": "help:logs"},
             ],
             [
-                {"text": "💰 Finance",     "callback_data": "help:finance"},
                 {"text": "📸 Screenshot",  "callback_data": "prompt:screenshot"},
             ],
             [

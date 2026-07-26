@@ -47,7 +47,6 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `pins` | List your pinned searches, each with **Run** ▶ and **Delete** 🗑️ (web buttons / Telegram inline keyboard). Also `pin delete <id>`. Aliases: `savedsearches`, `saved`. |
 | `translate <text> to <lang>` | Translate text |
 | `files <query>` | Search your stored files |
-| `budget` / `bills` / `pay <bill>` / `addbill` | Budget Manager (per-user `finance_api_key`) |
 | `logs` | System-health report (admin) |
 | `node …` | Remote node management (admin/allowlisted): `node <name> <cmd>`, `node all <cmd>`, `node agent <name> <goal>`, `node list`, `node jobs`, `node log <id>`, `node kill <id>` |
 

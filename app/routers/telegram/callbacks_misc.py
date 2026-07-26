@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _FIN_INCOME_PROMPT, _HELP_SECTIONS, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
 from .keyboards import _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _finance_bills_cache, _geni_image_cache, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_bills_list, _send_budget, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from .senders import User, _deliver_pin_result, _geni_image_cache, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -60,52 +60,6 @@ async def _cb_pin(update, db, chat_id, data, callback_query, callback_query_id):
         return {"ok": True}
 
 
-async def _cb_fin(update, db, chat_id, data, callback_query, callback_query_id):
-        parts = data.split(":")
-        action = parts[1] if len(parts) > 1 else ""
-        message_id = (callback_query.get("message") or {}).get("message_id")
-        cb_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-        if not cb_user:
-            await telegram_service.send_message(chat_id, "Your Telegram account is not linked.")
-        elif action == "add":
-            await telegram_service.send_message(
-                chat_id,
-                "💰 Add a bill — reply: name amount",
-                reply_markup={"force_reply": True, "selective": True,
-                              "input_field_placeholder": "e.g. Rent 1200"},
-            )
-        elif action == "addincome":
-            await telegram_service.send_message(
-                chat_id,
-                _FIN_INCOME_PROMPT,
-                reply_markup={"force_reply": True, "selective": True,
-                              "input_field_placeholder": "e.g. Paycheck 3000"},
-            )
-        elif action == "bills" and len(parts) > 2:
-            await _send_bills_list(chat_id, cb_user, db, parts[2], message_id=message_id)
-        elif action == "refresh":
-            await _send_budget(chat_id, cb_user, db, message_id=message_id)
-        elif action == "pay" and len(parts) > 2:
-            from app.services import finance_service
-            bill = _finance_bills_cache.get(chat_id, {}).get(parts[2])
-            if not bill:
-                await telegram_service.answer_callback_query(
-                    callback_query_id, text="Bill list expired — tap Refresh.", show_alert=True)
-            else:
-                try:
-                    base, key = finance_service.get_config(db, cb_user)
-                    res = await finance_service.pay_bill(base, key, bill["name"])
-                    await telegram_service.answer_callback_query(
-                        callback_query_id, text=res.get("message", "Paid."))
-                except finance_service.FinanceError as e:
-                    await telegram_service.answer_callback_query(
-                        callback_query_id, text=str(e), show_alert=True)
-                await _send_budget(chat_id, cb_user, db, message_id=message_id)
-
-
 async def _cb_prompt(update, db, chat_id, data, callback_query, callback_query_id):
         action = data.split(":", 1)[1]
         _PROMPT_CONFIGS = {
@@ -138,21 +92,6 @@ async def _cb_help(update, db, chat_id, data, callback_query, callback_query_id)
                 parse_mode="MarkdownV2",
                 reply_markup=_help_main_keyboard(),
             )
-        elif section == "finance":
-            # Open the interactive budget directly instead of showing help text,
-            # so finance is fully button-driven from the help menu.
-            cb_user = db.query(User).filter(
-                User.telegram_chat_id == chat_id,
-                User.telegram_enabled == True
-            ).first()
-            if cb_user:
-                await _send_budget(chat_id, cb_user, db)
-            else:
-                await telegram_service.send_message(
-                    chat_id,
-                    "Your Telegram account is not linked.",
-                    reply_markup=back_button,
-                )
         elif section == "logs":
             # Execute the logs command directly instead of showing help text
             cb_user = db.query(User).filter(

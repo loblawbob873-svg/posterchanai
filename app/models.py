@@ -71,8 +71,6 @@ class User(Base):
     # Mirrored to Nostr via users_store.CONFIG_FIELDS; gated by the global stream_record_enabled.
     stream_record = Column(Boolean, default=False)
 
-    # Finance (Budget Manager) integration — per-user API key for that user's finance account
-    finance_api_key = Column(String(200), nullable=True)
 
     # Social notification relay → Telegram (master per-user toggle + per-platform cursors)
     social_notif_enabled = Column(Boolean, default=False)

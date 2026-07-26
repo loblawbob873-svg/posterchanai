@@ -3072,6 +3072,74 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .img-hold:active{ opacity:.75; }
 @media(hover:hover){ .img-hold:hover{ border-color:var(--neon); color:var(--text); } }
 
+/* ===== Budget (bills + plans; data lives in an encrypted Nostr event, see budget.js) =====
+   Every colour here is a THEME VARIABLE, never a literal — that's what makes the view work in all
+   nine themes (including the light ones and win98) without a single per-theme override. */
+.bg-wrap{padding:14px 16px calc(28px + env(safe-area-inset-bottom));max-width:760px;margin:0 auto}
+.bg-month{font-size:15px;font-weight:700;color:var(--muted);letter-spacing:.4px;margin-bottom:10px;text-transform:uppercase}
+/* auto-fit keeps four tiles on a desktop row and folds to 2x2 on a phone with no media query */
+.bg-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.bg-tile{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.bg-tl{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bg-tv{font-size:20px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bg-tile.in .bg-tv{color:var(--green)}
+.bg-tile.due .bg-tv{color:var(--amber)}
+.bg-tile.ok .bg-tv{color:var(--neon)}
+.bg-tile.neg .bg-tv{color:var(--danger)}
+
+.bg-tabs{display:flex;align-items:center;gap:8px;margin:16px 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.bg-tab{cursor:pointer;border:1px solid transparent;background:transparent;color:var(--muted);font:inherit;font-weight:700;
+  padding:7px 14px;border-radius:10px;display:inline-flex;align-items:center;gap:6px}
+.bg-tab:hover{color:var(--text)}
+.bg-tab.on{color:var(--neon);border-color:var(--line);background:color-mix(in srgb, var(--neon) 12%, var(--panel2))}
+.bg-tab .bg-n{font-style:normal;font-size:11.5px;background:var(--amber);color:var(--bg);border-radius:9px;padding:1px 7px;font-weight:800}
+.bg-tab.ghost{font-size:16px;padding:6px 11px}
+
+.bg-sec{font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+.bg-row{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel2);margin-bottom:7px;min-width:0}
+.bg-row.done{opacity:.62}
+.bg-row.done .bg-name{text-decoration:line-through}
+.bg-row.hid{border-style:dashed;opacity:.55}
+.bg-check,.bg-more,.bg-idel{cursor:pointer;background:transparent;border:none;color:var(--muted);font:inherit;padding:4px;
+  border-radius:8px;flex-shrink:0;line-height:1}
+.bg-check{font-size:19px;min-width:38px;min-height:38px}   /* comfortable touch target on a phone */
+.bg-more{font-size:15px;min-width:34px;min-height:34px}
+.bg-more:hover,.bg-idel:hover{color:var(--neon)}
+.bg-name{flex:1;min-width:0;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bg-flag{font-style:normal;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:1px 6px;margin-left:6px}
+.bg-amt{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap;flex-shrink:0}
+.bg-amt.in{color:var(--green)}
+.bg-amt.out{color:var(--text)}
+.bg-empty{padding:12px 2px}
+
+.bg-plan{border:1px solid var(--line);border-radius:14px;padding:9px;margin-bottom:10px;background:var(--panel)}
+.bg-plan.done{opacity:.62}
+.bg-plan.hid{border-style:dashed;opacity:.55}
+.bg-plan-hd{margin-bottom:4px;background:transparent;border:none;padding:4px 2px}
+.bg-items{padding:0 4px 4px}
+.bg-item{display:flex;align-items:center;gap:10px;padding:6px 8px;border-bottom:1px solid var(--line);min-width:0}
+.bg-item:last-child{border-bottom:none}
+.bg-iname{flex:1;min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bg-iamt{font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap}
+.bg-additem{margin:2px 4px 4px}
+
+/* Add-row: wraps to its own line on a phone rather than squeezing the name field to nothing */
+.bg-add{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.bg-add .input{flex:1 1 190px;min-width:0;width:auto}
+.bg-add .bg-amtin{flex:0 1 120px}
+.bg-chk{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13.5px;white-space:nowrap;cursor:pointer}
+.bg-menu{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.bg-foot{margin-top:18px;text-align:center}
+.bg-link{background:none;border:none;color:var(--neon);cursor:pointer;font:inherit;text-decoration:underline;padding:0 4px}
+.bg-err{padding:22px;text-align:center;color:var(--danger);display:flex;flex-direction:column;gap:10px;align-items:center}
+@media(max-width:480px){
+  .bg-wrap{padding:12px 11px calc(28px + env(safe-area-inset-bottom))}
+  .bg-tv{font-size:18px}
+  .bg-add .input{flex:1 1 100%}
+  .bg-add .bg-amtin{flex:1 1 100%}
+}
+
 /* ===== Voice/Video calls ===== */
 @keyframes callpulse{0%,100%{opacity:1}50%{opacity:.45}}
 .call-overlay{position:fixed;inset:0;z-index:400;background:radial-gradient(circle at 50% 28%,#1a1a2e,#08040e);display:flex;flex-direction:column;align-items:center;color:#fff;padding:calc(26px + env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom))}

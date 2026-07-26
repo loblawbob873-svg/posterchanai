@@ -367,8 +367,6 @@ class SettingsResponse(BaseModel):
     # smart-HTTP requests to the hosting node here (like the Blossom storage proxy). Auth + repos + hooks
     # + the 30617/30618 lookups stay on the hosting node. Empty ⇒ run the local host (per git_server_enabled).
     git_server_proxy_url: str = ""             # e.g. http://nas.lan:3053 or https://nas.lan/git
-    # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
-    finance_api_base: str = "http://localhost:5001"
     # Screenshot: hosts allowed to bypass the SSRF private-IP guard (the operator's own
     # domains that resolve to a LAN IP via split-horizon DNS). Comma/space/newline-separated;
     # a parent domain also covers its subdomains (e.g. poster.place allows www.poster.place).
@@ -696,8 +694,6 @@ class UserSettingsUpdate(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Finance (Budget Manager) — per-user API key
-    finance_api_key: Optional[str] = None
     # Relay social notifications (Misskey/Pleroma) to Telegram
     social_notif_enabled: Optional[bool] = None
     # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
@@ -742,8 +738,6 @@ class UserSettingsResponse(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Finance (Budget Manager) — per-user API key (key itself never exposed)
-    finance_has_api_key: bool = False
     # Relay social notifications (Misskey/Pleroma) to Telegram
     social_notif_enabled: bool = False
     # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side

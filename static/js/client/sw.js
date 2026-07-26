@@ -35,6 +35,7 @@ const SHELL = [
   '/static/js/client/news.js',
   '/static/js/client/meme.js',
   '/static/js/client/markets.js',
+  '/static/js/client/budget.js',
   '/static/js/client/chess.js',
   '/static/js/client/ttt.js',
   '/static/js/client/hangman.js',

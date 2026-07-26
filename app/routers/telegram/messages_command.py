@@ -1,7 +1,7 @@
 """Auto-split from messages.py: _msg_command."""
 from ._common import Conversation, Message, User, _news_post_cache, asyncio, logger, re, telegram_service
 from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _torrent_nav_keyboard, re
-from .senders import User, _has_misskey, _has_pleroma, _offer_social_post, _offer_ytdl_video_actions, _send_4chan_catalog, _send_active_torrents, _send_budget, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
+from .senders import User, _has_misskey, _has_pleroma, _offer_social_post, _offer_ytdl_video_actions, _send_4chan_catalog, _send_active_torrents, _send_nyaa_results, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, logger, re, telegram_service
 
 
 async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command, command_service, db, has_images, reply_to, text, user_obj):
@@ -47,19 +47,6 @@ async def _msg_command(_make_tg_node_notify, arg, attachments, chat_id, command,
                             await chat_store.delete_conversation(db, user_obj, tg_conv.id)
                             db.commit()
                         await telegram_service.send_message(chat_id, "Conversation cleared. Starting fresh!")
-                        return {"ok": True}
-                    elif command in ("budget", "finance"):
-                        await _send_budget(chat_id, user_obj, db)
-                        return {"ok": True}
-                    elif command in ("bills", "pay", "addbill"):
-                        # pay/addbill mutate, then show the refreshed interactive budget;
-                        # bills just returns the formatted list from the shared command service.
-                        result = await command_service.execute_command(command, arg)
-                        await telegram_service.send_message(
-                            chat_id, result.get("content", "Done."), parse_mode=""
-                        )
-                        if command in ("pay", "addbill") and arg.strip():
-                            await _send_budget(chat_id, user_obj, db)
                         return {"ok": True}
                     elif command == "ytdl":
                         if not arg:

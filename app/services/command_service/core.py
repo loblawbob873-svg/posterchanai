@@ -128,11 +128,10 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "feltedtables": "Turn an attached image into an MP4 set to the felted-tables clip: feltedtables",
         "prayer": "Turn an attached image into an MP4 set to the prayer clip: prayer",
         "node": "Agentic node mgmt: node <name> <cmd> | node all <cmd> | node agent <name> <goal> | node agent all <goal> | node list | node jobs | node log <id> | node kill <id>",
-        "budget": "Show your budget summary (income, unpaid bills, remaining)",
-        "bills": "List your bills: bills (unpaid) | bills all | bills paid",
-        "pay": "Pay a bill by name: pay <bill name>",
-        "addbill": "Add a bill: addbill <name> <amount> [income]",
-        "bill": "Snap a bill: attach a photo/PDF and send bill — reads the vendor, total and due date, then `bill add` files it in your budget and sets a reminder",
+        # budget/bills/pay/addbill are GONE: the budget now lives in a Nostr event encrypted to the
+        # user's own key (Discover → Budget), which the server cannot read or write. `bill` stays —
+        # OCR and extraction are server work — but it only reads the photo and sets the reminder now.
+        "bill": "Snap a bill: attach a photo/PDF and send bill — reads the vendor, total and due date, then `bill add` sets a reminder (add it to Discover → Budget with one tap)",
         "screenshot": "Full-page screenshot of a website: screenshot <url>",
         "poll": "Create a poll: poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
     }
@@ -143,7 +142,6 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
         "ytdlp": "ytdl",
         "youtube": "yt",
         "nodes": "node",
-        "finance": "budget",
         "shot": "screenshot",
         "ss": "screenshot",
         "cards": "flashcards",
@@ -718,14 +716,6 @@ class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torre
             return await self._feltedtables_command(attachments)
         elif command == "node":
             return await self._node_command(arg, notify=node_notify)
-        elif command == "budget":
-            return await self._budget_command()
-        elif command == "bills":
-            return await self._bills_command(arg)
-        elif command == "pay":
-            return await self._pay_command(arg)
-        elif command == "addbill":
-            return await self._addbill_command(arg)
         elif command == "bill":
             return await self._bill_command(arg, attachments)
         elif command == "screenshot":

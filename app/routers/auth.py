@@ -586,7 +586,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         nostr_relays=current_user.nostr_relays if hasattr(current_user, 'nostr_relays') else None,
         nostr_media_service=current_user.nostr_media_service if hasattr(current_user, 'nostr_media_service') else None,
         nostr_media_endpoint=current_user.nostr_media_endpoint if hasattr(current_user, 'nostr_media_endpoint') else None,
-        finance_has_api_key=bool(current_user.finance_api_key) if hasattr(current_user, 'finance_api_key') else False,
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
         fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
         fedi_crosspost_enabled=current_user.fedi_crosspost_enabled if hasattr(current_user, 'fedi_crosspost_enabled') else False,
@@ -699,10 +698,6 @@ def update_user_settings(
     if settings.nostr_media_endpoint is not None:
         current_user.nostr_media_endpoint = settings.nostr_media_endpoint.strip() or None
 
-
-    # Finance (Budget Manager) API key — allow clearing with empty string
-    if settings.finance_api_key is not None:
-        current_user.finance_api_key = settings.finance_api_key.strip() or None
 
     # Relay social notifications to Telegram (master per-user toggle)
     if settings.social_notif_enabled is not None:

@@ -2174,7 +2174,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -2223,6 +2223,7 @@
     if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -7766,8 +7767,8 @@
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
-    const items=[['news','news','News'],['markets','chart','Markets'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
-      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
+      .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend (Budget is client-only, so it stays)
     modal(`<h3>${ICO('compass','h-ic')} Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
@@ -11858,10 +11859,20 @@
         const row=bno.closest('.ai-budget-btns'); if(row) row.innerHTML='<span class="muted small">Not added.</span>'; return; }
       const vo=e.target.closest('[data-view-open]'); if(vo){ e.preventDefault(); switchView(vo.dataset.viewOpen); return; }
       const cmd=e.target.closest('.ai-cmd'); if(cmd){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=cmd.dataset.cmd; aiSend(); } return; }
-      const ab=e.target.closest('.ai-addbill'); if(ab){ e.preventDefault();
-        const income=ab.dataset.income==='1';
-        const v=await uiPrompt(income?'Add income — name and amount, e.g. "Paycheck 2000"':'Add bill — name and amount, e.g. "Rent 1200"');
-        if(v && v.trim()){ const ta=$('#ai-input'); if(ta){ ta.value='addbill '+v.trim()+(income?' income':''); aiSend(); } } return; }
+      // "Add to budget" on a read bill. The write is split because the two halves live in different
+      // places: the budget row is encrypted to this user's key so ONLY the client can write it, while
+      // the reminder is server data, so `bill add` still handles that. One tap does both.
+      const ab=e.target.closest('.ai-billadd'); if(ab){ e.preventDefault();
+        const row=ab.closest('.ai-budget-btns');
+        try{
+          if(!window.PCBudget) throw new Error('budget module not loaded');
+          await window.PCBudget.addParsed(ab.dataset.vendor, ab.dataset.amount);
+          if(row) row.innerHTML='<span class="muted small">✅ Added to your budget.</span>';
+          const ta=$('#ai-input'); if(ta){ ta.value='bill add'; aiSend(); }   // …and set the reminder
+        }catch(err){
+          if(row) row.innerHTML='<span class="muted small">Couldn’t save that — open Discover → Budget and add it there.</span>';
+        }
+        return; }
       const fxc=e.target.closest('.fx-cmd'); if(fxc){ e.preventDefault();
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
         const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxSetEffect(ta, fxc.dataset.cmd); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → set base effect (keeps motion/caption)
@@ -12795,23 +12806,12 @@
       return `<div class="flashcard-deck" id="${id}">${_fcRender(id)}</div>`;
     }
     if(d.type==='bill'){
-      // Confirm-before-write, as a tap. The parse is staged server-side for 15 min; "Add to budget"
-      // just runs `bill add` through the same .ai-cmd path the budget Pay buttons use. The confirm
-      // exists because the finance API has add and pay but NO delete — a wrong amount is permanent.
+      // Confirm-before-write, as a tap — but the write is now SPLIT. The budget doc is encrypted to
+      // this user's key, so only we can file the bill (PCBudget.addParsed); the reminder is server
+      // data, so `bill add` still does that half. One tap, both halves — see the click handler.
       return head
-        + `<div class="ai-budget-btns"><button class="ai-cmd" data-cmd="bill add">✅ Add to budget</button>`
+        + `<div class="ai-budget-btns"><button class="ai-billadd" data-vendor="${enc(d.vendor||'')}" data-amount="${enc(String(d.amount||0))}">✅ Add to budget</button>`
         + `<button class="ai-billno">✖ Cancel</button></div>`;
-    }
-    if(d.type==='budget'){
-      // Telegram-parity interactive budget: summary text + a Pay button per unpaid bill, Refresh, and
-      // Add bill / income. Pay/Refresh reuse the .ai-cmd run-a-command path; Add prompts then sends.
-      const bills=Array.isArray(d.bills)?d.bills:[];
-      const pays=bills.map(b=>`<button class="ai-cmd" data-cmd="pay ${enc(b.name)}" title="Pay ${enc(b.name)}">✅ ${enc(b.name)} $${(Number(b.amount)||0).toFixed(0)}</button>`).join('');
-      return head
-        +`<div class="ai-budget-btns">${pays||'<span class="muted small">No unpaid bills 🎉</span>'}</div>`
-        +`<div class="ai-budget-btns"><button class="ai-cmd" data-cmd="budget">🔄 Refresh</button>`
-        +`<button class="ai-addbill">➕ Add bill</button>`
-        +`<button class="ai-addbill" data-income="1">💵 Add income</button></div>`;
     }
     if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4');
@@ -13197,7 +13197,7 @@
     let _curTheme; try{ _curTheme=localStorage.getItem('pc_theme'); }catch(_){}
     _curTheme=_curTheme||s.theme||siteDefaultTheme();
     if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
-    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['finance','Finance'],['keys','API Keys']];
+    const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']];
     const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
     // Media destination as a 3-way choice (hydrated from the saved server): 'default' = automatic
     // (built-in server, or the nostr.build fallback for accounts without upload access), 'nostrbuild'
@@ -13272,12 +13272,6 @@
               : `<button class="btn btn-ghost small" id="us-mk-conn">Connect with MiAuth</button>`}
             <div class="us-stat muted small" id="us-mk-stat"></div>
           </div>
-        </div>
-        <div class="us-pane" data-pane="finance">
-          <div class="muted small">Budget Manager API key — drives <code>budget</code>, <code>bills</code>, <code>pay</code>, <code>addbill</code>.</div>
-          <div class="${s.finance_has_api_key?'us-ok':'muted'}">${s.finance_has_api_key?'✓ Connected — an API key is set.':'⚠ Not connected — paste your Budget Manager API key below.'}</div>
-          <label class="fld">API key${s.finance_has_api_key?' <span class="muted small">(leave blank to keep the current one)</span>':''}<input class="input" id="us-fin" type="password" placeholder="${s.finance_has_api_key?'•••••••• (set)':'X-API-Key'}"></label>
-          ${s.finance_has_api_key?'<button class="btn btn-ghost small" id="us-fin-clear" style="color:var(--danger)">Remove key</button>':''}
         </div>
         <div class="us-pane" data-pane="keys">
           <div class="muted small">API keys let external apps use the AI API as you.</div>
@@ -13555,9 +13549,6 @@
         _awaitLink(s=>!!s.misskey_has_api_token, st, 'misskey_connected'); }; }   // NB: has_api_token, not has_access_token
     { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
     // Finance: remove the stored key
-    { const fc=$('#us-fin-clear'); if(fc) fc.onclick=async()=>{ if(!await uiConfirm('Remove your Budget Manager API key?'))return;
-        await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({finance_api_key:''})});
-        toast('finance key removed'); renderUserSettings(); }; }
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
       const d=await fetch('/api/auth/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()).catch(()=>({}));
@@ -13591,7 +13582,6 @@
         misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
-      const fin=$('#us-fin').value.trim(); if(fin) body.finance_api_key=fin;
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
       // Persist the client-side tabs too, so the single Save button saves EVERYTHING (not just the
       // server account settings — the "relay/media edits silently dropped" bug). Reload only when the
@@ -14346,6 +14336,7 @@
     ['k', 'markets',       'Markets'],
     ['r', 'meme',          'Meme Builder'],
     ['u', 'stats',         'Server Stats'],
+    ['$', 'budget',        'Budget'],
     [',', 'settings',      'Settings'],
     ['/', '@help',         'This list'],
   ];
@@ -16190,6 +16181,11 @@
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
+    // …and the encrypt side, for a sub-module that keeps PRIVATE data of its own in a kind-30078 doc
+    // (budget.js). Self-encryption is nip44enc(ME.pubkey, …) — every signer mode implements it (local
+    // key via the worker, nip07, Amber/NIP-55, NIP-46), so the ciphertext is readable by this user's
+    // key ALONE. The server never sees a key that can open it, which is the whole point for Budget.
+    nip44enc: (peer, text) => (signer && signer.nip44enc) ? signer.nip44enc(peer, text) : Promise.reject(new Error('no nip44')),
     // Blossom upload + the cached self-auth proof + the non-native confirm — needed by any sub-module
     // that stores media or calls a /client endpoint (meme.js). uiConfirm specifically: a sub-module must
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.

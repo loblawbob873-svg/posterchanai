@@ -200,7 +200,7 @@ open a fresh `SessionLocal` and capture any needed config up front.
   `music_factory.py`): text-to-song via a self-hosted **ACE-Step 1.5** REST server (`acestep-api`).
   ACE-Step needs Python 3.11–3.12 and a conflicting torch stack and is **not on PyPI**, so it runs
   as a SEPARATE process (installed by `./install.sh --music` via uv+git-clone, or the Docker
-  `acestep` service) and the app is just an HTTP client — like `image_server_urls`/`finance_api_base`.
+  `acestep` service) and the app is just an HTTP client — like `image_server_urls`/`music_server_urls`.
   `music_factory` mirrors `image_factory`: round-robin LB over `music_server_urls`, and the local
   `music_api_base` path takes the shared `GPUResourceLock` + `vram_manager.prepare_for_music()`
   (one GPU task at a time, swap LLM/image out). **Output is a branded MP4**, not raw audio:
@@ -229,15 +229,20 @@ open a fresh `SessionLocal` and capture any needed config up front.
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
-- **Finance (Budget Manager)** (`app/services/finance_service.py`; `budget`/`bills`/`pay`/`addbill`
-  commands): thin async client for the self-hosted Budget Manager Flask app's `/api/v1/*`
-  (summary/bills/add/pay), reached at the global `finance_api_base` setting (default
-  `http://localhost:5001`). It's **multi-user**: each PosterChanAI user connects their own finance
-  account via a **per-user `User.finance_api_key`** (Settings → Finance in the web UI; sent as
-  `X-API-Key`) — a global key would make everyone act as finance user #1. Commands live in
-  `CommandService` so the web UI and Telegram share them; Telegram adds an interactive
-  budget view (`_send_budget`, `fin:` callbacks: tap a bill to pay, ➕ add via ForceReply, 🔄
-  refresh — bill id→name resolved through the per-chat `_finance_bills_cache`).
+- **Budget** (`static/js/client/budget.js`; Discover → Budget): bills, a monthly summary and
+  "Plans" (categories of line items), stored as ONE kind-30078 doc `d=pcai:budget` that is
+  **NIP-44-encrypted to the user's OWN key** — not the server-held storage key the rest of the app
+  uses. That is the point: nobody but that user can read their finances, so there is no server-side
+  `budget`/`pay` and none on Telegram either. Replaces a separate self-hosted Budget Manager Flask
+  app (`finance_service.py`, `finance_api_base`, `User.finance_api_key` — all removed).
+  **Gotcha:** the doc is replaceable, so every write is a read-modify-write of the whole document
+  and they MUST stay serialized (`chain` in budget.js) or concurrent saves silently drop changes.
+  Summary math is ported verbatim from the old Flask app — `settled(row) = paid OR hidden this
+  month`; `remaining = income − paid − due` — and was checked against the live app's `/api/v1/summary`
+  before the cutover. The `bill` photo-OCR command survives, but SPLIT: the server does OCR +
+  extraction and sets the reminder, the client writes the encrypted row (`PCBudget.addParsed`).
+  Migration off the old SQLite DB is `scripts/export_budget_db.py` → paste into Budget → Import
+  (it can't be a server script — only the browser holds the key).
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Services

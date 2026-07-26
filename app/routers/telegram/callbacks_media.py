@@ -156,10 +156,12 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                             _texts.append(_t)
                 await telegram_service.send_message(chat_id, ("🔤 *Extracted text:*\n\n" + "\n\n".join(_texts)) if _texts else "No text found in the image(s).")
             elif _action == "bill":
-                # 🧾 Bill: read the attachment, then offer Add / Cancel as BUTTONS. The command form
-                # needs a second typed message (`bill add`) to confirm; from a photo you have just
-                # tapped, another round of typing is the wrong shape — but the confirm itself stays,
-                # because the finance API has no delete and a mis-read amount would be permanent.
+                # 🧾 Bill: read the attachment, then offer Remind / Cancel as BUTTONS. The command
+                # form needs a second typed message (`bill add`) to confirm; from a photo you have
+                # just tapped, another round of typing is the wrong shape.
+                # NOTE: this can only set the REMINDER. The budget itself is encrypted to the user's
+                # own Nostr key and writable only by their client (Discover → Budget), so there is
+                # no "add to budget" this side of the wire any more — the reply text says so.
                 _res = await cb_command_service.execute_command("bill", "", attachments=_atts)
                 _txt = (_res or {}).get("content") or "Couldn't read that bill."
                 # type == "bill" is exactly "a parse was staged"; matching on the message text would
@@ -168,7 +170,7 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                 await telegram_service.send_message(
                     chat_id, _txt.replace("**", ""),
                     reply_markup=({"inline_keyboard": [[
-                        {"text": "✅ Add to budget", "callback_data": "media:billadd"},
+                        {"text": "⏰ Set reminder", "callback_data": "media:billadd"},
                         {"text": "✖ Cancel", "callback_data": "media:billno"},
                     ]]} if _staged else None),
                 )

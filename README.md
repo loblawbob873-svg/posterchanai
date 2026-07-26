@@ -32,7 +32,7 @@
 - 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
 - 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Misskey / Nostr** bots from a single admin tab.
-- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, finance, torrents — all behind one chat box.
+- 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, budget, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
 > Point any OpenAI-compatible tool at `http://your-box:3051/v1/` and you've got a private, function-calling-capable model server. Open the web UI and you've got a full assistant. Link a bot and it's in your pocket.
@@ -74,7 +74,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 
 - **Email**: read and send mail via IMAP/SMTP
 - **News**: LLM news summaries from chat (`news` / `dailynews`), plus a full **RSS reader** in the web client (see [Nostr web client](#nostr-web-client))
-- **Finance (Budget Manager)**: per-user budget summary, bills, and payments from chat (`budget`, `bills`, `pay`, `addbill`) against a self-hosted Budget Manager app
+- **Budget**: bills, monthly summary and spending plans in the web client (Discover → Budget), stored as a Nostr event **encrypted to your own key** — the server can't read it
 - **To-do**: quick personal task list from chat (`todo`)
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
 - **File storage** per user and per conversation; file manager in the UI

@@ -34,15 +34,6 @@ _HELP_SECTIONS = {
         "Send `reminders` to list your pending ones, each with a 🗑️ Cancel button\\. "
         "You can also `remind cancel <id>`\\."
     ),
-    "finance": (
-        "💰 *Finance — Budget Manager*\n\n"
-        "Connect your account in the web UI \\(Settings → Finance\\), then send `/finance` "
-        "\\(or tap 💰 Finance above\\)\\. It's all buttons — no commands to remember:\n\n"
-        "• ✅ tap a bill to pay it\n"
-        "• 📋 Unpaid / 📜 Paid / 📂 All — view your bills\n"
-        "• ➕ Add Bill / 💵 Add Income — then reply with `name amount`\n"
-        "• 🔄 Refresh — update the totals"
-    ),
     "files": (
         "📎 *Files — compress, convert, extractaudio, circlecrop, meme, dildo, poo, cum, blood, fire & bulletholes*\n\n"
         "Just upload a file (no caption needed) and tap a button:\n\n"
@@ -240,8 +231,6 @@ _nostr_post_cache: dict = {}
 _CONSUMED = "__consumed__"
 _geni_image_cache: dict = {}
 _link_action_cache: dict = {}
-_finance_bills_cache: dict = {}
-_FIN_INCOME_PROMPT = "💵 Add income — reply: name amount"
 _youtube_action_cache: dict = {}
 _media_action_cache: dict = {}
 _MEDIA_ACTION_TTL = 600  # seconds

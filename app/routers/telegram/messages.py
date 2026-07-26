@@ -1,9 +1,9 @@
 """Auto-split from webhook.py: the message half of _handle_telegram_update."""
 from .messages_command import _msg_command
 from .messages_chat import _msg_chat
-from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _FIN_INCOME_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _misskey_post_cache, _news_post_cache, _pleroma_post_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
+from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _misskey_post_cache, _news_post_cache, _pleroma_post_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
 from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _character_prompt_keyboard, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _media_action_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
-from .senders import User, _has_misskey, _has_pleroma, _media_action_cache, _misskey_post_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _pleroma_post_cache, _send_4chan_catalog, _send_active_torrents, _send_budget, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
+from .senders import User, _has_misskey, _has_pleroma, _media_action_cache, _misskey_post_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _pleroma_post_cache, _send_4chan_catalog, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
 
 
 async def _handle_message(update, db):
@@ -31,19 +31,12 @@ async def _handle_message(update, db):
                 "🖼 What images would you like to search for?": "images",
                 "🎨 Describe the image you want to generate:": "geni",
                 "📸 Send the URL to screenshot:": "screenshot",
-                "💰 Add a bill — reply: name amount": "addbill",
             }
             reply_from = (reply_to or {}).get("from", {})
             if reply_from.get("is_bot") and text.strip():
                 route = _FORCE_REPLY_ROUTES.get(reply_text.strip())
                 if route:
                     text = f"{route} {text.strip()}"
-                    text_lower = text.lower()
-                    reply_to = {}
-                    reply_text = ""
-                elif reply_text.strip() == _FIN_INCOME_PROMPT:
-                    # "💵 Add Income" button → reuse addbill with the income flag appended.
-                    text = f"addbill {text.strip()} income"
                     text_lower = text.lower()
                     reply_to = {}
                     reply_text = ""
@@ -351,7 +344,7 @@ async def _handle_message(update, db):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "node", "budget", "finance", "bills", "pay", "addbill", "bill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "node", "bill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -583,7 +576,7 @@ async def _handle_message(update, db):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "node", "budget", "finance", "bills", "pay", "addbill", "bill", "screenshot", "shot", "ss"]
+            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "node", "bill", "screenshot", "shot", "ss"]
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd

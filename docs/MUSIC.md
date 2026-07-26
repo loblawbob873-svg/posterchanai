@@ -36,7 +36,7 @@ lyrics.
 ACE-Step needs **Python 3.11–3.12** and a `torch`/`transformers` stack that conflicts with both the
 main app venv and the image-gen venv. It also ships its own REST server (`acestep-api`). So it runs
 as a **separate process**, and the app talks to it over HTTP — like the external image servers and
-the Budget Manager. The main app needs no extra Python deps (just `httpx`). See
+the external image servers. The main app needs no extra Python deps (just `httpx`). See
 `app/services/music_service.py` (per-server REST client) and `app/services/music_factory.py`
 (orchestration). ACE-Step is **not on PyPI** — it's installed from its git repo with `uv`.
 

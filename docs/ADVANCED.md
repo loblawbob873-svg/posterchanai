@@ -603,7 +603,6 @@ Type these commands in the chat (or use the mode buttons):
 | `ytdl [mp3\|video] <url>` | Download YouTube: MP3 to Music (default) or video (MP4) to YouTube Videos |
 | `torrents` | Built-in torrent client: browse, download, pause, resume, delete |
 | `nyaa <query>` | Search nyaa.si for anime torrents |
-| `budget` | Budget manager (summary, bills, add, pay) |
 | `firewall` | Firewall status and log search |
 | `cal` | Calendar: today's events, week view, add events (aliases: sched, schedule) |
 | `contacts` | Search or add CardDAV contacts (with clickable phone/email links) |

@@ -3,7 +3,7 @@
 # Separate image from the main app: ACE-Step 1.5 needs Python 3.11–3.12 and a torch/transformers
 # stack that conflicts with PosterChanAI's venv, and it ships a REST server (`acestep-api`). The
 # app talks to it over HTTP (app/services/music_service.py) — same arrangement as the external
-# image servers and the Budget Manager.
+# image servers.
 #
 # ACE-Step is NOT on PyPI; it's installed from its git repo with `uv` (its own recommended
 # installer, which also provisions Python 3.12).

@@ -78,7 +78,7 @@ async def _nostr_profile(pk: str) -> dict:
 
 async def _download(url: str, cap: int = 10_000_000) -> bytes | None:
     # SSRF guard: `url` is the caller's OWN kind-0 `picture`, i.e. fully attacker-controlled, and this
-    # request is issued from inside the trust boundary (the relay, Budget Manager, image servers and the
+    # request is issued from inside the trust boundary (the relay, image servers and the
     # cloud metadata endpoint all live on loopback/link-local). Reuse the resolve-based check so a public
     # hostname that resolves to an internal IP is rejected too, and DON'T follow redirects — a 302 to
     # 127.0.0.1 would otherwise walk straight past the check.

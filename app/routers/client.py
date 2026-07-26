@@ -744,7 +744,7 @@ async def client_commands():
         ("🔍 Find", "search images yt news dailynews files torrents nyaa"),
         ("🖼 Files & media", "compress clip convert extractaudio circlecrop removebackground ocr collage ytdl screenshot"),
         ("📚 Learn", "flashcards translate"),
-        ("💰 Money", "budget bills bill addbill pay"),
+        ("💰 Money", "bill"),   # the budget itself is client-side + encrypted (Discover → Budget)
         ("⏰ Keep track", "remind reminders pin pins mail"),
         ("📣 Share", "post"),
         ("⚙️ System", "logs node help"),

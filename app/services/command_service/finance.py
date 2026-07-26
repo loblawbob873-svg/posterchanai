@@ -1,74 +1,30 @@
-"""Auto-split from the original command_service.py monolith (mixin pattern). No behavior change."""
+"""The `bill` command — snap a photo of a bill, read it, set a reminder.
+
+Everything else that used to live here (budget/bills/pay/addbill) is GONE. The budget is no longer
+an external Flask app reached with a per-user API key; it's a Nostr event encrypted to the user's
+OWN key, held in the client (static/js/client/budget.js, Discover -> Budget). The server has no key
+that can read or write it, deliberately — so a server-side `pay` is not something we can offer any
+more, on Telegram or anywhere else.
+
+What survives here is the half only the server can do: OCR + the extraction call. The parse comes
+back to the caller, the web client files it into the encrypted doc with one tap, and `bill add`
+sets the reminder (reminders ARE server data).
+"""
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class _FinanceMixin:
-    async def _budget_command(self) -> dict:
-        from app.services import finance_service
-        try:
-            base, key = finance_service.get_config(self.db, self.user)
-            summary = await finance_service.get_summary(base, key)
-        except finance_service.FinanceError as e:
-            return {"type": "text", "content": f"💰 {e}"}
-        # The unpaid-bills list gives the REAL count (the API's bills_count is the TOTAL, which made
-        # the "(N)" beside Unpaid bills wrong) + the Pay buttons. But a /bills failure must NOT sink
-        # the whole budget — fall back to the summary alone (with the API's count) if it errors.
-        unpaid, count = [], None
-        try:
-            unpaid = [b for b in await finance_service.get_bills(base, key, status="unpaid")
-                      if not b.get("is_income")]
-            count = len(unpaid)
-        except finance_service.FinanceError:
-            pass
-        return {"type": "budget",
-                "content": finance_service.format_summary(summary, unpaid_count=count),
-                "bills": [{"id": b.get("id"), "name": b.get("name", "?"),
-                           "amount": abs(b.get("amount", 0))} for b in unpaid]}
-
-    async def _bills_command(self, arg: str) -> dict:
-        from app.services import finance_service
-        arg = (arg or "").strip().lower()
-        status = None if arg == "all" else (arg if arg in ("paid", "unpaid") else "unpaid")
-        header = {"paid": "Paid bills", "unpaid": "Unpaid bills", None: "All bills"}.get(status, "Unpaid bills")
-        try:
-            base, key = finance_service.get_config(self.db, self.user)
-            bills = await finance_service.get_bills(base, key, status=status)
-        except finance_service.FinanceError as e:
-            return {"type": "text", "content": f"💰 {e}"}
-        return {"type": "text", "content": finance_service.format_bills(bills, header=header)}
-
-    async def _pay_command(self, arg: str) -> dict:
-        from app.services import finance_service
-        name = (arg or "").strip()
-        if not name:
-            return {"type": "text", "content": "Usage: pay <bill name>"}
-        try:
-            base, key = finance_service.get_config(self.db, self.user)
-            result = await finance_service.pay_bill(base, key, name)
-        except finance_service.FinanceError as e:
-            return {"type": "text", "content": f"💰 {e}"}
-        return {"type": "text", "content": f"✅ {result.get('message', 'Paid.')}"}
-
-    async def _addbill_command(self, arg: str) -> dict:
-        from app.services import finance_service
-        try:
-            name, amount, is_income = finance_service.parse_add_bill_arg(arg or "")
-            base, key = finance_service.get_config(self.db, self.user)
-            result = await finance_service.add_bill(base, key, name, amount, is_income=is_income)
-        except finance_service.FinanceError as e:
-            return {"type": "text", "content": f"💰 {e}"}
-        return {"type": "text", "content": f"✅ {result.get('message', 'Added.')}"}
-
     # ------------------------------------------------------------------ bill (snap a bill) ---
-    # A photo of a bill → OCR → one small extraction call → your Budget Manager + a reminder before
-    # it's due. Three systems you already have, joined by ~100 tokens of LLM.
+    # A photo of a bill → OCR → one small extraction call → a reminder before it's due, and (in the
+    # web client) a one-tap file into your encrypted Budget. Three systems you already have, joined
+    # by ~100 tokens of LLM.
     #
-    # It PREVIEWS first and only writes on `bill add`. The finance API has add and pay but NO delete,
-    # so a mis-read amount would be stuck in your books forever — that asymmetry is what makes the
-    # confirm step non-negotiable rather than a nicety. The pending parse is held in-process (same
-    # pattern as the Telegram media/caption flows) so confirming doesn't mean re-uploading the photo.
+    # It PREVIEWS first and only acts on `bill add`. A mis-read amount is worth one confirmation tap
+    # either way, and the preview is what lets the web client offer "Add to budget" — the parse is
+    # held in-process (same pattern as the Telegram media/caption flows) so confirming doesn't mean
+    # re-uploading the photo.
     _BILL_PENDING: dict = {}          # user_id -> {vendor, amount, due, ts}
     _BILL_PENDING_TTL = 900           # 15 min
 
@@ -82,20 +38,18 @@ class _FinanceMixin:
             return {"type": "text", "content": "Sign in to use bills."}
         low = (arg or "").strip().lower()
 
-        # ---- confirm step: write the pending parse to Budget Manager + set the reminder ----
+        # ---- confirm step: set the reminder. The BUDGET entry is written by the client, not here:
+        # the budget doc is encrypted to the user's own key and the server holds nothing that can
+        # open it. The web client's "Add to budget" button writes it (PCBudget.addParsed) and then
+        # runs this, so one tap still does both. ----
         if low in ("add", "yes", "confirm", "ok"):
             pend = self._BILL_PENDING.get(self.user.id)
             if not pend or (_time.time() - pend.get("ts", 0)) > self._BILL_PENDING_TTL:
                 self._BILL_PENDING.pop(self.user.id, None)
                 return {"type": "text", "content": "Nothing to add — send a photo of a bill with `bill` first."}
-            from app.services import finance_service, reminder_service
-            try:
-                base, key = finance_service.get_config(self.db, self.user)
-                res = await finance_service.add_bill(base, key, pend["vendor"], pend["amount"])
-            except finance_service.FinanceError as e:
-                return {"type": "text", "content": f"💰 {e}"}
+            from app.services import reminder_service
             self._BILL_PENDING.pop(self.user.id, None)
-            out = [f"✅ {res.get('message') or 'Added'} — {pend['vendor']} {pend['amount']:.2f}"]
+            out = [f"📄 {pend['vendor']} — {pend['amount']:.2f}"]
             # Remind two days out, or first thing tomorrow when it's due sooner than that. A reminder
             # dated in the past would just fire immediately, which is noise, not help.
             due = pend.get("due")
@@ -114,7 +68,7 @@ class _FinanceMixin:
                         out.append(f"📅 Due {due} — already past, no reminder set.")
                 except ValueError:
                     pass
-            out.append(f"Mark it paid later with `pay {pend['vendor']}`.")
+            out.append("Add it to your books in Discover → Budget (it's encrypted to your key, so only your client can write it).")
             return {"type": "text", "content": "\n".join(out)}
 
         # ---- read step: OCR the attachment, extract the fields, preview ----
@@ -203,7 +157,7 @@ class _FinanceMixin:
             return {"type": "text", "content":
                     "📄 I read the text but couldn't pin down the vendor and total"
                     + (f" (got {got})" if got else "")
-                    + ".\nAdd it by hand with `addbill <name> <amount>`."}
+                    + ".\nAdd it by hand in Discover → Budget."}
 
         self._BILL_PENDING[self.user.id] = {"vendor": vendor, "amount": amount, "due": due, "ts": _time.time()}
         lines = ["📄 **Bill read**", f"• Vendor: {vendor}", f"• Amount: {amount:.2f}"]

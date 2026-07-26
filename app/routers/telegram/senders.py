@@ -1,5 +1,5 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _finance_bills_cache, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _misskey_post_cache, _news_source_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
+from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _misskey_post_cache, _news_source_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
 from .keyboards import _4chan_board_switcher_keyboard, _4chan_thread_keyboard, _flashcard_keyboard, _format_4chan_post, _has_misskey, _has_nostr, _has_pleroma, _news_source_keyboard, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
 
 
@@ -437,79 +437,6 @@ async def _send_screenshot(chat_id: str, image_b64: str, caption: str) -> None:
         )
     except Exception as _e:
         logger.warning(f"[screenshot] OCR/translate offer failed: {_e}")
-
-
-async def _send_budget(chat_id: str, user, db, message_id: int = None) -> None:
-    """Render the interactive budget view (summary + a Pay button per unpaid bill).
-
-    When message_id is given the existing message is edited in place (used by the
-    Pay / Refresh callbacks); otherwise a new message is sent.
-    """
-    from app.services import finance_service
-    try:
-        base, key = finance_service.get_config(db, user)
-        summary = await finance_service.get_summary(base, key)
-        bills = await finance_service.get_bills(base, key, status="unpaid")
-    except finance_service.FinanceError as e:
-        await telegram_service.send_message(chat_id, f"💰 {e}")
-        return
-
-    # Only expenses get a Pay button; income lines are informational.
-    payable = [b for b in bills if not b.get("is_income")]
-    _finance_bills_cache[chat_id] = {str(b["id"]): b for b in payable}
-
-    # Live timestamp footer so each Refresh visibly changes the message — otherwise
-    # tapping Refresh with unchanged data makes Telegram reject the edit with
-    # "message is not modified" (400) and the button appears to do nothing.
-    text = finance_service.format_summary(summary, unpaid_count=len(payable)) + f"\n🕒 {datetime.now():%H:%M:%S}"
-    rows = [
-        [{"text": f"✅ {b['name'][:24]} ${abs(b.get('amount', 0)):,.0f}",
-          "callback_data": f"fin:pay:{b['id']}"}]
-        for b in payable[:20]
-    ]
-    rows.append([
-        {"text": "📋 Unpaid", "callback_data": "fin:bills:unpaid"},
-        {"text": "📜 Paid", "callback_data": "fin:bills:paid"},
-        {"text": "📂 All", "callback_data": "fin:bills:all"},
-    ])
-    rows.append([
-        {"text": "➕ Add Bill", "callback_data": "fin:add"},
-        {"text": "💵 Add Income", "callback_data": "fin:addincome"},
-    ])
-    rows.append([
-        {"text": "🔄 Refresh", "callback_data": "fin:refresh"},
-    ])
-    markup = {"inline_keyboard": rows}
-    if message_id:
-        await telegram_service.edit_message_text(chat_id, message_id, text, parse_mode="", reply_markup=markup)
-    else:
-        await telegram_service.send_message(chat_id, text, parse_mode="", reply_markup=markup)
-
-
-async def _send_bills_list(chat_id: str, user, db, status: str, message_id: int = None) -> None:
-    """Render a bills list (unpaid / paid / all) with a Back-to-Budget button.
-
-    Driven by the `fin:bills:<status>` buttons on the budget view so the user never
-    has to type the `bills` command. Edits in place when message_id is given.
-    """
-    from app.services import finance_service
-    # The finance API filters with ?status=paid|unpaid; "all" means no filter.
-    api_status = None if status == "all" else status
-    header = {"paid": "Paid bills", "unpaid": "Unpaid bills", "all": "All bills"}.get(status, "Bills")
-    try:
-        base, key = finance_service.get_config(db, user)
-        bills = await finance_service.get_bills(base, key, status=api_status)
-    except finance_service.FinanceError as e:
-        await telegram_service.send_message(chat_id, f"💰 {e}")
-        return
-
-    text = finance_service.format_bills(bills, header=header)
-    markup = {"inline_keyboard": [[{"text": "⬅️ Back to Budget", "callback_data": "fin:refresh"}]]}
-    if message_id:
-        await telegram_service.edit_message_text(chat_id, message_id, text, parse_mode="", reply_markup=markup)
-    else:
-        await telegram_service.send_message(chat_id, text, parse_mode="", reply_markup=markup)
-
 
 async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, prompt: str = "📣 *Post this?*", image_bytes: Optional[bytes] = None):
     """Show the generated post and offer to share it on configured social platforms.

@@ -98,17 +98,6 @@ const VOICE_COMMANDS = [
     { patterns: [/^download\s+(youtube|youtube\s+video)\s+(.+)$/i], command: 'ytdl video $2' },
     { patterns: [/^download\s+(.+)$/i], command: 'ytdl $1' }, // Default to audio
 
-    // ==================== BUDGET ====================
-    { patterns: [/^(my\s+)?budget$/i], command: 'budget' },
-    { patterns: [/^(my\s+)?bills?$/i], command: 'bills' },
-    // "add bill rent 500" or "add bill chilies for $200"
-    // Mishearings: "bill" -> "to", "two", "till", "built", "build", "bill"
-    { patterns: [/^add\s+(bill|build|built|to|two|till|bild|bil)\s+(.+?)\s+(?:for\s+)?\$?(\d+(?:\.\d+)?)$/i], command: 'addbill $2 $3' },
-    // "pay chilies" or "pay bill chilies" - strip "bill/build/to" if present
-    { patterns: [/^pay\s+(bill|build|built|to|two|till)\s+(.+)$/i], command: 'pay $2' },
-    { patterns: [/^pay\s+(.+)$/i], command: 'pay $1' },
-    { patterns: [/^(.+)\s+paid$/i], command: 'pay $1' },
-
     // ==================== TRANSLATE ====================
     { patterns: [/^translate\s+to\s+(\w+)$/i], command: 'translate $1' },
     { patterns: [/^(say\s+)?that\s+in\s+(\w+)$/i], command: 'translate $2' },
