@@ -5918,6 +5918,11 @@
       const artc=e.target.closest('.article-card'); if(artc){ if(e.target.closest('[data-prof]')){ renderProfileView(artc.dataset.pk); return; } const a=Store.get(artc.dataset.id); if(a) openArticle(a); return; }
       // Community / channel discovery cards surfaced in the feed → open the community / channel.
       const cc=e.target.closest('.community-card,.channel-card'); if(cc){ if(e.target.closest('[data-prof]')){ renderProfileView(cc.dataset.pk); return; } const x=Store.get(cc.dataset.id); if(x){ cc.classList.contains('community-card')?openCommunity(x):openChannel(x); } return; }
+      // Git repo cards (kind-30617) surfaced in Discover/search → open the REPO DETAIL (README/issues/
+      // patches), NOT the generic .note thread. A repo-card is also class="note" for styling, so without
+      // this it fell through to renderThread below and opened the announcement as a thread. Let the author
+      // name (data-prof) and the Copy-clone / ↗ Open controls keep their own handlers.
+      const rc=e.target.closest('.repo-card'); if(rc){ if(e.target.closest('[data-prof]')){ renderProfileView(rc.dataset.pk); return; } if(e.target.closest('a,button')) return; const x=Store.get(rc.dataset.id); if(x) openRepo(x); return; }
       const btn=e.target.closest('.act');
       const art=e.target.closest('.note');
       // Click anywhere else on the card body opens the post's thread, so the user doesn't have to

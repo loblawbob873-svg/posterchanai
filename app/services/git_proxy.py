@@ -61,10 +61,13 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
     """Forward a smart-HTTP git request (`<npub>/<id>.git/...`) to the hosting node and stream back
     the reply. `repo_path` is everything after the `/git/` mount (already URL-path form)."""
     base = _base_url()
-    # Reject anything that isn't a smart-HTTP git endpoint (don't become an open proxy).
+    # Reject anything that isn't a smart-HTTP git endpoint or a raw-file read (don't become an open
+    # proxy). `.git/raw/<ref>/<path>` is the read-gated single-file read the client's repo view uses to
+    # render a README without cloning; the hosting node still applies the private-repo read gate.
     if not (repo_path.endswith("/info/refs")
             or repo_path.endswith("/git-upload-pack")
-            or repo_path.endswith("/git-receive-pack")):
+            or repo_path.endswith("/git-receive-pack")
+            or ".git/raw/" in repo_path):
         raise HTTPException(status_code=404, detail="not a git smart-HTTP endpoint")
 
     target = "%s/%s" % (base, repo_path.lstrip("/"))

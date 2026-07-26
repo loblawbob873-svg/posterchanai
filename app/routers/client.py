@@ -1334,11 +1334,45 @@ def _looks_like_html_page(text: str) -> bool:
     return head.startswith("<!doctype html") or head.startswith("<html")
 
 
+async def _grasp_readme(clone_url: str) -> str | None:
+    """If clone_url points at THIS deployment's OWN GRASP git host (git_server_public_base), read the
+    README straight from the host's raw endpoint (<npub>/<id>.git/raw/HEAD/README.md) — our /git/ is
+    smart-HTTP (pack) only, so the forge-URL candidates never match it. Reaches the git host on the LAN
+    (the node we proxy to) or on localhost (a hosting node); it's our own service, so no SSRF surface.
+    Returns the markdown, or None when the url isn't ours / no README exists."""
+    from urllib.parse import urlparse
+    try:
+        base = (settings_store.get("git_server_public_base", "") or "").strip()
+        base_host = (urlparse(base).hostname or "").lower() if base else ""
+        pu = urlparse(clone_url)
+        if not base_host or (pu.hostname or "").lower() != base_host:
+            return None
+        segs = [s for s in pu.path.split("/") if s]
+        gi = next((i for i, s in enumerate(segs) if s.endswith(".git")), None)
+        if gi is None or gi < 1:
+            return None
+        owner_seg, rid = segs[gi - 1], segs[gi][:-4]
+        proxy = (settings_store.get("git_server_proxy_url", "") or "").strip().rstrip("/")
+        host_base = proxy or ("http://127.0.0.1:%s" % (settings_store.get("git_server_port", "3053") or "3053"))
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0)) as c:
+            for name in ("README.md", "readme.md", "README", "readme", "README.markdown", "Readme.md"):
+                try:
+                    r = await c.get("%s/%s/%s.git/raw/HEAD/%s" % (host_base, owner_seg, rid, name))
+                    if r.status_code == 200 and r.content:
+                        return r.content[:_README_MAX].decode("utf-8", "ignore")
+                except Exception:
+                    continue
+    except Exception:
+        return None
+    return None
+
+
 @router.get("/git/readme")
 async def git_readme(url: str):
     """Fetch a repo's README markdown from its forge given a clone/web URL — powers Discover → Git
     Repos' repo-detail view. Public helper (mirrors /preview): SSRF-guarded, size-capped, best-effort
-    across Gitea/Forgejo/GitHub/GitLab. Returns {ok, markdown, source} or {ok:false, error}."""
+    across Gitea/Forgejo/GitHub/GitLab, AND our own self-hosted GRASP host. Returns {ok, markdown, source}."""
     from urllib.parse import urlparse
     from app.services import rss_service
     if not url or not url.startswith(("http://", "https://")):
@@ -1347,6 +1381,12 @@ async def git_readme(url: str):
     hit = _readme_cache.get(url)
     if hit and hit[0] > now:
         return JSONResponse(hit[1])
+    # Our own GRASP host first (smart-HTTP only → forge candidates below can't read it).
+    _g = await _grasp_readme(url)
+    if _g is not None:
+        out = {"ok": True, "markdown": _g, "source": "grasp"}
+        _readme_cache[url] = (now + 300, out)
+        return JSONResponse(out)
     creds = _git_host_creds()
     result = {"ok": False, "error": "no README found"}
     try:

@@ -164,17 +164,62 @@ class _Handler(BaseHTTPRequestHandler):
     def _serve(self, method: str):
         parsed = urlparse(self.path)
         info = _parse_repo_path(parsed.path)
-        service = _wants_service(parsed.path, parsed.query, method)
-        if info is None or service is None:
+        if info is None:
             return self._deny(404, "not found")
         owner_hex, repo_id, rest = info
         if not ghs.repo_exists(owner_hex, repo_id):
             return self._deny(404, "no such repo")        # never auto-create on read/GET
+        # RAW single-file read (README + file browsing in the client's repo view):
+        #   GET /<owner>/<id>.git/raw/<ref>/<path>  ->  `git show <ref>:<path>`
+        # Read-gated exactly like a clone (private repos need NIP-98). Our /git/ is otherwise smart-HTTP
+        # (pack protocol) only, so this is the one way the client can render a README/file without cloning.
+        if method == "GET" and (rest == "raw" or rest.startswith("raw/")):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_raw(owner_hex, repo_id, rest[4:])
+        service = _wants_service(parsed.path, parsed.query, method)
+        if service is None:
+            return self._deny(404, "not found")
         # READ GATE: upload-pack (clone/pull) on a private repo needs NIP-98 read auth. receive-pack
         # (push) is authorized inside the pre-receive hook regardless of private/public.
         if service == "git-upload-pack" and not self._read_gate_ok(owner_hex, repo_id):
             return self._deny(401, "authentication required (private repo)", auth=True)
         return self._exec_backend(method, owner_hex, repo_id, rest, parsed.query)
+
+    def _serve_raw(self, owner_hex: str, repo_id: str, refpath: str):
+        """Serve one file's bytes from the bare repo via `git show <ref>:<path>`. refpath = '<ref>/<path>'.
+        Read-gated by the caller. Args-only subprocess (no shell); output capped; content-type by extension."""
+        import re as _re
+        import mimetypes as _mt
+        refpath = (refpath or "").strip("/")
+        ref, _, path = refpath.partition("/")
+        if not ref or not path or ".." in path.split("/") or path.startswith("/"):
+            return self._deny(400, "bad ref/path")
+        if not _re.match(r"^[A-Za-z0-9_./-]{1,120}$", ref) or len(path) > 512:
+            return self._deny(400, "bad ref/path")
+        repo_dir = ghs.repo_dir(owner_hex, repo_id)
+        if not repo_dir or not os.path.isdir(repo_dir):
+            return self._deny(404, "no such repo")
+        try:
+            proc = subprocess.run(["git", "--git-dir", repo_dir, "show", "%s:%s" % (ref, path)],
+                                  capture_output=True, timeout=15)
+        except Exception:
+            return self._deny(500, "read failed")
+        if proc.returncode != 0:
+            return self._deny(404, "file not found")
+        data = (proc.stdout or b"")[:2 * 1024 * 1024]     # 2 MB cap — a README, not a release tarball
+        ctype = _mt.guess_type(path)[0] or "application/octet-stream"
+        if path.lower().endswith((".md", ".markdown", ".txt", "")):
+            ctype = "text/plain; charset=utf-8"
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _exec_backend(self, method, owner_hex, repo_id, rest, query):
         """Exec git-http-backend as CGI and stream stdin->child and child-stdout->client."""
