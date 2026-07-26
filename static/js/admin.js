@@ -993,3 +993,76 @@ setTimeout(() => {
     updateImageBackendUI();
     refreshImageQueue();
 }, 500);
+
+// ── Ctrl/Cmd+F find-in-page for the Admin UI ──────────────────────────────────────────────────
+// The desktop (Electron) app has no built-in browser Find, so provide our own: highlight matches in
+// the visible tab, jump between them, live count. Enter = next, Shift+Enter = prev, Esc = close.
+(function(){
+  let bar=null,input=null,countEl=null,hits=[],cur=-1;
+  const scopeEl=()=>document.querySelector('.admin-content')||document.body;
+  function clearHits(){
+    for(const m of hits){ const t=document.createTextNode(m.textContent); const pn=m.parentNode; if(pn){ pn.replaceChild(t,m); pn.normalize&&pn.normalize(); } }
+    hits=[]; cur=-1;
+  }
+  function build(){
+    if(bar) return;
+    const st=document.createElement('style');
+    st.textContent=`#admin-find{position:fixed;top:12px;right:16px;z-index:99999;display:none;align-items:center;gap:6px;
+      background:#12151c;border:1px solid #2a3140;border-radius:10px;padding:6px 8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+      #admin-find.show{display:flex}
+      #admin-find input{background:#0c0e13;border:1px solid #2a3140;border-radius:6px;color:#e6e8ee;padding:5px 8px;font-size:13px;width:180px;outline:none}
+      #admin-find input:focus{border-color:#39d0d8}
+      #admin-find #admin-find-ct{color:#8a93a6;font-size:12px;min-width:36px;text-align:center}
+      #admin-find button{background:none;border:none;color:#8a93a6;cursor:pointer;font-size:13px;padding:3px 6px;border-radius:5px}
+      #admin-find button:hover{background:#1c2130;color:#e6e8ee}
+      mark.admin-find-hit{background:#664d00;color:#fff;border-radius:2px}
+      mark.admin-find-hit.cur{background:#39d0d8;color:#08121a}`;
+    document.head.appendChild(st);
+    bar=document.createElement('div'); bar.id='admin-find';
+    bar.innerHTML='<input type="text" id="admin-find-in" placeholder="Find in page…" autocomplete="off" spellcheck="false">'+
+      '<span id="admin-find-ct">0/0</span>'+
+      '<button id="admin-find-prev" title="Previous (Shift+Enter)">▲</button>'+
+      '<button id="admin-find-next" title="Next (Enter)">▼</button>'+
+      '<button id="admin-find-x" title="Close (Esc)">✕</button>';
+    document.body.appendChild(bar);
+    input=bar.querySelector('#admin-find-in'); countEl=bar.querySelector('#admin-find-ct');
+    input.addEventListener('input',()=>run(input.value));
+    input.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); step(e.shiftKey?-1:1); } else if(e.key==='Escape'){ e.preventDefault(); close(); } });
+    bar.querySelector('#admin-find-next').onclick=()=>step(1);
+    bar.querySelector('#admin-find-prev').onclick=()=>step(-1);
+    bar.querySelector('#admin-find-x').onclick=close;
+  }
+  function run(q){
+    clearHits(); q=(q||'').trim();
+    if(!q){ countEl.textContent='0/0'; return; }
+    const rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+    const w=document.createTreeWalker(scopeEl(),NodeFilter.SHOW_TEXT,{acceptNode(n){
+      if(!n.nodeValue||!n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      const pe=n.parentElement; if(!pe) return NodeFilter.FILTER_REJECT;
+      if(pe.closest('#admin-find,script,style,noscript,option')) return NodeFilter.FILTER_REJECT;
+      if(pe.offsetParent===null) return NodeFilter.FILTER_REJECT;   // hidden (other tab / display:none)
+      return NodeFilter.FILTER_ACCEPT; }});
+    const nodes=[]; let n; while(n=w.nextNode()) nodes.push(n);
+    for(const node of nodes){
+      const txt=node.nodeValue; rx.lastIndex=0; if(!rx.test(txt)) continue; rx.lastIndex=0;
+      const frag=document.createDocumentFragment(); let last=0,m;
+      while(m=rx.exec(txt)){
+        if(m.index>last) frag.appendChild(document.createTextNode(txt.slice(last,m.index)));
+        const mk=document.createElement('mark'); mk.className='admin-find-hit'; mk.textContent=m[0];
+        frag.appendChild(mk); hits.push(mk); last=m.index+m[0].length;
+        if(m.index===rx.lastIndex) rx.lastIndex++;
+      }
+      if(last<txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+      node.parentNode.replaceChild(frag,node);
+    }
+    cur=hits.length?0:-1; paint(); update();
+  }
+  function paint(){ hits.forEach((h,i)=>h.classList.toggle('cur',i===cur)); if(cur>=0&&hits[cur]) hits[cur].scrollIntoView({block:'center',behavior:'smooth'}); }
+  function step(d){ if(!hits.length) return; cur=(cur+d+hits.length)%hits.length; paint(); update(); }
+  function update(){ countEl.textContent=(hits.length?cur+1:0)+'/'+hits.length; }
+  function open(){ build(); bar.classList.add('show'); input.focus(); input.select(); if(input.value) run(input.value); }
+  function close(){ if(bar) bar.classList.remove('show'); clearHits(); if(countEl) countEl.textContent='0/0'; }
+  document.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&!e.altKey&&(e.key==='f'||e.key==='F')){ e.preventDefault(); e.stopPropagation(); open(); }
+  }, true);
+})();

@@ -3567,7 +3567,7 @@
     if(VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
     feed.innerHTML = `<div class="art-top"><button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button></div>`
-      + (repos.length ? repos.map(repoCard).join('') : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
+      + (repos.length ? `<div class="repo-grid">${repos.map(repoCard).join('')}</div>` : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
     $('#repo-new').onclick=()=>publishRepo();
     decorateProfiles();
     $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
@@ -3615,12 +3615,12 @@
     const clone=(e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean);
     const web=(e.tags.find(t=>t[0]==='web')||[]).slice(1).filter(Boolean);
     const wurl=_mdUrl(web[0]||'');   // scheme-allowlist (http/https only) — a relay-supplied javascript: href must never become clickable
-    return `<article class="repo-card note" data-id="${e.id}" data-pk="${e.pubkey}"><div class="body">
-      <div class="tor-title">🌱 ${enc(name)}</div>
-      <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
-      ${desc?`<div class="tor-desc">${enc(desc.slice(0,400))}</div>`:''}
-      <div class="row tor-actions">${wurl?`<a class="btn btn-cyan small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open</a>`:''}${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Copy clone URL</button>`:''}</div>
-    </div></article>`;
+    return `<article class="repo-card" data-id="${e.id}" data-pk="${e.pubkey}">
+      <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span></div>
+      <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
+      <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${wurl?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
+    </article>`;
   }
   // ---------- NIP-34 repo detail (README + issues + patches) ----------
   // Addressable coordinate a repo's collaboration events (issues 1621 / patches 1617) point at via `a`.
@@ -13315,7 +13315,7 @@
     if(strms.length){ html+='<div class="search-section-title">▷ Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
     if(comms.length){ html+='<div class="search-section-title">☷ Communities</div><div class="stream-grid">'+comms.map(communityCard).join('')+'</div>'; }
     if(tors.length){  html+='<div class="search-section-title">🧲 Torrents</div>'+tors.map(torrentCard).join(''); }
-    if(repos.length){ html+='<div class="search-section-title">🌱 Git Repos</div>'+repos.map(repoCard).join(''); }
+    if(repos.length){ html+='<div class="search-section-title">🌱 Git Repos</div><div class="repo-grid">'+repos.map(repoCard).join('')+'</div>'; }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
     html+='<div class="search-section-title">Posts</div>';
     html+= posts.length ? `<div id="search-posts">${posts.map(feedNoteHtml).join('')}</div>` : '<div class="empty">No matching posts.</div>';
