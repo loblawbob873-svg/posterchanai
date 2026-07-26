@@ -630,6 +630,19 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         # Already stored (possibly by another user) — content-addressed, so nothing to write.
         # Retention is governed live by the admin TTL setting (see _cleanup_once), keyed off
         # created_at, so re-uploads don't need to re-stamp anything.
+        # The one thing that DOES need re-stamping is the explicit per-blob TTL: dedup means these
+        # identical bytes may now be referenced by something with a different lifetime. A save that
+        # wants the blob KEPT (expires_days=0 — a chat image) must clear a TTL a transient artifact
+        # stamped earlier, or the permanent reference is swept out from under it; a save that wants a
+        # TTL only ever pushes the expiry LATER, never sooner.
+        _want = (int(time.time()) + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
+        _cur = existing.expires_at or None
+        if _cur and (_want is None or _want > _cur):
+            existing.expires_at = _want
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
         _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 

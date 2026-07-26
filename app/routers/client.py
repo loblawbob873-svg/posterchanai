@@ -868,7 +868,8 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
 
     # Busy-overflow LB: if this node's render queue is full, run it on a peer instead.
     _fwd = await _meme_lb_forward(request, "effect",
-                                  {"pubkey": data.pubkey, "auth": data.auth, "name": data.name, "dur": data.dur})
+                                  {"pubkey": data.pubkey, "auth": data.auth, "name": data.name, "dur": data.dur},
+                                  db=db)
     if _fwd is not None:
         return _fwd
 
@@ -950,7 +951,8 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     # Busy-overflow LB: full local queue → run this effect on a peer node instead.
     _fwd = await _meme_lb_forward(request, "apply-effect",
                                   {"pubkey": data.pubkey, "auth": data.auth, "url": data.url,
-                                   "effect": data.effect, "arg": data.arg})
+                                   "effect": data.effect, "arg": data.arg},
+                                  db=db)
     if _fwd is not None:
         return _fwd
 
@@ -2924,7 +2926,39 @@ def _meme_semaphore() -> asyncio.Semaphore:
 _meme_rr = [0]   # round-robin cursor over peer nodes for render overflow
 
 
-async def _meme_lb_forward(request: "Request", subpath: str, body: dict):
+_MEME_BLOB_RE = re.compile(r"/([0-9a-f]{64})(\.[A-Za-z0-9]{1,8})?(?:[?#]|$)")
+
+
+async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
+    """Copy a peer-rendered blob into THIS node's Blossom store, so the URL the peer handed back
+    actually resolves. Nodes share the public Blossom base URL (`blossom_public_url`) but each has
+    its OWN Postgres: a blob saved on the peer has no BlossomBlob row here, and /blossom/<sha> is a
+    row lookup — so without this copy the URL 404s and the layer silently breaks. Content-addressed,
+    so re-saving the same bytes locally yields the SAME sha and the peer's URL stays correct."""
+    from app.services import blossom_service
+    url = (payload or {}).get("url") or ""
+    m = _MEME_BLOB_RE.search(url)
+    if not m:
+        return False
+    sha, ext = m.group(1), (m.group(2) or "")
+    if blossom_service.get_blob_meta(db, sha) is not None:
+        return True   # already here (dedup / shared DB) — nothing to copy
+    import httpx
+    # Fetch from the PEER directly, not from the shared public base: that base points at whichever
+    # node serves media, which is exactly the node that doesn't have the blob yet.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=8.0)) as c:
+        r = await c.get("%s/blossom/%s%s" % (peer.rstrip("/"), sha, ext))
+        r.raise_for_status()
+        data = r.content
+    if not data:
+        return False
+    mime = (r.headers.get("content-type") or "application/octet-stream").split(";")[0].strip()
+    pk = nostr_service.to_pubkey_hex((payload or {}).get("pubkey") or "") or ""
+    desc = await blossom_service.save_blob(db, pk or sha, data, mime)
+    return desc.get("sha256") == sha
+
+
+async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):
     """Busy-overflow load balancer for meme/effect RENDER jobs. When THIS node's render queue is already
     full (all _MEME_MAX_CONCURRENT slots busy) and there are peer nodes, forward the same request to a
     peer (round-robin) and return its Response — so multiple jobs run across the fleet at once instead of
@@ -2953,7 +2987,20 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict):
                 logger.info("[meme] overflow render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
                 ct = r.headers.get("content-type", "") or ""
                 if ct.startswith("application/json"):
-                    return JSONResponse(r.json(), status_code=r.status_code)
+                    payload = r.json()
+                    # The endpoints that answer with a Blossom URL (effect / apply-effect) stored their
+                    # output in the PEER's blob store. Adopt it here or the URL is dead on arrival; if the
+                    # copy fails, fall through to local rather than hand back a 404 link.
+                    if r.status_code < 400 and isinstance(payload, dict) and payload.get("url") and db is not None:
+                        try:
+                            if not await _meme_adopt_peer_blob(db, peer, {**payload, "pubkey": body.get("pubkey")}):
+                                logger.warning("[meme] peer %s blob adopt failed (%s) — rendering locally", peer, subpath)
+                                return None
+                        except Exception as e:
+                            logger.warning("[meme] peer %s blob adopt error (%s) — rendering locally: %s",
+                                           peer, subpath, e)
+                            return None
+                    return JSONResponse(payload, status_code=r.status_code)
                 return Response(content=r.content, status_code=r.status_code,
                                 media_type=ct or "application/octet-stream")
             except Exception as e:
