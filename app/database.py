@@ -228,9 +228,19 @@ def init_db():
             "nostr_relay_pg_dsn": os.environ.get("NOSTR_RELAY_PG_DSN",
                 "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"),
             # Built-in git-over-nostr host (GRASP). OFF by default — the supervisor spawns nothing and
-            # the /api/git endpoints 404 until an admin enables it. Other knobs fall back to schema
-            # defaults in app/schemas.py:SettingsResponse. See docs/GIT_OVER_NOSTR.md.
+            # the /api/git endpoints 404 until an admin enables it. All keys are relay-stored via
+            # settings_store (pcai:setting:<key>), non-secret. See docs/GIT_OVER_NOSTR.md.
             "git_server_enabled": "false",
+            "git_server_port": "3053",
+            "git_server_bind": "127.0.0.1",
+            "git_server_public_base": "",
+            "git_server_allowlist": "",
+            "git_server_repo_max_mb": "512",
+            "git_server_total_gb": "20",
+            "git_server_allow_force": "true",
+            "git_server_nip98_push": "true",
+            "git_server_default_private": "false",
+            "git_server_proxy_url": "",   # multi-node: reverse-proxy to a hosting node (empty = local host)
             # NB: the old chat_/settings_/users_/bots_/records_backend flags are gone — the relay
             # (encrypted Nostr events) is now the ONE datastore unconditionally; the Postgres tables
             # are just a hydrated read-cache. No sqlite/table-authoritative mode anymore.

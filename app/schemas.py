@@ -356,6 +356,10 @@ class SettingsResponse(BaseModel):
     git_server_allow_force: str = "true"       # allow maintainer-signed non-fast-forward (force) pushes
     git_server_nip98_push: str = "true"        # accept NIP-98-authenticated pushes (admin/sync.sh path)
     git_server_default_private: str = "false"  # default privacy for newly-provisioned/imported repos
+    # Multi-node: when SET, this node runs NO local git subprocess — its git front reverse-proxies the
+    # smart-HTTP requests to the hosting node here (like the Blossom storage proxy). Auth + repos + hooks
+    # + the 30617/30618 lookups stay on the hosting node. Empty ⇒ run the local host (per git_server_enabled).
+    git_server_proxy_url: str = ""             # e.g. http://nas.lan:3053 or https://nas.lan/git
     # Finance (Budget Manager) integration — per-user API keys live on User; this is the shared base URL
     finance_api_base: str = "http://localhost:5001"
     # Screenshot: hosts allowed to bypass the SSRF private-IP guard (the operator's own

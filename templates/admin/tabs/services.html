@@ -57,6 +57,11 @@
             </label>
             <small>Private repos require a NIP-98 read auth (allowlisted readers/maintainers) to clone and are NOT announced (no public 30617/30618).</small>
         </div>
+        <div class="form-group">
+            <label for="git_server_proxy_url">Reverse-proxy to hosting node (multi-node)</label>
+            <input type="text" id="git_server_proxy_url" name="git_server_proxy_url" placeholder="empty = run the local host; e.g. http://nas.lan:3053">
+            <small>When SET, this node runs NO local git subprocess — it forwards smart-HTTP git requests to the hosting node (like the Blossom storage proxy). Auth + repos + hooks stay on the hosting node. Empty ⇒ run the local host (per the enable toggle above).</small>
+        </div>
     </fieldset>
 
     <fieldset>

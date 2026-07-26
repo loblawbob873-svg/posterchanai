@@ -65,8 +65,13 @@ def _read_config() -> dict:
         def gb(key, default=False):
             return str(g(key, str(default))).strip().lower() in ("1", "true", "yes", "on")
 
+        # Proxy mode: if git_server_proxy_url is set, this node forwards smart-HTTP to the hosting
+        # node instead of running its own subprocess — so the local host is DISABLED regardless of
+        # git_server_enabled (see app/services/git_proxy.py + app/routers/git.py:git_smart_proxy).
+        proxy_url = (g("git_server_proxy_url", "") or "").strip()
         return {
-            "enabled": gb("git_server_enabled", False),
+            "enabled": gb("git_server_enabled", False) and not proxy_url,
+            "proxy_url": proxy_url,
             "bind": g("git_server_bind", "127.0.0.1"),
             "port": gi("git_server_port", 3053),
             "public_base": g("git_server_public_base", ""),

@@ -87,12 +87,37 @@ Push auth for a private repo is the *same* maintainer-signed check; the read gat
   private**). This keeps the WoT exemption from becoming an open spam firehose. 30617 announcements
   stay broadly public (Discover). Git kinds are not in `_PRUNABLE_KINDS`, so they're purge-exempt.
 
-## Settings (all default-safe)
+## Multi-node — git-server reverse proxy (like the Blossom storage proxy)
+
+To run the git host on ONE node (e.g. `nas.lan`) and reach it from another (`server1`), set
+`git_server_proxy_url` on the *other* node. Behavior mirrors the Blossom storage proxy exactly:
+
+- **`git_server_proxy_url` set** ⇒ the node runs **no local git subprocess**. Its git front
+  (`/git/<npub>/<id>.git/...`, `app/routers/git.py:git_smart_proxy` → `app/services/git_proxy.py`)
+  is a **thin HTTP reverse-proxy** that forwards the smart-HTTP requests (`info/refs`,
+  `git-upload-pack`, `git-receive-pack`) to `<git_server_proxy_url>/<npub>/<id>.git/...` on the
+  hosting node — streaming, preserving the `Authorization`/NIP-98 header, `Content-Type`, and
+  `Git-Protocol`. **All auth + repo storage + the pre-receive/post-receive hooks + the Postgres
+  30617/30618 lookups stay on the hosting node** — the proxy is dumb and re-implements NO auth (it
+  forwards the client's NIP-98 header and the hosting node authorizes; no server-to-server bypass).
+  The request body is buffered so `Content-Length` is preserved for the host's CGI; the response
+  (packfile) is streamed. Management endpoints (`/api/git/host|announce|repos`) refuse on a proxy
+  node — provision on the hosting node.
+- **`git_server_proxy_url` empty** ⇒ run the local subprocess as normal (gated on `git_server_enabled`).
+
+Trust: `git_server_proxy_url` is admin-set config (same trust model as `storage_server_url`); an
+http(s):// scheme is required. Mount matches the recommended nginx `location /git/`.
+
+## Settings (all default-safe, relay-stored via settings_store `pcai:setting:<key>`)
 
 `git_server_enabled` (**false**), `git_server_port` (3053), `git_server_bind` (127.0.0.1),
 `git_server_public_base` (""), `git_server_allowlist` ("" ⇒ admins only), `git_server_repo_max_mb`
 (512), `git_server_total_gb` (20), `git_server_allow_force` (true), `git_server_nip98_push` (true),
-`git_server_default_private` (false).
+`git_server_default_private` (false), `git_server_proxy_url` ("" ⇒ local host).
+
+Each key is (a) a typed field in `schemas.SettingsResponse`, (b) seeded in `database.py`
+`default_settings`, (c) an Admin → Services input with `id`==`name`==key (so `static/js/admin.js`
+hydrates + persists it generically). None are secret (no NIP-44 encryption needed).
 
 ## Deps
 
@@ -109,6 +134,10 @@ already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequ
 - `tests/test_git_push_e2e.py` — a real `git push` through git-http-backend → pre-receive → real
   Postgres: accept on matching maintainer-signed 30618, reject with no/mismatched state, and confirms
   a rejected push does not move the ref (objects discarded).
+- `tests/test_git_proxy.py` — the reverse-proxy path: proxy-disabled ⇒ 404; public proxied `info/refs`
+  is byte-identical to hitting the host directly; a private repo through the proxy 401s anonymously and
+  200s with a forwarded reader NIP-98 header (auth stays on the host). Uses `httpx` (already a dep,
+  via the storage proxy) — no new packages.
 
 ## Deferred
 

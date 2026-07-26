@@ -16,10 +16,26 @@ from fastapi.responses import JSONResponse
 
 from app.auth import get_current_user
 from app.models import User
-from app.services import settings_store, git_host_service as ghs
+from app.services import settings_store, git_host_service as ghs, git_proxy
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/git", tags=["git"])
+
+# Smart-HTTP reverse-proxy router (NO /api prefix): mounted at /git/ (matching the recommended nginx
+# `location /git/`). Active ONLY when git_server_proxy_url is set — on a hosting node these paths are
+# served by the git_host_main subprocess via nginx→3053, so the app never sees them. Registered before
+# the client SPA catch-all in app/main.py so /git/… wins.
+smart_router = APIRouter(tags=["git"])
+
+
+@smart_router.api_route("/git/{repo_path:path}", methods=["GET", "POST"])
+async def git_smart_proxy(repo_path: str, request: Request):
+    """Thin reverse-proxy of a git smart-HTTP request to the hosting node (git_server_proxy_url).
+    404 when this node isn't a proxy (empty git_server_proxy_url). No auth here — the hosting node
+    authorizes the forwarded NIP-98/30618, exactly like the Blossom storage proxy."""
+    if not git_proxy.proxy_enabled():
+        raise HTTPException(status_code=404, detail="not a git proxy node")
+    return await git_proxy.proxy_git_request(request, repo_path)
 
 
 def _enabled() -> bool:
@@ -30,6 +46,16 @@ def _require_enabled():
     if not _enabled():
         # 404 (not 403) so the feature is indistinguishable from absent when off.
         raise HTTPException(status_code=404, detail="git host not enabled")
+
+
+def _require_local_host():
+    """Provisioning/announce/list must run on the HOSTING node (where the repos + hooks + DB live).
+    A proxy node forwards smart-HTTP but has no local repos, so these management calls are refused
+    there — provision on the node that actually hosts (git_server_proxy_url empty)."""
+    if git_proxy.proxy_enabled():
+        raise HTTPException(status_code=400,
+                            detail="this node proxies git to %s — provision/manage on the hosting node"
+                                   % settings_store.get("git_server_proxy_url", ""))
 
 
 def _may_provision(user: User) -> bool:
@@ -69,14 +95,21 @@ def _owner_hex_for(user: User, body_owner: str | None) -> str | None:
 @router.get("/status")
 def status(user: User = Depends(get_current_user)):
     _require_enabled()
+    if git_proxy.proxy_enabled():
+        # Proxy node: no local subprocess; report the mode + upstream host.
+        return {"mode": "proxy", "proxy_url": settings_store.get("git_server_proxy_url", ""),
+                "running": True}
     from app.services.git_http_service import git_http_status
-    return git_http_status()
+    st = git_http_status()
+    st["mode"] = "local"
+    return st
 
 
 @router.get("/repos")
 def list_repos(user: User = Depends(get_current_user)):
     """List hosted repos. Admin-gated so private repos are not disclosed anonymously."""
     _require_enabled()
+    _require_local_host()
     if not getattr(user, "is_admin", False):
         raise HTTPException(status_code=403, detail="admin only")
     return {"repos": ghs.list_repos(), "total_gb": ghs.total_size_gb()}
@@ -87,6 +120,7 @@ async def host_repo(request: Request, user: User = Depends(get_current_user)):
     """Create/host a bare repo. Body: {repo_id, name?, description?, owner?(admin), private?, readers?}.
     Returns the clone/web/relays URLs + the suggested 30617 tags for the client to sign+publish."""
     _require_enabled()
+    _require_local_host()
     if not _may_provision(user):
         raise HTTPException(status_code=403, detail="not allowed to provision repos")
     body = await request.json()
@@ -133,6 +167,7 @@ async def announce_repo(request: Request, user: User = Depends(get_current_user)
     OPERATOR key, to the local relay. Only valid when the repo owner IS the operator (e.g. the P4
     self-host of posterchanai). Refuses private repos. Non-operator owners sign client-side instead."""
     _require_enabled()
+    _require_local_host()
     if not _may_provision(user):
         raise HTTPException(status_code=403, detail="not allowed")
     body = await request.json()
