@@ -2968,29 +2968,32 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
 
 
 async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):
-    """Busy-overflow load balancer for meme/effect RENDER jobs. When THIS node is ALREADY rendering and
-    there are peer nodes, forward the same request to a peer (round-robin) and return its Response — so
-    concurrent jobs run across the fleet instead of piling onto one box (this is the ffmpeg-render
-    analogue of the chat/image node LB). Returns None to run LOCALLY: a request already forwarded to us
-    (loop guard header), no peers, or an IDLE node (a hop is pure latency when nothing is queued). Any
-    peer error falls through to local.
+    """Node load balancer for meme/effect RENDER jobs: hand the job to a peer (round-robin) and return
+    its Response, so renders spread across the fleet instead of piling onto one box (this is the
+    ffmpeg-render analogue of the chat/image node LB). Returns None to run LOCALLY: a request already
+    forwarded to us (loop guard header), or no peers at all. Any peer error falls through to local.
 
-    The gate is "is anything rendering here", NOT "are all _MEME_MAX_CONCURRENT slots full". Full is
-    nearly unreachable in practice — a pubkey may hold only one timeline render (`_meme_rendering`) and
-    may start an effect only every _EFFECT_COOLDOWN_S — so a per-user workload could never fill two
-    slots, the gate never opened, and every job ran on one node (which is exactly what it looked like
-    in production). Local still handles the first job; the fleet picks up the overlap."""
+    Scheduling is ROUND-ROBIN over [this node] + peers, the same policy image generation uses — not
+    "overflow only". Two earlier gates each looked correct and each left every job on one box:
+    `locked()` (all _MEME_MAX_CONCURRENT slots full) is nearly unreachable, since a pubkey may hold
+    only one timeline render (`_meme_rendering`) and may start an effect only every
+    _EFFECT_COOLDOWN_S; and "am I rendering right now" only fires when jobs happen to overlap, so
+    ordinary click-wait-click editing never leaves the local node. Rotating unconditionally is what
+    actually spreads the fleet. Local keeps its turn in the rotation (no hop, no blob copy), and
+    gives that turn up when it is already rendering and a peer could take the job instead."""
     try:
         if request is not None and request.headers.get("x-pcai-meme-fwd"):
             return None   # already a forwarded job — run it here, never re-forward (loop guard)
-        if _meme_busy[0] <= 0:
-            return None   # nothing rendering locally → local is the fastest path
         from app.services import settings_store, video_factory
         peers = video_factory.parse_video_server_urls(settings_store.get("chat_server_urls", "") or "")
         if not peers:
             return None
         import httpx
-        start = _meme_rr[0] % len(peers); _meme_rr[0] += 1
+        # One slot per node in the rotation: 0 = local, 1..N = peers.
+        turn = _meme_rr[0] % (len(peers) + 1); _meme_rr[0] += 1
+        if turn == 0 and _meme_busy[0] <= 0:
+            return None   # local's turn and local is free → run here (cheapest path)
+        start = (turn - 1) if turn > 0 else 0
         for k in range(len(peers)):
             peer = peers[(start + k) % len(peers)].rstrip("/")
             url = "%s/client/meme/%s" % (peer, subpath)
@@ -2999,7 +3002,7 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
                     r = await c.post(url, json=body, headers={"x-pcai-meme-fwd": "1"})
                 if r.status_code >= 500:
                     continue   # peer busy/broke → try the next, else local
-                logger.info("[meme] overflow render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
+                logger.info("[meme] render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
                 ct = r.headers.get("content-type", "") or ""
                 if ct.startswith("application/json"):
                     payload = r.json()
