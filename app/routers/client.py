@@ -1659,6 +1659,11 @@ class GitCreateReq(BaseModel):
     auth: str                      # NIP-98 header signed by the repo owner, bound to <url>/create
 
 
+class GitDeleteReq(BaseModel):
+    url: str                       # the repo's clone URL (identifies owner + repo id)
+    auth: str                      # NIP-98 header signed by the repo OWNER, bound to <url>/delete
+
+
 @router.post("/git/edit")
 async def git_edit(data: GitEditReq):
     """Commit a single file change to a self-hosted GRASP repo from the web editor.
@@ -1718,6 +1723,31 @@ async def git_create(data: GitCreateReq):
     except Exception:
         payload = {"ok": r.status_code == 200,
                    "error": (r.text or "").strip()[:200] or "create failed"}
+    return JSONResponse(payload, status_code=r.status_code)
+
+
+@router.post("/git/delete")
+async def git_delete(data: GitDeleteReq):
+    """Delete a self-hosted GRASP repo. Like /git/edit + /git/create it holds NO authority: it forwards
+    the caller's NIP-98 header to the git host, which re-verifies the signer IS the repo owner before
+    removing anything. The 30617 announcement + 30618 state are deleted client-side (NIP-09)."""
+    tgt = _grasp_host_target(data.url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    if not (data.auth or "").strip().lower().startswith("nostr "):
+        return JSONResponse({"ok": False, "error": "a signed NIP-98 header is required"}, status_code=400)
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=4.0)) as c:
+            r = await c.post("%s/%s/%s.git/delete" % tgt, headers={"Authorization": data.auth})
+    except Exception as e:
+        logger.warning("[client] git delete proxy failed: %s", e)
+        return JSONResponse({"ok": False, "error": "the git host did not answer"}, status_code=502)
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {"ok": r.status_code == 200,
+                   "error": (r.text or "").strip()[:200] or "delete failed"}
     return JSONResponse(payload, status_code=r.status_code)
 
 

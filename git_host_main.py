@@ -338,6 +338,8 @@ class _Handler(BaseHTTPRequestHandler):
         # EDIT (the one write route): commit a single file change, authorized by a maintainer's NIP-98.
         if method == "POST" and rest == "edit":
             return self._serve_edit(owner_hex, repo_id)
+        if method == "POST" and rest == "delete":
+            return self._serve_delete(owner_hex, repo_id)
         # TREE listing (Files browser):  GET /<owner>/<id>.git/tree/<ref>[/<subdir>]  ->  `git ls-tree`
         # JSON of the directory's entries. Read-gated like a clone.
         if method == "GET" and (rest == "tree" or rest.startswith("tree/")):
@@ -725,6 +727,28 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --- write: commit one file change (the web editor) -----------------------------------------
     _EDIT_MAX = 2 * 1024 * 1024      # a text editor's file, not an asset upload
+
+    def _serve_delete(self, owner_hex: str, repo_id: str):
+        """POST /<owner>/<id>.git/delete — remove a repo, authorized by a NIP-98 header signed by the
+        OWNER (signer==owner: only the owner can delete their own repo, exactly the key that owns the
+        clone-URL path). Removes the bare repo from disk. The 30617 announcement + 30618 state are
+        deleted CLIENT-side (NIP-09), since the client holds the key that signed them."""
+        signer = git_auth.verify_nip98(self.headers.get("Authorization", ""), "POST",
+                                       "%s.git/delete" % repo_id, {owner_hex},
+                                       max_skew=int(_CONFIG.get("write_skew", 120)), require_method=True)
+        if not signer:
+            return self._deny(401, "a NIP-98 signature from the repo owner is required", auth=True)
+        d = ghs.repo_dir(owner_hex, repo_id)   # traversal-proof, asserted under the repo root
+        if not d or not os.path.isdir(d):
+            return self._deny(404, "no such repo")
+        try:
+            import shutil
+            shutil.rmtree(d)
+        except OSError as e:
+            log.warning("[git-host] delete %s/%s failed: %s", owner_hex[:12], repo_id, e)
+            return self._deny(500, "delete failed")
+        log.info("[git-host] deleted repo %s/%s by %s", owner_hex[:12], repo_id, signer[:12])
+        return self._json_out({"ok": True, "deleted": repo_id})
 
     def _serve_create(self, owner_hex: str, repo_id: str):
         """POST /<owner>/<id>.git/create — provision a bare repo, authorized by a NIP-98 header signed

@@ -1676,10 +1676,15 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12.5px;font-weight:700;margin-left:6px;box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 .lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
-.lightbox img,.lightbox video{max-width:100%;max-height:90vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(var(--accent-rgb),.4)}
+/* leave ~16vh at the bottom for the toolbar + counter so they sit BELOW the media (and clear of a
+   video's own controls) instead of overlapping it */
+.lightbox img,.lightbox video{max-width:100%;max-height:84vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(var(--accent-rgb),.4)}
 .lightbox img{transform-origin:center center;will-change:transform;touch-action:none}   /* transform-driven zoom/pan (see _lbZoom); touch-action:none so pinch doesn't page-zoom */
 .lightbox audio{width:min(560px,100%)}
-.lb-bar{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:401;display:flex;gap:10px;transition:opacity .18s ease}
+/* Toolbar sits BELOW the media, centered along the bottom — not the top-right corner (it covered the
+   image and was an awkward reach). A row of pills on the bottom edge is thumb-reachable on phones and
+   reads as "controls for what's above". Wraps if a narrow screen can't fit the row. */
+.lb-bar{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);right:auto;top:auto;z-index:401;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 24px);transition:opacity .18s ease}
 /* Filled, not a dark disc with a hairline — these read as actions now instead of dissolving into the
    image behind them. Close is the tertiary accent so it is not one of four identical circles. */
 .lb-btn{width:46px;height:46px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--neon),var(--neon2));color:#fff;font-size:21px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;box-shadow:0 2px 12px rgba(0,0,0,.5)}
@@ -1708,7 +1713,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .lb-nav[disabled]{opacity:.25;pointer-events:none}
 .lb-prev{left:calc(10px + env(safe-area-inset-left))}
 .lb-next{right:calc(10px + env(safe-area-inset-right))}
-.lb-count{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));
+/* the n / N counter sits just ABOVE the bottom toolbar so the two don't stack on the same spot */
+.lb-count{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(74px + env(safe-area-inset-bottom));
   z-index:401;padding:5px 13px;border-radius:13px;background:rgba(4,2,12,.72);border:1px solid var(--line);
   color:#fff;font-size:13px;font-weight:600;letter-spacing:.4px}
 .lightbox.lb-zoom .lb-nav,.lightbox.lb-zoom .lb-count{display:none}   /* zoomed = panning, not paging */

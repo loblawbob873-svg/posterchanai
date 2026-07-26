@@ -3783,6 +3783,26 @@
     toast(priv?'private repo created':'repo created + announced');
     _showRepoQuickStart(cloneUrl, d, ev);   // the first-commit tutorial, like other git platforms
   }
+  // Delete a repo the CURRENT USER OWNS: NIP-09-delete its 30617 announcement (+ 30618 state), then
+  // remove the hosted bare repo (owner NIP-98). Owner-only + confirmed — destructive, no undo.
+  async function deleteRepo(e){
+    if(!ME || !e || e.pubkey!==ME.pubkey){ toast('only the repo owner can delete it'); return; }
+    const name=_repoTag(e,'name')||_repoTag(e,'d')||'this repo';
+    if(!await uiConfirm(`Delete “${name}”?\n\nThis removes the hosted repository AND its announcement, and can’t be undone.`, {ok:'Delete', danger:true})) return;
+    const cloneUrl=(e.tags.find(t=>t[0]==='clone')||[])[1]||'';
+    // 1) NIP-09 delete the announcement (30617) + any state (30618) — the client signed them, so this
+    //    removes it from Discover for everyone (the relay applies + federates the kind-5).
+    try{ await publish(5,'',[['e',e.id],['a',_repoAddr(e)]]); }catch(_){}
+    // 2) Remove the hosted bare repo (owner NIP-98). No-op for a repo hosted on an external forge.
+    if(cloneUrl){
+      try{
+        const auth='Nostr '+btoa(JSON.stringify(await sign(27235,'',[['u',cloneUrl.replace(/\/+$/,'')+'/delete'],['method','POST']])));
+        const j=await fetch('/client/git/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:cloneUrl, auth})}).then(r=>r.json());
+        if(j && j.ok===false && !/not a self-hosted/i.test(j.error||'')){ toast('announcement removed; host: '+(j.error||'delete failed')); }
+      }catch(_){ }
+    }
+    toast('repo deleted'); switchView('repos');
+  }
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
   function publishRepo(existing){
@@ -3902,6 +3922,7 @@
     const readmeSrc=clone[0]||web[0]||'';   // clone URL preferred (points straight at the forge)
     const cloneUrl=clone[0]||'';
     const shareUrl=_repoShareUrl(e);        // poster.place/<naddr> — the link to hand out for this project
+    const isOwner=!!(ME && e.pubkey===ME.pubkey);   // only the owner sees Delete (host re-checks the signature)
     // Files browser only for a self-hosted (Nostr-owned) repo — the clone path has an npub/hex owner
     // before <id>.git; a plain forge clone URL (GitHub/Gitea) has no readable file API here.
     const isGrasp=(()=>{ try{ const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean); const gi=sg.findIndex(s=>s.endsWith('.git')); return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1])); }catch(_){ return false; } })();
@@ -3924,7 +3945,8 @@
           <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
           ${shareUrl?`<button class="btn btn-ghost small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project">🔗 Share</button>`:''}
           ${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Web</a>`:''}
-        </div>`:`<div class="rv-clone">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project">🔗 Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a>`:''}</div>`}
+          ${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)">🗑 Delete</button>`:''}
+        </div>`:`<div class="rv-clone">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project">🔗 Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener">↗ Open web</a>`:''}${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)">🗑 Delete</button>`:''}</div>`}
         ${isGrasp?`<div class="rv-refbar">
           <button class="btn btn-ghost small rv-refbtn" id="rv-refpick" title="Switch branch or tag">⎇ <span id="rv-refname">default</span> ▾</button>
           <span class="muted small" id="rv-refnote"></span>
@@ -3955,6 +3977,7 @@
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:cb.dataset.clone}); } }; }
     { const sb=$('.rv-share',feed); if(sb) sb.onclick=async()=>{ try{ await navigator.clipboard.writeText(sb.dataset.share); toast('project link copied — share it anywhere'); }catch(_){ await uiPrompt('Project link', {value:sb.dataset.share}); } }; }
+    { const xb=$('.rv-delete',feed); if(xb) xb.onclick=()=>deleteRepo(e); }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
     // Files/Commits are lazy-loaded on first open (a git round-trip each).
