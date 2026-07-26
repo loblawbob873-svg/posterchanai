@@ -220,7 +220,6 @@
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
         <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
-        <button class="btn btn-cyan small" id="mb-add-effect" title="Add a full effect (dancing man, shrug, a character) as a transparent overlay layer">✨ Effect</button>
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
@@ -374,7 +373,11 @@
       <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
         ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
       </select></label>
-      <label class="mb-f"><span>Meme effect (sound)</span><select class="input" id="mb-f-snd">
+      ${(l.type==='image'||l.type==='video') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
+        <option value="">— add over this layer —</option>
+        ${EFFECTS.map(e=>`<option value="${enc(e.name)}">${enc(e.label||e.name)}${e.audio?' 🔊':''}</option>`).join('')}
+      </select></label>` : ''}
+      <label class="mb-f"><span>Sound</span><select class="input" id="mb-f-snd">
         <option value="">None</option>
         ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
       </select></label>
@@ -733,49 +736,45 @@
     });
   }
 
-  // Add a full effect as a transparent overlay LAYER. The server renders it onto an alpha canvas
-  // (ProRes 4444, transparency preserved), stores it to Blossom, and returns a URL we hang on the
-  // timeline as an ordinary video layer — so it composites over whatever is beneath it and its sound
-  // mixes into the final render. One render call per pick; guarded like doRender so a double-tap can't
-  // fire two.
+  // Overlay a full effect (dancing man / shrug / a character) ON a specific image or video layer. The
+  // per-layer "Meme effect" dropdown is the SOURCE OF TRUTH (there is no separate "add effect" button):
+  // the server renders the effect onto a transparent VP9-alpha canvas, stores it to Blossom, and returns
+  // a URL we drop in as a video layer sized + timed to the base layer and drawn directly ON TOP of it —
+  // so the man dances over that image, and the effect's sound mixes into the final render. Guarded like
+  // doRender so a double-tap can't fire two renders.
   let _fxBusy = false;
-  function pickEffect(){
-    if(!EFFECTS.length){ toast('no add-in effects available on this server'); return; }
-    const rows = EFFECTS.map((e,i)=>`<button class="btn btn-ghost full" data-i="${i}" style="text-align:left">`
-      + `${enc(e.label||e.name)}${e.audio?' <span class="muted small">🔊 with sound</span>':''}</button>`).join('');
-    PC.modal(`<h3>✨ Add an effect layer</h3>
-      <div class="muted small" style="margin-bottom:8px">Rendered on a transparent background, so it sits over whatever is beneath it.</div>
-      ${rows}`, root=>{
-      root.querySelectorAll('button[data-i]').forEach(btn=>btn.onclick=async()=>{
-        const e = EFFECTS[+btn.dataset.i]; if(!e) return;
-        PC.closeModal();
-        if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
-        _fxBusy = true;
-        const st=document.getElementById('mb-status');
-        if(st) st.textContent='rendering '+(e.label||e.name)+'…';
-        try{
-          const auth = await selfProof();
-          const r = await fetch('/client/meme/effect',{ method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ pubkey: ME.pubkey, auth, name: e.name }) });
-          const j = await r.json().catch(()=>({}));
-          if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
-          // A normal video layer: gets geometry/timing handles, and its embedded audio mixes in on render.
-          // Only pass `dur` when the server gave a valid one — Object.assign copies an undefined through
-          // and would blow away addLayer's own default duration.
-          // The clip is silent (VP9 alpha can't carry audio); if the effect has a sound the server hands
-          // back its name → set it as the layer's `sound` so the render mixes it via the per-layer sound
-          // path (same catalogue as the sound dropdown). The layer still shows the 🔊 sound control.
-          const extra = { name:(e.label||e.name).slice(0,24) };
-          if(+j.dur > 0) extra.dur = +j.dur;
-          if(j.sound) extra.sound = j.sound;
-          addLayer('video', j.url, extra);
-          if(st) st.textContent='';
-          render();
-          toast('effect layer added');
-        }catch(err){ if(st) st.textContent=''; toast('effect failed: '+((err&&err.message)||err)); }
-        finally{ _fxBusy = false; }
-      });
-    });
+  async function applyMemeEffect(base, name){
+    if(!name || !base) return;
+    if(!EFFECTS.length){ toast('no effects available on this server'); return; }
+    if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
+    _fxBusy = true;
+    const st=document.getElementById('mb-status');
+    if(st) st.textContent='rendering '+name+'…';
+    try{
+      const auth = await selfProof();
+      const r = await fetch('/client/meme/effect',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, name }) });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
+      // Match the base layer's box + timeline slot so the effect sits OVER that image the whole time it's
+      // on screen (VP9 alpha can't carry audio, so its sound rides the layer's `sound` field — same as the
+      // sound dropdown — and mixes on render). Duration follows the base layer, not the raw clip length.
+      const dur = (+base.dur>0) ? +base.dur : ((+j.dur>0)? +j.dur : 4);
+      const ov = { id: nid(), type:'video', src:j.url, name:String(name).slice(0,24),
+        start:(+base.start||0), dur, trim:0, x:base.x, y:base.y, w:base.w, h:base.h,
+        opacity:1, effect:'none', volume:1, mute:false,
+        sound:j.sound||'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'' };
+      // Insert directly ABOVE the base layer (draws on top of it) but keep it BELOW any captions.
+      let at = P.layers.indexOf(base); if(at<0) at = P.layers.length-1;
+      at = at + 1;
+      const firstText = P.layers.findIndex(x=>x.type==='text');
+      if(firstText>=0 && at>firstText) at = firstText;
+      P.layers.splice(at, 0, ov);
+      sel = ov.id;
+      save(); render();
+      toast('added '+name+' over the layer');
+    }catch(err){ toast('effect failed: '+((err&&err.message)||err)); }
+    finally{ _fxBusy = false; if(st) st.textContent=''; }
   }
 
   async function doRender(){
@@ -881,6 +880,10 @@
       const a=_audioEls.find(x=>x.dataset.id===l.id); if(a) a.volume=clamp(l.volume,0,1); });
     on('mb-f-afade','change',(e)=>{ l.fade=e.target.checked; save(); });
     on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
+    // The per-layer "Meme effect" dropdown is the SOURCE OF TRUTH for full effects (dancing man, shrug,
+    // characters): picking one renders it server-side and overlays it ON this layer. Trigger dropdown —
+    // reset to the placeholder after firing so it can be used again.
+    on('mb-f-meme','change',(e)=>{ const nm=e.target.value; e.target.value=''; if(nm) applyMemeEffect(l, nm); });
     on('mb-f-sndvol','input',(e)=>{ l.soundVolume=clamp(e.target.value,0,3); save(); });
     on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
     on('mb-f-op','input',(e)=>{ l.opacity=clamp(e.target.value,0.05,1); save();
@@ -911,7 +914,6 @@
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
     on('mb-add-audio','click',pickAudio);
     on('mb-add-blossom','click',pickBlossom);
-    on('mb-add-effect','click',pickEffect);
     on('mb-save','click',saveProject);
     on('mb-open','click',openProject);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
