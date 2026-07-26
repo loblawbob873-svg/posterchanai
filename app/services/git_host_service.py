@@ -24,11 +24,30 @@ from app.services.nostr import bech32
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# Repo store root. Overridable via GRASP_GIT_PROJECT_ROOT so (a) a container/turnkey can relocate the
-# store to a data volume, and (b) the pre-receive/post-receive hooks — which run as fresh subprocesses
-# and re-import this module — resolve the SAME root git_host_main.py served from (it exports this env
-# into the CGI environment). Without that, the hook's path-confinement check couldn't match the gitdir.
-GIT_PROJECT_ROOT = os.environ.get("GRASP_GIT_PROJECT_ROOT") or os.path.join(_REPO_ROOT, "data", "git_repos")
+
+
+def git_project_root() -> str:
+    """Repo store root. Resolution order:
+      1. GRASP_GIT_PROJECT_ROOT env — set by git_host_main into the CGI/hook environment (so the fresh
+         pre-receive/post-receive subprocesses resolve the SAME root the server served from) and by a
+         container/turnkey that relocates the store.
+      2. the operator's Storage Path (`upload_path` setting) + /git_repos — so repos live on the SAME
+         volume as uploaded media (e.g. /raid/posterchanai/git_repos), not the small system/code disk.
+      3. /var/lib/posterchanai/git_repos as a last-resort default.
+    Computed LAZILY (not a module constant) so it reflects the setting once the datastore has hydrated —
+    an import-time constant would freeze the default before settings load."""
+    env = os.environ.get("GRASP_GIT_PROJECT_ROOT")
+    if env:
+        return env
+    up = ""
+    try:
+        from app.services import settings_store
+        up = (settings_store.get("upload_path", "") or "").strip()
+    except Exception:
+        up = ""
+    return os.path.join(up or "/var/lib/posterchanai", "git_repos")
+
+
 GIT_HTTP_BACKEND = "/usr/libexec/git-core/git-http-backend"
 
 # A repo id is the 30617 d-tag (a slug). Strict allowlist so it can never escape GIT_PROJECT_ROOT.
@@ -77,12 +96,13 @@ def repo_dir(owner_hex: str, repo_id: str) -> str | None:
     rid = sanitize_repo_id(repo_id)
     if not rid:
         return None
-    path = os.path.join(GIT_PROJECT_ROOT, owner_hex.lower(), rid + ".git")
-    real_root = os.path.realpath(GIT_PROJECT_ROOT)
+    root = git_project_root()
+    path = os.path.join(root, owner_hex.lower(), rid + ".git")
+    real_root = os.path.realpath(root)
     real_path = os.path.realpath(path)
     if real_path != path and not real_path.startswith(real_root + os.sep):
         return None
-    if not (path == os.path.join(GIT_PROJECT_ROOT, owner_hex.lower(), rid + ".git")
+    if not (path == os.path.join(root, owner_hex.lower(), rid + ".git")
             and os.path.commonpath([real_root, os.path.realpath(os.path.dirname(path))]) == real_root):
         return None
     return path
@@ -266,10 +286,11 @@ def dir_size_bytes(path: str) -> int:
 def list_repos() -> list:
     """Enumerate hosted repos (owner_hex, repo_id, size_mb, refs count, created_at)."""
     out = []
-    if not os.path.isdir(GIT_PROJECT_ROOT):
+    root = git_project_root()
+    if not os.path.isdir(root):
         return out
-    for owner in os.listdir(GIT_PROJECT_ROOT):
-        odir = os.path.join(GIT_PROJECT_ROOT, owner)
+    for owner in os.listdir(root):
+        odir = os.path.join(root, owner)
         if not (os.path.isdir(odir) and len(owner) == 64):
             continue
         for name in os.listdir(odir):
@@ -297,9 +318,10 @@ def list_repos() -> list:
 
 
 def total_size_gb() -> float:
-    if not os.path.isdir(GIT_PROJECT_ROOT):
+    root = git_project_root()
+    if not os.path.isdir(root):
         return 0.0
-    return round(dir_size_bytes(GIT_PROJECT_ROOT) / (1024 ** 3), 3)
+    return round(dir_size_bytes(root) / (1024 ** 3), 3)
 
 
 # Rate-limited gc reaper: gc is CPU/IO heavy, so NEVER per-push (receive.autogc already bounds loose

@@ -179,12 +179,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _exec_backend(self, method, owner_hex, repo_id, rest, query):
         """Exec git-http-backend as CGI and stream stdin->child and child-stdout->client."""
         path_info = "/%s/%s.git/%s" % (owner_hex, repo_id, rest)
+        _root = ghs.git_project_root()
         env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "GIT_PROJECT_ROOT": ghs.GIT_PROJECT_ROOT,
+            "GIT_PROJECT_ROOT": _root,
             # Propagate the store root so the hooks (fresh subprocesses that re-import git_host_service)
-            # resolve the same GIT_PROJECT_ROOT for their path-confinement check.
-            "GRASP_GIT_PROJECT_ROOT": ghs.GIT_PROJECT_ROOT,
+            # resolve the same root for their path-confinement check — the hook reads GRASP_GIT_PROJECT_ROOT
+            # from this env, so it never has to re-derive it from settings.
+            "GRASP_GIT_PROJECT_ROOT": _root,
             "GIT_HTTP_EXPORT_ALL": "1",           # provisioning is gated by us; every hosted repo exports
             "PATH_INFO": path_info,
             "REQUEST_METHOD": method,
@@ -338,7 +340,8 @@ def main():
     if not os.path.exists(GIT_HTTP_BACKEND):
         log.error("[git-host] %s missing — install git; exiting", GIT_HTTP_BACKEND)
         return
-    os.makedirs(ghs.GIT_PROJECT_ROOT, exist_ok=True)
+    _root = ghs.git_project_root()
+    os.makedirs(_root, exist_ok=True)
     bind, port = _CONFIG.get("bind", "127.0.0.1"), int(_CONFIG.get("port", 3053))
 
     class _Server(ThreadingHTTPServer):
@@ -347,7 +350,7 @@ def main():
 
     httpd = _Server((bind, port), _Handler)
     _write_status(True)
-    log.info("[git-host] serving smart-HTTP on http://%s:%d (repos: %s)", bind, port, ghs.GIT_PROJECT_ROOT)
+    log.info("[git-host] serving smart-HTTP on http://%s:%d (repos: %s)", bind, port, _root)
     try:
         httpd.serve_forever(poll_interval=1.0)
     except KeyboardInterrupt:
