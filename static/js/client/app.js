@@ -3842,7 +3842,10 @@
     if(VIEW!=='repo') return;
     if(!j||!j.ok){ box.innerHTML='<div class="rv-empty muted small">Couldn’t list files.</div>'; return; }
     const parts=(path||'').split('/').filter(Boolean);
-    const crumbs=['<a class="fb-crumb" data-p="">🏠 root</a>'].concat(parts.map((seg,i)=>`<a class="fb-crumb" data-p="${enc(parts.slice(0,i+1).join('/'))}">${enc(seg)}</a>`)).join('<span class="fb-sep">/</span>');
+    // role/tabindex because these are href-less <a>s: without them Tab skipped the breadcrumbs entirely,
+    // so there was no keyboard way back UP a directory once you had descended.
+    const crumb=(p,label)=>`<a class="fb-crumb" role="button" tabindex="0" data-p="${enc(p)}">${enc(label)}</a>`;
+    const crumbs=[crumb('','🏠 root')].concat(parts.map((seg,i)=>crumb(parts.slice(0,i+1).join('/'),seg))).join('<span class="fb-sep">/</span>');
     const rows=(j.entries||[]).map(en=>{
       const ico=en.type==='tree'?'📁':'📄';
       const sz=en.type==='blob'?`<span class="fb-size">${_fmtBytes(en.size)}</span>`:'';
@@ -3860,7 +3863,10 @@
       <span class="fb-hby">${enc(h.author||'')}</span>
       <span class="fb-hwhen" title="${enc(new Date((h.at||0)*1000).toLocaleString())}">${enc(h.at?timeAgo(h.at):'')}</span></div>`:'';
     box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
-    $$('.fb-crumb',box).forEach(a=> a.onclick=()=>_loadRepoFiles(feed,cloneUrl,a.dataset.p));
+    $$('.fb-crumb',box).forEach(a=>{
+      a.onclick=()=>_loadRepoFiles(feed,cloneUrl,a.dataset.p);
+      a.onkeydown=ev=>{ if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); a.click(); } };
+    });
     $$('.fb-row',box).forEach(r=> r.onclick=()=>{
       if(r.dataset.type==='tree') _loadRepoFiles(feed,cloneUrl,r.dataset.path);
       else _viewRepoFile(feed,cloneUrl,r.dataset.path);
@@ -13990,7 +13996,7 @@
     // and without it the cursor stopped dead on the last tile — Tab could not save you either, because
     // while a row is selected Tab is scoped to THAT row's own controls.
     '#feed .file-card, #feed .bl-more',
-    '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card',
+    '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card, #feed .repo-card',
     // AI Chat's splash — the starter cards you are greeted with, plus the `help` chip under them. They
     // were real buttons, so Tab reached them, but only one at a time: twenty cards meant twenty presses
     // and no cursor to show where you were. As rows they get the arrows, j/k, and h/l across the grid.
@@ -14008,6 +14014,10 @@
     '#feed .mkts-card',                  // Markets (NOT .mkt-card above — that is Shopping)
     '#fc-posts .fc-post',                // an open 4chan thread
     '#ch-msgs .chat-msg[data-mid]',      // an open chat room
+    // An open git repo: the file list and the commit list. Both are plain vertical lists, so they get
+    // the arrows, j/k and gg/G with no stride. A .fb-row already knows how to open itself (a directory
+    // descends, a file opens), which is exactly what Enter on a row does.
+    '#rv-files .fb-row, #rv-commits .cm-row',
   ];
   function _noteEls(){
     // HIDDEN rows are not rows. The splash's Agents card is display:none unless you have node access, and
@@ -14429,6 +14439,7 @@
   // in some bars and `active` in others, so both are accepted.
   const _TAB_SEL = ['#feed .prof-tabs .prof-tab', '#feed .tl-tabs .tltab', '#feed .notif-tabs .ntab',
                     '#feed .files-tabs .ftab', '#feed .np-tabs .np-tab',
+                    '#feed .rv-tabs .rv-tab',        // an open repo: README / Files / Commits / Issues / Patches
                     '#feed .us-tabs .us-tab'];       // Settings / User Settings
   function _tabGroup(){
     for(const sel of _TAB_SEL){
