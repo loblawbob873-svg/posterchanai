@@ -3681,29 +3681,88 @@
   }
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
+  // Slugify a repo id to the git host's allowlist (^[a-z0-9][a-z0-9._-]{0,99}$) so the client rejects
+  // a bad id before a round-trip and the "Create" clone URL always matches what the host will accept.
+  function _repoSlug(s){
+    s=(s||'').trim().toLowerCase().replace(/\.git$/,'').replace(/[^a-z0-9._-]+/g,'-').replace(/^[-.]+/,'').replace(/-+/g,'-');
+    return s.slice(0,100);
+  }
+  // Provision a NEW self-hosted GRASP repo on this node, then announce it. Two steps: (1) a NIP-98-signed
+  // POST to /client/git/create that the git host authorizes (owner + allowlist) and that returns the
+  // clone URL + the 30617 tags; (2) publish that 30617 signed by the user — same as the announce flow.
+  async function _createHostedRepo(root, d, name, desc){
+    const st=$('#rp-status',root);
+    const base=(CFG.git_host_base||'').replace(/\/+$/,'');
+    if(!base){ st.textContent='this node has no git host configured.'; return; }
+    let npub; try{ npub=NT().nip19.npubEncode(ME.pubkey); }catch(_){ st.textContent='no key to own the repo.'; return; }
+    const clone=`${base}/${npub}/${d}.git`;
+    st.textContent='signing…';
+    let auth;
+    try{ auth='Nostr '+btoa(JSON.stringify(await sign(27235,'',[['u',clone+'/create'],['method','POST']]))); }
+    catch(err){ st.textContent='couldn’t sign: '+((err&&err.message)||err); return; }
+    st.textContent='creating on the host…';
+    let j={};
+    try{
+      j=await fetch('/client/git/create',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({url:clone, name, description:desc, private:false, auth})}).then(r=>r.json());
+    }catch(_){ st.textContent='the git host didn’t answer.'; return; }
+    if(!j || !j.ok){ st.textContent='host: '+((j&&j.error)||'create failed'); return; }
+    // Announce it (client-signed 30617). Prefer the host's suggested tags (they carry the real clone URL).
+    const tags = (Array.isArray(j.announce_tags_30617) && j.announce_tags_30617.length)
+      ? j.announce_tags_30617
+      : [['d',d], ...(name?[['name',name]]:[]), ...(desc?[['description',desc]]:[]), ['clone',j.clone||clone], ['maintainers',ME.pubkey], ['alt',`git repository: ${name||d}`]];
+    st.textContent='announcing…';
+    try{ const r=await publish(30617,'',tags);
+      if(r && r.ok===false){ st.textContent='created ✓ but announce was rejected: '+(r.msg||''); return; }
+    }catch(e){ st.textContent='created ✓ but announce failed: '+((e&&e.message)||e); return; }
+    toast('repo created + announced'); closeModal(); switchView('repos');
+  }
+  // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
+  // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier). When the
+  // node runs a git host (CFG.git_host_base) and this is a fresh repo, offer to CREATE + host it here.
   function publishRepo(existing){
     const tag=(e,k)=>(existing&&Array.isArray(existing.tags))?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
-    modal(`<h3>🌱 Announce a git repo</h3>
-      <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>
+    const canHost = !!(CFG.git_host_base && ME && !GUEST && !existing);
+    modal(`<h3>🌱 ${existing?'Announce a git repo':'New git repo'}</h3>
+      ${canHost?`<label class="fld fld-check"><input type="checkbox" id="rp-host" checked> <span>Create &amp; host it on ${enc(CFG.name||'this node')}</span></label>
+      <p class="muted small" id="rp-hosthint">Provisions an empty repo here you can <code>git push</code> to. Untick to just announce a repo hosted elsewhere.</p>`:`
+      <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>`}
       <label class="fld">Repo id <span class="muted small">(short slug, e.g. posterchanai)</span><input class="input" id="rp-d" value="${enc(tag(existing,'d'))}" placeholder="my-app"></label>
       <label class="fld">Name<input class="input" id="rp-name" value="${enc(tag(existing,'name'))}" placeholder="My App"></label>
       <label class="fld">Description<textarea class="input" id="rp-desc" rows="2">${enc(tag(existing,'description'))}</textarea></label>
-      <label class="fld">Clone URL<input class="input" id="rp-clone" value="${enc(tag(existing,'clone'))}" placeholder="https://git.example.com/me/my-app.git"></label>
-      <label class="fld">Web URL<input class="input" id="rp-web" value="${enc(tag(existing,'web'))}" placeholder="https://git.example.com/me/my-app"></label>
-      <div class="set-actions"><button class="btn btn-neon small" id="rp-pub">Publish</button><button class="btn btn-ghost small" id="rp-cancel">Cancel</button></div>
+      <label class="fld" id="rp-clonefld">Clone URL<input class="input" id="rp-clone" value="${enc(tag(existing,'clone'))}" placeholder="https://git.example.com/me/my-app.git"></label>
+      <label class="fld" id="rp-webfld">Web URL<input class="input" id="rp-web" value="${enc(tag(existing,'web'))}" placeholder="https://git.example.com/me/my-app"></label>
+      <div class="set-actions"><button class="btn btn-neon small" id="rp-pub">${canHost?'Create':'Publish'}</button><button class="btn btn-ghost small" id="rp-cancel">Cancel</button></div>
       <div class="muted small" id="rp-status"></div>`,
       root=>{
+        const host=$('#rp-host',root);
+        // In "create" mode the clone/web URLs come from the host, so hide those inputs + relabel the button.
+        const syncMode=()=>{
+          const hosting=!!(host && host.checked);
+          const cf=$('#rp-clonefld',root), wf=$('#rp-webfld',root), hint=$('#rp-hosthint',root);
+          if(cf) cf.hidden=hosting; if(wf) wf.hidden=hosting;
+          const btn=$('#rp-pub',root); if(btn) btn.textContent=hosting?'Create':'Publish';
+          if(hint) hint.hidden=!hosting;
+        };
+        if(host){ host.onchange=syncMode; syncMode(); }
+        $('#rp-d',root).focus();
         $('#rp-cancel',root).onclick=closeModal;
+        // Enter anywhere in the form submits (keyboard-friendly), except inside the description textarea.
+        root.addEventListener('keydown',ev=>{ if(ev.key==='Enter' && (ev.target.tagName||'').toLowerCase()!=='textarea'){ ev.preventDefault(); $('#rp-pub',root).click(); } });
         $('#rp-pub',root).onclick=async()=>{
           const v=id=>($('#'+id,root).value||'').trim();
-          const d=v('rp-d'); const st=$('#rp-status',root);
-          if(!d){ st.textContent='Repo id is required.'; return; }
+          const st=$('#rp-status',root);
+          const name=v('rp-name'), desc=v('rp-desc');
+          const hosting=!!(host && host.checked);
+          const d=hosting ? _repoSlug(v('rp-d')) : v('rp-d');
+          if(!d){ st.textContent = hosting ? 'A repo id is required (letters, digits, . _ -).' : 'Repo id is required.'; return; }
+          if(hosting){ return _createHostedRepo(root, d, name, desc); }
           const tags=[['d',d]];
-          if(v('rp-name')) tags.push(['name',v('rp-name')]);
-          if(v('rp-desc')) tags.push(['description',v('rp-desc')]);
+          if(name) tags.push(['name',name]);
+          if(desc) tags.push(['description',desc]);
           if(v('rp-clone')) tags.push(['clone',v('rp-clone')]);
           if(v('rp-web')) tags.push(['web',v('rp-web')]);
-          tags.push(['alt',`git repository: ${v('rp-name')||d}`]);
+          tags.push(['alt',`git repository: ${name||d}`]);
           st.textContent='publishing…';
           try{ const r=await publish(30617,'',tags);
             if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }

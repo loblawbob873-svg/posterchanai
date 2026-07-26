@@ -1919,6 +1919,9 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .repo-card.kb-sel{border-color:var(--neon);box-shadow:0 0 0 2px var(--neon),0 0 22px rgba(var(--accent-rgb),.30);transform:translateY(-2px)}
 .repo-kbhint{margin-left:auto;opacity:.6;white-space:nowrap;font-size:.82em}
 @media(max-width:620px){.repo-kbhint{display:none}}
+/* checkbox row inside a modal form (e.g. "Create & host it here") — inline, not the stacked .fld */
+.fld-check{display:flex;flex-direction:row;align-items:center;gap:8px;cursor:pointer}
+.fld-check input{width:auto;margin:0}
 .repo-card-hd{display:flex;align-items:baseline;gap:8px;min-width:0}
 .repo-card-ico{flex:none}
 .repo-card-name{font-weight:800;font-size:16px;letter-spacing:.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
