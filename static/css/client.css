@@ -1886,6 +1886,11 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 
 /* ===== Articles (NIP-23) ===== */
 .art-top{padding:14px 18px;border-bottom:1px solid var(--line)}
+/* Repos toolbar: announce button + search on one row. Scoped to .repo-top so the shared .art-top
+   (articles) keeps its plain block layout. .input is width:100%, hence the explicit flex basis. */
+.repo-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.repo-top .repo-search{flex:1 1 220px;min-width:0;max-width:460px;margin:0}
+@media(max-width:600px){.repo-top .repo-search{flex-basis:100%}}
 .article-card{display:flex;gap:14px;padding:16px 20px;border-bottom:1px solid var(--line);cursor:pointer;
   transition:background .15s;position:relative;animation:fade .25s}
 .article-card::before{content:"";position:absolute;left:0;top:12%;bottom:12%;width:3px;border-radius:3px;background:transparent;transition:.15s}

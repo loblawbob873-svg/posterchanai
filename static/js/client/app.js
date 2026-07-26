@@ -3570,20 +3570,52 @@
     </div></article>`;
   }
   // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
+  // Everything a repo can be searched by: its name, slug, description, clone/web URLs — and the
+  // owner, since "who published it" is how you look for a repo you didn't name yourself.
+  function _repoHaystack(e){
+    const p=profOf(e.pubkey)||{};
+    const t=k=>e.tags.filter(x=>x[0]===k).map(x=>x.slice(1).join(' ')).join(' ');
+    return [t('name'),t('d'),t('description'),t('clone'),t('web'),
+            p.name||'',p.display_name||'',p.nip05||''].join(' ').toLowerCase();
+  }
   async function renderRepos(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:80 }]); }catch(_){}
+    // 80 was fine for a grid you scroll. Once it is a SEARCHABLE list the cap becomes a correctness
+    // problem: searching a truncated set reports "no match" for a repo that is really on the relay.
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:500 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
-    feed.innerHTML = `<div class="art-top"><button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button></div>`
-      + (repos.length ? `<div class="repo-grid">${repos.map(repoCard).join('')}</div>` : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>');
+    const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
+    feed.innerHTML = `<div class="art-top repo-top">
+        <button class="btn btn-neon small" id="repo-new">＋ Announce a repo</button>
+        ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
+      </div>
+      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). Announce yours ↑</div>'}</div>`;
     $('#repo-new').onclick=()=>publishRepo();
-    decorateProfiles();
-    $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
-    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
-    $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
-    $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
+    // Card wiring is re-applied after every filter render, since filtering replaces the cards.
+    const wire=()=>{
+      decorateProfiles();
+      $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
+      $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+      $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
+      $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
+    };
+    wire();
+    const q=$('#repo-q',feed);
+    if(q){
+      // EVERY space-separated term must match, so "posterchan ai" narrows rather than widens.
+      // Re-rendering the grid (instead of hiding cards) keeps the empty state honest.
+      const apply=()=>{
+        const terms=(q.value||'').toLowerCase().split(/\s+/).filter(Boolean);
+        const hits=terms.length ? repos.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : repos;
+        $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
+          : `<div class="empty">No repo matches “${enc(q.value)}”.</div>`;
+        wire();
+      };
+      q.oninput=apply;
+      q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; apply(); } };
+    }
   }
   // Publish a NIP-34 repo announcement (kind 30617) signed by the user, so it shows here + in other
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
