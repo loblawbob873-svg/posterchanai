@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """P4 — self-host the posterchanai repo on the built-in GRASP host, IN PARALLEL with Gitea.
 
-Best-effort, non-blocking capability. Does NOT touch sync.sh or the deploy pipeline (that's P5,
-deferred): Gitea (origin) stays the deploy backbone. This just makes the *capability* exist so a
-maintainer can, once soaked, add the built-in host as an extra `grasp` remote.
+This script only PROVISIONS + announces the repo. Keeping its commits in sync with origin is
+scripts/grasp_mirror.py (P5), which sync.sh runs on every deploy. Gitea (origin) stays the deploy
+backbone either way — the built-in host is a mirror, not a cutover.
 
 What it does (all gated behind git_server_enabled):
   1. creates the bare repo data/git_repos/<operator_hex>/posterchanai.git (if missing),
   2. announces it (30617 + an initial 30618 from current refs) signed by the operator key, to the
      local relay — so the repo is discoverable and clonable over nostr://,
-  3. prints the exact `git remote add grasp <clone-url>` + `git push grasp master` a human/operator
-     can run manually (we do NOT modify sync.sh or push automatically).
+  3. prints the clone URL (commits are then mirrored on every deploy by scripts/grasp_mirror.py).
 
 Usage:  venv-unified/bin/python scripts/grasp_selfhost.py [--repo-id posterchanai] [--public]
 Run it on the port-3051 host. Public (announced) by default; pass --private to keep it unannounced.

@@ -7,7 +7,8 @@ relay's Postgres. No external services (no ngit-relay/ngit.dev), no HTTP passwor
 **OFF BY DEFAULT.** Everything is gated on the `git_server_enabled` setting (default `"false"`):
 the supervisor spawns nothing and every `/api/git/*` route 404s until an admin turns it on. Shipping
 it dormant is what makes a one-shot deploy safe. Gitea (`git.poster.place`) remains the deploy
-backbone — `sync.sh` is untouched (that cutover is P5, deferred).
+backbone — `sync.sh` only **mirrors** each deploy onto the built-in host (P5, below); it never
+deploys *from* it.
 
 ## Components (files added)
 
@@ -20,7 +21,8 @@ backbone — `sync.sh` is untouched (that cutover is P5, deferred).
 | `git_hooks/pre_receive.py` | The `pre-receive` hook (invoked by receive-pack). Fail-closed push validator; delegates the decision to `git_auth.decide_push_ref`. |
 | `git_hooks/post_receive.py` | The `post-receive` hook. Publishes a normalized **30618 witness** (operator-signed, LOCAL relay only). Skips private repos. |
 | `app/routers/git.py` | `/api/git/*` — host/list/announce/status. Hard-gated on `git_server_enabled`. |
-| `scripts/grasp_selfhost.py` | P4 — host the `posterchanai` repo on the built-in host in PARALLEL with Gitea. Does NOT modify `sync.sh`. |
+| `scripts/grasp_selfhost.py` | P4 — **provision + announce** (30617/30618) the `posterchanai` repo on the built-in host, in PARALLEL with Gitea. |
+| `scripts/grasp_mirror.py` | P5 — **mirror commits**: publish a maintainer-signed 30618 for the new tip, then push it. Called by `sync.sh` on every deploy; runs on the hosting node, self-skips elsewhere. |
 
 Edited: `app/schemas.py` (`git_server_*` settings), `app/database.py` (default `git_server_enabled=false`),
 `app/main.py` (start/stop under the port-3051 guard + router registration),
@@ -170,7 +172,35 @@ already `apt-get install`s `git`. `./install.sh --git-host` verifies the prerequ
   200s with a forwarded reader NIP-98 header (auth stays on the host). Uses `httpx` (already a dep,
   via the storage proxy) — no new packages.
 
+## P5 — `sync.sh` mirrors every deploy to the nostr repo
+
+`scripts/grasp_mirror.py` keeps the hosted repo's commits in sync with `origin` (it had drifted 8
+commits behind before this existed). Gitea (`origin`) is still the **deploy backbone** and the
+break-glass path — the GRASP repo is a **mirror**, like the `github` remote, not a cutover.
+
+- **Where it runs: the HOSTING node.** Push auth is a maintainer *signature*, not a connection: only
+  a maintainer of `30617:<owner>:<id>` can move a ref, and `pre-receive` reads the **hosting node's**
+  relay Postgres (`GRASP_PG_DSN`) — a 30618 published to another node's relay isn't seen. On the
+  hosting node the operator key IS the repo owner, hence always a maintainer. A proxy node
+  (`git_server_proxy_url` set), a node with the host off, or one with no operator key **skips with a
+  message and exit 0**. `sync.sh` therefore invokes it on **both** server1 and nas: whichever hosts
+  does the work, the other prints `skipping` — no topology hardcoded in the deploy script.
+- **Two proofs per push (either suffices).** It publishes a maintainer-signed **30618** naming the
+  new tip for the pushed ref (carrying the repo's other refs forward unchanged) to the local relay,
+  then pushes over smart-HTTP with a **NIP-98** header (`git_server_nip98_push`). The 30618 is the
+  canonical GRASP path and keeps the relay's advertised state correct; the header means a slow relay
+  write can't wedge a deploy. `post-receive` then republishes the operator witness as usual.
+- **Idempotent + best-effort.** If the hosted ref already equals the local tip it prints
+  `already current` and does nothing; any failure prints `[grasp] …` and the deploy carries on
+  (`sync.sh` wraps it in `|| echo WARN`). `--dry-run` reports what would move.
+- Provisioning + the 30617 announcement stay in `scripts/grasp_selfhost.py`; the mirror refuses to
+  create a repo (that would overwrite a configured announcement with defaults) and points there.
+
+Verified on this deployment: `nas.lan` mirrored `master` `61821659…` → `c0887701…`, the re-run
+no-op'd, and the repo clones anonymously from `https://poster.place/git/<npub>/posterchanai.git`.
+
 ## Deferred
 
-P5 (cut `sync.sh` over to the built-in host) — explicitly not done; Gitea stays the deploy backbone
-and the break-glass path. PRs (1618/1619), Blossom pack offload, multi-host GRASP sync — later.
+PRs (1618/1619), Blossom pack offload, multi-host GRASP sync — later. Mirroring from a *non*-hosting
+node would need that node's npub added to the repo's 30617 `maintainers` (then NIP-98 alone
+authorizes it); not done, since the hosting node already has the key.
