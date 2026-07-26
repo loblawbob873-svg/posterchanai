@@ -239,6 +239,28 @@ class _Handler(BaseHTTPRequestHandler):
             return True
         return False
 
+    def _is_wot_member(self, pubkey_hex: str) -> bool:
+        """True if pubkey is in the relay's Web of Trust — read from the `wot` table the relay maintains,
+        via the SAME Postgres the maintainer ACL uses. Lets any WoT member provision a repo (no explicit
+        npub allowlist to curate). Fail-closed on any DB error / no DSN."""
+        dsn = _CONFIG.get("pg_dsn")
+        if not dsn:
+            return False
+        try:
+            import psycopg2
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            try:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = 4000")
+                    cur.execute("SELECT 1 FROM wot WHERE pubkey = %s LIMIT 1", (pubkey_hex,))
+                    return cur.fetchone() is not None
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("[git-host] WoT membership check failed (%s) -> deny", e)
+            return False
+
     def _maintainers(self, owner_hex: str, repo_id: str) -> set:
         """The repo's maintainer ACL = owner ∪ 30617.maintainers, read from the relay Postgres exactly
         as the pre-receive hook reads it (git_auth.load_maintainers re-verifies the announcement's
@@ -719,16 +741,18 @@ class _Handler(BaseHTTPRequestHandler):
                                        max_skew=int(_CONFIG.get("write_skew", 120)), require_method=True)
         if not signer:
             return self._deny(401, "a NIP-98 signature from the repo owner is required", auth=True)
-        # Provisioning gate: the owner npub must be on git_server_allowlist (admins add it in Admin →
-        # Services). An empty allowlist means "nobody self-provisions" — fail closed with a clear note.
+        # Provisioning gate: ANY web-of-trust member may create a repo — the relay's WoT IS the trust
+        # boundary, so we never keep a separate npub allowlist to maintain. An optional
+        # git_server_allowlist still grants EXTRA keys (e.g. an operator key that isn't in the social
+        # graph). Fail closed only if the owner is in neither.
         allow = set()
         for tok in (_CONFIG.get("allowlist", "") or "").replace(",", "\n").split():
             h = nostr_service.to_pubkey_hex(tok.strip())
             if h:
                 allow.add(h)
-        if owner_hex not in allow:
-            return self._deny(403, "your npub is not allowed to create repos here — ask the operator "
-                                   "to add it to git_server_allowlist")
+        if owner_hex not in allow and not self._is_wot_member(owner_hex):
+            return self._deny(403, "creating a repo here needs a web-of-trust account on this relay "
+                                   "(be followed by the community), or an operator allowlist entry")
         try:
             clen = int(self.headers.get("Content-Length") or 0)
         except ValueError:
