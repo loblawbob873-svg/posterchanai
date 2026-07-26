@@ -371,6 +371,7 @@
         </div>
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Size the whole photo to the canvas — nothing is cut off">⛶ Fill the canvas</button><button class="btn btn-cyan small" id="mb-fill" title="Crop the edges so there are no bars">✂ Crop to fill</button></div>
         ${l.type==='video' ? trimWidget(l) + `
+        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
       ${l.type==='video'
         ? `<div class="muted small mb-dbg">Drag the clip on the timeline below to set when it appears in the meme.</div>`
@@ -384,7 +385,8 @@
       ${(l.type==='image') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
         <option value="">— apply an effect to this image —</option>
         ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
-      </select></label>` : ''}
+      </select></label>
+      <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above">▶︎ Preview effect</button>` : ''}
       <label class="mb-f"><span>Sound</span><select class="input" id="mb-f-snd">
         <option value="">None</option>
         ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
@@ -687,9 +689,13 @@
     const b=document.getElementById('mb-play'); if(b) b.textContent='▶︎';
     if(rewind){ const s2=document.getElementById('mb-scrub'); if(s2) s2.value=0; seek(0); }
   }
-  function togglePlay(){
+  // endT (optional) — stop the preview at this time instead of the end of the whole meme. Used by
+  // previewLayer() to play only one layer's slice ("Preview clip"/"Preview effect") so checking a trim or an
+  // effect no longer means running the entire meme. The play-button binding calls togglePlay() with no arg.
+  function togglePlay(endT){
     const btn=document.getElementById('mb-play'), scrub=document.getElementById('mb-scrub');
     if(_playT){ stopPlay(false); return; }
+    const stopAt=(typeof endT==='number' && endT>0) ? Math.min(endT, projEnd()) : null;
     if(btn) btn.textContent='❚❚';
     let t=+(scrub?scrub.value:0);
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.play().catch(()=>{}); }catch(_){ } });
@@ -702,12 +708,23 @@
       // to keep running over whatever view you switched to. Harmless while the only media was muted video;
       // with music it means a song playing over the rest of the app. Stop as soon as the stage is gone.
       if(!document.getElementById('mb-stage')){ stopPlay(false); return; }
-      if(t>projEnd()){        // STOP at the end — it used to wrap to 0 and loop forever, so the preview
-        stopPlay(true);       // (and every video layer) just kept running until you switched views.
+      if(t > (stopAt!=null ? stopAt : projEnd())){  // STOP at the end — it used to wrap to 0 and loop forever.
+        stopPlay(stopAt==null);   // full play rewinds to 0; a one-layer preview stays where it stopped.
         return;
       }
       if(scrub) scrub.value=t; seek(t);
     }, 100);
+  }
+  // Play only the selected layer's window in the preview, then stop. Lets you check a trimmed clip or an
+  // applied effect right here, instead of pressing the big "🎬 Render" (which builds the whole finished meme).
+  function previewLayer(l){
+    if(!l || !document.getElementById('mb-stage')) return;
+    if(_playT) stopPlay(false);
+    const start=+l.start||0, end=start+Math.max(0.1,(+l.dur||0));
+    const scrub=document.getElementById('mb-scrub');
+    if(scrub) scrub.value=start.toFixed(2);
+    seek(start);
+    togglePlay(end);
   }
 
   async function pickMedia(){
@@ -889,6 +906,8 @@
     });
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     if(l.type==='video') bindTrim(root, l);
+    on('mb-prev-clip','click',()=>previewLayer(l));   // play just this clip, not the whole meme
+    on('mb-prev-fx','click',()=>previewLayer(l));      // same for an effect layer
     num('mb-f-size','size',8,400);
     on('mb-f-text','input',(e)=>{ l.text=e.target.value; save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.childNodes[0].nodeValue=l.text;
@@ -1020,7 +1039,7 @@
       toast('all layers cleared');
     });
     on('mb-render','click',doRender);
-    on('mb-play','click',togglePlay);
+    on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
     on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); P.w=w; P.h=h; save(); render(); });
     root.querySelectorAll('.mb-track').forEach(t=>t.addEventListener('click',(e)=>{
