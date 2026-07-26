@@ -3597,7 +3597,7 @@
     const wire=()=>{
       decorateProfiles();
       $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
-      $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+      $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
       $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     };
@@ -3770,7 +3770,7 @@
     </div>`;
     $('#repo-back',feed).onclick=()=>switchView('repos');
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
-    { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', cb.dataset.clone); } }; }
+    { const cb=$('.repo-clone',feed); if(cb) cb.onclick=async()=>{ try{ await navigator.clipboard.writeText(cb.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:cb.dataset.clone}); } }; }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
     // Files/Commits are lazy-loaded on first open (a git round-trip each).
@@ -13768,7 +13768,7 @@
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
     $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
     $$('.tor-copy',feed).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.magnet); toast('magnet copied'); }catch(_){ window.prompt('Magnet:', b.dataset.magnet); } });
-    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ window.prompt('Clone:', b.dataset.clone); } });
+    $$('.repo-clone',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation(); try{ await navigator.clipboard.writeText(b.dataset.clone); toast('clone URL copied'); }catch(_){ await uiPrompt('Clone URL', {value:b.dataset.clone}); } });
     $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
     $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     // pagination cursor for scroll-back through more search hits
