@@ -8819,6 +8819,21 @@
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
+    // A FOLDER upload (webkitdirectory / dropped dir) carries webkitRelativePath like "Top/sub/pic.jpg".
+    // Preserve that structure instead of flattening everything into one folder: each file lands in a
+    // folder derived from its subpath. Capture the paths NOW — compressImage() below returns a fresh File
+    // that has NO webkitRelativePath, and the batch may reorder-replace `files`, so read them up front and
+    // index-align. _subFolder drops the selected top-level dir (a flat folder still lands in the current
+    // folder) and nests any real subfolders under wherever you are. Only the plain path uses it; Music /
+    // encrypted folders keep their single-folder behavior.
+    const _relPaths=files.map(f=>(f&&f.webkitRelativePath)||'');
+    const _subFolder=(i)=>{
+      const rel=_relPaths[i]||''; if(!rel.includes('/')) return folder;
+      const parts=rel.split('/'); parts.shift();          // drop the selected top folder name
+      const dir=parts.slice(0,-1).join('/');              // subdir path (minus the filename)
+      if(!dir) return folder;                             // file was directly in the top folder
+      return folder ? (folder+'/'+dir) : dir;             // nest the uploaded subfolders under the current one
+    };
     // FAIL-CLOSED: never upload into a NAMED folder before the index has loaded. If the folder's
     // encrypted flag isn't known yet, uploading would silently take the PLAINTEXT path and put a
     // world-readable blob on Blossom (the leaked-file bug). Refuse until we know the folder's status.
@@ -8836,6 +8851,13 @@
     let _batchPrepped=null;
     if(!encFolder && files.length>1){ try{ _batchPrepped=await _signUploadBatch(files); }catch(_){ _batchPrepped=null; } }
     if(_batchPrepped && _batchPrepped.length===files.length) files=_batchPrepped;   // upload the exact bytes we hashed
+    // Register the subfolders this upload will populate — setFile only TAGS a file; folders() is a
+    // separate registry, so an unregistered folder wouldn't appear in the Files list. Deduped up front
+    // (a handful per import, not per file), plain uploads only.
+    if(!music && !encFolder){
+      const _seen=new Set(FilesIdx.folders());
+      for(let i=0;i<files.length;i++){ const tf=_subFolder(i); if(tf && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf); }catch(_){} } }
+    }
     let done=0, ok=0, skip=0, fail=0;
     for(let i=0;i<files.length;i++){
       if(_uploadCancel) break;
@@ -8853,7 +8875,7 @@
         } else {
           if(stat) stat.textContent='uploading…';
           const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
-          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder, mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_subFolder(i), mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
           ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
@@ -10682,7 +10704,7 @@
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
-      <div class="row"><button class="mini" id="pf-up">🖼 upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
+      <div class="row"><button class="btn btn-cyan small" id="pf-up">🖼 Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —
       // e.g. the signup publish lost the race with the first socket. The name is a public read, so
       // prefill the empty field with it: the verified handle is then one Save away instead of a
@@ -10692,7 +10714,11 @@
           .then(r=>r.json()).then(r=>{ if(r && r.ok && r.nip05 && !n5.value.trim()) n5.value=r.nip05; })
           .catch(()=>{}); }
       $('#pf-up',root).onclick=()=>$('#pf-file',root).click();
-      $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ $('#pf-pic',root).value=await uploadBlob(f); toast('uploaded'); }catch(err){toast('upload failed');} };
+      $('#pf-file',root).onchange=async e=>{ const f=e.target.files[0]; if(!f)return; try{ const _u=await uploadBlob(f); $('#pf-pic',root).value=_u;
+        // Index it into the Files list too — otherwise a profile pic uploaded here lands on Blossom but
+        // never shows under Files ("updated my pic but it's not in blossom"). Best-effort.
+        try{ const _sha=_shaFromUrl(_u); if(_sha) FilesIdx.setFile(_sha,{name:f.name||'profile-pic', folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
+        toast('uploaded'); }catch(err){toast('upload failed');} };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
         const _bch=$('#pf-bch',root).value.trim().replace(/^bitcoincash:/i,'');
