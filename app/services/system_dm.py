@@ -25,22 +25,62 @@ _profile_tries = 0      # bounded retries — the WoT add is async, so the first
 _PROFILE_MAX_TRIES = 4
 
 
-def _sender_for(recipient_hex: str):
-    """(seckey, is_fallback) — who this notification comes from.
+def _ai_bot_seckey():
+    """This node's main Nostr BOT key — the account users already hold a conversation with.
 
-    PREFER THE OPERATOR KEY: it is the node's own identity, it already has a profile and a history, and
-    on a fresh install it is the only identity there is — a brand-new npub DMing you out of nowhere is
-    worse than no notification. It fails in exactly one case: when the operator key IS the recipient's
-    key (single-admin nodes, where the admin set the instance up with their own key). A DM from you to
-    you is a self-DM the client files under note-to-self — no unread count, no toast — so THAT is when
-    we fall back to the dedicated notifier identity, and only then."""
+    Selected generically: an enabled bot running the `--nostr` listener (the AI bot), never a game bot
+    (`--chess`, `--holdem`, …). Whatever the operator named it is what the DM will read as, so nothing
+    here assumes a "PosterChan" install."""
+    try:
+        import json
+        from app.database import SessionLocal
+        from app.models import Bot
+        from app.services.nostr import nostr_service
+
+        db = SessionLocal()
+        try:
+            for b in db.query(Bot).filter(Bot.enabled == True).all():   # noqa: E712 (SQLAlchemy)
+                if "--nostr" not in [m.strip() for m in (b.modes or "").split(",")]:
+                    continue
+                cfg = b.config if isinstance(b.config, dict) else json.loads(b.config or "{}")
+                nsec = (cfg.get("nostr_nsec") or "").strip()
+                if nsec:
+                    return nostr_service.decode_seckey(nsec)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("[system-dm] no AI bot key available: %s", e)
+    return None
+
+
+def _sender_for(recipient_hex: str):
+    """(seckey, is_fallback) — who this notification comes from, best identity first.
+
+    1. THE NODE'S AI BOT, when one is configured. It already has a profile, a NIP-05 and — crucially —
+       an existing conversation with the user, so an agent result lands in the thread they already talk
+       to the assistant in, rather than opening a thread with a stranger.
+    2. The operator key — the node's own identity, and on a bot-less install the only one there is.
+    3. A generated notifier key, ONLY when neither of the above is usable. Both 1 and 2 are skipped
+       when the key IS the recipient's own: a DM from you to you is a self-DM, which every client files
+       under note-to-self with no unread count and no toast — published, and notifying nobody.
+    """
     from app.services import keystore
     from app.services.nostr import bip340, nostr_service
+
+    def _usable(sk):
+        try:
+            return bool(sk) and bip340.pubkey_from_seckey(sk).hex() != recipient_hex
+        except Exception:
+            return False
+
+    bot = _ai_bot_seckey()
+    if _usable(bot):
+        return bot, False
     nsec = keystore.get_operator_nsec()
     if nsec:
         try:
             sk = nostr_service.decode_seckey(nsec)
-            if sk and bip340.pubkey_from_seckey(sk).hex() != recipient_hex:
+            if _usable(sk):
                 return sk, False
         except Exception:
             pass
@@ -79,9 +119,13 @@ async def _ensure_profile(sk: bytes, pk_hex: str, port: int) -> None:
             logger.debug("[system-dm] wot-add for the notifier failed: %s", e)
         await asyncio.sleep(3.0)        # let the relay's control-file poll admit the key first
 
-        site = (settings_store.get("site_name", "") or "PosterChan").strip()
-        meta = {"name": site, "display_name": f"{site} 🤖",
-                "about": f"System notifications from {site} — agent runs, uptime alerts. Replies aren't read."}
+        # Named after THIS instance (site_name), never a hardcoded brand — a fresh install elsewhere
+        # must not end up with an identity called PosterChan. Neutral wording when it's unset.
+        site = (settings_store.get("site_name", "") or "").strip()
+        name = f"{site} notifications" if site else "System notifications"
+        meta = {"name": name, "display_name": name,
+                "about": (f"Automated notifications from {site}" if site else "Automated server notifications")
+                         + " — agent runs, uptime alerts. Replies aren't read."}
         ok, err = await publish_event(port, _event.build_event(sk, 0, json.dumps(meta), tags=[]))
         if ok:
             _profile_done = True
