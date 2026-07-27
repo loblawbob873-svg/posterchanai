@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from fastapi.responses import FileResponse, Response
 from starlette.requests import Request
 from pydantic import BaseModel
@@ -118,6 +118,29 @@ def build_media_attachments(images, image_data, pdfs, pdf_data, documents, docum
 
 # Commands whose handlers consume the RAW uploaded file bytes (not extracted text). Shared by the
 # chat WebSocket handler and the HTTP `/chat/send` fallback so both gate attachment-building the same.
+# ----- Budget: "Add Bill with AI" — photo of a bill -> vendor/total/due -----
+# The Budget view is client-side and encrypted, so it can't run OCR or call the model itself. This is
+# the half the server CAN do, and it is deliberately the SAME code path as the `bill` chat command
+# (CommandService._bill_command) rather than a second implementation — one OCR pipeline, one prompt,
+# one set of guard rails (it refuses rather than guessing an amount). The client takes the parse,
+# shows it for confirmation and writes the encrypted row itself.
+@router.post("/budget/scan")
+async def budget_scan(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty upload")
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="that image is too large (25 MB max)")
+    cs = CommandService(db, user=current_user)
+    res = await cs._bill_command("", attachments=[(file.filename or "bill.jpg", data, file.content_type or "")])
+    # _bill_command returns {"type": "bill", vendor, amount, due} on a good read, or {"type": "text"}
+    # carrying the reason it couldn't. Pass both through so the client can show the real message.
+    return res
+
 MEDIA_ATTACHMENT_COMMANDS = ("bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "hag", "goon", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse")
 
 

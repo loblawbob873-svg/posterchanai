@@ -299,6 +299,7 @@
           <label class="bg-chk"><input type="checkbox" id="bg-inc"> Income</label>
           <label class="bg-chk"><input type="checkbox" id="bg-once"> One-time</label>
           <button class="btn btn-cyan" id="bg-save">Add</button>
+          <button class="btn btn-ghost bg-ai" id="bg-ai">✨ Add Bill with AI</button>
         </div>` : `
         <div class="bg-list">
           ${visibleCats().sort(bySort).map(planCard).join('') || '<div class="muted small bg-empty">No plans yet. A plan is a group of line items (a credit card, a trip) that totals into Bills Due.</div>'}
@@ -359,6 +360,7 @@
       if(cn) cn.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); addCat(); } };
     }
     const imp=$('#bg-import'); if(imp) imp.onclick = importDialog;
+    const ai=$('#bg-ai'); if(ai) ai.onclick = aiBillDialog;
   }
 
   function billMenu(id){
@@ -434,6 +436,83 @@
         _doc.items.push({ id:uid(), cat:cid, name:n, amount:num(root.querySelector('#bg-ia').value),
                           sort_order:_doc.items.filter(i=>i.cat===cid).length });
         closeModal(); save(); repaint();
+      };
+    });
+  }
+
+  // ---- "Add Bill with AI" ------------------------------------------------------------------------
+  // Photograph a bill → the server OCRs it and pulls out vendor / total / due date → you confirm →
+  // it lands in the encrypted doc. The split is forced and correct: OCR and the model live on the
+  // server (it's the same /api/budget/scan → CommandService._bill_command path the chat `bill`
+  // command uses), while the WRITE happens here because only this client can encrypt to your key.
+  //
+  // The parse is always shown in EDITABLE fields rather than as a yes/no confirm. OCR on a phone
+  // photo mis-reads decimal points more often than it mis-reads names, and a wrong amount is the one
+  // error that silently corrupts your totals — so correcting it has to be possible without starting
+  // over.
+  function aiBillDialog(){
+    modal(`<h3>✨ Add Bill with AI</h3>
+      <div class="muted small">Photograph a bill (or pick an image/PDF) and I'll read the vendor, total and due date. You confirm before anything is saved.</div>
+      <div class="bg-aipick">
+        <button class="btn btn-ghost bg-aibtn" id="bg-cam">📷 Take a photo</button>
+        <button class="btn btn-ghost bg-aibtn" id="bg-pick">🖼 Choose a file</button>
+      </div>
+      <!-- two inputs, not one: capture= opens the camera straight away on a phone, which is the wrong
+           thing when you actually wanted the file you already saved. Desktop ignores capture and both
+           behave as a normal picker. -->
+      <input type="file" id="bg-cami" accept="image/*" capture="environment" hidden>
+      <input type="file" id="bg-picki" accept="image/*,application/pdf" hidden>
+      <div id="bg-aistat" class="bg-aistat"></div>`, root=>{
+      const stat=root.querySelector('#bg-aistat');
+      const cam=root.querySelector('#bg-cami'), pick=root.querySelector('#bg-picki');
+      root.querySelector('#bg-cam').onclick=()=>cam.click();
+      root.querySelector('#bg-pick').onclick=()=>pick.click();
+
+      const go=async(f)=>{
+        if(!f) return;
+        stat.innerHTML='<span class="spinner"></span> reading the bill…';
+        root.querySelectorAll('.bg-aibtn').forEach(b=>b.disabled=true);
+        try{
+          await PC.ensureAiSession();     // the scan needs an app session (OCR + the model run server-side)
+          const fd=new FormData(); fd.append('file', f, f.name||'bill.jpg');
+          const r=await PC.authFetch('/api/budget/scan',{method:'POST', body:fd});
+          if(!r.ok) throw new Error(r.status===401||r.status===403 ? 'your account can’t use AI features' : 'the scan failed');
+          const d=await r.json();
+          // _bill_command hands back type:'text' with the REASON when it couldn't pin down the fields.
+          // Show that rather than a generic failure — it usually says "try a sharper, straight-on photo".
+          if(!d || d.type!=='bill'){ stat.innerHTML=`<span class="muted small">${enc((d&&d.content)||'Couldn’t read that bill.')}</span>`;
+            root.querySelectorAll('.bg-aibtn').forEach(b=>b.disabled=false); return; }
+          closeModal();
+          confirmParsed(d);
+        }catch(err){
+          stat.innerHTML=`<span class="muted small">${enc((err&&err.message)||'that didn’t work')}</span>`;
+          root.querySelectorAll('.bg-aibtn').forEach(b=>b.disabled=false);
+        }
+      };
+      cam.onchange=()=>go(cam.files&&cam.files[0]);
+      pick.onchange=()=>go(pick.files&&pick.files[0]);
+    });
+  }
+
+  function confirmParsed(d){
+    const amt = Math.abs(Number(d.amount)||0);
+    modal(`<h3>📄 Bill read</h3>
+      <div class="muted small">Check these before saving — OCR gets decimal points wrong more often than names.</div>
+      <label class="fld">Name<input class="input" id="bg-an" value="${enc(String(d.vendor||''))}"></label>
+      <label class="fld">Amount<input class="input" id="bg-aa" inputmode="decimal" value="${enc(amt.toFixed(2))}"></label>
+      <label class="bg-chk" style="margin:4px 0 10px"><input type="checkbox" id="bg-arec" checked> Recurring (comes back every month)</label>
+      ${d.due?`<div class="muted small">Due ${enc(String(d.due))} — a reminder will be set.</div>`:''}
+      <button class="btn btn-cyan full" id="bg-aok">Add to budget</button>`, root=>{
+      root.querySelector('#bg-aok').onclick=async()=>{
+        const n=(root.querySelector('#bg-an').value||'').trim();
+        if(!n) return toast('give the bill a name');
+        const a=num(root.querySelector('#bg-aa').value);
+        const rec=root.querySelector('#bg-arec').checked;
+        closeModal();
+        await load();
+        // Expenses are stored NEGATIVE, matching every row that came over from the old app.
+        await addBill(n, -Math.abs(a), false, rec);
+        toast('✅ added to your budget');
       };
     });
   }

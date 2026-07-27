@@ -135,6 +135,22 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "screenshot": "Full-page screenshot of a website: screenshot <url>",
         "poll": "Create a poll: poll <question> | <option 1> | <option 2> — 2 to 20 options, separated by |",
     }
+    # Commands that USED to exist and now can't, with the reason. The budget moved into a Nostr event
+    # encrypted to the user's own key, so the server genuinely cannot answer these — saying so beats
+    # letting the model guess, and beats "Unknown command", which reads like a bug to someone who used
+    # the feature yesterday.
+    _BUDGET_MOVED = ("💰 Your budget moved into the app itself — open **Discover → Budget**.\n"
+                     "It's stored in a Nostr event encrypted to your own key, so only your client can "
+                     "read or change it. That's why I can't show or pay bills for you here any more.\n"
+                     "The `bill` command still works: send a photo of a bill and I'll read it.")
+    RETIRED_COMMANDS = {
+        "budget": _BUDGET_MOVED,
+        "bills": _BUDGET_MOVED,
+        "pay": _BUDGET_MOVED,
+        "addbill": _BUDGET_MOVED,
+        "finance": _BUDGET_MOVED,
+    }
+
     COMMAND_ALIASES = {
         "torrent": "torrents",
         "bt": "torrents",
@@ -229,6 +245,13 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             url = message[9:].strip()
             return "ytdl", url
 
+        # RETIRED commands: match them so they get a straight answer instead of falling through to the
+        # LLM, which has no idea the feature moved and will cheerfully invent a budget it cannot read.
+        # Kept OUT of COMMANDS on purpose, so they stay out of `help` and the command lists.
+        for cmd in self.RETIRED_COMMANDS:
+            if lower == cmd or lower.startswith(f"{cmd} "):
+                return cmd, message[len(cmd) + 1:].strip() if lower != cmd else ""
+
         # Check canonical commands
         for cmd in self.COMMANDS:
             if lower.startswith(f"{cmd} "):
@@ -302,6 +325,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     ) -> dict:
         """Execute a command, then shrink any oversized video outputs via the shared
         `compress` feature before returning (so effects don't hand back 10 MB clips)."""
+        if command in self.RETIRED_COMMANDS:
+            return {"type": "text", "content": self.RETIRED_COMMANDS[command]}
         result = await self._execute_command_inner(
             command, arg, last_prompt, stop_check, attachments, node_notify,
         )

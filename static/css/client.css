@@ -3132,6 +3132,17 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .bg-add .bg-amtin{flex:0 1 120px}
 .bg-chk{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13.5px;white-space:nowrap;cursor:pointer}
 .bg-menu{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+/* Add Bill with AI — the two source buttons stack on a phone and sit side by side on a desktop */
+.bg-ai{flex:0 0 auto;white-space:nowrap}
+.bg-aipick{display:flex;gap:10px;margin:14px 0 4px;flex-wrap:wrap}
+.bg-aibtn{flex:1 1 160px;min-height:52px;font-size:15px}   /* thumb-sized targets, not text links */
+.bg-aibtn:disabled{opacity:.5;cursor:default}
+.bg-aistat{min-height:22px;margin-top:8px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13.5px}
+.bg-aistat .spinner{width:16px;height:16px;margin:0;flex-shrink:0}
+@media(max-width:480px){
+  .bg-ai{flex:1 1 100%}          /* full-width under the Add row rather than squeezed beside it */
+  .bg-aibtn{flex:1 1 100%}
+}
 .bg-foot{margin-top:18px;text-align:center}
 .bg-link{background:none;border:none;color:var(--neon);cursor:pointer;font:inherit;text-decoration:underline;padding:0 4px}
 .bg-err{padding:22px;text-align:center;color:var(--danger);display:flex;flex-direction:column;gap:10px;align-items:center}

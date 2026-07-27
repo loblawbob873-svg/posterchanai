@@ -162,6 +162,14 @@ arg (`clip <start> <end>`).
   `app/schemas.py:SettingsResponse`; `GET/PUT /api/admin/settings`. Admin UI is plain HTML in
   `templates/admin/tabs/*.html`; `static/js/admin.js` loads/saves **generically** by element
   `id`/`name` (no per-field JS). Add a field = add to `SettingsResponse` + an input in a tab.
+  **REMOVING a setting takes three deletes, not one.** Dropping it from `SettingsResponse` only stops
+  the code reading it; the VALUE lives on in two places that will resurrect each other:
+  (1) the operator-signed relay doc `pcai:setting:<key>` (per node — each node has its own relay and
+  operator key), and (2) a row in the legacy Postgres `settings` table, which
+  `settings_store.migrate_legacy_table()` re-seeds into the relay **on every startup** for any key the
+  relay doesn't already hold. So deleting only the relay doc looks like it worked and silently comes
+  back on the next restart. Delete the legacy ROW FIRST, then the relay doc, on EVERY node, then
+  restart and re-check. (Learned removing `finance_api_base`.)
 - **Per-user:** columns on `User` (+ the `UserSetting` key/value table). Migrations for new
   `User` columns go in `app/database.py:_run_migrations` `new_user_columns` (ALTER-on-startup);
   **new tables** are auto-created by `Base.metadata.create_all` in `init_db()`. UI lives in
@@ -245,6 +253,15 @@ open a fresh `SessionLocal` and capture any needed config up front.
   month`; `remaining = income − paid − due` — and was checked against the live app's `/api/v1/summary`
   before the cutover. The `bill` photo-OCR command survives, but SPLIT: the server does OCR +
   extraction and sets the reminder, the client writes the encrypted row (`PCBudget.addParsed`).
+  **Add Bill with AI** is the same idea inside Budget itself: `POST /api/budget/scan` (chat.py, app
+  session) takes a photo/PDF and calls the SAME `CommandService._bill_command`, so there is one OCR
+  pipeline and one prompt; the client shows the parse in EDITABLE fields (OCR mangles decimal points
+  far more often than names) and only then writes the row. Camera and file are two separate inputs —
+  `capture=` jumps straight to the camera, which is wrong when you wanted a file you already have.
+  Retired commands (`budget`/`bills`/`pay`/`addbill`/`finance`) are kept in `RETIRED_COMMANDS`, matched
+  by `parse_command` AND short-circuited in `execute_command` (Telegram never calls `parse_command`),
+  so they answer "it moved to Discover → Budget" instead of falling through to the LLM, which would
+  invent a budget it cannot read. They stay OUT of `COMMANDS` so `help` doesn't advertise them.
   Migration off the old SQLite DB is `scripts/export_budget_db.py` → paste into Budget → Import
   (it can't be a server script — only the browser holds the key).
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
