@@ -887,33 +887,51 @@ async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
     if not emoji_service.index():
         return JSONResponse({"error": "this instance has no custom emoji"}, status_code=404)
 
-    words = _emoji_words(text)
+    subject = _emoji_words(text)                     # what the post is about, from the post itself
+    reaction: list[str] = []                         # how to react to it, from the model
     try:
         from app.services.inference_factory import get_inference_service
         svc = get_inference_service(db)
         res = await svc.chat_completion(
             [{"role": "system", "content": (
-                "You pick reaction emoji for a social post on an irreverent, meme-literate instance. "
-                "Reply with 8 lowercase single words, comma-separated, no explanation, no hashtags.\n"
-                "FIRST 4: the funniest REACTION to this post — imagine the wittiest reply-guy. Use meme "
-                "reaction words like kek smug cope seethe based chad wojak pepe soyjak sadge comfy "
-                "gigachad clown copium rage tism doubt shrug facepalm popcorn.\n"
-                "LAST 4: literal SUBJECTS and MOOD from the post (things, animals, feelings) like cat "
-                "dog coffee beer money bitcoin food sleep angry happy sad laugh love tired.\n"
-                "Be funny before you are literal.")},
+                "You are the wittiest reply-guy on a meme-literate social instance. Read the post and "
+                "answer with EXACTLY two lines, four lowercase single words each, comma-separated:\n"
+                "REACTION: how you would react to THIS post — be funny, specific and a bit unhinged\n"
+                "SUBJECT: what THIS post is literally about (things, people, feelings)\n"
+                "No other text. Never reuse the words from these instructions — react to the post.")},
+             # ONE worked example, deliberately in vocabulary nobody will want back: a small model
+             # parrots whatever words the prompt shows it, and listing "kek smug cope seethe…" got the
+             # same five emoji for every post. This teaches the SHAPE, not the words.
+             {"role": "user", "content": "the bakery gave me a free croissant today"},
+             {"role": "assistant", "content": "REACTION: smug, blessed, gluttony, victory\n"
+                                              "SUBJECT: bread, food, bakery, happy"},
              {"role": "user", "content": text[:1500]}],
-            max_tokens=60, temperature=0.3)
+            max_tokens=64, temperature=0.85)         # warm: the ask is creativity, not accuracy
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
-        words = _emoji_words(out) + words            # LLM keywords first: they rank higher by order
+        for line in out.splitlines():
+            low = line.strip().lower()
+            if low.startswith("reaction"):
+                reaction += _emoji_words(low.split(":", 1)[-1])
+            elif low.startswith("subject"):
+                subject = _emoji_words(low.split(":", 1)[-1]) + subject
+        if not reaction and not out.lower().count("subject"):
+            reaction = _emoji_words(out)             # model ignored the format — take what it gave
     except Exception as e:
         logger.warning("[client] emoji-suggest LLM unavailable, using post words only: %s", e)
 
     base = _emoji_base(request)
-    picked = _emoji_rank(words, want)
-    if not picked:
-        # "nothing matched this post" is a useless answer from a 3000-emoji pack — fall back to the
-        # generic reactions rather than making the user go and search the picker themselves.
-        picked = _emoji_rank(_EMOJI_GENERIC, want)
+    # MIX the two: a couple of on-topic emoji so the answer is about this post, the rest reactions so
+    # it is funny. Taking one ranked list meant a parroting model drowned the post out completely.
+    half = max(1, want // 2)
+    picked = _emoji_rank(subject, half)
+    seen = {e["shortcode"] for e in picked}
+    for e in _emoji_rank(reaction + _EMOJI_GENERIC, want * 2):
+        if e["shortcode"] not in seen and len(picked) < want:
+            seen.add(e["shortcode"]); picked.append(e)
+    if len(picked) < want:                           # top up from whatever else the post matched
+        for e in _emoji_rank(subject + _EMOJI_GENERIC, want * 2):
+            if e["shortcode"] not in seen and len(picked) < want:
+                seen.add(e["shortcode"]); picked.append(e)
     return JSONResponse({"emojis": [{"s": e["shortcode"],
                                      "u": f"{base}/{e['pack']}/{e['shortcode']}{e['ext']}"}
                                     for e in picked]})
