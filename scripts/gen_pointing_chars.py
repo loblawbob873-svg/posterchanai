@@ -27,9 +27,11 @@ sys.path.insert(0, REPO)
 
 # "anime" has to be in the prompt for the good anime model to be picked up, and asking for
 # "lineart" (a natural thing to write for cel art) makes it return UNCOLOURED line drawings.
-NEGATIVE = ("text, letters, watermark, signature, blurry, monochrome, greyscale, sketch, lineart, "
+NEGATIVE = ("1girl, 2boys, multiple people, couple, elf, elf ears, dress, "
+            "text, letters, watermark, signature, blurry, monochrome, greyscale, sketch, lineart, "
             "painterly, oil painting, semi realistic, "
-            "extra fingers, deformed hands, malformed limbs, cropped, out of frame, multiple people, "
+            "navy, blue clothes, wizard, sorcerer, robe, cape, long coat, temple interior, scenery, "
+            "extra fingers, deformed hands, malformed limbs, cropped, out of frame, "
             "photo, realistic, 3d render, busy background")
 # Leading with "anime <noun>" and naming the cel shading matters as much as the character name:
 # "Old rabbi ... . Anime." (name-last, the wording that nails Rebecca/Makima) came back as
@@ -43,10 +45,16 @@ CHARACTERS = {
               "straight up, smug knowing smile, vibrant colours, clean anime cel shading, anime key "
               "visual, simple flat white background"),
     # `shrug` is the same renderer (_add_pointing_meme), just a palms-up pose instead of a point.
-    "shrug": ("full body anime rabbi, old man with a long white beard, black wide-brim hat and long "
-              "black coat, shrugging with both palms turned up at his sides, resigned wry smile, "
-              "raised eyebrows, vibrant colours, clean anime cel shading, anime key visual, simple "
-              "flat white background"),
+    # Getting him to read as a RABBI took three rounds. A wide-brim hat + long coat + white beard is
+    # a WIZARD, so: a SUIT, not a coat. "tallit/prayer shawl" and "hasidic" summoned whole wedding
+    # and temple scenes; "payot sidelocks" on its own kept inventing an elf GIRL beside him — this
+    # model reads danbooru tags, so "solo, 1boy" up front (and 1girl in the negative) is what pins
+    # it to one figure. "pure black" matters too: plain "black suit" came back midnight blue.
+    "shrug": ("solo, 1boy, full body anime jewish rabbi, elderly man, long bushy white beard, payot "
+              "sidelocks, black fedora hat, pure black suit jacket and black trousers, crisp white "
+              "dress shirt, shrugging with both palms turned up at his sides, wry resigned smile, "
+              "raised eyebrows, clean anime cel shading, anime key visual, simple flat white "
+              "background"),
 }
 
 
