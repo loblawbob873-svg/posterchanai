@@ -296,6 +296,23 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding Nostr relay settings: {e}")
 
+        # IN A CONTAINER, loopback-only is never the useful bind. The relay's default is 127.0.0.1 and
+        # only POSTERCHANAI_NOSTR_RELAY=1 used to widen it — but the relay became the app's DATASTORE and
+        # is now enabled by default (database.py), so a plain `docker compose up` (that env defaults to 0)
+        # ran the relay bound to the container's own loopback while compose published 3052. The browser
+        # client is handed ws://<host>:3052/relay and every connection was refused: "never connects to
+        # relays on a new install". Publishing a port the process can't be reached on is never intended,
+        # so widen it whenever we're containerised — still first-run only, so an explicit bind is kept.
+        try:
+            if os.path.exists("/.dockerenv"):
+                from app.services import settings_store as _ss
+                if not _ss.exists("nostr_relay_bind"):
+                    _ss.put("nostr_relay_bind", "0.0.0.0")
+                    logging.info("Container detected: relay bind seeded to 0.0.0.0 "
+                                 "(127.0.0.1 would make the published port unreachable)")
+        except Exception as e:
+            logging.error(f"Error seeding container relay bind: {e}")
+
         # Turnkey Docker calls/TURN: when POSTERCHANAI_TURN=1, enable the built-in Pion TURN relay and
         # seed its public IP + optional domain from env. The app supervises the bundled binary; still needs
         # one open public port (3478 and/or a TLS port). Only seeds keys the admin hasn't set.

@@ -295,8 +295,10 @@ ENV POSTERCHANAI_PORT=3051 \
 # (seeded only on first run, so this never overrides an existing choice).
 
 EXPOSE 3051
-# Built-in Nostr WoT relay (NIP-01). Stays OFF unless POSTERCHANAI_NOSTR_RELAY=1, which
-# seeds it on + binds 0.0.0.0 so the published port is reachable. See docs/RELAY.md.
+# Built-in Nostr WoT relay (NIP-01). ON by default — it is the app's datastore AND the relay the web
+# client connects to, so the container always binds it to 0.0.0.0 (loopback-only would leave this
+# published port answering nothing). POSTERCHANAI_NOSTR_RELAY=1 additionally forces it on for an
+# existing install that had turned it off. See docs/RELAY.md.
 EXPOSE 3052
 
 # Built-in TURN/STUN relay for voice/video calls. OFF unless POSTERCHANAI_TURN=1 + a public IP is set.

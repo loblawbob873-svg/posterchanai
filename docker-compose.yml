@@ -52,9 +52,10 @@ x-common: &common
     - "${POSTERCHANAI_GIT_PORT:-3053}:3053"
   environment:
     - POSTERCHANAI_PORT=3051
-    # Turnkey Nostr relay: set POSTERCHANAI_NOSTR_RELAY=1 and the app auto-enables the
-    # web-of-trust relay (binds 0.0.0.0:3052, on-disk WAL DB on the data volume). Front with
-    # TLS (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
+    # The web-of-trust relay is ON by default (it's the datastore + the web client's relay) and the
+    # container binds it to 0.0.0.0 so the published 3052 above is actually reachable — a browser on a
+    # plain `docker compose up` is handed ws://<host>:3052/relay. This flag only force-enables it on an
+    # install that had turned it off. Front with TLS (e.g. nginx → wss://relay.yourdomain/). See docs/RELAY.md.
     - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
     # Nostr-only deployment (no AI): hides the AI tab + AI compose actions in the web client.
     # The `nostr` profile/image already ships without the AI stack; this flag just tidies the UI.
