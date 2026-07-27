@@ -134,8 +134,9 @@ def mark_publishing(db, user_id: int) -> None:
 
 # ---------------------------------------------------------------- liveness + publishing
 
-async def _is_publishing(token: str) -> Optional[bool]:
-    """Is a source publishing this path? True / False / None = can't tell.
+async def is_publishing(token: str) -> Optional[bool]:
+    """Is a source publishing this path? True / False / None = can't tell. (Public: stream_vod_service and
+    the HLS proxy's clamp resolver both ask this, so it is the one MediaMTX liveness probe in the codebase.)
 
     Asks MediaMTX's local control API, NOT the HLS playlist. Two reasons the playlist is the wrong signal:
     a WebRTC/WHIP (phone) ingest 404s while it warms up into HLS — the client disables its own HLS heartbeat
@@ -225,7 +226,7 @@ async def _end_after_grace(token: str, user_id: int) -> None:
         # Only a definitive "not publishing" ends it here. Came back (a reconnect blip) or can't tell
         # (MediaMTX went down with it — its own shutdown fires this hook for every live path) → leave it to
         # the reaper, which re-probes until it gets a real answer.
-        if await _is_publishing(token) is not False:
+        if await is_publishing(token) is not False:
             logger.info("[stream-end] %s… is publishing again or unverifiable — leaving it to the reaper",
                         token[:8])
             return
@@ -266,7 +267,7 @@ async def _sweep() -> None:
         token = token_of(data)
         if not token:
             continue
-        live = await _is_publishing(token) if enabled else False
+        live = await is_publishing(token) if enabled else False
         if live is None:
             continue            # MediaMTX unreachable — we can't tell, so we don't guess (a wrong "ended"
                                 # is unrecoverable: only the browser can sign a stream back to "live")

@@ -349,6 +349,18 @@ def init_db():
             # "Save ended streams to Blossom" ON by default (per-user opt-in User.stream_record still required).
             "stream_record_enabled": ("false" if os.environ.get("POSTERCHANAI_STREAM_RECORD", "1") in ("0", "false") else "true"),
             "stream_record_dir": os.environ.get("POSTERCHANAI_STREAM_RECORD_DIR", "/tmp/posterchanai-streams"),
+            # Live bitrate clamp ON by default: MediaMTX is a pure remux, so without it a streamer's OBS
+            # settings decide what EVERY viewer downloads (a 6 Mbps stream costs 6 Mbps of upload per
+            # viewer). POSTERCHANAI_STREAM_CLAMP=0 serves the source untouched instead.
+            "stream_clamp_enabled": ("false" if os.environ.get("POSTERCHANAI_STREAM_CLAMP", "1")
+                                     in ("0", "false") else "true"),
+            "stream_clamp_height": os.environ.get("POSTERCHANAI_STREAM_CLAMP_HEIGHT", "720"),
+            "stream_clamp_fps": os.environ.get("POSTERCHANAI_STREAM_CLAMP_FPS", "30"),
+            "stream_clamp_bitrate": os.environ.get("POSTERCHANAI_STREAM_CLAMP_BITRATE", "1500k"),
+            "stream_clamp_audio_bitrate": os.environ.get("POSTERCHANAI_STREAM_CLAMP_AUDIO_BITRATE", "128k"),
+            "stream_clamp_encoder": os.environ.get("POSTERCHANAI_STREAM_CLAMP_ENCODER", ""),  # blank = autodetect
+            # RTSP is LOOPBACK-only and exists solely so the clamp can read/write streams — never forward it.
+            "stream_rtsp_port": os.environ.get("POSTERCHANAI_STREAM_RTSP_PORT", "8554"),
             # VRAM management
             "vram_mode": os.environ.get("POSTERCHANAI_VRAM_MODE", "shared"),  # "shared" (swap models) or "dedicated" (keep both)
             "searxng_url": "https://search.poster.place",

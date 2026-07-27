@@ -359,7 +359,7 @@ async def _claim_ended_sessions() -> None:
         return
     if not os.path.isdir(rec):
         return
-    from app.services.stream_end_service import _is_publishing
+    from app.services.stream_end_service import is_publishing
     now = time.time()
     for token in os.listdir(rec):
         if token == _JOBS_SUBDIR:
@@ -371,7 +371,7 @@ async def _claim_ended_sessions() -> None:
         if newest is not None and now - newest < _END_QUIET_S:
             continue   # a segment was written recently — still live or mid-reconnect
         try:
-            live = await _is_publishing(token)
+            live = await is_publishing(token)
         except Exception:
             continue
         if live is not False:
@@ -442,7 +442,7 @@ def sweep_orphans() -> None:
             continue
         if _golive_of(name) is not None:
             # Tracked session — normally left for the worker to claim. But if nothing has been written for
-            # a very long time (e.g. MediaMTX's control API was unreachable so _is_publishing never returned
+            # a very long time (e.g. MediaMTX's control API was unreachable so is_publishing never returned
             # False → the session was never claimed), it's a leak. Only THEN fall through and remove it
             # (marker and all) so a stuck recording can't fill the temp dir indefinitely.
             nm = _newest_mtime(d)

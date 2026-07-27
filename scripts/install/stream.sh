@@ -7,6 +7,14 @@
 # (stream_record_dir, default /tmp/posterchanai-streams) which the app creates on demand, then uploads the
 # finished VOD to Blossom and deletes it. Nothing to install here — it's just a directory; mount it as tmpfs
 # (or point it at /dev/shm) if you want RAM-backed recording. No extra packages: ffprobe/ffmpeg cover it.
+#
+# Bitrate clamp (stream_clamp_enabled, ON by default): MediaMTX only remuxes, so without the clamp whatever
+# OBS sends is what EVERY viewer downloads — a 6 Mbps stream costs 6 Mbps of upload per viewer. The clamp
+# re-encodes each stream to 720p30 @ 1500k and serves viewers only that. It needs **ffmpeg** (checked by
+# deps.sh) and uses the GPU's media engine when there is one — NVENC/VAAPI are auto-detected, else CPU.
+# No new port to forward: it reads and writes over RTSP bound to 127.0.0.1. If ffmpeg is missing the
+# transcode simply never starts and viewers get the unclamped source, so nothing breaks — it just costs
+# far more bandwidth. Turn it off in Admin → Services → OBS Streaming.
 
 setup_stream_server() {
     print_banner 2>/dev/null || true

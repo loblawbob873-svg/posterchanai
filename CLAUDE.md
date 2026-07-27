@@ -263,6 +263,33 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   invent a budget it cannot read. They stay OUT of `COMMANDS` so `help` doesn't advertise them.
   Migration off the old SQLite DB is `scripts/export_budget_db.py` → paste into Budget → Import
   (it can't be a server script — only the browser holds the key).
+- **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
+  Admin → Services → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what
+  **every viewer downloads** — one 1080p60/6 Mbps streamer costs 6 Mbps of upload *per viewer*. The clamp
+  re-encodes each live stream to a ceiling (default 720p30 @ 1500k) and viewers are served ONLY that.
+  **ON by default.** MediaMTX itself supervises the transcode via `runOnReady` (start/stop/restart for
+  free — no Python supervisor); source `<token>` in, `<token>_clamped` out; the HLS proxy swaps in the
+  clamped path per request (`_upstream_path`) and falls back to the source whenever the clamp isn't up, so
+  a missing ffmpeg degrades to "unclamped" rather than "broken". Encoder autodetect is shared with offline
+  video (`media_service._video_encoder_candidates`) and runs on the GPU's **media engine**, which is separate
+  silicon from the compute cores — it does NOT contend with LLM/image/music/video generation, and so
+  deliberately does NOT take `GPUResourceLock` (a 3-hour stream would hold it for 3 hours).
+  Four gotchas, all measured against MediaMTX v1.19.2, not guessed:
+  (1) **Never authorize the clamp's publish by IP** — MediaMTX reports a *LAN* address for a connection made
+  to a `127.0.0.1`-bound listener, so a loopback check denies every clamp and viewers silently get the
+  unclamped source. The RTSP URL **query** IS forwarded to the auth hook, so that's the gate
+  (`stream_service.clamp_secret`, derived from `stream_auth_secret`).
+  (2) `rtspTransports: [tcp]` is **required** — plain `rtsp: yes` also opens UDP :8000/:8001 on ALL
+  interfaces, two public ports we never use.
+  (3) Clamped paths get their **own** regex path entry (no `runOnReady` → no infinite clamp-the-clamp, no
+  `record` → VODs stay the full-quality source, no `runOnNotReady` → can't end a stream by the wrong name).
+  (4) RTSP readers must be **excluded from the viewer count** (`stream_viewers`) — the clamp is a reader of
+  the source path, so counting it reports "1 viewer" on every stream nobody is watching.
+  (5) The scale filter caps the **short** side, not the height — that's what makes 720p mean 720p in both
+  orientations. A plain `scale=-2:min(720,ih)` squeezes a portrait 1080x1920 phone stream to **406x720**,
+  which saves nothing (the bitrate ceiling already bounds bandwidth) and just looks bad. Covered by
+  `tests/test_stream_clamp.py`, which runs the real filter through ffmpeg and checks actual pixel
+  dimensions — the string-only assertion passed while this was wrong.
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Services

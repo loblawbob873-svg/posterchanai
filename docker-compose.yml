@@ -46,6 +46,8 @@ x-common: &common
     # app, so only needed for direct use); 8189/udp = WebRTC media (forward this for remote phones).
     - "${POSTERCHANAI_STREAM_WEBRTC_PORT:-8889}:8889/tcp"
     - "${POSTERCHANAI_STREAM_WEBRTC_UDP_PORT:-8189}:8189/udp"
+    # NOT published on purpose: RTSP (8554) is bound to 127.0.0.1 inside the container and exists only so
+    # the bitrate clamp can read a stream and publish the transcode back. Nothing external should reach it.
     # Built-in GRASP git server (only used with POSTERCHANAI_GIT=1). Publish it only if git clients
     # hit the container directly; the usual setup fronts it with nginx `location /git/` and leaves
     # this port on the LAN. See docs/GIT.md.
@@ -186,7 +188,11 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: ["gpu"]
+              # "video" is REQUIRED for NVENC and is NOT implied by "gpu" — the container toolkit
+              # defaults to compute,utility, under which h264_nvenc cannot open the encoder at all.
+              # Without it the live-stream bitrate clamp (and `compress` on video) silently fall back
+              # to libx264 and burn CPU instead of using the card's media engine.
+              capabilities: ["gpu", "video"]
 
   rocm:
     <<: *common

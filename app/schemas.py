@@ -162,6 +162,19 @@ class SettingsResponse(BaseModel):
     # want RAM-backed (no SSD writes); the app doesn't care which.
     stream_record_enabled: str = "false"   # global kill-switch; per-user opt-in is User.stream_record
     stream_record_dir: str = "/tmp/posterchanai-streams"   # recording scratch dir (temp; cleaned as it goes)
+    # Bitrate clamp (stream_service._write_clamp_script). MediaMTX is a pure remux — whatever OBS sends is
+    # what EVERY viewer pulls, so one 1080p60 streamer at 6 Mbps costs 6 Mbps of upload PER VIEWER. The clamp
+    # transcodes each live stream down to a fixed ceiling and serves viewers ONLY that, so a streamer's
+    # encoder settings can't dictate the instance's bandwidth bill. ON by default; admins can turn it off.
+    # Runs on the GPU's media engine (fixed-function, separate from the compute cores) so it does not
+    # contend with LLM/image/music/video generation.
+    stream_clamp_enabled: str = "true"       # transcode live streams down to the ceiling below
+    stream_clamp_height: str = "720"         # max height (width follows the aspect ratio); never upscales
+    stream_clamp_fps: str = "30"             # max frame rate; a lower source is passed through untouched
+    stream_clamp_bitrate: str = "1500k"      # video bitrate ceiling (this is the per-viewer cost)
+    stream_clamp_audio_bitrate: str = "128k"  # audio bitrate (AAC; normalises OBS's AAC and WHIP's Opus)
+    stream_clamp_encoder: str = ""           # blank = autodetect (NVENC → VAAPI → libx264); or force one
+    stream_rtsp_port: str = "8554"           # MediaMTX RTSP, LOOPBACK-only: how the clamp reads/writes streams
     # Video generation (videogeni — NATIVE in-process diffusers, like image gen; mirrors music LB)
     video_enabled: str = "false"
     video_local_enabled: str = "true"  # generate on THIS node's GPU (the native diffusers path)

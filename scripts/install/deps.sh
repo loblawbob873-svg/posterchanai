@@ -51,10 +51,14 @@ check_dependencies() {
 
     # Check optional dependencies
     if ! command -v ffmpeg &>/dev/null; then
-        print_warning "ffmpeg not found - music transcoding, video compression and the 'hava' effect will be unavailable"
+        print_warning "ffmpeg not found - music transcoding, video compression, the 'hava' effect and the LIVE-STREAM BITRATE CLAMP will be unavailable"
         echo "  Install ffmpeg for music streaming, the 'compress'/'clip' commands (video) and the 'hava' image→song video"
+        # Without ffmpeg the clamp can't run, so viewers are served whatever the streamer's encoder sends —
+        # every viewer then costs the FULL source bitrate of your upload. Streams still work; they just
+        # cost a lot more bandwidth, which is easy to miss because nothing visibly breaks.
+        echo "  It is also required to clamp live streams to 720p30 — without it every viewer pulls the streamer's full bitrate"
     else
-        print_success "ffmpeg found (music transcoding + video compression + 'hava' video available)"
+        print_success "ffmpeg found (music transcoding + video compression + 'hava' video + live-stream clamp available)"
     fi
 
     # tesseract OCR binary - pytesseract (in requirements.txt) is only a wrapper and

@@ -160,6 +160,27 @@
             <small>OBS ingest port — forward this on your router.</small>
         </div>
         <div class="form-group">
+            <label for="stream_clamp_enabled">
+                <input type="checkbox" id="stream_clamp_enabled" name="stream_clamp_enabled"> Clamp stream quality (saves bandwidth)
+            </label>
+            <small><strong>On by default, and you almost certainly want it on.</strong> Without it the media server is a pure pass-through: whatever a streamer's OBS sends is what <em>every viewer downloads</em>, so one person streaming 1080p60 at 6 Mbps costs 6 Mbps of your upload <em>per viewer</em>. With it on, each stream is re-encoded down to the ceiling below and viewers only ever get that — a streamer's settings can't run up your bandwidth bill. The transcode runs on the GPU's video engine, which is separate silicon from the part that runs the AI models, so it doesn't slow chat or image generation down. Toggling this restarts the media server (drops any live stream briefly).</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_clamp_height">Quality ceiling</label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <input type="text" id="stream_clamp_height" name="stream_clamp_height" placeholder="720" style="max-width:90px;">
+                <input type="text" id="stream_clamp_fps" name="stream_clamp_fps" placeholder="30" style="max-width:90px;">
+                <input type="text" id="stream_clamp_bitrate" name="stream_clamp_bitrate" placeholder="1500k" style="max-width:110px;">
+                <input type="text" id="stream_clamp_audio_bitrate" name="stream_clamp_audio_bitrate" placeholder="128k" style="max-width:110px;">
+            </div>
+            <small>Max height, max frame rate, video bitrate, audio bitrate. Defaults are <code>720</code> / <code>30</code> / <code>1500k</code> / <code>128k</code> — roughly 1.6 Mbps per viewer, so a 20 Mbps upload carries about a dozen at once. A stream that's already <em>below</em> a limit is left alone (a 480p phone stream is never upscaled). Video bitrate is the number that matters: halve it and you double how many people can watch.</small>
+        </div>
+        <div class="form-group">
+            <label for="stream_clamp_encoder">Encoder — optional</label>
+            <input type="text" id="stream_clamp_encoder" name="stream_clamp_encoder" placeholder="blank = detect automatically (h264_nvenc / h264_vaapi / libx264)">
+            <small>Blank auto-detects this node's hardware (NVIDIA NVENC, then Intel/AMD VAAPI, then CPU). Only set this to pin a specific ffmpeg encoder. If the hardware encoder fails to start, the clamp falls back to CPU on its own — check <code>journalctl</code> for <code>clamp:</code> lines.</small>
+        </div>
+        <div class="form-group">
             <label for="stream_record_enabled">
                 <input type="checkbox" id="stream_record_enabled" name="stream_record_enabled"> Save ended streams to Blossom (“Past streams”)
             </label>

@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import APIKey, User, UserSetting, StreamVOD
-from app.services import settings_store, stream_end_service, users_store
+from app.services import settings_store, stream_end_service, stream_service, users_store
 from app.services.nostr.event import verify_event
 
 logger = logging.getLogger(__name__)
@@ -165,6 +165,35 @@ def _obs_key(db, user: User) -> str:
     return key
 
 
+# Which MediaMTX path a viewer is served: the clamped transcode when it's up, else the raw source. Probed
+# against MediaMTX's control API and memoised briefly — a live viewer re-fetches every couple of seconds, so
+# without the memo every viewer would add a control-API round-trip to every segment.
+_CLAMP_TTL = 5.0
+_clamp_ready: dict[str, tuple[bool, float]] = {}
+
+
+async def _upstream_path(token: str) -> str:
+    """The MediaMTX path to proxy for `token` — `<token>_clamped` while the clamp is publishing it.
+
+    Falls back to the source path whenever the clamp isn't up: during the second or two after go-live before
+    ffmpeg has produced anything, when the admin has clamping off, and when MediaMTX can't be reached (in
+    which case the source won't work either, but failing to the unclamped path can only be less broken).
+    """
+    if not stream_service.clamp_enabled():
+        return token
+    name = f"{token}{stream_service.CLAMP_SUFFIX}"
+    now = time.monotonic()
+    ent = _clamp_ready.get(name)
+    if ent is not None and now - ent[1] < _CLAMP_TTL:
+        return name if ent[0] else token
+    ready = bool(await stream_end_service.is_publishing(name))
+    _clamp_ready[name] = (ready, now)
+    if len(_clamp_ready) > 512:                 # bound the memo; entries are re-probed on demand anyway
+        for k in [k for k, v in _clamp_ready.items() if now - v[1] > _CLAMP_TTL]:
+            _clamp_ready.pop(k, None)
+    return name if ready else token
+
+
 def _may_stream(user) -> bool:
     """Admins always may; everyone else needs the granted capability. Watching is NOT gated — only
     publishing, which is what costs bandwidth and carries the instance's name."""
@@ -194,6 +223,27 @@ async def stream_auth(request: Request, db=Depends(get_db)):
         return Response(status_code=200)
     if action != "publish":
         return JSONResponse({"error": "unsupported action"}, status_code=401)
+    path = (body.get("path") or "").strip()
+    q = (body.get("query") or "").strip().strip("?/&")
+    # The bitrate clamp publishes its transcoded copy back into MediaMTX over loopback RTSP (clamp.sh). It
+    # holds no API key — there is no user behind it — so it proves itself with a secret derived from the
+    # auth-hook secret, carried in the RTSP URL query. Two things must hold: that secret, and a base name
+    # that is a real streamer's token (so this can't be used to publish arbitrary paths).
+    # NB: authorizing on MediaMTX's reported publisher `ip` instead does NOT work — it reports a LAN address
+    # for connections made to a 127.0.0.1-bound listener, so a loopback check denies every clamp and viewers
+    # silently get the unclamped source. Measured against MediaMTX v1.19.2; don't "simplify" it back.
+    if path.endswith(stream_service.CLAMP_SUFFIX):
+        base = path[: -len(stream_service.CLAMP_SUFFIX)]
+        want = stream_service.clamp_secret()
+        got = ""
+        try:
+            got = (parse_qs(q).get("clamp") or [""])[0]
+        except Exception:
+            got = ""
+        if want and hmac.compare_digest(got, want) and stream_end_service.user_by_token(db, base) is not None:
+            return Response(status_code=200)
+        logger.info("[stream] clamp publish denied for %r", path)
+        return JSONResponse({"error": "not a clamp publish"}, status_code=403)
     # Extract the API key from the RTMP/SRT query. Two shapes reach us, both legitimate:
     #   OBS         → "key=<api_key>"   (stream key "<token>?key=<api_key>")
     #   the app     → "<api_key>"       (bare, no "key=" — see _native_rtmp_url for why)
@@ -201,7 +251,6 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     # parsed leniently rather than assumed well-formed. A bare query is only ever treated as the key when it
     # carries no "=" at all, so a real query string can never be mistaken for one.
     key = ""
-    q = (body.get("query") or "").strip().strip("?/&")
     if q:
         if "=" in q:
             try:
@@ -220,7 +269,6 @@ async def stream_auth(request: Request, db=Depends(get_db)):
     # A user may publish ONLY to their OWN token (not an arbitrary/made-up path, and not a sub-path of a
     # victim's token). Require the path to equal the key-owner's stream_token exactly — this closes both
     # the open-publish resource-abuse vector and the sub-path ownership bypass.
-    path = (body.get("path") or "").strip()
     own = db.query(UserSetting).filter(UserSetting.user_id == row.user_id,
                                        UserSetting.key == _TOKEN_SETTING).first()
     if not own or not own.value or path != own.value:
@@ -262,6 +310,11 @@ async def stream_unpublish(request: Request, db=Depends(get_db)):
     token = (request.query_params.get("path") or "").strip()
     if not token:
         return JSONResponse({"error": "missing path"}, status_code=400)
+    # The clamp's output path is not a stream — it's our own transcode of one. The generated config gives
+    # clamped paths no runOnNotReady, so this shouldn't fire; belt-and-braces for a hand-edited config,
+    # because ending on this name would schedule an end that the source path can never re-confirm as live.
+    if token.endswith(stream_service.CLAMP_SUFFIX):
+        return Response(status_code=200)
     user_id = stream_end_service.user_by_token(db, token)
     if user_id is None:
         return Response(status_code=200)   # unknown token — nothing of ours to end
@@ -333,7 +386,12 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
     origin = _public_origin(request)
     hls_base = (cfg.get("stream_hls_base", "") or "").strip().rstrip("/")
     if hls_base:
-        hls_url = f"{hls_base}/{token}/index.m3u8"
+        # A direct base bypasses our proxy, so the clamped path has to be baked into the public URL here.
+        # Unlike the proxy path this is decided ONCE, at go-live: an admin who toggles clamping mid-stream
+        # breaks the URL already published in that streamer's kind-30311. That's the accepted trade-off for
+        # the direct-base deployment (an advanced, set-and-forget option) — the proxy path resolves live.
+        suffix = stream_service.CLAMP_SUFFIX if stream_service.clamp_enabled(cfg) else ""
+        hls_url = f"{hls_base}/{token}{suffix}/index.m3u8"
     else:
         hls_url = f"{origin}/api/streams/hls/{token}/index.m3u8"
 
@@ -480,7 +538,11 @@ async def stream_viewers(token: str):
         data = r.json()
     except Exception:
         return {"live": pc > 0, "viewers": pc}
-    readers = [x for x in (data.get("readers") or []) if isinstance(x, dict)]
+    # Drop RTSP readers before counting. RTSP is bound to loopback and exists ONLY so the bitrate clamp can
+    # read the source and publish the transcode back, so an rtspSession here is our own ffmpeg, never a
+    # person — counting it reported "1 viewer" on every live stream that nobody was watching.
+    readers = [x for x in (data.get("readers") or [])
+               if isinstance(x, dict) and x.get("type") != "rtspSession"]
     return {"live": bool(data.get("ready")), "viewers": max(len(readers), pc)}
 
 
@@ -512,7 +574,11 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
               else "application/octet-stream")
         return Response(status_code=200, media_type=ct)
     hls_port = (settings_store.get("stream_hls_port", "8888") or "8888").strip()
-    upstream = f"http://127.0.0.1:{hls_port}/{token}/{path}?cookieCheck=1"
+    # Viewers always address the PUBLIC token (it's what rides the kind-30311); the clamped transcode is an
+    # internal path they never see, so the swap happens here. Segment URLs inside a MediaMTX playlist are
+    # relative, so the follow-up segment requests come back to this same route and resolve identically.
+    src = await _upstream_path(token)
+    upstream = f"http://127.0.0.1:{hls_port}/{src}/{path}?cookieCheck=1"
     _mark_viewer(token, _client_fingerprint(request))   # headcount by client fingerprint (no per-viewer cookie now)
     import httpx
 
@@ -522,7 +588,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         rp = await cl.send(rq, stream=True)
         return cl, rp
 
-    cookie = await _hls_session_cookie(hls_port, token)
+    cookie = await _hls_session_cookie(hls_port, src)
     if cookie is None:
         return Response(status_code=502)
     client = None
@@ -533,7 +599,7 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
         # fix this (it holds no cookie), so re-prime the session HERE and retry once before giving up.
         if resp.status_code in (400, 401, 403):
             await resp.aclose(); await client.aclose(); client = resp = None
-            cookie = await _hls_session_cookie(hls_port, token, force=True)
+            cookie = await _hls_session_cookie(hls_port, src, force=True)
             if cookie is None:
                 return Response(status_code=502)
             client, resp = await _open(cookie)
