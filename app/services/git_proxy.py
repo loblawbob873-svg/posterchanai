@@ -41,7 +41,13 @@ _FORWARD_REQ_HEADERS = (
 # Response headers we pass back. Content-Type distinguishes the advertisement vs the result; the
 # no-cache set matches git's smart-HTTP semantics for info/refs. We stream the body, so Content-Length
 # / Transfer-Encoding are handled by StreamingResponse, not copied.
-_FORWARD_RESP_HEADERS = ("content-type", "cache-control", "expires", "pragma", "content-encoding")
+#
+# www-authenticate is REQUIRED, not cosmetic: it is the host's 401 challenge for a private repo. A
+# client only authenticates against a scheme the server advertises — libgit2 (ngit) gives up outright
+# and git-core never runs its credential helper — so dropping it made every private repo unreadable
+# through a proxy node while working fine when hitting the host directly.
+_FORWARD_RESP_HEADERS = ("content-type", "cache-control", "expires", "pragma", "content-encoding",
+                         "www-authenticate")
 
 
 def proxy_enabled() -> bool:
@@ -107,6 +113,16 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
         v = resp.headers.get(k)
         if v is not None:
             out_headers[k] = v
+    # The host sends TWO www-authenticate challenges (Nostr and Basic) and a dict keeps only the
+    # first, which would drop exactly the Basic one ngit needs. Re-emit every value as its own raw
+    # header (RFC 7235 permits repeating the field) instead of comma-joining them, since a client
+    # that mis-parses a combined challenge list would silently fail to authenticate.
+    extra_raw = []
+    if resp.status_code == 401:
+        challenges = resp.headers.get_list("www-authenticate")
+        if len(challenges) > 1:
+            out_headers.pop("www-authenticate", None)
+            extra_raw = [(b"www-authenticate", c.encode("latin-1")) for c in challenges]
 
     async def _body():
         try:
@@ -117,6 +133,8 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
             await client.aclose()
 
     logger.info("[git-proxy] %s %s -> %d", method, target, resp.status_code)
-    return StreamingResponse(_body(), status_code=resp.status_code,
-                             headers=out_headers,
-                             media_type=resp.headers.get("content-type"))
+    out = StreamingResponse(_body(), status_code=resp.status_code,
+                            headers=out_headers,
+                            media_type=resp.headers.get("content-type"))
+    out.raw_headers.extend(extra_raw)
+    return out

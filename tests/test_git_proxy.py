@@ -131,6 +131,15 @@ async def run():
         print("   proxied private anon: HTTP %d" % r.status_code)
         check("private: anon proxied clone -> 401", r.status_code == 401)
         check("private: 401 leaks no refs", b"refs/heads/main" not in r.content)
+        # The 401 challenge MUST survive the proxy hop, and BOTH schemes must survive it: a client
+        # only authenticates against a scheme the server advertises, and ngit (libgit2) needs the
+        # Basic one specifically. Collapsing them into one header silently broke private clones
+        # through a proxy node while direct-to-host worked.
+        ch = [v.lower() for v in r.headers.get_list("www-authenticate")]
+        check("private: 401 forwards a www-authenticate challenge", len(ch) > 0)
+        check("private: 401 forwards the Nostr challenge", any("nostr" in v for v in ch))
+        check("private: 401 forwards the Basic challenge (ngit needs it)",
+              any("basic" in v for v in ch))
 
         # (4) private via proxy WITH NIP-98 header -> forwarded -> 200
         full_url = "http://127.0.0.1:%d/%s/privrepo.git/info/refs" % (hport, npub)
