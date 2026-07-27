@@ -3593,6 +3593,18 @@
   // from the keyboard: j/k move, o/Enter open, g/G jump, / search, n new, 1-5 switch detail tabs,
   // h/Esc back. It NEVER hijacks keys while a text field is focused (except Enter/Esc in the search).
   let _kbSel=-1, _gitKbBound=false;
+  // Which slice of the relay's repos the list shows. YOUR repos are the default: the Git view is a
+  // workspace before it is a directory, and the relay carries every announcement the web of trust has
+  // ever federated in — so "all" buries the three repos you actually push to under other people's.
+  // Falls back to 'all' when you're signed out or own none, otherwise the default view is empty.
+  // Sticky for the session (not persisted), so switching to 'all' survives leaving and re-entering.
+  let _repoScope='mine';
+  // Yours = you announced it, OR you're in its maintainers tag — the same set that can push to it.
+  function _repoIsMine(e){
+    if(!ME||!ME.pubkey) return false;
+    if(e.pubkey===ME.pubkey) return true;
+    return (e.tags||[]).some(t=>t[0]==='maintainers' && t.slice(1).includes(ME.pubkey));
+  }
   function _kbCards(feed){ return $$('.repo-card',feed); }
   function _kbPaint(feed){
     const cards=_kbCards(feed);
@@ -3676,13 +3688,20 @@
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
+    const mine=repos.filter(_repoIsMine);
+    if(!mine.length) _repoScope='all';           // never open on an empty view
+    const scoped=()=>_repoScope==='mine'?mine:repos;
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
         ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
         <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
-        ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search ${repos.length} repos — name, owner, description…">`:''}
+        ${mine.length?`<div class="repo-scope" role="tablist">
+          <button class="tr-tab repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine">Mine <i class="repo-n">${mine.length}</i></button>
+          <button class="tr-tab repo-sc${_repoScope==='all'?' on':''}" data-scope="all">All repos <i class="repo-n">${repos.length}</i></button>
+        </div>`:''}
+        ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search repos — name, owner, description…">`:''}
       </div>
-      <div id="repo-results">${repos.length ? grid(repos) : '<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). '+(_gitHostBase()?'Create one ↑':'Announce yours ↑')+'</div>'}</div>`;
+      <div id="repo-results"></div>`;
     $('#repo-new').onclick=()=>publishRepo();
     { const cb=$('#repo-create'); if(cb) cb.onclick=()=>createRepo(); }
     // Card wiring is re-applied after every filter render, since filtering replaces the cards.
@@ -3694,20 +3713,31 @@
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
       $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
     };
-    wire();
     const q=$('#repo-q',feed);
+    // ONE renderer for both the scope chips and the search box: they filter the same list, and two
+    // renderers would let a scope switch quietly drop the active search (or vice versa).
+    // EVERY space-separated term must match, so "posterchan ai" narrows rather than widens.
+    // Re-rendering the grid (instead of hiding cards) keeps the empty state honest.
+    const paint=()=>{
+      const base=scoped();
+      const terms=((q&&q.value)||'').toLowerCase().split(/\s+/).filter(Boolean);
+      const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
+      $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
+        : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
+           : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
+      if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
+      wire();
+    };
+    paint();
+    $$('.repo-sc',feed).forEach(b=> b.onclick=()=>{
+      _repoScope=b.dataset.scope;
+      $$('.repo-sc',feed).forEach(x=>x.classList.toggle('on', x.dataset.scope===_repoScope));
+      _kbSel=-1;                       // the card under the keyboard cursor is gone; don't keep its index
+      paint();
+    });
     if(q){
-      // EVERY space-separated term must match, so "posterchan ai" narrows rather than widens.
-      // Re-rendering the grid (instead of hiding cards) keeps the empty state honest.
-      const apply=()=>{
-        const terms=(q.value||'').toLowerCase().split(/\s+/).filter(Boolean);
-        const hits=terms.length ? repos.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : repos;
-        $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
-          : `<div class="empty">No repo matches “${enc(q.value)}”.</div>`;
-        wire();
-      };
-      q.oninput=apply;
-      q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; apply(); } };
+      q.oninput=paint;
+      q.onkeydown=ev=>{ if(ev.key==='Escape'){ q.value=''; paint(); } };
     }
   }
   // The GRASP git host base for creating a repo from THIS node: the operator's public_base if set, else
