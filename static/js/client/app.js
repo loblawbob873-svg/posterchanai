@@ -9395,16 +9395,26 @@
         const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
         const sr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr})});
-        // The server refuses a write that would collapse the index (409). Treat that as the save
-        // FAILING — keep the edit local and say so — rather than reporting success for a write the
-        // server threw away. A deliberate mass-delete is what `force` is for.
+        // 409 = the server refused a write that would collapse the index. That is right when it's a
+        // bug and wrong when the user genuinely just deleted a big folder — and since nothing else
+        // ever sets `force`, without this branch the guard makes a legitimate mass-delete impossible.
+        // So ASK, and honour the answer. Never report success for a write the server threw away.
         if(sr && sr.status===409){
-          this._dirty=true;
-          try{ toast('⚠️ That change would have wiped most of your file list, so the server refused it. Nothing was lost.'); }catch(_){}
-          console.warn('files-index: server refused a collapsing save');
-          return;
-        }
-        if(!sr || !sr.ok) throw new Error('files-index save HTTP '+(sr?sr.status:'?'));
+          let why=''; try{ why=((await sr.json())||{}).error||''; }catch(_){}
+          console.warn('files-index: server refused a collapsing save —', why);
+          const intended = await uiConfirm('This removes most of your file list ('+(why.replace(/^refused: /,'')||'large drop')+
+            ').\n\nIf you just deleted a folder, that\'s expected — continue?\n\nIf you did NOT expect this, cancel: '+
+            'your file list is still safe on the server.');
+          if(!intended){
+            this._dirty=true;
+            try{ toast('Kept your file list — nothing was changed on the server.'); }catch(_){}
+            return;
+          }
+          const auth2=await sign(27235,'files-index',[['p',ME.pubkey]]);
+          const fr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth2)),index:ptr,force:true})});
+          if(!fr || !fr.ok){ this._dirty=true; throw new Error('files-index forced save HTTP '+(fr?fr.status:'?')); }
+        } else if(!sr || !sr.ok) throw new Error('files-index save HTTP '+(sr?sr.status:'?'));
         // The superseded index blob is deliberately KEPT. It is ~133 KB and it is the only
         // standalone backup of every filename and folder on the drive — deleting it to reclaim
         // that space is what left a wiped index with nothing to restore from.

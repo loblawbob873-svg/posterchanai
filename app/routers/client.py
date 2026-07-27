@@ -3124,7 +3124,9 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         # every overwrite is final and NOTHING — not this bug, not a bad bulk-move, not a fat-fingered
         # folder delete — is undoable.
         if isinstance(prev, dict) and prev:
-            await _files_index_backup(store, port, sk, prev)
+            old_n, new_n = _files_index_count(prev), _files_index_count(data.index)
+            shrinking = old_n is not None and new_n is not None and new_n < old_n
+            await _files_index_backup(store, port, sk, prev, shrinking)
 
         await store.put_doc(port, sk, "pcai:files-index", data.index)
         return JSONResponse({"ok": True})
@@ -3166,17 +3168,36 @@ def _files_index_collapse(prev, new) -> str | None:
     return None
 
 
-async def _files_index_backup(store, port: int, sk: bytes, prev: dict) -> None:
-    """Keep the replaced index as `pcai:files-index-bak:<ts>`, newest _FILES_INDEX_BAKS retained.
+async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking: bool) -> None:
+    """Keep the replaced index in one of _FILES_INDEX_BAKS fixed slots, overwriting the oldest.
 
-    Best-effort by design: a backup that fails must not block the user's save. These are the same
-    operator-preserved kind-30078 docs as the index itself, so the relay's prune never touches them."""
+    FIXED SLOTS, not timestamped d-tags. A timestamped scheme has to enumerate what exists to prune
+    it, and the only listing available walks EVERY kind-30078 doc the storage key owns — chats, mail
+    and budget share that namespace, so the cost grows with the account and lands on the save path.
+    Five known d-tags are one bounded query, one write, and no deletes (30078 is replaceable).
+
+    `shrinking` writes a backup unconditionally — losing entries is exactly when an undo is wanted.
+    Growing saves (the overwhelming majority: every upload) back up at most hourly, so a 400-file
+    import doesn't burn all five slots on near-identical copies and push the pre-import state out.
+
+    Best-effort: a backup that fails must not block the user's save."""
     import time as _t
+    from app.services.nostr import bip340
     try:
-        await store.put_doc(port, sk, f"pcai:files-index-bak:{int(_t.time())}", prev)
-        baks = await store.list_docs(port, "pcai:files-index-bak:", seckey=sk)
-        for d in sorted(baks.keys(), reverse=True)[_FILES_INDEX_BAKS:]:
-            await store.delete_doc(port, sk, d)
+        pk = bip340.pubkey_from_seckey(sk).hex()
+        slots = [f"pcai:files-index-bak:{i}" for i in range(1, _FILES_INDEX_BAKS + 1)]
+        evs = await store._ws_query(port, [{"authors": [pk], "kinds": [store.APP_KIND],
+                                            "#d": slots, "limit": _FILES_INDEX_BAKS}])
+        seen = {}
+        for ev in evs:
+            d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+            if d in slots:
+                seen[d] = max(seen.get(d, 0), int(ev.get("created_at") or 0))
+        free = [s for s in slots if s not in seen]
+        if not free and not shrinking and seen and (int(_t.time()) - min(seen.values())) < 3600:
+            return                                   # a recent backup already covers this state
+        target = free[0] if free else min(seen, key=seen.get)
+        await store.put_doc(port, sk, target, prev)
     except Exception as e:
         logger.warning("[client] files-index: backup failed (save continues): %s", e)
 
