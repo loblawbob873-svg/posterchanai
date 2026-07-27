@@ -14534,6 +14534,10 @@
     // while a row is selected Tab is scoped to THAT row's own controls.
     '#feed .file-card, #feed .bl-more',
     '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card, #feed .repo-card',
+    // Budget: a bill row and a plan CARD are both rows. `[data-bill]` deliberately excludes the plan's
+    // own header (it carries .bg-row for styling but no data-bill), so the cursor doesn't stop twice on
+    // the same plan. Their letters live in _CARD_KEYS; Tab still reaches the ✅/☰ inside a selected row.
+    '#feed .bg-row[data-bill], #feed .bg-plan[data-cat]',
     // AI Chat's splash — the starter cards you are greeted with, plus the `help` chip under them. They
     // were real buttons, so Tab reached them, but only one at a time: twenty cards meant twenty presses
     // and no cursor to show where you were. As rows they get the arrows, j/k, and h/l across the grid.
@@ -15020,6 +15024,11 @@
     ['.file-card', { o:'a', c:'.copy', m:'.movebtn', d:'.del' }],
     ['.news-card', { s:'.news-post', u:'.news-sum' }],
     ['.mkts-card', { s:'.mkts-post' }],
+    // Budget. `p` is the one you press all day (pay / un-pay), so it gets the letter even though the
+    // GLOBAL p is "New post" — global shortcuts are Alt+p, so there is no collision. querySelector
+    // finds the plan header's own ✅/☰ rather than an item's, because the header comes first.
+    ['.bg-row[data-bill]', { p:'.bg-check', m:'.bg-more' }],
+    ['.bg-plan[data-cat]', { p:'.bg-check', m:'.bg-more', a:'.bg-additem' }],
   ];
   (function(){
     document.addEventListener('keydown', e=>{
@@ -15095,6 +15104,11 @@
         // A file card is a grid tile with no click handler of its own — the OPEN is its <a>, so Enter has
         // to press that or it looked like Enter did nothing in the file manager.
         if(el.matches('.file-card')){ const a=el.querySelector('a'); if(a){ a.click(); return; } }
+        // A budget row's own click does nothing (its handler only fires for [data-act] children), so a
+        // bare el.click() would make Enter look dead. Enter means "open this" everywhere else, so open
+        // the row's ☰ menu — edit/skip/delete all live behind it, and `p` already covers paying.
+        if(el.matches('.bg-row[data-bill], .bg-plan[data-cat]')){
+          const mb=el.querySelector('.bg-more'); if(mb){ mb.click(); return; } }
         el.click();
         // Opening a conversation from the keyboard should leave you able to TYPE — otherwise focus is
         // still on the list and the first thing you write goes nowhere. Only on the KEYBOARD path: doing
