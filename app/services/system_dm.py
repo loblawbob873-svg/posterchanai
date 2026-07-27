@@ -1,166 +1,44 @@
-"""Server → user notifications, delivered as NIP-17 DMs from the node's SYSTEM identity.
+"""Server → user notifications, delivered as NIP-17 DMs from the node's OPERATOR key.
 
-WHY THIS EXISTS. Every server→user DM here used to be sent from the OPERATOR key. On a single-admin
-deployment that key is very often the ADMIN'S OWN key — and a DM from you to you is a **self-DM**:
-`rumor.pubkey === ME.pubkey`, so the client files it in your note-to-self thread as a message you
-sent. No unread count, no toast, no OS notification. The alert was published, stored, and perfectly
-decryptable, and it told the user nothing. That is how "I didn't get an agent notification" and a
-dead-looking Messages badge happened on this node, while DMs from the chess bot (a different key)
-notified fine.
+The operator key is the npub that installed/set this node up — the one identity every install has, with
+no bot required and no extra key minted. On a single-admin node it is usually the ADMIN'S OWN key, so
+the notification is a **self-DM**: a note to self, which is exactly the intent — the server telling you
+something as you.
 
-So system notifications go out from a dedicated, persistent notifier key instead — a distinct sender
-is what makes a DM a notification at all. The key is admitted to the WoT and publishes a kind-0 once,
-so it shows up as a named conversation rather than a bare npub.
-
-Gift wraps are gated on the RECIPIENT being a WoT member (nostr_relay/server.py), not the sender, so
-delivery works regardless; the WoT add is only so the notifier's PROFILE is accepted.
+That only works because the CLIENT counts notes-to-self as unread (`ingestWrap` in static/js/client/
+app.js). It deliberately does not badge the copy of a message this session composed — `sendDm` ingests
+its own `toSelf` wrap up front, so the relay's echo is deduped before it can count — which leaves
+exactly the arriving ones: system notifications, and your own notes from another device.
 """
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
 
-_profile_done = False   # per-process: publish the notifier's kind-0 once, not on every alert
-_profile_tries = 0      # bounded retries — the WoT add is async, so the first attempt can lose the race
-_PROFILE_MAX_TRIES = 4
-
-
-def _ai_bot_seckey():
-    """This node's main Nostr BOT key — the account users already hold a conversation with.
-
-    Selected generically: an enabled bot running the `--nostr` listener (the AI bot), never a game bot
-    (`--chess`, `--holdem`, …). Whatever the operator named it is what the DM will read as, so nothing
-    here assumes a "PosterChan" install."""
-    try:
-        import json
-        from app.database import SessionLocal
-        from app.models import Bot
-        from app.services.nostr import nostr_service
-
-        db = SessionLocal()
-        try:
-            for b in db.query(Bot).filter(Bot.enabled == True).all():   # noqa: E712 (SQLAlchemy)
-                if "--nostr" not in [m.strip() for m in (b.modes or "").split(",")]:
-                    continue
-                cfg = b.config if isinstance(b.config, dict) else json.loads(b.config or "{}")
-                nsec = (cfg.get("nostr_nsec") or "").strip()
-                if nsec:
-                    return nostr_service.decode_seckey(nsec)
-        finally:
-            db.close()
-    except Exception as e:
-        logger.debug("[system-dm] no AI bot key available: %s", e)
-    return None
-
-
-def _sender_for(recipient_hex: str):
-    """(seckey, is_fallback) — who this notification comes from, best identity first.
-
-    1. THE NODE'S AI BOT, when one is configured. It already has a profile, a NIP-05 and — crucially —
-       an existing conversation with the user, so an agent result lands in the thread they already talk
-       to the assistant in, rather than opening a thread with a stranger.
-    2. The operator key — the node's own identity, and on a bot-less install the only one there is.
-    3. A generated notifier key, ONLY when neither of the above is usable. Both 1 and 2 are skipped
-       when the key IS the recipient's own: a DM from you to you is a self-DM, which every client files
-       under note-to-self with no unread count and no toast — published, and notifying nobody.
-    """
-    from app.services import keystore
-    from app.services.nostr import bip340, nostr_service
-
-    def _usable(sk):
-        try:
-            return bool(sk) and bip340.pubkey_from_seckey(sk).hex() != recipient_hex
-        except Exception:
-            return False
-
-    bot = _ai_bot_seckey()
-    if _usable(bot):
-        return bot, False
-    nsec = keystore.get_operator_nsec()
-    if nsec:
-        try:
-            sk = nostr_service.decode_seckey(nsec)
-            if _usable(sk):
-                return sk, False
-        except Exception:
-            pass
-    return keystore.get_notifier_seckey(), True
-
-
-def notifier_npub() -> str:
-    """The npub of the fallback identity (used when the operator key is the recipient's own)."""
-    from app.services import keystore
-    from app.services.nostr import bip340, nostr_service
-    sk = keystore.get_notifier_seckey()
-    return nostr_service.npub_of(bip340.pubkey_from_seckey(sk).hex())
-
-
-async def _ensure_profile(sk: bytes, pk_hex: str, port: int) -> None:
-    """Publish the notifier's kind-0 so it reads as a name, not a raw npub. Best effort, but RETRIED.
-
-    trigger_wot_add hands the relay a control FILE it picks up on its poll loop, so publishing the
-    profile immediately after loses the race — "blocked: not in web of trust" — and the first version
-    of this gave up permanently on that, leaving the user with notifications from an unknown npub. So:
-    give the add a moment, and if it still fails, try again on the next notification (bounded)."""
-    global _profile_done, _profile_tries
-    if _profile_done or _profile_tries >= _PROFILE_MAX_TRIES:
-        return
-    _profile_tries += 1   # count the attempt up front — a raising path must not retry forever either
-    try:
-        import json
-        from app.services import settings_store
-        from app.services.nostr import event as _event
-        from app.services.nostr_store import publish_event
-        from app.services.nostr_relay.thread import trigger_wot_add
-
-        try:
-            trigger_wot_add([pk_hex])   # so the relay accepts the profile (wraps don't need this)
-        except Exception as e:
-            logger.debug("[system-dm] wot-add for the notifier failed: %s", e)
-        await asyncio.sleep(3.0)        # let the relay's control-file poll admit the key first
-
-        # Named after THIS instance (site_name), never a hardcoded brand — a fresh install elsewhere
-        # must not end up with an identity called PosterChan. Neutral wording when it's unset.
-        site = (settings_store.get("site_name", "") or "").strip()
-        name = f"{site} notifications" if site else "System notifications"
-        meta = {"name": name, "display_name": name,
-                "about": (f"Automated notifications from {site}" if site else "Automated server notifications")
-                         + " — agent runs, uptime alerts. Replies aren't read."}
-        ok, err = await publish_event(port, _event.build_event(sk, 0, json.dumps(meta), tags=[]))
-        if ok:
-            _profile_done = True
-            logger.info("[system-dm] notifier profile published as %s", site)
-        else:
-            logger.info("[system-dm] notifier profile not published (try %d/%d): %s",
-                        _profile_tries, _PROFILE_MAX_TRIES, err)
-    except Exception as e:
-        logger.debug("[system-dm] notifier profile publish failed: %s", e)
-
 
 async def send(recipient: str, text: str) -> bool:
-    """DM `recipient` (npub or hex) from this node's system identity. True if the relay took it.
+    """DM `recipient` (npub or hex) from this node's operator key. True if the relay took it.
 
     Publishes to the LOCAL relay only — it federates outward from there, the rule every publisher in
     this codebase follows. Never raises: a failed notification must not break its caller."""
     if not recipient or not text:
         return False
     try:
-        from app.services import settings_store
-        from app.services.nostr import bip340, nip17, nostr_service
+        from app.services import keystore, settings_store
+        from app.services.nostr import nip17, nostr_service
         from app.services.nostr_store import publish_event
 
         hexpk = nostr_service.to_pubkey_hex(recipient)
         if not hexpk:
             logger.info("[system-dm] no usable pubkey for %s — not sent", recipient[:16])
             return False
-        sk, fallback = _sender_for(hexpk)
-        pk_hex = bip340.pubkey_from_seckey(sk).hex()
+        nsec = keystore.get_operator_nsec()
+        if not nsec:
+            logger.info("[system-dm] no operator key yet — notification not sent")
+            return False
+        sk = nostr_service.decode_seckey(nsec)
+        if not sk:
+            return False
         port = settings_store.get_int("nostr_relay_port", 3052)
-        # Only the FALLBACK identity gets a profile published for it. The operator key's kind-0 is the
-        # node's real identity, managed elsewhere — overwriting it with "system notifications" metadata
-        # would clobber the operator's own name and avatar.
-        if fallback:
-            await _ensure_profile(sk, pk_hex, port)
         ok, err = await publish_event(port, nip17.wrap(sk, hexpk, text))
         if not ok:
             logger.warning("[system-dm] DM to %s not published: %s", recipient[:16], err)

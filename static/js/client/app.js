@@ -10652,12 +10652,19 @@
     // Newer than the last time Messages was opened IS the definition of unread — the same test
     // recountDmUnread and the per-peer unread dot already use, so all three now agree.
     const _seen = Number(ClientSettings.get('dmSeen', 0)) || 0;
-    if(!mine && !MUTED.has(peer) && (rumor.created_at||0) > _seen){
+    // A NOTE TO SELF counts too. The server sends system notifications (agent run finished, uptime
+    // alerts) from the node's operator key — which on a single-admin install IS your key, so they
+    // arrive as you→you. Skipping every `mine` message meant those published, decrypted, and notified
+    // nobody. This does NOT badge what you compose here: sendDm ingests its own `toSelf` wrap up
+    // front, so the relay's echo is deduped above before it can reach this. What's left is the
+    // arriving ones — server notifications, and your own notes from another device.
+    const selfNote = mine && peer === ME.pubkey;
+    if((!mine || selfNote) && !MUTED.has(peer) && (rumor.created_at||0) > _seen){
       _dmUnread++; bumpDm();
       // The interrupting toast/OS notification stays gated on `live`, so restoring a backlog on login
       // doesn't fire a burst of them. It names the SENDER only, never the message — so it says the same
       // thing whether or not "Hide DM previews until opened" is on.
-      if(live) _dmNotify(peer);
+      if(live) _dmNotify(selfNote ? null : peer, selfNote);
     }
     _scheduleDmRefresh();
     return true;
@@ -10747,7 +10754,14 @@
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
     for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue; for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
-  function _dmNotify(fromPk){
+  function _dmNotify(fromPk, selfNote){
+    // A note to self is how the server delivers system notifications (agent run finished, uptime
+    // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
+    if(selfNote){
+      notifToast('🔔 <b>New notification</b> — saved to your notes to self', LOGO);
+      try{ if(window.Notification && Notification.permission==='granted') new Notification('🔔 New notification', {body:'Saved to your notes to self', tag:'pc-dm', icon:LOGO}); }catch(_){}
+      return;
+    }
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
     notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
     try{ if(window.Notification && Notification.permission==='granted') new Notification('✉ New message', {body:`${who} sent you a DM`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), tag:'pc-dm', icon:p.picture||LOGO}); }catch(_){}
