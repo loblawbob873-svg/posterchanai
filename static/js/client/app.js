@@ -2655,6 +2655,7 @@
     ta.addEventListener('paste', e=>{ const f=[...((e.clipboardData&&e.clipboardData.files)||[])]; if(f.length){ e.preventDefault(); upload(f); } });
     // 😀 works fully INLINE — openEmojiPopover/_insertAt/gifPicker are module-level, so there's nothing to
     // duplicate and no reason to send you to a modal just to add an emoji.
+    attachEmojiAutocomplete(ta);   // type `:wave` → suggestions (same InstEmoji as the 😀 picker)
     { const rb=$('#tl-cmp-react',box); if(rb) rb.onclick=e=>{ e.stopPropagation();
         const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
         openMenuPopover(rb, items, a=>{
@@ -5612,7 +5613,8 @@
     { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
     const send=()=>postToChannel(e);
     { const b=$('#ch-send'); if(b) b.onclick=send; }
-    { const ta=$('#ch-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
+    { const ta=$('#ch-input'); if(ta){ attachEmojiAutocomplete(ta);
+        ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
       ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
     // 🌐 translate YOUR draft to another language before sending (same picker as new Post / reply).
     { const tb=$('#ch-translate'), ta=$('#ch-input'); if(tb && ta) tb.onclick=()=>composeTranslate(ta, tb); }
@@ -5903,7 +5905,8 @@
     $('#grp-back').onclick=()=>switchView('chat');
     { const jb=$('#grp-join'); if(jb) jb.onclick=joinGroup; }
     { const sb=$('#grp-send'); if(sb) sb.onclick=postToGroup; }
-    { const ta=$('#grp-input'); if(ta){ ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); postToGroup(); } };
+    { const ta=$('#grp-input'); if(ta){ attachEmojiAutocomplete(ta);
+        ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); postToGroup(); } };
       ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
     { const mb=$('#grp-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
     _pollGroup(true);
@@ -7191,6 +7194,79 @@
     return `<button class="ce" data-e=":${enc(e.s)}:" title=":${enc(e.s)}:">`
          + `<img src="${enc(e.t||e.u)}" alt=":${enc(e.s)}:" loading="lazy" decoding="async"></button>`;
   }
+  // ---------- ":shortcode" autocomplete ----------
+  // Type `:` plus a letter in ANY composer and the matching instance emoji drop down, Pleroma-style.
+  // ONE implementation, attached to every text box (timeline composer, the New post/reply modal, DMs,
+  // chatrooms, groups) — the picker button and this share InstEmoji, so they can never disagree about
+  // what exists. The `:` must start a word (so "12:30" and "http://…" never trigger it).
+  const _AC_RE=/(^|[\s(>])(:([A-Za-z0-9_+\-]{1,40}))$/;
+  const _AC_MAX=14;
+  function attachEmojiAutocomplete(ta){
+    if(!ta || ta.dataset.emAc) return; ta.dataset.emAc='1';
+    let box=null, items=[], sel=0, from=-1;
+    const close=()=>{ if(box){ box.remove(); box=null; } items=[]; sel=0; from=-1; };
+    const place=()=>{
+      if(!box) return;
+      const r=ta.getBoundingClientRect(), M=8, w=Math.min(300, Math.max(200, r.width));
+      box.style.width=w+'px';
+      let left=Math.max(M, Math.min(r.left, window.innerWidth-M-w));
+      const h=box.offsetHeight;
+      // ABOVE the box by default: on a phone the on-screen keyboard owns everything below the caret.
+      let top=r.top-h-6; if(top<M) top=Math.min(r.bottom+6, window.innerHeight-M-h);
+      box.style.left=left+'px'; box.style.top=Math.max(M, top)+'px';
+    };
+    const draw=()=>{
+      if(!items.length){ close(); return; }
+      if(!box){ box=document.createElement('div'); box.className='em-ac'; document.documentElement.appendChild(box); }
+      box.innerHTML=items.map((e,i)=>
+        `<button type="button" class="em-ac-row${i===sel?' on':''}" data-i="${i}">`
+        +`<img src="${enc(e.t||e.u)}" alt="" loading="lazy"><span>:${enc(e.s)}:</span></button>`).join('');
+      $$('.em-ac-row',box).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); take(+b.dataset.i); });
+      place();
+    };
+    const take=i=>{
+      const e=items[i]; if(!e) return;
+      const c=ta.selectionStart||0, tail=ta.value.slice(c);
+      ta.value=ta.value.slice(0, from)+':'+e.s+': '+tail;
+      const at=from+e.s.length+3;
+      ta.selectionStart=ta.selectionEnd=at; ta.focus();
+      _emojiRemember(':'+e.s+':');
+      close();
+      ta.dispatchEvent(new Event('input',{bubbles:true}));   // composers autosave/grow on input
+    };
+    const scan=()=>{
+      const c=ta.selectionStart||0, m=_AC_RE.exec(ta.value.slice(0,c));
+      if(!m){ close(); return; }
+      from=c-m[2].length;
+      const q=m[3].toLowerCase();
+      InstEmoji.load().then(list=>{
+        if(!list.length || from<0) { close(); return; }
+        if((ta.selectionStart||0)!==c) return;              // caret moved on while we loaded
+        const starts=[], has=[];
+        for(const e of list){
+          const s=e.s.toLowerCase();
+          if(s.startsWith(q)) starts.push(e); else if(s.includes(q)) has.push(e);
+          if(starts.length>=_AC_MAX) break;
+        }
+        items=starts.concat(has).slice(0,_AC_MAX); sel=0; draw();
+      });
+    };
+    ta.addEventListener('input', scan);
+    ta.addEventListener('click', scan);
+    ta.addEventListener('blur', ()=>setTimeout(close, 160));   // let a click on a row land first
+    // CAPTURE on the document: the composers bind Enter (post/send) on the textarea itself, and the
+    // suggestion list has to take that key first while it's open.
+    document.addEventListener('keydown', e=>{
+      if(!box || e.target!==ta) return;
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        e.preventDefault(); e.stopPropagation();
+        sel=(sel+(e.key==='ArrowDown'?1:items.length-1))%items.length; draw();
+      } else if(e.key==='Enter'||e.key==='Tab'){
+        e.preventDefault(); e.stopPropagation(); take(sel);
+      } else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); }
+    }, true);
+    window.addEventListener('resize', ()=>{ if(box) place(); });
+  }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
@@ -8389,6 +8465,7 @@
           else if(a==='local') $('#cmp-file',root).click();
           else if(a==='blossom') blossomPicker(ta); });
       };
+      attachEmojiAutocomplete(ta);   // `:shortcode` autocomplete, same as every other composer
       // 😀 React → insert an Emoji or a GIF
       $('#cmp-react',root).onclick=(e)=>{ e.stopPropagation();
         const items=[['emoji','😀 Emoji']]; if(CFG.gif_enabled) items.push(['gif','🎬 GIF']);
@@ -11299,6 +11376,7 @@
       try{ ensureDmInboxList(); await sendDm(pk, _body); inp.value=''; _dmReply=null; _dmReplyBanner(); _syncAtts(); }   // clear ONLY on success — a failed send keeps the text + attachment
       catch(e){ toast('dm failed: '+((e&&e.message)||e)); }
       finally{ _dmSending=false; } };
+    attachEmojiAutocomplete($('#dm-in'));   // `:shortcode` suggestions in DMs too (the rumor carries the tags)
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     // One row that GROWS to a cap (messenger behaviour), and a send button that only lights up when
     // there's something to send. The old box was a fixed 2 rows with a resize handle, which ate the
