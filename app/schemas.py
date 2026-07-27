@@ -282,6 +282,17 @@ class SettingsResponse(BaseModel):
     logs_scheduler_enabled: str = "false"
     logs_schedule: str = "1,12,18"
     logs_nodes: str = ""  # comma-separated node names to include (empty = all configured nodes + local)
+    # Uptime monitoring (Discover → Server Stats → Uptime). Checks run in the WORKER process
+    # (app/worker.py) and the state lives in ONE operator-signed relay doc — see
+    # app/services/uptime_service.py. The status page is PUBLIC, like Server Stats itself.
+    uptime_enabled: str = "false"
+    uptime_monitors: str = ""            # one per line: `Name | https://url | interval_secs | expected text`
+    uptime_interval_seconds: str = "60"  # default per-monitor interval (a line's 3rd field overrides it)
+    uptime_timeout_seconds: str = "15"
+    uptime_retries: str = "2"            # consecutive failures before a monitor is called DOWN (and alerts)
+    uptime_alert_telegram: str = "false"  # alert the admin's Telegram on up→down / down→up
+    uptime_alert_nostr: str = "false"     # alert by NIP-17 DM from the operator key
+    uptime_alert_npubs: str = ""          # npubs to DM (one per line/comma; empty = the admin's own npub)
     # Nostr Stats Bot is now a per-bot FEATURE (Bot.config.stats_enabled), not a global setting —
     # see app/services/stats_bot_service.py + the Bots tab. (No global stats_bot_* keys.)
     # Social notification relay (Misskey/Pleroma → Telegram)

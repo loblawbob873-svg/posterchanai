@@ -196,6 +196,52 @@
     </fieldset>
 
     <fieldset>
+        <legend>Uptime Monitoring</legend>
+        <div class="form-group">
+            <label for="uptime_enabled">
+                <input type="checkbox" id="uptime_enabled" name="uptime_enabled"> Enable Uptime Monitoring
+            </label>
+            <small>📡 Polls the endpoints below and shows them in <strong>Discover → Server Stats → Uptime</strong> (heartbeats, response time, 24h/30d uptime), and on a standalone public status page at <code>/status</code> (JSON at <code>/status.json</code>) that needs no account and no JavaScript. Checks run in the background worker process; state is stored in the Nostr relay, not a database table. <strong>Both pages are public</strong> — only list endpoints you're happy to publish.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_monitors">Endpoints (one per line)</label>
+            <textarea id="uptime_monitors" name="uptime_monitors" rows="6" placeholder="Website | https://poster.place&#10;Relay | https://poster.place/relay | 120&#10;Git host | https://poster.place/git | 300 | posterchanai&#10;https://example.com"></textarea>
+            <small>Format: <code>Name | URL | interval seconds | expected text</code>. Only the URL is required — a bare URL line names itself after the host. The interval falls back to the default below; with an <em>expected text</em> field the response body must contain it, otherwise any 2xx/3xx counts as up. Lines starting with <code>#</code> are ignored. Renaming a monitor starts its history over (the name is its id); changing its URL keeps it.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_interval_seconds">Default Check Interval (seconds)</label>
+            <input type="number" id="uptime_interval_seconds" name="uptime_interval_seconds" min="20" placeholder="60">
+            <small>Used by any endpoint that doesn't set its own. Minimum 20s.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_timeout_seconds">Request Timeout (seconds)</label>
+            <input type="number" id="uptime_timeout_seconds" name="uptime_timeout_seconds" min="1" placeholder="15">
+        </div>
+        <div class="form-group">
+            <label for="uptime_retries">Failures Before DOWN</label>
+            <input type="number" id="uptime_retries" name="uptime_retries" min="1" placeholder="2">
+            <small>Consecutive failed checks before a monitor is called down and an alert is sent — stops a single blip from paging you.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_telegram">
+                <input type="checkbox" id="uptime_alert_telegram" name="uptime_alert_telegram"> Telegram alerts
+            </label>
+            <small>Sends 🔴 DOWN / 🟢 UP messages to the admin's Telegram (needs Telegram enabled on the admin account).</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_nostr">
+                <input type="checkbox" id="uptime_alert_nostr" name="uptime_alert_nostr"> Nostr alerts
+            </label>
+            <small>Sends the same message as an encrypted NIP-17 DM from this instance's operator key — it arrives in any Nostr client, not just this one.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_npubs">Alert npubs</label>
+            <input type="text" id="uptime_alert_npubs" name="uptime_alert_npubs" placeholder="empty = the admin's own npub">
+            <small>Who receives the Nostr alerts — one npub per line or comma-separated. Leave empty to DM the admin.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Agentic Node Management</legend>
         <div class="form-group">
             <small>Run OS commands and <strong>agentic tasks</strong> (LLM-driven, multi-step goals) on SSH-reachable nodes or <code>local</code> — from chat, Telegram, or the health report.</small>

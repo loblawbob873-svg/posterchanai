@@ -725,6 +725,22 @@ async def client_server_stats():
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+@router.get("/uptime")
+async def client_uptime():
+    """Public uptime-monitor status for the Server Stats page's Uptime tab.
+
+    Public on purpose — it is a status page, and the endpoints on it are ones an admin chose to
+    publish. The checks themselves run in the worker process; this only reads the state doc the
+    worker writes to the relay, cached server-side, so polling it is a dictionary lookup.
+    """
+    from app.services import uptime_service
+    try:
+        return JSONResponse(await uptime_service.get_status())
+    except Exception as e:
+        logger.warning("[client] uptime failed: %s", e)
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
 @router.get("/commands")
 async def client_commands():
     """The command catalogue for the client's help sheet — grouped, with descriptions.

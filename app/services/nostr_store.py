@@ -114,7 +114,15 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
     return await _ws_publish(port, event, timeout=timeout)
 
 
-async def _ws_query(port: int, filters: list, timeout: float = 6.0) -> list:
+async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: bool = False) -> list:
+    """Query the local relay. Returns the matching events.
+
+    `strict` decides what a FAILURE looks like. By default a dead socket or a timeout is swallowed and
+    reported as "no events" — which is what every hydrate-style caller wants (a node whose relay isn't
+    up yet must not crash on startup). But that makes "the document doesn't exist" and "I couldn't
+    ask" the same answer, and a caller that then WRITES on the strength of an empty read will replace
+    real data with nothing. Pass strict=True to get the exception instead, and treat it as "unknown".
+    """
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"
     sub = "repo" + os.urandom(4).hex()
@@ -130,6 +138,8 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0) -> list:
                     break
     except Exception as e:
         logger.debug("[nostr-store] query failed: %s", e)
+        if strict:
+            raise
     return out
 
 
@@ -167,12 +177,17 @@ async def put_doc(port: int, seckey: bytes, d_tag: str, data,
 
 
 async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey: str | None = None,
-                  encrypt: bool = True, kind: int = APP_KIND):
-    """Read document `d_tag`. Supply `seckey` (owner) to decrypt, or `pubkey` for a plaintext doc."""
+                  encrypt: bool = True, kind: int = APP_KIND, strict: bool = False):
+    """Read document `d_tag`. Supply `seckey` (owner) to decrypt, or `pubkey` for a plaintext doc.
+
+    Returns None when the document doesn't exist. With `strict=True` an unreachable relay RAISES
+    instead of also returning None — see _ws_query. Any caller that writes back what it read should
+    use it, so a failed read can't be mistaken for an empty document."""
     pk = pubkey or (bip340.pubkey_from_seckey(seckey).hex() if seckey else None)
     if not pk:
         raise ValueError("get_doc needs seckey or pubkey")
-    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}])
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}],
+                          strict=strict)
     if not evs:
         return None
     evs.sort(key=lambda e: e.get("created_at", 0), reverse=True)   # newest wins (defensive)

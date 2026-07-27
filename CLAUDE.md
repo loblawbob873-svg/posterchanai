@@ -169,8 +169,8 @@ arg (`clip <start> <end>`).
 
 APScheduler `AsyncIOScheduler`. The pollers run in a **separate worker process**
 (`app/worker.py`, spawned from `app/main.py` **only on port 3051** so they can't double-run):
-`logs_scheduler`, `social_notifications_service`, `nitter_feeds_service`, and the three
-fediverse↔Nostr bridge services (`fedi_nostr_bridge_service`, `fedi_nostr_writeback_service`,
+`logs_scheduler`, `social_notifications_service`, `nitter_feeds_service`, `uptime_service`, and the
+three fediverse↔Nostr bridge services (`fedi_nostr_bridge_service`, `fedi_nostr_writeback_service`,
 `fedi_nostr_personal_service`). Each exposes idempotent `start_*`/`stop_*` helpers. The in-process
 port-3051 schedulers (relay, streams, bot manager, reminders, DVM, blossom cleanup, tor) stay in
 `app/main.py`. **Worker gotcha:** the worker must read `*_enabled` flags from the DB, not
@@ -192,6 +192,16 @@ Module-level singleton `telegram_service` (`app/services/telegram_service.py`); 
 Bot API server via the `telegram_api_base` setting (lifts the 20 MB file cap). Background
 callbacks that fire after a request must **not** reuse the request's DB session (it's closed) —
 open a fresh `SessionLocal` and capture any needed config up front.
+
+**Uptime monitoring** (`app/services/uptime_service.py`, Admin → Services → "Uptime Monitoring",
+Discover → Server Stats → **Uptime** tab): HTTP monitors with heartbeats, response time and 24h/30d
+uptime, alerting on up→down / down→up over Telegram and NIP-17 DMs. All state is ONE operator-signed
+kind-30078 doc (`pcai:kv:uptime`) — no SQL table. The checks run in the WORKER (sole writer); the app
+process only READS the doc for the public `/client/uptime` endpoint. **Gotcha:** it reads with
+`nostr_store.get_doc(..., strict=True)` and refuses to persist unless the restore succeeded —
+`_ws_query` otherwise returns `[]` for BOTH "no document" and "relay unreachable", and writing on the
+strength of that empty read replaces the whole history (the same replaceable-doc wipe that took out a
+drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for that one).
 
 ## Notable features
 

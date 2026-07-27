@@ -1,7 +1,9 @@
-/* #stats — public Server Stats. Anyone (including a logged-out guest) can read them.
+/* #stats — public Server Stats + Uptime. Anyone (including a logged-out guest) can read them.
  *
- * Data comes from ONE cached endpoint (/client/server-stats, recomputed at most once a minute server-side),
- * so opening this page costs the server a dictionary lookup, not a query.
+ * Two tabs, two cached endpoints: /client/server-stats (activity, recomputed at most once a minute
+ * server-side) and /client/uptime (endpoint monitors, whose checks run in the background worker —
+ * this page only reads the state the worker publishes). Opening either costs the server a dictionary
+ * lookup, not a query.
  *
  * Rendering is deliberately dumb: every chart is a static SVG string built once per refresh — no
  * canvas, no animation loop, no requestAnimationFrame, no charting library. The only motion is a
@@ -16,7 +18,9 @@
     const inView = () => window.__PC.VIEW === 'stats';
 
     const RANGES = [['minute','60 min'],['hour','24 hours'],['day','30 days']];
+    const TABS = [['stats','📊 Activity'],['uptime','📡 Uptime']];
     let _range = 'hour', _data = null, _timer = null, _busy = false;
+    let _tab = 'stats', _up = null, _upBusy = false;
 
     // Per-metric accent + label. Colours are the client's own neon palette so the page matches the
     // rest of the app rather than inventing a second one.
@@ -115,17 +119,16 @@
         <div class="st-tval">${enc(String(value))}</div><div class="st-tlbl muted small">${enc(label)}</div></div>`;
     }
 
-    function render(){
-      const feed = $('#feed'); if(!feed) return;
-      if(!_data){ feed.innerHTML = `<div class="st-wrap"><div class="spinner"></div></div>`; return; }
+    /* The Activity tab's body (everything below the shared header/tabs). Returns a string; the
+       caller owns the wrapper, so switching tabs never re-paints the header. */
+    function activityBody(){
+      if(!_data) return `<div class="spinner"></div>`;
       // Say so out loud rather than rendering an empty page: a payload without `windows` means the
       // endpoint isn't the stats one (this is exactly what a route-name collision looked like — the
       // page silently drew nothing while the fetch returned 200).
       if(!_data.windows){
-        feed.innerHTML = `<div class="st-wrap"><h2 class="st-h1">📊 Server Stats</h2>
-          <p class="muted">Stats aren't available from this server yet — it may need a restart to pick
-          up the stats endpoint.</p></div>`;
-        return;
+        return `<p class="muted">Stats aren't available from this server yet — it may need a restart
+          to pick up the stats endpoint.</p>`;
       }
       const w = (_data.windows||{})[_range] || {series:{}, n:0};
       const S = w.series || {};
@@ -146,12 +149,7 @@
       const GAME_LBL = {chess:'♟️ Chess', tictactoe:'⭕ Tic-Tac-Toe', hangman:'🎯 Hangman',
                         connect4:'🔴 Connect Four', blackjack:'🃏 Blackjack', holdem:'🂡 Hold’em'};
 
-      feed.innerHTML = `<div class="st-wrap">
-        <div class="st-head">
-          <div><h2 class="st-h1">📊 Server Stats</h2>
-            <div class="muted small">Activity published to <b>this server</b> — not the wider Nostr network it syncs. Public, no account needed.</div></div>
-        </div>
-
+      return `
         <div class="st-ranges">${RANGES.map(([k,l])=>
           `<button class="st-range${_range===k?' on':''}" data-range="${k}">${enc(l)}</button>`).join('')}</div>
 
@@ -213,32 +211,159 @@
           full history.</div>` : ''}
 
         <div class="st-foot muted small">Refreshes every ${enc(String(_data.ttl||60))}s ·
-          computed in ${enc(String(_data.ms||0))}ms · shared by every viewer</div>
+          computed in ${enc(String(_data.ms||0))}ms · shared by every viewer</div>`;
+    }
+
+    // ---- Uptime tab ---------------------------------------------------------------------------
+    // The server does the arithmetic (uptime %, averages) so this stays a renderer, same as above.
+
+    const ago = ts => {
+      if(!ts) return 'never';
+      const s = Math.max(0, Math.floor(Date.now()/1000) - ts);
+      if(s < 60) return s + 's ago';
+      if(s < 3600) return Math.floor(s/60) + 'm ago';
+      if(s < 86400) return Math.floor(s/3600) + 'h ago';
+      return Math.floor(s/86400) + 'd ago';
+    };
+    const dur = ts => {
+      if(!ts) return '—';
+      const s = Math.max(0, Math.floor(Date.now()/1000) - ts);
+      if(s < 3600) return Math.floor(s/60) + 'm';
+      if(s < 86400) return Math.floor(s/3600) + 'h';
+      return Math.floor(s/86400) + 'd';
+    };
+    const pct = v => (v==null ? '—' : (Number(v).toFixed(Number(v) >= 99.95 ? 0 : 2) + '%'));
+    const plural = (n, w) => nf(n) + ' ' + w + (n === 1 ? '' : 's');
+
+    /* Kuma-style heartbeat bar: one bar per check, oldest → newest, right-aligned. Titles carry the
+       timestamp so hovering a red bar tells you WHEN, without any tooltip machinery. */
+    function beats(checks){
+      const c = (checks||[]).slice(-60);
+      if(!c.length) return `<div class="up-beats"><span class="muted small">no checks yet</span></div>`;
+      return `<div class="up-beats">${c.map(([ts, ok, ms])=>
+        `<i class="up-beat${ok?'':' bad'}" title="${enc(new Date(ts*1000).toLocaleString())} · ${
+          ok ? enc(String(ms)) + ' ms' : 'failed'}"></i>`).join('')}</div>`;
+    }
+
+    function monitorCard(m){
+      const st = m.status === 'up' ? 'up' : (m.status === 'down' ? 'down' : 'pending');
+      const lbl = st === 'up' ? 'Up' : (st === 'down' ? 'Down' : 'Pending');
+      return `<div class="up-card ${st}">
+        <div class="up-hd">
+          <div class="up-name">
+            <span class="up-dot"></span>
+            <a href="${enc(m.url||'#')}" target="_blank" rel="noopener noreferrer nofollow">${enc(m.name||m.url||'')}</a>
+          </div>
+          <span class="up-pill ${st}">${lbl}</span>
+        </div>
+        <div class="up-url muted small">${enc(m.url||'')}</div>
+        ${beats(m.checks)}
+        <div class="up-meta muted small">
+          ${st === 'pending' ? '<span>awaiting first check</span>'
+            : `<span>${st} for <b>${enc(dur(m.since))}</b></span>`}
+          <span>24h <b>${enc(pct(m.uptime_24h))}</b></span>
+          <span>30d <b>${enc(pct(m.uptime_30d))}</b></span>
+          <span>${enc(String(m.ms||0))} ms <span class="muted">(avg ${enc(String(m.avg_ms||0))})</span></span>
+          <span>checked ${enc(ago(m.last))}</span>
+        </div>
+        ${m.err ? `<div class="up-err small">${enc(m.err)}</div>` : ''}
+      </div>`;
+    }
+
+    function uptimeBody(){
+      if(!_up) return `<div class="spinner"></div>`;
+      if(!_up.enabled){
+        return `<p class="muted">Uptime monitoring is off on this server. An admin can turn it on and
+          add endpoints in <b>Admin → Services → Uptime Monitoring</b>.</p>`;
+      }
+      if(!(_up.monitors||[]).length){
+        return `<p class="muted">No endpoints are being monitored yet. An admin can add them in
+          <b>Admin → Services → Uptime Monitoring</b>.</p>`;
+      }
+      const all = _up.monitors, down = _up.down|0;
+      const overall = all.map(m=>m.uptime_24h).filter(v=>v!=null);
+      const avg = overall.length ? overall.reduce((a,b)=>a+b,0)/overall.length : null;
+      return `
+        <div class="up-banner ${down?'down':'ok'}">${down
+          ? `🔴 ${nf(down)} of ${plural(_up.total,'endpoint')} down`
+          : `🟢 All ${plural(_up.total,'endpoint')} up`}</div>
+        <div class="st-tiles">
+          ${tile('endpoints', nf(_up.total))}
+          ${tile('up now', nf(_up.up))}
+          ${tile('down now', nf(down))}
+          ${tile('average uptime 24h', pct(avg))}
+        </div>
+        <div class="up-list">${all.map(monitorCard).join('')}</div>
+        <div class="st-foot muted small">Checked in the background · page refreshes every 30s ·
+          last update ${enc(ago(_up.updated))}<br>
+          Shareable public status page: <a href="/status" target="_blank" rel="noopener">/status</a>
+          · machine-readable: <a href="/status.json" target="_blank" rel="noopener">/status.json</a></div>`;
+    }
+
+    // ---- shell --------------------------------------------------------------------------------
+
+    function render(){
+      const feed = $('#feed'); if(!feed) return;
+      const sub = _tab === 'uptime'
+        ? 'Endpoints this server watches. Public, no account needed.'
+        : 'Activity published to <b>this server</b> — not the wider Nostr network it syncs. Public, no account needed.';
+      feed.innerHTML = `<div class="st-wrap">
+        <div class="st-head">
+          <div><h2 class="st-h1">📊 Server Stats</h2>
+            <div class="muted small">${sub}</div></div>
+        </div>
+        <div class="st-tabs">${TABS.map(([k,l])=>
+          `<button class="st-tab${_tab===k?' on':''}" data-tab="${k}">${enc(l)}</button>`).join('')}</div>
+        <div class="st-body">${_tab === 'uptime' ? uptimeBody() : activityBody()}</div>
       </div>`;
 
       feed.querySelectorAll('.st-range').forEach(b=> b.onclick = ()=>{ _range = b.dataset.range; render(); });
+      feed.querySelectorAll('.st-tab').forEach(b=> b.onclick = ()=>{
+        if(_tab === b.dataset.tab) return;
+        _tab = b.dataset.tab;
+        render();               // paint the tab's last snapshot (or a spinner) immediately…
+        load();                 // …then refresh whichever endpoint it needs
+        schedule();             // the two tabs poll at different rates
+      });
     }
 
-    async function load(force){
-      if(_busy) return; _busy = true;
-      try{
-        const r = await fetch('/client/server-stats', {credentials:'include'});
-        if(r.ok){ const d = await r.json(); if(!d.error) _data = d; }
-      }catch(_){ }
-      finally{ _busy = false; }
+    /* One loader for both tabs — it only ever fetches the endpoint the OPEN tab needs, so sitting on
+       Activity costs nothing on the uptime side and vice versa. */
+    async function load(){
+      if(_tab === 'uptime'){
+        if(_upBusy) return; _upBusy = true;
+        try{
+          const r = await fetch('/client/uptime', {credentials:'include'});
+          if(r.ok){ const d = await r.json(); if(!d.error) _up = d; }
+        }catch(_){ }
+        finally{ _upBusy = false; }
+      }else{
+        if(_busy) return; _busy = true;
+        try{
+          const r = await fetch('/client/server-stats', {credentials:'include'});
+          if(r.ok){ const d = await r.json(); if(!d.error) _data = d; }
+        }catch(_){ }
+        finally{ _busy = false; }
+      }
       if(inView()) render();
+    }
+
+    /* Poll only while the page is actually open AND the tab is visible — a backgrounded phone must
+       not keep waking to fetch. Uptime moves faster than the once-a-minute stats snapshot, so it
+       polls at 30s; the server caches both, so neither is a per-viewer cost. */
+    function schedule(){
+      if(_timer) clearInterval(_timer);
+      const every = _tab === 'uptime' ? 30000 : 60000;
+      _timer = setInterval(()=>{
+        if(!inView()){ clearInterval(_timer); _timer=null; return; }
+        if(document.visibilityState === 'visible') load();
+      }, every);
     }
 
     async function renderStats(){
       render();                 // paint the last snapshot (or a spinner) immediately
       await load();
-      // Poll only while the page is actually open AND the tab is visible — a backgrounded phone must
-      // not keep waking to fetch stats.
-      if(_timer) clearInterval(_timer);
-      _timer = setInterval(()=>{
-        if(!inView()){ clearInterval(_timer); _timer=null; return; }
-        if(document.visibilityState === 'visible') load();
-      }, 60000);
+      schedule();
     }
 
     window.PCStats = { render: renderStats };

@@ -6395,7 +6395,7 @@
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="react"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
-          <button class="act actz ${counts.zaps?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${counts.zaps?fmtSats(counts.zaps):''}</span></button>
+          <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
       </div></article>`;
@@ -6572,11 +6572,22 @@
   let CIDX = null;
   function invalidateCounts(){ CIDX = null; }
   function buildCounts(){
-    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, sob:{} };
+    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, sob:{}, tips:{}, tipN:{} };
     const lastE = e => { for(let i=e.tags.length-1;i>=0;i--) if(e.tags[i][0]==='e') return e.tags[i][1]; return null; };
     for(const e of Store.all()){
       const id = lastE(e); if(!id) continue;
-      if(e.kind===1) c.replies[id]=(c.replies[id]||0)+1;
+      if(e.kind===1){
+        // An ADDRESS tip (Monero `t:monerotip` / BCH `t:bchtip`) is a kind-1 carrying an `e` tag, so it
+        // used to be counted as a REPLY and shown nowhere as a tip — you'd receive 0.00022 XMR and the
+        // note would just gain a phantom reply. It isn't a zap receipt either (no kind 9735, no sats:
+        // the payment happens wallet-to-wallet off Nostr), so it needs its own tally, per unit.
+        const tip=_tipNote(e);
+        if(tip){
+          const n=parseFloat(tip.amt)||0;
+          (c.tips[id]=c.tips[id]||{})[tip.unit]=(c.tips[id][tip.unit]||0)+n;
+          c.tipN[id]=(c.tipN[id]||0)+1;
+        } else c.replies[id]=(c.replies[id]||0)+1;
+      }
       else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content);
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
@@ -6584,7 +6595,19 @@
     }
     CIDX = c;
   }
-  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, zaps:CIDX.zaps[id]||0, zapN:CIDX.zapN[id]||0, iRt:CIDX.myRt.has(id), sob:CIDX.sob[id]||0 }; }
+  function countsFor(id){ if(!CIDX) buildCounts(); return { replies:CIDX.replies[id]||0, reactions:CIDX.reactions[id]||0, reposts:CIDX.reposts[id]||0, zaps:CIDX.zaps[id]||0, zapN:CIDX.zapN[id]||0, iRt:CIDX.myRt.has(id), sob:CIDX.sob[id]||0, tips:CIDX.tips[id]||null, tipN:CIDX.tipN[id]||0 }; }
+  /* Amount label for an address tip: XMR/BCH are decimal, not sats, so fmtSats can't render them
+     (0.00022 would round to "0"). Trim trailing zeros so a tip reads as the sender typed it. */
+  function fmtTipAmt(n){ return (Number(n)||0).toFixed(8).replace(/0+$/,'').replace(/\.$/,'') || '0'; }
+  /* What the tip button shows: Lightning sats and any address tips, side by side — they're different
+     currencies and summing them would be a lie. Empty string when the note has neither. */
+  function tipCountLabel(counts){
+    const parts=[];
+    if(counts.zaps) parts.push(fmtSats(counts.zaps));
+    const t=counts.tips;
+    if(t){ if(t.XMR) parts.push('ɱ'+fmtTipAmt(t.XMR)); if(t.BCH) parts.push('🟢'+fmtTipAmt(t.BCH)); }
+    return parts.join(' ');
+  }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
   // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/pickEmoji)
 
@@ -9237,7 +9260,11 @@
   // key (cross-device, survives PWA reinstalls), cached in localStorage for instant render. Blossom is
   // flat/content-addressed, so foldering is this client-side overlay keyed by blob sha256.
   const FilesIdx = {
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false, _saving:false,
+    // _pullDone = a pull attempt finished. _pullOk = the pull actually MATERIALISED the index (or
+    // proved the server has none). _pullBlocked = the server HAS an index we could not read — the one
+    // state in which writing anything would destroy it. The three are not the same thing, and
+    // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false, _saving:false,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -9250,10 +9277,26 @@
     // The master key (AES-256) is generated once, NIP-44 self-wrapped, and kept in the index pointer.
     async _ensureMK(){
       if(this.mk) return this.mk;
-      if(this._mkWrapped){ try{ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }catch(_){} }
+      // A wrapped key that won't unwrap (signer not ready / wrong account / NIP-44 denied) must FAIL,
+      // never silently mint a replacement: the new key can't read the existing encrypted index or Music
+      // blobs, and re-wrapping it over the old one in localStorage destroys the only way back to them.
+      if(this._mkWrapped){ this.mk=_b64u8(JSON.parse(await signer.nip44dec(ME.pubkey,this._mkWrapped)).k); return this.mk; }
       this.mk=crypto.getRandomValues(new Uint8Array(32));
       this._mkWrapped=await signer.nip44enc(ME.pubkey, JSON.stringify({k:_u8b64(this.mk)})); this.saveLocal();
       return this.mk;
+    },
+    /* Fold a server index UNDER the local one: folders/encFolders union, per-file local wins (a local
+       entry is the newer edit). Used only when a pull lands while edits are pending — the alternative
+       there is dropping one side, and dropping the server's side loses the whole drive's foldering.
+       The known cost is that a folder deleted locally in that window can come back; resurrecting a
+       folder is recoverable, replacing 400 files' metadata with nothing is not. */
+    _merge(srv){
+      this._norm();
+      const loc=this.data;
+      this.data={ folders:[...new Set([...(srv.folders||[]), ...loc.folders])],
+                  encFolders:[...new Set([...(srv.encFolders||[]), ...loc.encFolders])],
+                  files:Object.assign({}, srv.files||{}, loc.files||{}) };
+      this.saveLocal();
     },
     async pull(){
       try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
@@ -9265,23 +9308,57 @@
           let idx=null;
           if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
             this._lastIndexSha=ptr.indexSha;        // remember it so the NEXT save GCs this superseded blob
-            await this._ensureMK();                 // (without this, every session leaked its old index blob)
-            const br=await fetch(mediaServer()+'/'+ptr.indexSha);
-            if(br.ok){ const d=JSON.parse(new TextDecoder().decode(await _masterDecrypt(this.mk, new Uint8Array(await br.arrayBuffer()))));
-              if(d&&d.files) idx=d; }
+            // Own try: a signer that can't unwrap the master key, an offline media host or a 404'd blob
+            // must fall through to the _pullBlocked check below, NOT escape to the outer catch — which
+            // would leave us looking like a fresh empty drive that is safe to overwrite.
+            try{
+              await this._ensureMK();               // (without this, every session leaked its old index blob)
+              const br=await fetch(mediaServer()+'/'+ptr.indexSha);
+              if(br.ok){ const d=JSON.parse(new TextDecoder().decode(await _masterDecrypt(this.mk, new Uint8Array(await br.arrayBuffer()))));
+                if(d&&d.files) idx=d; }
+            }catch(e){ console.warn('files-index: could not read index blob', e); }
           } else if(ptr.files){ idx=ptr; }          // v1: small index stored inline in the pointer
           // Don't clobber edits made WHILE this (possibly slow blob-fetch) pull was in flight — local is
           // newer and syncs on the next save. Without this, creating a folder + uploading during the
           // initial load got wiped: the files lost their metadata and vanished / showed as octet-stream.
-          if(idx && !this._dirty && !this._saving){ this.data=idx; this.saveLocal(); }
+          if(idx){
+            if(!this._dirty && !this._saving){ this.data=idx; this.saveLocal(); }
+            // Edits in flight: the old code SKIPPED the server index entirely, so a first upload on a
+            // fresh device saved {Music, that one file} straight over a full drive. Fold the server's
+            // index UNDER the local edits instead — local wins per file, nothing is dropped.
+            else this._merge(idx);
+          }
+          // Did we actually GET the index? A pointer that names a blob we couldn't fetch or decrypt is
+          // the dangerous case: the server HAS folders, we're holding an empty default, and the next
+          // save would replace theirs with ours. Flag it and refuse to write until a pull succeeds.
+          if(idx) this._pullOk=true;
+          else if(ptr.indexSha || (ptr.files && Object.keys(ptr.files).length)) this._pullBlocked=true;
+          else this._pullOk=true;                 // a pointer with nothing in it: server really is empty
+        } else if(r && r.ok){
+          this._pullOk=true;                      // server has no index at all — a fresh drive, safe to save
         }
-        this._pullDone=true;   // only AFTER a successful pull is it safe to GC orphan index blobs (we now
-                               // know _lastIndexSha + the real file metadata — see _gcOrphanIndexBlobs)
+        this._pullDone=true;
       }catch(_){}
       return this._norm();
     },
     push(){ this._dirty=true; this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
     async _save(){
+      // NEVER overwrite a server index we failed to READ. The doc is replaceable, so one save from a
+      // browser holding the empty default (fresh device, cleared storage, a blob fetch that 404'd)
+      // replaces every folder and filename with nothing — which is exactly how a drive lost its
+      // folders while all 417 blobs sat untouched in Blossom. Retry the pull once; if it still can't
+      // be read, keep the edit local (_dirty stays set) and say so rather than writing over it.
+      // The gate is "we have CONFIRMED what's on the server" (_pullOk), not "the pull didn't set an
+      // error flag" — an errored/unauthorised pull sets neither, and defaulting that to "safe to
+      // write" is the same mistake one level along.
+      if(!this._pullOk){
+        await this.pull();
+        if(!this._pullOk){
+          console.warn('files-index: server index unreadable — not saving (would overwrite it)');
+          try{ toast('⚠️ Couldn\'t read your folders from the server — not saving, so your existing folders aren\'t overwritten. Try reloading.'); }catch(_){}
+          return;
+        }
+      }
       this._saving=true;   // while a save's index-blob upload + POST is in flight the server is NOT yet
                            // up to date — pull() must not apply stale server data during this window (it
                            // would wipe the very file being saved). Cleared in finally.
@@ -9300,7 +9377,13 @@
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr})});
         if(ptr.indexSha && this._lastIndexSha && this._lastIndexSha!==ptr.indexSha) _delBlobSilent(this._lastIndexSha);   // GC the superseded index blob
         if(ptr.indexSha) this._lastIndexSha=ptr.indexSha;
-      }catch(e){ console.warn('files-index save failed', e); }
+      }catch(e){
+        // The edit is NOT saved, so it must not stay marked clean: `_dirty=false` was set at the
+        // capture point above, and leaving it there tells the next pull() it's free to overwrite local
+        // with the server's copy — silently discarding the rename/move/upload that just failed.
+        this._dirty=true;
+        console.warn('files-index save failed', e);
+      }
       finally{ this._saving=false; }
     },
     beginBatch(){ this._batch=true; },
@@ -9648,10 +9731,13 @@
   // and random/other ciphertext fails AES-GCM auth and is skipped).
   let _idxGcDone=false;
   async function _gcOrphanIndexBlobs(list){
-    // CRITICAL: wait until pull() finished. Before it does, _lastIndexSha is null and FilesIdx.files is
-    // empty, so the user's LIVE index blob (which is {files,folders}-shaped) would not be excluded and
-    // would be deleted, destroying the whole index. Re-runs after pull's .then() re-renders.
-    if(_idxGcDone || !FilesIdx._pullDone) return;
+    // CRITICAL: wait until pull() actually LOADED the index (_pullOk), not merely until it finished
+    // (_pullDone). Before it has, _lastIndexSha is null and FilesIdx.files is empty, so the user's LIVE
+    // index blob (which is {files,folders}-shaped) would not be excluded and would be deleted,
+    // destroying the whole index. A pull that fetched the pointer but could NOT read the blob sets
+    // _pullDone too — and in that state this GC was one decrypt away from deleting the only surviving
+    // copy of a drive's folders. Re-runs after pull's .then() re-renders.
+    if(_idxGcDone || !FilesIdx._pullOk) return;
     _idxGcDone=true;
     try{
       const cur=FilesIdx._lastIndexSha;

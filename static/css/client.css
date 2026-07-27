@@ -3306,6 +3306,14 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .st-h1{margin:0 0 2px;font-size:22px}
 .st-sec{margin:26px 0 10px;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 
+/* tabs — Activity / Uptime. Same pill language as the range buttons, one notch louder so the two
+   rows read as a hierarchy (tab picks the page, range filters what's on it). */
+.st-tabs{display:flex;gap:8px;margin:0 0 14px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.st-tab{flex:0 0 auto;background:transparent;border:1px solid var(--line);color:var(--muted);
+  border-radius:999px;padding:8px 18px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
+.st-tab:hover{border-color:var(--cyan);color:var(--text)}
+.st-tab.on{color:#04121a;background:var(--cyan);border-color:var(--cyan);box-shadow:var(--glow-cy)}
+
 .st-ranges{display:flex;gap:8px;margin-bottom:14px}
 .st-range{flex:0 0 auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
   border-radius:999px;padding:7px 16px;font-size:14px;cursor:pointer;transition:.15s}
@@ -3353,6 +3361,50 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 .st-note{margin-top:16px;border-left:2px solid var(--line);padding-left:10px}
 .st-foot{margin-top:18px;text-align:center}
+
+/* ---- 📡 Uptime tab ---------------------------------------------------------------------------
+   Status colours are hard-coded rather than themed: red/green mean one thing here and must not turn
+   into an accent colour on a light theme, where a themed "down" could read as decoration. */
+.up-banner{border-radius:var(--r);padding:12px 16px;font-weight:700;margin-bottom:12px;
+  border:1px solid var(--line);background:var(--panel)}
+.up-banner.ok{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10);color:#34d399}
+.up-banner.down{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.12);color:#f87171}
+
+.up-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.up-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
+  transition:border-color .15s}
+.up-card.up{border-left:3px solid #34d399}
+.up-card.down{border-left:3px solid #ef4444}
+.up-card.pending{border-left:3px solid var(--muted)}
+.up-hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.up-name{display:flex;align-items:center;gap:8px;min-width:0;font-weight:700;font-size:15px}
+.up-name a{color:var(--text);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.up-name a:hover{color:var(--cyan)}
+.up-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.up-card.up .up-dot{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,.8)}
+.up-card.down .up-dot{background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.8)}
+.up-pill{flex:0 0 auto;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.04em}
+.up-pill.up{background:rgba(52,211,153,.15);color:#34d399}
+.up-pill.down{background:rgba(239,68,68,.18);color:#f87171}
+.up-pill.pending{background:rgba(148,163,184,.15);color:var(--muted)}
+.up-url{margin:2px 0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* heartbeat bar — one <i> per check, newest on the right */
+.up-beats{display:flex;align-items:flex-end;gap:2px;height:26px;overflow:hidden}
+.up-beat{flex:1 1 3px;min-width:2px;max-width:8px;height:100%;border-radius:2px;
+  background:#34d399;opacity:.85}
+.up-beat.bad{background:#ef4444;opacity:1}
+
+.up-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px}
+.up-meta b{color:var(--text)}
+.up-err{margin-top:6px;color:#f87171;word-break:break-word}
+
+@media (max-width:820px){
+  .up-beats{height:22px}
+  .up-beat{max-width:6px}
+  .up-meta{gap:2px 10px}
+}
 
 @media (max-width:820px){
   .st-wrap{padding:0 8px 90px}

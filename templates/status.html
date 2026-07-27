@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status · {{ site }}</title>
+<meta name="description" content="Live service status for {{ site }}.">
+<!-- Server-rendered and refreshed by the browser, with NO JavaScript and NO /static assets. A status
+     page is read precisely when something is broken, so it must not depend on the SPA bundle, the CDN
+     copy of /static, or a fetch loop. The payload behind it is cached server-side, so this refresh is
+     a dictionary lookup per viewer per minute. -->
+<meta http-equiv="refresh" content="60">
+<style>
+  :root{ --bg:#0b0a12; --panel:#141221; --line:#282438; --text:#e8e6f0; --muted:#9a94b0;
+         --up:#34d399; --down:#ef4444; --pending:#9a94b0; }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f6fa; --panel:#fff; --line:#e2e0ec; --text:#16141f; --muted:#67637d; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:840px;margin:0 auto;padding:28px 16px 60px}
+  h1{margin:0 0 4px;font-size:22px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .banner{border-radius:12px;padding:14px 18px;font-weight:700;border:1px solid var(--line);margin-bottom:18px}
+  .banner.ok{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10);color:var(--up)}
+  .banner.bad{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.12);color:var(--down)}
+  .banner.none{color:var(--muted)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+  .card.up{border-left:3px solid var(--up)} .card.down{border-left:3px solid var(--down)}
+  .card.pending{border-left:3px solid var(--pending)}
+  .hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .name{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .name a{color:inherit;text-decoration:none} .name a:hover{text-decoration:underline}
+  .pill{flex:0 0 auto;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;text-transform:uppercase}
+  .pill.up{background:rgba(52,211,153,.15);color:var(--up)}
+  .pill.down{background:rgba(239,68,68,.18);color:var(--down)}
+  .pill.pending{background:rgba(154,148,176,.18);color:var(--muted)}
+  .url{color:var(--muted);font-size:12px;margin:2px 0 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .beats{display:flex;align-items:flex-end;gap:2px;height:26px;overflow:hidden}
+  .beats i{flex:1 1 3px;min-width:2px;max-width:8px;height:100%;border-radius:2px;background:var(--up);opacity:.85}
+  .beats i.bad{background:var(--down);opacity:1}
+  .beats .none{color:var(--muted);font-size:12px}
+  .meta{display:flex;flex-wrap:wrap;gap:3px 14px;margin-top:9px;color:var(--muted);font-size:12px}
+  .meta b{color:var(--text)}
+  .err{margin-top:6px;color:var(--down);font-size:12px;word-break:break-word}
+  .foot{margin-top:22px;text-align:center;color:var(--muted);font-size:12px}
+  .foot a{color:inherit}
+  @media (max-width:600px){ .wrap{padding:18px 12px 50px} .beats{height:22px} .beats i{max-width:6px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📡 Service status</h1>
+  <div class="sub">{{ site }} · updated {{ v.updated }} · this page refreshes itself every minute</div>
+
+  <div class="banner {% if v.empty %}none{% elif v.ok %}ok{% else %}bad{% endif %}">
+    {% if v.ok %}🟢{% elif v.empty %}⚪{% else %}🔴{% endif %} {{ v.banner }}
+  </div>
+
+  {% for m in v.monitors %}
+  <div class="card {{ m.status }}">
+    <div class="hd">
+      <div class="name"><a href="{{ m.url }}" target="_blank" rel="noopener noreferrer nofollow">{{ m.name }}</a></div>
+      <span class="pill {{ m.status }}">{{ m.label }}</span>
+    </div>
+    <div class="url">{{ m.url }}</div>
+    <div class="beats">
+      {% for b in m.beats %}<i class="{{ 'bad' if not b.ok else '' }}" title="{{ b.title }}"></i>{% endfor %}
+      {% if not m.beats %}<span class="none">no checks yet</span>{% endif %}
+    </div>
+    <div class="meta">
+      <span>{{ 'down' if m.status == 'down' else 'up' }} for <b>{{ m.since }}</b></span>
+      <span>24h <b>{{ m.pct24 }}</b></span>
+      <span>30d <b>{{ m.pct30 }}</b></span>
+      <span><b>{{ m.ms }} ms</b> (avg {{ m.avg_ms }})</span>
+      <span>checked {{ m.last }}</span>
+    </div>
+    {% if m.err %}<div class="err">{{ m.err }}</div>{% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="foot">Machine-readable: <a href="/status.json">/status.json</a></div>
+</div>
+</body>
+</html>

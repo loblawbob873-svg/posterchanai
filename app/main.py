@@ -1021,6 +1021,45 @@ async def manifest():
     return FileResponse(manifest_path, media_type="application/manifest+json")
 
 
+@app.get("/status", response_class=HTMLResponse)
+async def public_status_page(request: Request):
+    """The PUBLIC status page: poster.place/status. No account, no client bundle, no JavaScript.
+
+    Deliberately a top-level route rather than a tab-only view: the audience for a status page is
+    people who can't use the app right now, and asking them to load the SPA to find out whether the
+    SPA is up defeats the point. Registered before the /{entity} catch-all so /status isn't parsed as
+    a Nostr entity. 404s while uptime monitoring is off — nothing to publish yet.
+    """
+    from app.services import uptime_service, settings_store
+    data = await uptime_service.get_status()
+    if not data.get("enabled"):
+        raise StarletteHTTPException(status_code=404)
+    site = (settings_store.get("site_name", "") or "this server").strip()
+    try:
+        view = uptime_service.status_view(data)
+    except Exception as e:
+        # A status page that 500s is the worst possible failure mode for a status page — it's the one
+        # thing people load when they already suspect the server is broken. Degrade to the banner.
+        logging.warning("[status] could not render monitors: %s", e)
+        view = {"ok": False, "empty": True, "banner": "Status is temporarily unavailable",
+                "total": 0, "up": 0, "down": 0, "monitors": [], "updated": "just now"}
+    return templates.TemplateResponse("status.html", {
+        "request": request, "site": site, "v": view,
+    })
+
+
+@app.get("/status.json")
+async def public_status_json():
+    """The same status, machine-readable — for anyone else's monitoring, a badge, or a phone widget.
+    Same cached payload as /client/uptime (which the in-app Uptime tab uses); this is just the public,
+    guessable name for it."""
+    from app.services import uptime_service
+    data = await uptime_service.get_status()
+    if not data.get("enabled"):
+        raise StarletteHTTPException(status_code=404)
+    return JSONResponse(data)
+
+
 @app.get("/verify/{token}")
 async def verify_email_page(
     token: str,
