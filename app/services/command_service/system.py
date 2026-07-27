@@ -11,6 +11,45 @@ from ._common import Callable, Optional, logger
 _AGENT_BG_TASKS: set = set()
 
 
+async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
+    """Tell the user their background agent finished, as a NIP-17 DM from the instance's operator key.
+
+    The in-app `agent_done` push only reaches a socket that is still OPEN — which is precisely the case a
+    detached run exists to handle ("close the app, get the result later"). So a user who walked away
+    learned nothing until they went looking. A DM badges the client on every device they read from and
+    survives being offline. Mirrors uptime_service._alert_nostr / access_notify_service: operator key →
+    LOCAL relay, which federates outward. Best-effort — a failed ping must never sink a finished run."""
+    if not npub:
+        return
+    try:
+        from app.services import keystore, settings_store
+        from app.services.nostr import nostr_service, nip17
+        from app.services.nostr_store import publish_event
+
+        nsec = keystore.get_operator_nsec()
+        if not nsec:
+            logger.debug("[node] no operator key yet; skipping the agent-done DM")
+            return
+        sk = nostr_service.decode_seckey(nsec)
+        hexpk = nostr_service.to_pubkey_hex(npub)
+        if not sk or not hexpk:
+            return
+        # Short by design: the DM is the PING, not the delivery. The full transcript already landed in
+        # the conversation that launched the run — a multi-page agent log in a DM is unreadable.
+        one_line = " ".join((goal or "").split())
+        if len(one_line) > 160:
+            one_line = one_line[:159] + "…"
+        text = (f"🤖 {banner.replace('**', '')}\n\n"
+                + (f"Goal: {one_line}\n\n" if one_line else "")
+                + "The full transcript is in the chat you started it from (PosterChan AI).")
+        port = settings_store.get_int("nostr_relay_port", 3052)
+        ok, err = await publish_event(port, nip17.wrap(sk, hexpk, text))
+        if not ok:
+            logger.warning(f"[node] agent-done DM not published: {err}")
+    except Exception as e:
+        logger.warning(f"[node] agent-done DM failed: {e}")
+
+
 async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     """Run the agent over one-or-more (name, target) nodes on a FRESH session, then deliver the combined
     summary via notify({'type':'agent_result', ...}) — chat.py persists + pushes it (queued if offline).
@@ -24,9 +63,13 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
     sections = []
     backups = []        # (name, tar.gz bytes) — a sandbox's /workspace, auto-archived so the user gets what it built
     multi = len(targets) > 1
+    npub = ""           # the launcher's npub, captured below for the completion DM
     _stopped = (lambda: bool(stop and stop.is_set()))
     try:
         u = db.query(_User).filter(_User.id == uid).first() if uid else None
+        # Capture the npub NOW, while the session is alive: the completion DM fires after this session is
+        # closed (a multi-minute run outlives it), so it can't go back to the ORM for it.
+        npub = (getattr(u, "nostr_npub", "") or "").strip() if u else ""
         for name, target in targets:
             if _stopped():
                 break
@@ -126,6 +169,11 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
             await notify({"type": "agent_result", "content": f"{content}\n\n{banner}"})
         except Exception as e:
             logger.warning(f"[node] background agent deliver failed: {e}")
+        # Then ping the user on the SOCIAL side, so a run they walked away from actually reaches them
+        # (the in-app toast needs a live socket; a DM badges every device and waits). Skipped when THEY
+        # cancelled it — telling someone about the thing they just stopped is noise, not news.
+        if not _stopped():
+            await _agent_done_dm(npub, goal, banner)
         # Then hand back what the agent BUILT: each sandbox's /workspace as a downloadable .tar.gz.
         # Delivered as its own `agent_files` payload so each interface stores it its own way (web →
         # encrypted Blossom + link, Telegram → a document) — the same split the `type:files` path uses.
