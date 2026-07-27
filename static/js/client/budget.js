@@ -172,16 +172,14 @@
 
   function summary(){
     const income = _doc.bills.filter(b=>b.is_income).reduce((s,b)=>s+(Number(b.cost)||0), 0);
+    // Plans live on their own tab but count toward Bills Due, so the Plans tab carries a badge for
+    // the unpaid ones — otherwise the total silently disagrees with the bills you can see.
     const duePlanCats = _doc.cats.filter(c=>!settled(c));
-    const dueBills = _doc.bills.filter(b=>!b.is_income && !settled(b))
-                               .reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
-    // Plans live on their own tab, so their share of Bills Due is invisible from the Bills tab —
-    // it's reported separately (see the tile) rather than silently folded into one number.
-    const duePlans = duePlanCats.reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
-    const due = dueBills + duePlans;
+    let due = _doc.bills.filter(b=>!b.is_income && !settled(b)).reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
+    due += duePlanCats.reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
     let paid = _doc.bills.filter(b=>!b.is_income && b.paid==='Y').reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
     paid += _doc.cats.filter(c=>c.paid==='Y').reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
-    return { income, due, dueBills, duePlans, paid, remaining: income - paid - due,
+    return { income, due, paid, remaining: income - paid - due,
              dueCount: _doc.bills.filter(b=>!b.is_income && !settled(b)).length,
              duePlanCount: duePlanCats.filter(c=>catTotal(c.id)).length };
   }
@@ -227,9 +225,8 @@
   }
 
   // ---- render -----------------------------------------------------------------------------------
-  function tile(label, value, tone, sub){
-    return `<div class="bg-tile${tone?' '+tone:''}"><span class="bg-tl">${enc(label)}</span><b class="bg-tv">${enc(value)}</b>${
-      sub?`<span class="bg-ts">${enc(sub)}</span>`:''}</div>`;
+  function tile(label, value, tone){
+    return `<div class="bg-tile${tone?' '+tone:''}"><span class="bg-tl">${enc(label)}</span><b class="bg-tv">${enc(value)}</b></div>`;
   }
 
   function billRow(b){
@@ -288,8 +285,7 @@
         </div>
         <div class="bg-tiles">
           ${tile('Income', money(s.income), 'in')}
-          ${tile('Bills due', money(s.due), 'due',
-                 s.duePlans ? `${money(s.dueBills)} bills + ${money(s.duePlans)} plans` : '')}
+          ${tile('Bills due', money(s.due), 'due')}
           ${tile('Paid', money(s.paid), '')}
           ${tile('Remaining', (s.remaining<0?'−':'')+money(s.remaining), s.remaining<0?'neg':'ok')}
         </div>
