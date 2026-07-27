@@ -15539,7 +15539,15 @@
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
     try{
       toast('saving to Blossom…');
-      const r=await fetch(src, { credentials:'omit' });
+      // OUR OWN media is AUTHED and a credential-less fetch never gets it: an AI-chat artifact lives at
+      // /api/files/… (session/Bearer-gated → 401) or /client/file/… (ownership-cookie-gated → 403), so
+      // "save the image I just generated/compressed" died before it ever reached Blossom. Send the
+      // credentials for anything on the instance origin — exactly what Copy (_lbCopyImg) and Save
+      // (_lbSaveMedia) already do — and keep 'omit' for third-party timeline hosts, where cookies are
+      // useless and would make the CORS request fail outright.
+      const org=_serverOrigin(), mine=!!org && src.indexOf(org+'/')===0;
+      const r=await fetch(src, mine ? { headers:(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}), credentials:'include' }
+                                    : { credentials:'omit' });
       if(!r.ok) throw new Error('could not fetch it ('+r.status+')');
       const blob=await r.blob();
       let name=''; try{ name=decodeURIComponent(new URL(src, location.href).pathname.split('/').pop()||''); }catch(_){ }
