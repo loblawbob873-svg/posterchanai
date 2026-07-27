@@ -274,7 +274,24 @@ async def _alert(rec: dict, kind: str) -> None:
     from app.services import settings_store
     text = _alert_text(rec, kind)
 
-    if settings_store.get_bool("uptime_alert_telegram", False):
+    # Refresh the settings cache FIRST. This process is the worker, whose cache only re-syncs every
+    # 120s (app/worker.py), so a transition inside that window was judged against up-to-two-minutes-old
+    # config — enable the alerts and the very next outage can still go out to nobody, silently, because
+    # the flag hadn't landed yet. Transitions are rare, and hydrate_from_db is a direct Postgres read,
+    # so paying for one here buys alerts that obey the CURRENT configuration.
+    try:
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            settings_store.hydrate_from_db(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("[uptime] pre-alert settings refresh failed: %s", e)
+
+    if not settings_store.get_bool("uptime_alert_telegram", False):
+        logger.info("[uptime] %s %s — Telegram alert not sent (channel off)", rec["name"], kind)
+    else:
         try:
             from app.database import SessionLocal
             from app.models import User
@@ -283,7 +300,12 @@ async def _alert(rec: dict, kind: str) -> None:
                 admin = db.query(User).filter(User.id == 1).first()
                 chat_id = getattr(admin, "telegram_chat_id", None) if admin else None
                 enabled = bool(admin and admin.telegram_enabled and chat_id)
-                if enabled:
+                if not enabled:
+                    # The channel is ON but the admin account has no usable Telegram — another way to
+                    # get silence from a working alert path.
+                    logger.warning("[uptime] %s %s — Telegram alert not sent: admin has no linked chat",
+                                   rec["name"], kind)
+                else:
                     from app.services.telegram_service import telegram_service, configure_from_settings
                     token = settings_store.get("telegram_bot_token", "")
                     if token:
@@ -305,6 +327,10 @@ async def _alert(rec: dict, kind: str) -> None:
             await _alert_nostr(text)
         except Exception as e:
             logger.warning("[uptime] nostr alert failed: %s", e)
+    else:
+        # Say it out loud. A silently skipped alert is indistinguishable from a broken one, and
+        # "my service went down and I got nothing" is not a question the logs could answer before.
+        logger.info("[uptime] %s %s — Nostr alert not sent (channel off)", rec["name"], kind)
 
 
 async def _alert_nostr(text: str) -> None:
