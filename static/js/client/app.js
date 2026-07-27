@@ -3294,7 +3294,7 @@
     { const d=$('#ae-draft'); if(d) d.onclick=()=>_doSaveDraft(true); }
     // Gentle auto-save to a 30024 so work survives a refresh (cleared when you publish).
     body.addEventListener('input', ()=>{ clearTimeout(_aeDraftT); _aeDraftT=setTimeout(()=>_doSaveDraft(false), 4000); });
-    $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=mdToHtml(body.value)||'<div class="muted small">Nothing to preview.</div>'; });
+    $$('.cmp-tab',feed).forEach(b=> b.onclick=()=>{ $$('.cmp-tab',feed).forEach(x=>x.classList.toggle('active',x===b)); const pv=b.dataset.t==='preview'; body.classList.toggle('hidden',pv); const prev=$('#ae-preview'); prev.classList.toggle('hidden',!pv); if(pv) prev.innerHTML=InstEmoji.render(mdToHtml(body.value))||'<div class="muted small">Nothing to preview.</div>'; });   // article preview: same custom-emoji pass as the post composer
     $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
     $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
     $('#ae-insert').onclick=()=>$('#ae-body-file').click();
@@ -6397,6 +6397,14 @@
       this._p = this._fetch().catch(()=>{ this.loaded=true; return []; });
       return this._p;
     },
+    // Render :shortcodes: in text that has no event (and therefore no NIP-30 tags) yet — the composer
+    // PREVIEW. Everything already posted renders through applyEmojis with the event's own tags; this
+    // is only for a draft, where the instance map IS the source of truth.
+    render(htmlStr){
+      if(!this.loaded || !htmlStr) return htmlStr;
+      return String(htmlStr).replace(/<[^>]*>|:([A-Za-z0-9_+\-]+):/g,(m,sc)=>
+        sc ? (this.map[sc] ? `<img class="emoji-inline" src="${enc(this.map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">` : m) : m);
+    },
     // ["emoji", shortcode, url] for every KNOWN shortcode in `content`. Unknown ones are left as
     // plain text (they may be someone else's emoji, quoted) and a tag is never duplicated.
     tagsFor(content, tags){
@@ -8468,7 +8476,15 @@
         $$('.cmp-tab',root).forEach(x=>x.classList.toggle('active',x===b));
         const pv=b.dataset.t==='preview', prev=$('#cmp-preview',root);
         ta.classList.toggle('hidden',pv); prev.classList.toggle('hidden',!pv);
-        if(pv) prev.innerHTML = ta.value.trim() ? `<div class="txt">${linkify(ta.value)}</div>` : '<div class="muted small">Nothing to preview.</div>';
+        if(pv){
+          const paint=()=>{ prev.innerHTML = ta.value.trim()
+            ? `<div class="txt">${InstEmoji.render(linkify(ta.value))}</div>`
+            : '<div class="muted small">Nothing to preview.</div>'; };
+          paint();
+          // A typed :shortcode: must show as a picture here even if the picker was never opened in
+          // this session — that's the only reason the map might not be loaded yet.
+          if(!InstEmoji.loaded && InstEmoji.SC_RE.test(ta.value||'')) InstEmoji.load().then(()=>{ if(prev.isConnected && !prev.classList.contains('hidden')) paint(); });
+        }
       });
       // paste image (or any file) from clipboard -> upload + append URL
       ta.addEventListener('paste', async (e)=>{
