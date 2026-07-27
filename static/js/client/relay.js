@@ -192,7 +192,7 @@
         sub.eosed.add(conn.url);
         if (sub.onEose && sub.eosed.size >= this._conns.size){
           // for untrusted relays, drain pending verifications so the last events aren't lost
-          const fire = () => { if (sub.onEose){ const cb = sub.onEose; sub.onEose = null; cb(); } };
+          const fire = () => this._fireEose(sub);
           this._vq.length ? this._flush().then(fire) : fire();
         }
       } else if (typ === 'OK'){
@@ -228,12 +228,29 @@
     // filters: array of filter objects. Returns subId. live=true keeps it open for new events.
     subscribe(filters, { onEvent, onEose, live=true } = {}){
       const id = 'sub' + Math.random().toString(36).slice(2,9);
-      this._subs.set(id, { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set() });
+      const sub = { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set() };
+      this._subs.set(id, sub);
       this._send(['REQ', id, ...filters]);
+      // EOSE BACKSTOP. Below, onEose fires only once EVERY connection has EOSE'd — but a relay in the
+      // user's list that is down or DNS-dead is still in _conns and never answers, so that threshold
+      // could never be reached and onEose NEVER fired. Callers use it as the backlog→live boundary
+      // (`_dmLive`, `_notifReady`, `_followReady`), so one dead relay silently froze them in "this is
+      // all history" mode forever — which is how the Messages counter died. Fire it late rather than
+      // never. Live subs only: query() has its own timeout and needs `complete` to stay honest.
+      if (live && onEose) sub._eoseTimer = setTimeout(()=>{ this._fireEose(sub); }, 12000);
       return id;
     },
+    // Deliver a sub's onEose exactly once (whoever gets there first: the last relay's EOSE, or the
+    // backstop timer above).
+    _fireEose(sub){
+      if (!sub || !sub.onEose) return;
+      clearTimeout(sub._eoseTimer); sub._eoseTimer = null;
+      const cb = sub.onEose; sub.onEose = null; cb();
+    },
     close(subId){
-      if (!this._subs.has(subId)) return;
+      const sub = this._subs.get(subId);
+      if (!sub) return;
+      clearTimeout(sub._eoseTimer);
       this._send(['CLOSE', subId]); this._subs.delete(subId);
     },
     // Reconnect any socket that looks dead/stale (readyState not open, or nothing received in a while).

@@ -10645,7 +10645,20 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
-    if(live && !mine && !MUTED.has(peer)){ _dmUnread++; bumpDm(); _dmNotify(peer); }
+    // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
+    // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
+    // "everyone EOSE'd" test is never met and every incoming DM was classified as login backlog: no
+    // count, no badge, ever. (relay.js now backstops that, but the badge must not depend on it at all.)
+    // Newer than the last time Messages was opened IS the definition of unread — the same test
+    // recountDmUnread and the per-peer unread dot already use, so all three now agree.
+    const _seen = Number(ClientSettings.get('dmSeen', 0)) || 0;
+    if(!mine && !MUTED.has(peer) && (rumor.created_at||0) > _seen){
+      _dmUnread++; bumpDm();
+      // The interrupting toast/OS notification stays gated on `live`, so restoring a backlog on login
+      // doesn't fire a burst of them. It names the SENDER only, never the message — so it says the same
+      // thing whether or not "Hide DM previews until opened" is on.
+      if(live) _dmNotify(peer);
+    }
     _scheduleDmRefresh();
     return true;
   }
