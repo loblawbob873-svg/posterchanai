@@ -106,6 +106,28 @@ def set_operator_nsec(nsec: str) -> None:
             _save(data)
 
 
+# ---- system-notifier key ----
+def get_notifier_seckey() -> bytes:
+    """The key this node sends SYSTEM notifications from (agent-run finished, uptime alerts, …).
+
+    Deliberately NOT the operator key. On a single-admin deployment the operator key is very often the
+    ADMIN'S OWN key — and a NIP-17 DM from you to you is a self-DM: every client (ours included) files
+    it in your note-to-self thread as a message you sent, with no unread count and no notification. So
+    the alert arrived, was decryptable, and told the user nothing. Sending from a distinct identity is
+    what makes it a notification at all.
+
+    Generated once and persisted, so the sender npub is stable — the user sees one "PosterChan"
+    conversation instead of a new stranger per restart."""
+    with _LOCK:
+        data = _load()
+        hexsec = data.get("notifier_seckey")
+        if not hexsec:
+            hexsec = os.urandom(32).hex()
+            data["notifier_seckey"] = hexsec
+            _save(data)
+        return bytes.fromhex(hexsec)
+
+
 # ---- fediverse-bridge derivation secret ----
 def get_bridge_secret() -> bytes:
     """The stable HMAC secret the Nostr↔Fediverse bridge derives puppet keypairs from. Generated

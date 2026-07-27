@@ -52,31 +52,17 @@ async def notify_access_granted(db, recipient, kinds) -> bool:
         if not key:
             return False
 
-        from app.services import keystore, settings_store
-        from app.services.nostr import nostr_service, nip17
-
-        nsec = keystore.get_operator_nsec()
-        if not nsec:
-            logger.debug("[access-notify] no operator key yet; skipping the access DM")
-            return False
-        sk = nostr_service.decode_seckey(nsec)
-        recipient_hex = nostr_service.to_pubkey_hex(key)
-        if not sk or not recipient_hex:
-            return False
+        from app.services import settings_store, system_dm
 
         site = (settings_store.get("site_name", "") or "this server").strip()
         text = "\n\n".join(_MSG[k].format(site=site) for k in kinds)
 
-        # Publish to the LOCAL relay only — it federates outward from there (same rule every bot here
-        # follows). Never point this at public relays directly.
-        port = settings_store.get_int("nostr_relay_port", 3052)
-        from app.services.nostr_store import publish_event
-        wrap = nip17.wrap(sk, recipient_hex, text)
-        ok, err = await publish_event(port, wrap)
+        # system_dm (a distinct sender), NOT the operator key: on a single-admin node the operator key
+        # is the admin's own, and a self-DM lands in note-to-self with no unread count or toast — a
+        # notification nobody is notified by. It publishes to the LOCAL relay, which federates outward.
+        ok = await system_dm.send(key, text)
         if ok:
             logger.info("[access-notify] DMed %s about %s access", key[:16], "+".join(kinds))
-        else:
-            logger.warning("[access-notify] %s DM not published: %s", "+".join(kinds), err)
         return bool(ok)
     except Exception as e:
         # A failed notification must never break the grant that triggered it.

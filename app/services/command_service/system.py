@@ -26,18 +26,8 @@ async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
         logger.info("[node] agent-done DM skipped — the launching user has no linked npub")
         return
     try:
-        from app.services import keystore, settings_store
-        from app.services.nostr import nostr_service, nip17
-        from app.services.nostr_store import publish_event
+        from app.services import system_dm
 
-        nsec = keystore.get_operator_nsec()
-        if not nsec:
-            logger.debug("[node] no operator key yet; skipping the agent-done DM")
-            return
-        sk = nostr_service.decode_seckey(nsec)
-        hexpk = nostr_service.to_pubkey_hex(npub)
-        if not sk or not hexpk:
-            return
         # Short by design: the DM is the PING, not the delivery. The full transcript already landed in
         # the conversation that launched the run — a multi-page agent log in a DM is unreadable.
         one_line = " ".join((goal or "").split())
@@ -46,12 +36,11 @@ async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
         text = (f"🤖 {banner.replace('**', '')}\n\n"
                 + (f"Goal: {one_line}\n\n" if one_line else "")
                 + "The full transcript is in the chat you started it from (PosterChan AI).")
-        port = settings_store.get_int("nostr_relay_port", 3052)
-        ok, err = await publish_event(port, nip17.wrap(sk, hexpk, text))
-        if ok:
+        # system_dm, NOT the operator key: on a single-admin node the operator key IS the admin's own
+        # key, and a DM from you to you is a self-DM the client files under note-to-self — no unread
+        # count, no toast. It published fine and notified nobody.
+        if await system_dm.send(npub, text):
             logger.info(f"[node] agent-done DM sent to {npub[:16]}…")
-        else:
-            logger.warning(f"[node] agent-done DM not published: {err}")
     except Exception as e:
         logger.warning(f"[node] agent-done DM failed: {e}")
 

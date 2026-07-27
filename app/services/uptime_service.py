@@ -334,14 +334,16 @@ async def _alert(rec: dict, kind: str) -> None:
 
 
 async def _alert_nostr(text: str) -> None:
-    """NIP-17 gift-wrapped DM from the instance's OPERATOR key to each configured npub (default: the
-    admin's own npub), published to the LOCAL relay only — it federates outward from there, which is
-    the rule every publisher in this codebase follows."""
+    """NIP-17 gift-wrapped DM to each configured npub (default: the admin's own npub), sent from this
+    node's SYSTEM identity via system_dm — NOT the operator key.
+
+    The operator key is usually the admin's OWN key on a single-admin node, and a DM from you to you
+    is a self-DM: the client files it under note-to-self, with no unread count and no notification. An
+    uptime alert that silently fails to alert is worse than none, so it goes out from a distinct
+    sender. Published to the LOCAL relay only — it federates outward from there."""
     from app.database import SessionLocal
     from app.models import User
-    from app.services import settings_store, keystore
-    from app.services.nostr import nostr_service, nip17
-    from app.services.nostr_store import publish_event
+    from app.services import settings_store, system_dm
 
     targets = [x.strip() for x in
                (settings_store.get("uptime_alert_npubs", "") or "").replace(",", "\n").splitlines()
@@ -357,21 +359,9 @@ async def _alert_nostr(text: str) -> None:
             targets = [npub]
     if not targets:
         return
-    nsec = keystore.get_operator_nsec()
-    if not nsec:
-        return
-    sk = nostr_service.decode_seckey(nsec)
-    port = _relay_port()
     for t in targets:
-        try:
-            hexpk = nostr_service.to_pubkey_hex(t)
-            if not hexpk:
-                continue
-            ok, err = await publish_event(port, nip17.wrap(sk, hexpk, text))
-            if not ok:
-                logger.warning("[uptime] alert DM to %s not published: %s", t[:16], err)
-        except Exception as e:
-            logger.warning("[uptime] alert DM to %s failed: %s", t[:16], e)
+        if await system_dm.send(t, text):
+            logger.info("[uptime] alert DM sent to %s…", t[:16])
 
 
 # ---- the tick -----------------------------------------------------------
