@@ -6697,7 +6697,9 @@
           c.tipN[id]=(c.tipN[id]||0)+1;
         } else c.replies[id]=(c.replies[id]||0)+1;
       }
-      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=(e.content==='+'||e.content===''?'❤️':e.content);
+      // myReact holds the DISPLAY HTML (reactDisp), not the raw content — the react button injects it as
+      // innerHTML, so a NIP-30 custom emoji has to become its <img> here or the button reads ":shortcode:".
+      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=reactDisp(e);
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
@@ -6718,7 +6720,7 @@
     return parts.join(' ');
   }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
-  // (reaction display: '+' shows as ❤️, custom emoji shown as-is — see buildCounts/pickEmoji)
+  // (reaction display: '+' shows as ❤️, a custom emoji as its image — see reactDisp/buildCounts)
 
   // ---------- interactions ----------
   function bindFeedActions(){
@@ -10499,7 +10501,7 @@
       : _tn?`${_tn.icon} tipped you${_tn.amt?' '+enc(_tn.amt)+' '+enc(_tn.unit):''}`
       : ev.kind===3?'🫂 followed you'
       : ev.kind===1984?'🚩 reported you'
-      : ev.kind===7?`reacted ${ev.content==='+'||ev.content===''?'❤️':enc(ev.content)}`
+      : ev.kind===7?`reacted ${reactDisp(ev)}`
       : ev.kind===6?'reposted you'
       : ev.kind===42?'💬 messaged you in chat'
       : ev.kind===1111?'👥 replied to you in a community'
