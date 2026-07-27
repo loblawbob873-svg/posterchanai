@@ -3124,23 +3124,24 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         # Keep the outgoing version before replacing it. kind 30078 is replaceable, so without this
         # every overwrite is final and NOTHING — not this bug, not a bad bulk-move, not a fat-fingered
         # folder delete — is undoable.
+        evicted_sha = None
         if isinstance(prev, dict) and prev:
             old_n, new_n = _files_index_count(prev), _files_index_count(data.index)
             shrinking = old_n is not None and new_n is not None and new_n < old_n
-            await _files_index_backup(store, port, sk, prev, shrinking)
+            evicted_sha = await _files_index_backup(store, port, sk, prev, shrinking)
 
         await store.put_doc(port, sk, "pcai:files-index", data.index)
 
-        # The index the client just replaced points at a Blossom blob that is now superseded. The
-        # client used to DELETE it immediately, which is what left a wiped index with nothing to
-        # restore from; keeping it forever leaks ~133 KB per save. Stamp it with a TTL instead, so it
-        # stays recoverable for a month and is then reclaimed by the sweep that already exists.
+        # Age out only the index blob that just fell OUT of backup retention. A merely superseded
+        # blob is still referenced by the backup written above, and expiring that one left the version
+        # history pointing at bytes due for deletion — a backup that silently stops being restorable.
         try:
-            old_sha = prev.get("indexSha") if isinstance(prev, dict) else None
-            new_sha = data.index.get("indexSha")
-            if old_sha and old_sha != new_sha:
+            live = {data.index.get("indexSha")}
+            if isinstance(prev, dict):
+                live.add(prev.get("indexSha"))          # still referenced by the backup just written
+            if evicted_sha and evicted_sha not in live:
                 from app.services import blossom_service
-                blossom_service.expire_blob_in(db, old_sha, _FILES_INDEX_BAK_DAYS)
+                blossom_service.expire_blob_in(db, evicted_sha, _FILES_INDEX_BAK_DAYS)
         except Exception as e:
             logger.debug("[client] files-index: could not age out the old index blob: %s", e)
         return JSONResponse({"ok": True})
@@ -3182,7 +3183,7 @@ def _files_index_collapse(prev, new) -> str | None:
     return None
 
 
-async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking: bool) -> None:
+async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking: bool):
     """Keep the replaced index in one of _FILES_INDEX_BAKS fixed slots, overwriting the oldest.
 
     FIXED SLOTS, not timestamped d-tags. A timestamped scheme has to enumerate what exists to prune
@@ -3211,9 +3212,24 @@ async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking
         if not free and not shrinking and seen and (int(_t.time()) - min(seen.values())) < 3600:
             return                                   # a recent backup already covers this state
         target = free[0] if free else min(seen, key=seen.get)
+        # Whatever this slot held is about to fall out of retention. Its index BLOB is what becomes
+        # reclaimable — and only now. Expiring a blob the moment it was superseded (what this did at
+        # first) leaves the backup that references it pointing at bytes that get deleted underneath
+        # it: a version history that silently stops being restorable, which is the exact failure this
+        # whole series exists to stop. Return it so the caller can age it out.
+        evicted = None
+        if target not in free:
+            try:
+                old_doc = await store.get_doc(port, target, seckey=sk)
+                if isinstance(old_doc, dict):
+                    evicted = old_doc.get("indexSha")
+            except Exception:
+                evicted = None
         await store.put_doc(port, sk, target, prev)
+        return evicted
     except Exception as e:
         logger.warning("[client] files-index: backup failed (save continues): %s", e)
+    return None
 
 
 # ----- music: transcode an upload to Opus (compression) — client then encrypts + uploads to Blossom -----
