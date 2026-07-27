@@ -3084,6 +3084,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .bg-tile{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;flex-direction:column;gap:3px;min-width:0}
 .bg-tl{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bg-tv{font-size:20px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bg-ts{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bg-tile.in .bg-tv{color:var(--green)}
 .bg-tile.due .bg-tv{color:var(--amber)}
 .bg-tile.ok .bg-tv{color:var(--neon)}

@@ -167,12 +167,18 @@
 
   function summary(){
     const income = _doc.bills.filter(b=>b.is_income).reduce((s,b)=>s+(Number(b.cost)||0), 0);
-    let due = _doc.bills.filter(b=>!b.is_income && !settled(b)).reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
-    due += _doc.cats.filter(c=>!settled(c)).reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
+    const duePlanCats = _doc.cats.filter(c=>!settled(c));
+    const dueBills = _doc.bills.filter(b=>!b.is_income && !settled(b))
+                               .reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
+    // Plans live on their own tab, so their share of Bills Due is invisible from the Bills tab —
+    // it's reported separately (see the tile) rather than silently folded into one number.
+    const duePlans = duePlanCats.reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
+    const due = dueBills + duePlans;
     let paid = _doc.bills.filter(b=>!b.is_income && b.paid==='Y').reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
     paid += _doc.cats.filter(c=>c.paid==='Y').reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
-    return { income, due, paid, remaining: income - paid - due,
-             dueCount: _doc.bills.filter(b=>!b.is_income && !settled(b)).length };
+    return { income, due, dueBills, duePlans, paid, remaining: income - paid - due,
+             dueCount: _doc.bills.filter(b=>!b.is_income && !settled(b)).length,
+             duePlanCount: duePlanCats.filter(c=>catTotal(c.id)).length };
   }
 
   const visibleBills = () => _showHidden ? _doc.bills.slice() : _doc.bills.filter(b=>b.hidden_month!==thisMonth());
@@ -216,8 +222,9 @@
   }
 
   // ---- render -----------------------------------------------------------------------------------
-  function tile(label, value, tone){
-    return `<div class="bg-tile${tone?' '+tone:''}"><span class="bg-tl">${enc(label)}</span><b class="bg-tv">${enc(value)}</b></div>`;
+  function tile(label, value, tone, sub){
+    return `<div class="bg-tile${tone?' '+tone:''}"><span class="bg-tl">${enc(label)}</span><b class="bg-tv">${enc(value)}</b>${
+      sub?`<span class="bg-ts">${enc(sub)}</span>`:''}</div>`;
   }
 
   function billRow(b){
@@ -276,14 +283,15 @@
         </div>
         <div class="bg-tiles">
           ${tile('Income', money(s.income), 'in')}
-          ${tile('Bills due', money(s.due), 'due')}
+          ${tile('Bills due', money(s.due), 'due',
+                 s.duePlans ? `${money(s.dueBills)} bills + ${money(s.duePlans)} plans` : '')}
           ${tile('Paid', money(s.paid), '')}
           ${tile('Remaining', (s.remaining<0?'−':'')+money(s.remaining), s.remaining<0?'neg':'ok')}
         </div>
       </div>
       <div class="bg-tabs">
         <button class="bg-tab${_tab==='bills'?' on':''}" data-tab="bills">Bills${s.dueCount?` <i class="bg-n">${s.dueCount}</i>`:''}</button>
-        <button class="bg-tab${_tab==='plans'?' on':''}" data-tab="plans">Plans</button>
+        <button class="bg-tab${_tab==='plans'?' on':''}" data-tab="plans">Plans${s.duePlanCount?` <i class="bg-n">${s.duePlanCount}</i>`:''}</button>
         <span class="spacer"></span>
         <button class="bg-tab ghost${_showHidden?' on':''}" id="bg-hid" title="show rows skipped this month">👁</button>
       </div>
