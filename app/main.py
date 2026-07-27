@@ -1051,6 +1051,17 @@ async def public_status_page(request: Request):
     })
 
 
+@app.get("/recover-folders")
+async def recover_folders_page():
+    """Short, typeable alias for the read-only Files-index rescue page.
+
+    It lives in /static (so it ships without an app restart), but /static/recover-folders.html is a
+    mouthful to read out — and one character from /status/, which is exactly the wrong thing to
+    mistype when you're already on the status page trying to recover a lost drive."""
+    return FileResponse(os.path.join(os.path.dirname(__file__), "..", "static", "recover-folders.html"),
+                        media_type="text/html")
+
+
 @app.get("/status.json")
 async def public_status_json():
     """The same status, machine-readable — for anyone else's monitoring, a badge, or a phone widget.
