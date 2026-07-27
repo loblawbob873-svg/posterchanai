@@ -264,14 +264,18 @@ def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
     return still_to_alpha_video(still, dur=float(dur or 6.0))
 
 
-def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int):
+def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int,
+                          band_cap: int = 0):
     """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
     bubble in the wider gutter beside them with the tail on them, or — when no gutter can hold
     readable text — a plain white meme banner above their head.
 
     Shared by every character effect (`shrug`/`would`/`theraped`/`consider`) so the dialogue style
     can never drift between them. `char_top`/`char_left`/`char_right` are the character's bounds.
-    Returns (beside, caption_bottom); caption_bottom is where the pointing arrow may start.
+    `band_cap` (px, 0 = off) narrows the gutter the bubble may use — a character composited LARGE
+    leaves a gutter far wider than they are, and filling it makes the bubble dwarf them; capping it
+    at their own width keeps the compact block look. Returns (beside, caption_bottom);
+    caption_bottom is where the pointing arrow may start.
     """
     from PIL import ImageDraw as _Draw
     from ._common import _load_meme_font, _wrap_text_to_width
@@ -288,6 +292,8 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     side = "right" if right_w >= left_w else "left"
     band_w = max(left_w, right_w)
     beside = band_w >= max(int(W * 0.18), 60)
+    if band_cap > 0:
+        band_w = min(band_w, band_cap)
 
     def _layout(in_gutter: bool):
         """(max_width, top_size, band_h) for the beside-her or above-her-head placement."""
@@ -333,13 +339,18 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     # at about 2% of the image height. When that happens use the band ABOVE his head instead: the
     # pointing format leaves most of a portrait frame empty up there, so the caption can be several
     # times bigger, which matters more than sitting beside him.
-    if beside and chosen and chosen[0].size < H / 24:
+    #
+    # "Readable" is measured against the SHORT side: on a tall portrait frame H/24 demanded a font
+    # bigger than any gutter could hold, so a perfectly readable bubble was thrown away for the
+    # banner. The rabbi case above still falls back (38px in a 1080-wide frame is under 45).
+    floor = min(W, H) / 24
+    if beside and chosen and chosen[0].size < floor:
         # A multi-word caption ("WHADDYA GONNA DO?") is what usually shrinks: one line of it is
         # long, so the size loop keeps going down until the whole thing fits the gutter. Two lines
         # in the gutter at a readable size beat one tiny line, so try wrapping BEFORE giving up the
         # bubble — the speech bubble is the look, and only a genuinely narrow gutter should lose it.
         wrapped = _fit(False)
-        if wrapped and wrapped[0].size >= H / 24:
+        if wrapped and wrapped[0].size >= floor:
             chosen = wrapped
         else:
             max_width, top_size, band_h = _layout(False)

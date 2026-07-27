@@ -912,6 +912,26 @@ def _strip_baked_caption(ov):
     return ov.crop(ov.getbbox() or (0, 0, ov.size[0], ov.size[1]))
 
 
+def _figure_columns(ov) -> Tuple[int, int]:
+    """(left, right) of the FIGURE inside the cutout, ignoring the thin noose hanging beside her.
+    Her body is a solid mass — columns that are opaque down most of the frame — while the rope is a
+    few pixels wide, so take the run of dense columns containing the densest one. Without this the
+    speech bubble hugs the ROPE (the cutout's true left edge) and sits marooned out in the gutter."""
+    W, H = ov.size
+    px = ov.split()[-1].load()
+    cov = [sum(1 for y in range(H) if px[x, y] > 8) / H for x in range(W)]
+    peak = max(range(W), key=lambda x: cov[x])
+    if cov[peak] < 0.5:
+        return 0, W                                  # no solid mass — treat the whole cutout as the figure
+    left = peak
+    while left > 0 and cov[left - 1] >= 0.5:
+        left -= 1
+    right = peak
+    while right < W - 1 and cov[right + 1] >= 0.5:
+        right += 1
+    return left, right
+
+
 def add_consider(data: bytes, caption: str = "Consider the following") -> bytes:
     """Composite the (transparent) "consider the following" cutout over an image, scaled large and
     anchored to the bottom-right, with the line said in a SPEECH BUBBLE — the same dialogue renderer
@@ -954,8 +974,11 @@ def add_consider(data: bytes, caption: str = "Consider the following") -> bytes:
         x, y = W - nw - margin, H - nh - margin
         x, y = max(x, 0), max(y, 0)
         img.alpha_composite(ov, (x, y))
-        # She says it: same bubble/font/fit rules as the shrug rabbi, in the gutter beside her.
-        draw_dialogue_caption(img, caption, y, x, min(W, x + nw))
+        # She says it: same bubble/font/fit rules as the shrug rabbi. Anchor on HER, not on the
+        # cutout box (the noose hangs well to her left), and cap the bubble at her own width so it
+        # stays the compact block the rabbi gets instead of filling the whole gutter.
+        fl, fr = _figure_columns(ov)
+        draw_dialogue_caption(img, caption, y, x + fl, min(W, x + fr), band_cap=max(fr - fl, 1))
 
         img = img.convert("RGB")
         out = io.BytesIO()
