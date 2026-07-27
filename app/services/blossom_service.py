@@ -643,6 +643,9 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
                 db.commit()
             except Exception:
                 db.rollback()
+        # These bytes already exist, but THIS user may not have referenced them before — without this
+        # their upload would 200 and the file would never show up in their own drive.
+        add_owner(db, sha256, pubkey)
         _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 
@@ -681,12 +684,14 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         db.rollback()
         winner = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
         if winner is not None:
+            add_owner(db, sha256, pubkey)   # the race loser still owns a reference
             _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)   # bytes are identical + in RAM — seed the cache like the normal path
             _meta_put(_meta_from_row(winner))
             return _descriptor_fields(winner)
         raise
     # Seed the read + metadata caches — the bytes are already in RAM and the row is immutable, so a
     # fetch right after upload (the common case) touches neither disk/proxy nor Postgres.
+    add_owner(db, sha256, pubkey)      # first owner of these bytes
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
     _meta_put(_meta_from_row(blob))
     # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
@@ -708,6 +713,9 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
 
     existing = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
     if existing:
+        # These bytes already exist, but THIS user may not have referenced them before — without this
+        # their upload would 200 and the file would never show up in their own drive.
+        add_owner(db, sha256, pubkey)
         _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 
@@ -740,6 +748,7 @@ async def save_blob_file(db: Session, pubkey: str, path: str, mime: str) -> dict
     )
     db.add(blob)
     db.commit()
+    add_owner(db, sha256, pubkey)      # first owner of these bytes
     _meta_put(_meta_from_row(blob))
     return _descriptor_fields(blob)
 
@@ -993,10 +1002,50 @@ def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False)
     listing published their sha256, and /client/file hands back the DECRYPTED bytes to anyone holding
     that sha256 — so `GET /blossom/list/<storage-pubkey>` was an unauthenticated dump of every user's
     private chat files. The sha256 is the capability, so it must not be listed to strangers."""
-    q = db.query(BlossomBlob).filter(BlossomBlob.pubkey == pubkey_hex)
+    from app.models import BlossomBlobOwner
+    # Join the OWNERS table, not blossom_blobs.pubkey. Dedup means the blob row is owned by whoever
+    # uploaded these bytes first, so listing by it hid the file from everyone who uploaded it after —
+    # their upload succeeded and then simply wasn't in their drive.
+    q = (db.query(BlossomBlob)
+           .join(BlossomBlobOwner, BlossomBlobOwner.sha256 == BlossomBlob.sha256)
+           .filter(BlossomBlobOwner.pubkey == pubkey_hex))
     if not include_private:
         q = q.filter(BlossomBlob.private.is_(False))
     return q.order_by(BlossomBlob.created_at.desc()).all()
+
+
+def add_owner(db: Session, sha256: str, pubkey_hex: str) -> None:
+    """Record `pubkey_hex` as referencing `sha256`. Idempotent; never raises into the upload path."""
+    from app.models import BlossomBlobOwner
+    if not sha256 or not pubkey_hex:
+        return
+    try:
+        exists = db.query(BlossomBlobOwner).filter(
+            BlossomBlobOwner.sha256 == sha256, BlossomBlobOwner.pubkey == pubkey_hex).first()
+        if exists:
+            return
+        db.add(BlossomBlobOwner(sha256=sha256, pubkey=pubkey_hex, created_at=int(time.time())))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[blossom] could not record owner %s/%s: %s", sha256[:12], pubkey_hex[:12], e)
+
+
+def is_owner(db: Session, sha256: str, pubkey_hex: str) -> bool:
+    """Does `pubkey_hex` hold a reference to `sha256`?"""
+    from app.models import BlossomBlobOwner
+    return db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256,
+                                             BlossomBlobOwner.pubkey == pubkey_hex).first() is not None
+
+
+def release_owner(db: Session, sha256: str, pubkey_hex: str) -> int:
+    """Drop one owner's reference. Returns how many owners REMAIN — the caller deletes the bytes only
+    at zero, so one user removing a shared file can no longer delete it out from under the others."""
+    from app.models import BlossomBlobOwner
+    db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256,
+                                      BlossomBlobOwner.pubkey == pubkey_hex).delete()
+    db.flush()
+    return db.query(BlossomBlobOwner).filter(BlossomBlobOwner.sha256 == sha256).count()
 
 
 # --- expiry cleanup (daemon thread) -----------------------------------------

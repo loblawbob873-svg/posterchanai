@@ -332,15 +332,29 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
             blossom_service.verify_auth, request.headers.get("authorization", ""), "delete", sha)
     except ValueError as e:
         return _err(401, str(e))
-    # Only the owner (or any admin holding the key) may delete.
-    if pubkey != blob.pubkey and not blossom_service.is_pubkey_allowed(db, pubkey):
-        return _err(403, "not authorized to delete this blob")
-    if pubkey != blob.pubkey:
-        # An allowed key that isn't the owner: still require admin to delete others' blobs.
+    # Who may delete: anyone who OWNS a reference (dedup means that is no longer just the first
+    # uploader — listing by ownership without this would show a second owner a file they then got a
+    # 403 deleting), or an admin, whose delete is a moderation purge for everyone.
+    owns = blossom_service.is_owner(db, sha, pubkey)
+    is_admin = False
+    if not owns:
+        if not blossom_service.is_pubkey_allowed(db, pubkey):
+            return _err(403, "not authorized to delete this blob")
         from app.models import User
         u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pubkey)).first()
-        if not (u and getattr(u, "is_admin", False)):
-            return _err(403, "only the owner or an admin may delete this blob")
+        is_admin = bool(u and getattr(u, "is_admin", False))
+        if not is_admin:
+            return _err(403, "only an owner or an admin may delete this blob")
+
+    if owns:
+        # Drop just THIS user's reference. Blossom dedups, so the same bytes can be referenced by
+        # several people, and deleting the row outright removed the file from everyone else's drive.
+        # The bytes go only once the last owner lets go.
+        remaining = blossom_service.release_owner(db, sha, pubkey)
+        if remaining > 0:
+            db.commit()
+            blossom_service.drop_meta(sha)
+            return JSONResponse({"message": "deleted", "sha256": sha, "shared": True}, headers=_CORS)
 
     await blossom_service.delete_blob_bytes(db, blob)
     db.delete(blob)

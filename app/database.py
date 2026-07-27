@@ -94,6 +94,29 @@ def safe_query_settings(db: Session) -> dict:
     from app.services import settings_store
     return settings_store.all_settings()
 
+def _backfill_blob_owners():
+    """Seed `blossom_blob_owners` from `blossom_blobs.pubkey` once, so existing drives keep listing.
+
+    create_all() builds the new table EMPTY, and the BUD-02 listing now reads it — so without this
+    every user's drive would come back empty on the first boot after the upgrade. Idempotent: it only
+    inserts rows that aren't there, so a re-run (or a later restart) is a cheap no-op.
+
+    It doubles as a SELF-HEAL: if recording an owner ever fails mid-upload, the blob would be in
+    nobody's listing; the next restart re-derives the original uploader's row from the blob."""
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            n = conn.execute(text("""
+                INSERT INTO blossom_blob_owners (sha256, pubkey, created_at)
+                SELECT b.sha256, b.pubkey, b.created_at FROM blossom_blobs b
+                ON CONFLICT DO NOTHING
+            """)).rowcount
+        if n:
+            logger.info("[INIT] blossom: backfilled %d blob owner row(s)", n)
+    except Exception as e:
+        logger.warning("[INIT] blossom owner backfill skipped: %s", e)
+
+
 def _run_migrations():
     """Auto-add any model columns that are missing from an EXISTING table — run on every startup
     after create_all(). create_all only ever creates missing *tables*; it never alters a table that
@@ -160,10 +183,11 @@ DEFAULT_SETTINGS: dict = {}
 
 
 def init_db():
-    from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob, StreamVOD  # noqa: F401 - registers tables for create_all
+    from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob, BlossomBlobOwner, StreamVOD  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
+    _backfill_blob_owners()   # seed blossom_blob_owners from the pre-existing single-owner column
 
 
     # Create default settings if not exist

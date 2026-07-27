@@ -265,6 +265,28 @@ class BlossomBlob(Base):
     private = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
+class BlossomBlobOwner(Base):
+    """Who references a blob. Blossom is content-addressed and dedups, so `blossom_blobs` holds ONE
+    row per sha256 owned by whoever uploaded it FIRST — which silently broke two things for everyone
+    after them: their upload created no row, so the file never appeared in their own BUD-02 listing,
+    and if the first uploader deleted it, the bytes went out from under everybody else.
+
+    This is the many-to-many that `blossom_blobs.pubkey` pretended to be. The blob row (and its bytes)
+    survive until the LAST owner releases. `blossom_blobs.pubkey` stays as the original uploader for
+    back-compat and attribution.
+
+    A SQL table rather than a relay doc, deliberately: this is a hot-path index over an existing SQL
+    table (every list and every delete joins it), not new feature state."""
+    __tablename__ = "blossom_blob_owners"
+    __table_args__ = (
+        Index('ix_blobowner_pubkey', 'pubkey'),
+    )
+
+    sha256 = Column(String(64), ForeignKey("blossom_blobs.sha256", ondelete="CASCADE"), primary_key=True)
+    pubkey = Column(String(64), primary_key=True)       # hex x-only pubkey of a referencing user
+    created_at = Column(Integer, nullable=False)        # unix seconds — when THIS user added it
+
+
 class StreamVOD(Base):
     """A finished live stream saved to the streamer's Blossom drive (see stream_vod_service).
 

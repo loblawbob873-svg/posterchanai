@@ -8886,7 +8886,15 @@
   async function blossomCanUpload(){
     const server=mediaServer(); if(!server) return false;
     try{
-      const auth=await sign(24242,'Upload blob',[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+      // TIME-BOX the signer. This is a permission PROBE, and it sits on the awaited path that paints
+      // the Files view — so an external signer (Amber/NIP-55, a NIP-46 bunker) that never answers,
+      // because the prompt wasn't shown or the app isn't installed, left the whole drive as a spinner
+      // that never stopped. On timeout fall through to "inconclusive", exactly like the 404/405 case
+      // below: the real PUT is what actually decides, and its 403 opens the request-access flow.
+      const auth=await Promise.race([
+        sign(24242,'Upload blob',[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]]),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error('signer timeout')), 8000)),
+      ]);
       const res=await fetch(server+'/upload',{ method:'HEAD', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)) }});
       // Only a DEFINITIVE denial from the real handler means "no": 401 bad auth, 403 not authorized,
       // 413 too big. Anything else is inconclusive — some fronting proxies 404/405 a HEAD before it ever
@@ -9453,7 +9461,11 @@
     FilesIdx.loadLocal();
     if(!FilesIdx._pulled){ FilesIdx._pulled=true; FilesIdx.pull().then(()=>{ if(VIEW==='blossom') renderBlossom(); }); }
     pane.innerHTML='<div class="spinner"></div>';
-    const canUp=await blossomCanUpload();
+    // Anything that throws below leaves this spinner on screen forever unless it is caught, and
+    // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
+    let canUp=false;
+    try{ canUp=await blossomCanUpload(); }
+    catch(e){ console.warn('blossom: upload probe failed', e); canUp=true; }   // inconclusive → let the real PUT decide
     const folders=FilesIdx.folders();
     const folderBar = `<div class="folder-bar">
         <button class="folder-chip${_filesFolder===''?' active':''}" data-folder="">🗂 All</button>
@@ -9494,7 +9506,14 @@
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
     if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
-      if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); }
+      // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
+      // spinner spinning with no error anywhere the user could see.
+      try{
+        if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list);
+      }catch(e){
+        console.error('blossom: grid render failed', e);
+        const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t draw your files ('+enc(e.message||'error')+'). Your files are safe — reload to try again.</div>';
+      } }
     // Label saved-stream recordings ("Past streams") so they don't show as anonymous video blobs. This is
     // a cosmetic cross-reference of the user's own VOD list — fetch it ONCE (cached), in the BACKGROUND,
     // and re-render the grid when it lands. Never block the drive's first paint on this (a slow/hung
