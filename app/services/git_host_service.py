@@ -280,6 +280,36 @@ def repo_head(owner_hex: str, repo_id: str) -> str:
     return (r.stdout or "").strip()
 
 
+def adopt_head_if_unborn(owner_hex: str, repo_id: str) -> str:
+    """Point HEAD at a real branch when the repo's default branch was never born. Returns the ref
+    HEAD ends up on ("" if unchanged/unknown).
+
+    `git init --bare` stamps HEAD from the SERVER's init.defaultBranch (master here), so a repo whose
+    first push is `main` is left with HEAD -> refs/heads/master, a branch that does not exist. Clones
+    survive it (git falls back to the only advertised branch), but every reader that asks the repo for
+    its DEFAULT branch — the web Git UI's browse ref, the 30618 HEAD tag — gets a dead ref. Nothing
+    else sets it, and there is no endpoint to set it by hand, so the push that creates the first
+    branch adopts it here.
+
+    Only ever fires when HEAD's target does NOT exist: an established default branch is never
+    retargeted, so this cannot hijack a repo that deliberately points HEAD elsewhere."""
+    rid = sanitize_repo_id(repo_id)
+    d = repo_dir(owner_hex, rid) if rid else None
+    if not d or not os.path.isdir(d):
+        return ""
+    refs = repo_refs(owner_hex, rid)
+    head = repo_head(owner_hex, rid)
+    if head and head in refs:
+        return ""                     # already born — leave it alone
+    heads = sorted(r for r in refs if r.startswith("refs/heads/"))
+    if not heads:
+        return ""                     # empty repo: HEAD stays as-is until something is pushed
+    # Prefer the conventional names when the push brought several branches at once, else the first.
+    pick = next((r for r in ("refs/heads/main", "refs/heads/master") if r in heads), heads[0])
+    r = _git(d, "symbolic-ref", "HEAD", pick, check=False)
+    return pick if r.returncode == 0 else ""
+
+
 def state_tags(owner_hex: str, repo_id: str, refs: dict | None = None, head: str | None = None) -> list:
     """NIP-34 kind-30618 ("repository state") tags for a repo's CURRENT refs: d, HEAD, every
     refs/… -> sha, and an `a` link back to the 30617 announcement.

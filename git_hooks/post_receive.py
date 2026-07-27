@@ -43,6 +43,12 @@ def main():
         rid = ghs.sanitize_repo_id(repo_id)
         if not rid or ghs.repo_dir(owner_hex, rid) is None:
             return
+        # A first push has to settle the default branch before anything reads it: `git init --bare`
+        # stamped HEAD from the server's init.defaultBranch, which is a branch nobody pushed. Do it
+        # BEFORE the witness so the 30618's HEAD tag names the branch that actually exists.
+        adopted = ghs.adopt_head_if_unborn(owner_hex, rid)
+        if adopted:
+            sys.stderr.write("GRASP: default branch set to %s\n" % adopted[len("refs/heads/"):])
         # The operator authors this as a witness/mirror at 30618:<operator>:<id>, distinct from the
         # maintainer's own 30618:<owner>:<id> which stays authoritative for the ACL. Shared with the
         # web-editor commit path (git_host_main) so both produce identical tags — private repos and
