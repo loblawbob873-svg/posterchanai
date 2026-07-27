@@ -19,7 +19,8 @@
  *   paid          = Σ |cost| over paid expenses       + Σ |total| over paid plan categories
  *   remaining     = income − paid − bills due
  * Monthly rollover (maybe_reset_month_for_user): on the first open of a new month, recurring bills
- * and every plan category go back to unpaid+visible, and PAID one-time bills are deleted.
+ * and every plan category go back to unpaid+visible, and PAID one-time bills are deleted. The manual
+ * "Reset month" button does the same thing on demand (it just doesn't stamp lastReset).
  *
  * UI is built from the app's own classes (.btn/.input/.note/.muted) and never names a colour — it
  * reads var(--neon)/--green/--danger/--line etc., so all nine themes work with no per-theme code.
@@ -131,32 +132,36 @@
     return done;
   }
 
-  // Re-open everything recurring: unpaid and visible again. Shared by the automatic monthly rollover
-  // and the manual "Reset month" button, because in the Flask app both did exactly this.
+  // Start the month over: every recurring bill and plan back to unpaid+visible, and PAID one-time
+  // bills dropped — they were last month's expenses, not a bill this month owes again. Shared whole
+  // by the automatic rollover and the manual "Reset month" button, which is the point: "fresh month"
+  // has to mean one thing, or the button leaves stale one-time rows sitting in Paid (the $11.62
+  // that showed up under an otherwise-empty Paid tile). Only `lastReset` differs — see resetMonth.
+  const _paidOneTime = () => _doc.bills.filter(b=>!b.is_recurring && b.paid==='Y');
   function _reopen(){
     for(const b of _doc.bills) if(b.is_recurring){ b.hidden_month=''; b.paid='N'; }
     for(const c of _doc.cats){ c.hidden_month=''; c.paid='N'; }
+    const drop = new Set(_paidOneTime().map(b=>b.id));
+    if(drop.size) _doc.bills = _doc.bills.filter(b=>!drop.has(b.id));
   }
 
   // Port of maybe_reset_month_for_user — the AUTOMATIC one, so a new month starts fresh on its own
-  // the first time you open Budget that month (the Flask app did it on first page visit). On top of
-  // _reopen it also DELETES paid one-time bills: they were last month's expenses, not this month's.
+  // the first time you open Budget that month (the Flask app did it on first page visit).
   function rollover(){
     const m = thisMonth();
     if(_doc.lastReset === m) return false;
     _reopen();
-    const drop = new Set(_doc.bills.filter(b=>!b.is_recurring && b.paid==='Y').map(b=>b.id));
-    if(drop.size) _doc.bills = _doc.bills.filter(b=>!drop.has(b.id));
     _doc.lastReset = m;
     return true;
   }
 
-  // Port of /api/reset-month — the MANUAL button. Deliberately NOT the same as rollover(): it does
-  // not delete paid one-time bills and does not touch lastReset, so pressing it mid-month is a
-  // "mark everything unpaid again" do-over, not a month advance that would swallow this month's
-  // automatic reset. That asymmetry is exactly how the Flask app behaved.
+  // The MANUAL button — the same fresh start, minus the `lastReset` stamp, so pressing it mid-month
+  // is a do-over rather than a month advance that would swallow this month's automatic reset.
+  // It DELETES paid one-time bills, so the confirm says so and counts them.
   async function resetMonth(){
-    if(!await uiConfirm('Mark every recurring bill and plan unpaid again for this month?')) return;
+    const once = _paidOneTime().length;
+    if(!await uiConfirm(`Start ${monthLabel()} over? Every recurring bill and plan goes back to unpaid`
+       + (once ? `, and ${once} paid one-time bill${once>1?'s':''} will be deleted.` : '.'))) return;
     _reopen();
     save(); repaint(); toast('month reset');
   }
