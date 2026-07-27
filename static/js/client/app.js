@@ -10752,8 +10752,13 @@
     }
   }
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
+  // Startup count of what's unread. Notes to SELF count here for the same reason they do in
+  // ingestWrap — that's how the server delivers notifications — and this is the path that catches one
+  // that arrived while the app was CLOSED, which is the whole point of notifying at all.
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
-    for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue; for(const m of arr){ if(!m.mine && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
+    for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue;
+      const selfThread = pk===ME.pubkey;
+      for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
   function _dmNotify(fromPk, selfNote){
     // A note to self is how the server delivers system notifications (agent run finished, uptime
     // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
