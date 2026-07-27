@@ -131,17 +131,34 @@
     return done;
   }
 
-  // Port of maybe_reset_month_for_user: recurring bills + all plan categories go back to unpaid and
-  // visible; paid ONE-TIME bills are removed (they were this month's expenses, not next month's).
+  // Re-open everything recurring: unpaid and visible again. Shared by the automatic monthly rollover
+  // and the manual "Reset month" button, because in the Flask app both did exactly this.
+  function _reopen(){
+    for(const b of _doc.bills) if(b.is_recurring){ b.hidden_month=''; b.paid='N'; }
+    for(const c of _doc.cats){ c.hidden_month=''; c.paid='N'; }
+  }
+
+  // Port of maybe_reset_month_for_user — the AUTOMATIC one, so a new month starts fresh on its own
+  // the first time you open Budget that month (the Flask app did it on first page visit). On top of
+  // _reopen it also DELETES paid one-time bills: they were last month's expenses, not this month's.
   function rollover(){
     const m = thisMonth();
     if(_doc.lastReset === m) return false;
-    for(const b of _doc.bills) if(b.is_recurring){ b.hidden_month=''; b.paid='N'; }
+    _reopen();
     const drop = new Set(_doc.bills.filter(b=>!b.is_recurring && b.paid==='Y').map(b=>b.id));
     if(drop.size) _doc.bills = _doc.bills.filter(b=>!drop.has(b.id));
-    for(const c of _doc.cats){ c.hidden_month=''; c.paid='N'; }
     _doc.lastReset = m;
     return true;
+  }
+
+  // Port of /api/reset-month — the MANUAL button. Deliberately NOT the same as rollover(): it does
+  // not delete paid one-time bills and does not touch lastReset, so pressing it mid-month is a
+  // "mark everything unpaid again" do-over, not a month advance that would swallow this month's
+  // automatic reset. That asymmetry is exactly how the Flask app behaved.
+  async function resetMonth(){
+    if(!await uiConfirm('Mark every recurring bill and plan unpaid again for this month?')) return;
+    _reopen();
+    save(); repaint(); toast('month reset');
   }
 
   // ---- derived numbers (ported from the Flask index/api_summary) --------------------------------
@@ -253,7 +270,10 @@
 
     feed.innerHTML = `<div class="bg-wrap">
       <div class="bg-head">
-        <div class="bg-month">${enc(monthLabel())}</div>
+        <div class="bg-monthrow">
+          <div class="bg-month">${enc(monthLabel())}</div>
+          <button class="btn btn-ghost small" id="bg-reset" title="mark every recurring bill and plan unpaid again">↺ Reset month</button>
+        </div>
         <div class="bg-tiles">
           ${tile('Income', money(s.income), 'in')}
           ${tile('Bills due', money(s.due), 'due')}
@@ -300,6 +320,7 @@
 
     wrap.querySelectorAll('.bg-tab[data-tab]').forEach(b=> b.onclick=()=>{ _tab=b.dataset.tab; render(); });
     const hid = $('#bg-hid'); if(hid) hid.onclick=()=>{ _showHidden=!_showHidden; render(); };
+    const rst = $('#bg-reset'); if(rst) rst.onclick=resetMonth;
 
     // One delegated handler for the whole list — rows are re-rendered on every change, so per-row
     // listeners would be rebound constantly for no gain.
@@ -423,12 +444,22 @@
   // duplicates rather than silently destroying what's already there.
   function importDialog(){
     modal(`<h3>Import from Budget Manager</h3>
-      <div class="muted small">Paste the JSON from <code>scripts/export_budget_db.py</code>. Rows are ADDED to your current budget — they don't replace it.</div>
+      <div class="muted small">Pick the file from <code>scripts/export_budget_db.py</code> (or paste it below).
+        Rows are ADDED to your current budget — they don't replace it.</div>
+      <label class="fld">Backup file<input class="input" id="bg-file" type="file" accept=".json,application/json"></label>
       <textarea id="bg-json" rows="8" placeholder='{"bills":[…],"cats":[…],"items":[…]}'></textarea>
       <button class="btn btn-cyan full" id="bg-iok2">Import</button>`, root=>{
+      // Reading the file into the SAME textarea keeps one import path — the button never has to care
+      // where the JSON came from, and you can still eyeball it before committing.
+      const fi=root.querySelector('#bg-file');
+      if(fi) fi.onchange=()=>{ const f=fi.files && fi.files[0]; if(!f) return;
+        const fr=new FileReader();
+        fr.onload=()=>{ root.querySelector('#bg-json').value=String(fr.result||''); toast(`loaded ${f.name}`); };
+        fr.onerror=()=>toast('couldn’t read that file');
+        fr.readAsText(f); };
       root.querySelector('#bg-iok2').onclick=async()=>{
         let d; try{ d=JSON.parse(root.querySelector('#bg-json').value||''); }
-        catch(_){ return toast('that isn’t valid JSON'); }
+        catch(_){ return toast('pick a file first, or paste valid JSON'); }
         const nb=Array.isArray(d.bills)?d.bills:[], nc=Array.isArray(d.cats)?d.cats:[], ni=Array.isArray(d.items)?d.items:[];
         if(!nb.length && !nc.length) return toast('nothing to import');
         closeModal();

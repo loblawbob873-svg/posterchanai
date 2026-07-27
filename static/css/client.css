@@ -3076,7 +3076,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    Every colour here is a THEME VARIABLE, never a literal — that's what makes the view work in all
    nine themes (including the light ones and win98) without a single per-theme override. */
 .bg-wrap{padding:14px 16px calc(28px + env(safe-area-inset-bottom));max-width:760px;margin:0 auto}
-.bg-month{font-size:15px;font-weight:700;color:var(--muted);letter-spacing:.4px;margin-bottom:10px;text-transform:uppercase}
+.bg-monthrow{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.bg-month{font-size:15px;font-weight:700;color:var(--muted);letter-spacing:.4px;text-transform:uppercase}
+.bg-monthrow .btn{margin-left:auto}
 /* auto-fit keeps four tiles on a desktop row and folds to 2x2 on a phone with no media query */
 .bg-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .bg-tile{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:11px 13px;display:flex;flex-direction:column;gap:3px;min-width:0}
