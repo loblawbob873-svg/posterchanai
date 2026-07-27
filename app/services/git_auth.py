@@ -187,12 +187,11 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
     Every check below is unchanged, so this is a second envelope for the same signed token, not a
     second way to authenticate. Enabled for the READ gate only — push never sets it.
 
-    This does NOT make ngit work with private repos, which is what it was originally written for.
-    ngit 2.6.3 was measured: it sends no NIP-98 AND never invokes a git credential helper (verified
-    with a logging helper — it was not called once), so it simply cannot authenticate. The envelope
-    is still what lets plain `git clone https://…/<id>.git` read a private repo with no manual
-    header wrangling. Private repos reached over `nostr://` need an authenticated git server ngit
-    can actually speak to (SSH), not this.
+    This is what lets BOTH plain `git clone https://…/<id>.git` and ngit read a private repo. Stock
+    ngit 2.6.3 never invoked the helper (measured with a logging helper: zero calls) because it only
+    attempts the *unauthenticated* protocol against a GRASP server, so the credentials callback is
+    never installed — a locally patched ngit adds the authenticated fallback. See
+    docs/GIT_OVER_NOSTR.md; ngit sends no NIP-98 of its own, so this envelope is the way in.
 
     NOTE on replay: the ±max_skew freshness window plus URL binding is the practical guard; a nonce
     cache isn't feasible across independent one-shot hook processes / stateless request handlers. The

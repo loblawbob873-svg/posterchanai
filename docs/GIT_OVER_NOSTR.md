@@ -144,22 +144,33 @@ A repo can be marked **private** at create time (`private=true`; default configu
         '!/path/to/venv/bin/python /path/to/scripts/git-credential-nostr'
       git config --global 'credential.https://poster.place.useHttpPath' true
 
-### ngit CANNOT read a private repo on this host — use SSH for those
+### ngit + private repos: two things had to be fixed
 
-Measured against ngit 2.6.3, not assumed: it sends **no NIP-98** (no `27235`/`nip98`/`extraHeader`
-anywhere in the binary) and it **never invokes a git credential helper** (checked with a logging
-helper — zero invocations). So neither the native `Nostr` scheme nor the Basic envelope above can
-authenticate it, and a private repo here is unreachable over `nostr://`. Worse, the failure is
-**silent**: unable to list refs, ngit reports `Everything up-to-date` and pushes nothing.
+Stock ngit 2.6.3 cannot read a private repo here, and it fails **silently** — unable to list refs it
+reports `Everything up-to-date` and pushes nothing. Two independent causes, both measured:
 
-The working shape for a **private** repo is nostr for metadata, an authenticated git server ngit can
-actually speak for transport — i.e. SSH:
+1. **ngit only tries the unauthenticated protocol against a GRASP server.**
+   `get_read_protocols_to_try`/`get_write_protocols_to_try` return a one-element list for a GRASP
+   server, so `dont_authenticate` is set and the credentials callback is never installed — which is
+   why a credential helper is never invoked (it isn't that ngit lacks the ability: it uses
+   `auth_git2`, which does run helpers; it just never reaches that path). **Patched locally** so the
+   GRASP branch falls back to the authenticated protocol; `~/.local/bin/ngit.stock-2.6.3` and
+   `git-remote-nostr.stock-2.6.3` are the untouched originals. Worth upstreaming.
+2. **This host looked like a GRASP server without being one.** ngit classifies by URL shape
+   (`is_grasp_server_clone_url`: any `https://host/<npub>/<repo>.git`) and then derives the relay by
+   truncating at the npub — so `https://poster.place/git/<npub>/<x>.git` implies a relay at
+   `wss://poster.place/git`. Nothing answered there, so pushes died with `state event failed to
+   reach any git server relay`. Fixed in the router's nginx: `location = /git` (exact match, so the
+   longer smart-HTTP paths still reach the app) proxies to the relay on `:3052`.
 
-    ngit init --name <id> --clone ssh://git@git.poster.place:2200/<user>/<repo>.git \
+With both in place a private repo works over **HTTPS on this host** — no SSH:
+
+    ngit init --name <id> --clone https://poster.place/git/<npub>/<id>.git \
               --relay wss://relay.poster.place --relay ws://nas.lan:3052
 
-`/opt/admintools` and `/opt/gentoo-installer` are set up this way and both clone from a bare
-`nostr://` URL. The built-in GRASP host stays the right home for **public** repos.
+`/opt/admintools` and `/opt/gentoo-installer` are set up this way: both clone from a bare `nostr://`
+URL (`fetch: succeeded over https`), pushes are authorized by the signed 30618, and anonymous
+`info/refs` still 401s.
 
 - **Announcing at all makes the identifier public.** ngit resolves `nostr://<npub>/<id>` *from* the
   30617, so an unannounced repo has nothing to resolve. `relay.poster.place` serves anonymous reads,
