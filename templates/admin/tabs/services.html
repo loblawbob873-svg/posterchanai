@@ -206,7 +206,7 @@
         <div class="form-group">
             <label for="uptime_monitors">Endpoints (one per line)</label>
             <textarea id="uptime_monitors" name="uptime_monitors" rows="6" placeholder="Website | https://poster.place&#10;Relay | https://poster.place/relay | 120&#10;Git host | https://poster.place/git | 300 | posterchanai&#10;https://example.com"></textarea>
-            <small>Format: <code>Name | URL | interval seconds | expected text</code>. Only the URL is required — a bare URL line names itself after the host. The interval falls back to the default below; with an <em>expected text</em> field the response body must contain it, otherwise any 2xx/3xx counts as up. Lines starting with <code>#</code> are ignored. Renaming a monitor starts its history over (the name is its id); changing its URL keeps it.</small>
+            <small><strong>After saving, allow up to ~2 minutes</strong> before the first results appear: the checks run in the background worker, which picks up settings changes on its own re-hydrate cycle. No restart needed. Format: <code>Name | URL | interval seconds | expected text</code>. Only the URL is required — a bare URL line names itself after the host. The interval falls back to the default below; with an <em>expected text</em> field the response body must contain it, otherwise any 2xx/3xx counts as up. Lines starting with <code>#</code> are ignored. Renaming a monitor starts its history over (the name is its id); changing its URL keeps it.</small>
         </div>
         <div class="form-group">
             <label for="uptime_interval_seconds">Default Check Interval (seconds)</label>

@@ -9322,7 +9322,21 @@
           // newer and syncs on the next save. Without this, creating a folder + uploading during the
           // initial load got wiped: the files lost their metadata and vanished / showed as octet-stream.
           if(idx){
-            if(!this._dirty && !this._saving){ this.data=idx; this.saveLocal(); }
+            if(!this._dirty && !this._saving){
+              // SELF-REPAIR. If this device holds far more than the server does, the server's copy was
+              // truncated (a browser with no local state saved its empty default over it — the wipe
+              // this whole guard-set exists to stop). Blindly applying the server copy here is what
+              // would finish the job: the last good index would be overwritten by the bad one and the
+              // drive's folders would be gone for good. Keep ours, fold theirs under it, push it back.
+              const locN=Object.keys(this._norm().files||{}).length, srvN=Object.keys(idx.files||{}).length;
+              if(locN >= 5 && locN > srvN + 4){
+                this._merge(idx);
+                this._dirty=true;
+                try{ toast(`📁 Restored ${Object.keys(this.data.files).length} files and ${this.data.folders.length} folders from this device.`); }catch(_){}
+                console.warn('files-index: server copy was truncated ('+srvN+' vs '+locN+' here) — restoring from this device');
+                setTimeout(()=>this._save(), 50);   // _pullOk is set a few lines below, in this same tick
+              } else { this.data=idx; this.saveLocal(); }
+            }
             // Edits in flight: the old code SKIPPED the server index entirely, so a first upload on a
             // fresh device saved {Music, that one file} straight over a full drive. Fold the server's
             // index UNDER the local edits instead — local wins per file, nothing is dropped.

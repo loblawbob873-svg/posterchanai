@@ -578,7 +578,9 @@ async def _tick():
 
 def start_uptime_scheduler():
     """Register the base tick. It self-gates on `uptime_enabled` and re-reads the monitor list every
-    tick, so adding an endpoint (or turning the feature on) needs no restart."""
+    tick, so adding an endpoint (or turning the feature on) needs no restart — though it does need the
+    worker's periodic settings re-hydrate (app/worker.py, every 120s) to see the change first, so the
+    first results can be up to ~2 minutes behind the Save."""
     global uptime_scheduler
     if uptime_scheduler is not None:
         return
