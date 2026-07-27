@@ -75,7 +75,7 @@ def apply_character(outputs: List[OutputFile], name: str) -> List[OutputFile]:
 
 
 def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.52,
-                                  max_width_frac: float = 0.34):
+                                  max_width_frac: float = 0.48):
     """Place the character bottom-CENTRE (the pointing-up meme anchor) rather than bottom-right like
     apply_character. Returns (image, top_y, left_x, right_x) so a caption can be placed in whichever
     gutter beside her is wider, clear of the art."""
@@ -93,6 +93,11 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.5
             char = char.crop(_bb)
     except Exception:
         pass
+    # The width cap exists to leave a gutter for the caption, so it is derived from what the
+    # caption needs, not guessed: the bubble wants `W*0.18` and each gutter is
+    # (W - cw)/2 - 2*margin with margin = 0.03W, so cw <= 0.52W still satisfies it. 0.48 keeps a
+    # little slack. It was 0.34, which a WIDE pose pays for: the shrugging rabbi (arms out, 0.66
+    # aspect) hit the cap on any portrait photo and rendered at 29% of the height.
     # Size by HEIGHT, then cap her actual WIDTH — the two used to be conflated as
     # `height_frac * min(W, H)`, which is a width cap only by accident. On a 1080x1920 phone photo
     # that made her 0.38*1080 tall, i.e. 21% of the frame — the "too small on a high-res photo"
@@ -294,14 +299,21 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     side = "right" if right_w >= left_w else "left"
     band_w = max(left_w, right_w)
     beside = band_w >= max(int(W * 0.18), 60)
-    # Use only part of the gutter: at full width the bubble filled it end to end and clamped against the
-    # frame margin, which reads as "pinned to the right" rather than sitting beside him. The tail and the
-    # bubble padding also live outside `tw`, so budgeting for them here is what keeps the tail on him.
-    max_width = int(band_w * 0.74) if beside else (W - 2 * margin)
-    # "Smaller" applies to BOTH placements: this is a label on her, not a meme banner. The above-head
-    # fallback used H/6 and rendered enormous on portrait images where the gutters are too narrow.
-    top_size = max(int(H / (11 if beside else 10)), 13)
-    band_h = (H - char_top) if beside else min(max(int(H * 0.10), char_top - margin), int(H * 0.30))
+
+    def _layout(in_gutter: bool):
+        """(max_width, top_size, band_h) for the beside-her or above-her-head placement."""
+        # Use only part of the gutter: at full width the bubble filled it end to end and clamped
+        # against the frame margin, which reads as "pinned to the right" rather than sitting beside
+        # him. The tail and the bubble padding also live outside `tw`, so budgeting for them here is
+        # what keeps the tail on him.
+        mw = int(band_w * 0.74) if in_gutter else (W - 2 * margin)
+        # "Smaller" applies to BOTH placements: this is a label on her, not a meme banner. The
+        # above-head fallback used H/6 and rendered enormous on portrait images.
+        ts = max(int(H / (11 if in_gutter else 10)), 13)
+        bh = (H - char_top) if in_gutter else min(max(int(H * 0.10), char_top - margin), int(H * 0.30))
+        return mw, ts, bh
+
+    max_width, top_size, band_h = _layout(beside)
 
     # A caption must never be broken MID-WORD. _wrap_text_to_width hard-breaks a word that cannot fit,
     # so in a narrow gutter "WOULD" came out as "WOUL"/"D" — and the size loop accepted it, because the
@@ -327,6 +339,26 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     # two effects stopped matching. Prefer a single line even though it means a smaller font; only wrap
     # when the caption cannot fit on one line at any readable size (a long custom caption).
     chosen = _fit(True) or _fit(False)
+    # A gutter can be wide enough to pass the `beside` test and still only hold unreadable text —
+    # on a 1080x1920 phone photo the shrugging rabbi leaves ~217px of gutter, which fits "WHADDYA"
+    # at about 2% of the image height. When that happens use the band ABOVE his head instead: the
+    # pointing format leaves most of a portrait frame empty up there, so the caption can be several
+    # times bigger, which matters more than sitting beside him.
+    if beside and chosen and chosen[0].size < H / 24:
+        # A multi-word caption ("WHADDYA GONNA DO?") is what usually shrinks: one line of it is
+        # long, so the size loop keeps going down until the whole thing fits the gutter. Two lines
+        # in the gutter at a readable size beat one tiny line, so try wrapping BEFORE giving up the
+        # bubble — the speech bubble is the look, and only a genuinely narrow gutter should lose it.
+        wrapped = _fit(False)
+        if wrapped and wrapped[0].size >= H / 24:
+            chosen = wrapped
+        else:
+            max_width, top_size, band_h = _layout(False)
+            alt = _fit(True) or _fit(False)
+            if alt and alt[0].size > chosen[0].size:
+                beside, chosen = False, alt
+            else:
+                max_width, top_size, band_h = _layout(True)
     if chosen is None:
         font = _load_meme_font(11)
         lines = _wrap_text_to_width(draw, text, font, max_width)

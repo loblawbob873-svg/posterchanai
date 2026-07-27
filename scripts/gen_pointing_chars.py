@@ -1,4 +1,4 @@
-"""Regenerate assets/characters/theraped.png and would.png — the pointing-up meme characters.
+"""Regenerate assets/characters/theraped.png, would.png and shrug.png — the pointing-meme cast.
 
 Both were hand-drawn with Pillow (flat shapes, stick legs), which is why the format read as a
 doodle rather than a reaction image. There is no green-screen footage of "a character pointing
@@ -28,8 +28,12 @@ sys.path.insert(0, REPO)
 # "anime" has to be in the prompt for the good anime model to be picked up, and asking for
 # "lineart" (a natural thing to write for cel art) makes it return UNCOLOURED line drawings.
 NEGATIVE = ("text, letters, watermark, signature, blurry, monochrome, greyscale, sketch, lineart, "
+            "painterly, oil painting, semi realistic, "
             "extra fingers, deformed hands, malformed limbs, cropped, out of frame, multiple people, "
             "photo, realistic, 3d render, busy background")
+# Leading with "anime <noun>" and naming the cel shading matters as much as the character name:
+# "Old rabbi ... . Anime." (name-last, the wording that nails Rebecca/Makima) came back as
+# semi-realistic painted illustration, because "rabbi in a long coat" pulls that way hard.
 CHARACTERS = {
     "theraped": ("anime girl standing, full body, cute schoolgirl in a sailor uniform, one arm raised "
                  "straight up pointing at the sky with her index finger, big cheerful smile, looking up, "
@@ -38,6 +42,11 @@ CHARACTERS = {
               "dignified older professor, standing straight, one arm raised, index finger pointing "
               "straight up, smug knowing smile, vibrant colours, clean anime cel shading, anime key "
               "visual, simple flat white background"),
+    # `shrug` is the same renderer (_add_pointing_meme), just a palms-up pose instead of a point.
+    "shrug": ("full body anime rabbi, old man with a long white beard, black wide-brim hat and long "
+              "black coat, shrugging with both palms turned up at his sides, resigned wry smile, "
+              "raised eyebrows, vibrant colours, clean anime cel shading, anime key visual, simple "
+              "flat white background"),
 }
 
 
