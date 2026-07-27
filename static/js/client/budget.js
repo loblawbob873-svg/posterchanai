@@ -447,31 +447,8 @@
       <div class="muted small">Pick the file from <code>scripts/export_budget_db.py</code> (or paste it below).
         Rows are ADDED to your current budget — they don't replace it.</div>
       <label class="fld">Backup file<input class="input" id="bg-file" type="file" accept=".json,application/json"></label>
-      <div class="bg-add" style="margin-top:6px;padding-top:10px">
-        <input class="input" id="bg-tok" placeholder="one-time import code" autocomplete="off">
-        <button class="btn btn-ghost" id="bg-fetch">Load from server</button>
-      </div>
       <textarea id="bg-json" rows="8" placeholder='{"bills":[…],"cats":[…],"items":[…]}'></textarea>
       <button class="btn btn-cyan full" id="bg-iok2">Import</button>`, root=>{
-      // "Load from server" exists for PHONES: the old rows live in a SQLite file on the node, and
-      // asking someone to move a file onto a phone to migrate is absurd. The server can read that
-      // file but can never write the result — the doc is encrypted to this key — so it hands the rows
-      // here and we do the encrypting. The code is checked server-side against a local config file.
-      const fb=root.querySelector('#bg-fetch');
-      if(fb) fb.onclick=async()=>{
-        const tok=(root.querySelector('#bg-tok').value||'').trim();
-        if(!tok) return toast('paste the one-time import code');
-        fb.disabled=true; fb.textContent='loading…';
-        try{
-          const r=await fetch('/client/budget/legacy',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({token:tok})});
-          if(!r.ok) throw new Error(r.status===403?'that code is not right':'no legacy data on this node');
-          const d=await r.json();
-          root.querySelector('#bg-json').value=JSON.stringify(d);
-          toast(`loaded ${(d.bills||[]).length} bill(s) — now press Import`);
-        }catch(err){ toast((err&&err.message)||'could not load'); }
-        fb.disabled=false; fb.textContent='Load from server';
-      };
       // Reading the file into the SAME textarea keeps one import path — the button never has to care
       // where the JSON came from, and you can still eyeball it before committing.
       const fi=root.querySelector('#bg-file');
