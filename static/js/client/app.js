@@ -3715,8 +3715,8 @@
         ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
         <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
         ${mine.length?`<div class="repo-scope" role="tablist">
-          <button class="tr-tab repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine">Mine <i class="repo-n">${mine.length}</i></button>
-          <button class="tr-tab repo-sc${_repoScope==='all'?' on':''}" data-scope="all">All repos <i class="repo-n">${repos.length}</i></button>
+          <button class="repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine" role="tab">Mine</button>
+          <button class="repo-sc${_repoScope==='all'?' on':''}" data-scope="all" role="tab">All repos</button>
         </div>`:''}
         ${repos.length>1?`<input class="input repo-search" id="repo-q" type="search" autocomplete="off" placeholder="🔍 Search repos — name, owner, description…">`:''}
       </div>
