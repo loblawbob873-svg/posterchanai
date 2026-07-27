@@ -196,6 +196,14 @@ def create_repo(owner_hex: str, repo_id: str, *, announcement_addr: str = "",
                  # left by a force-push — still can't be fetched by anyone who guesses their sha.
                  ("uploadpack.allowTipSHA1InWant", "true"),
                  ("uploadpack.allowReachableSHA1InWant", "true"),
+                 # PARTIAL CLONE. In-browser git clients (gitworkshop.dev and anything else fetching a
+                 # repo over fetch()) ask for `filter blob:none` so they can render a tree without
+                 # pulling every blob — posterchanai is a 72MB pack, which no browser wants. Without
+                 # this, git does not advertise `filter`, and a client that asks anyway gets
+                 # upload-pack exiting mid-stream: HTTP 200 with a ZERO-byte body, which surfaces as
+                 # "couldn't fetch the objects (upload-pack failed)" and looks like a network fault
+                 # rather than a refused capability. Costs nothing for ordinary clones.
+                 ("uploadpack.allowFilter", "true"),
                  ("receive.fsckObjects", "true"),
                  ("receive.denyNonFastForwards", "false"),
                  ("receive.denyDeletes", "false"),
