@@ -172,6 +172,16 @@ def _clamp_params(cfg: dict) -> dict:
     }
 
 
+def _double_rate(rate: str) -> str:
+    """"1500k" -> "3000k". The VBV buffer is sized at 2x the ceiling: at 1x the encoder is effectively CBR
+    and pads the bitrate back up to the target, which is the behaviour this whole rate-control setup exists
+    to avoid. Falls back to the input unchanged if it isn't a shape we recognise (already validated by
+    _clamp_params, so this is belt-and-braces)."""
+    import re
+    m = re.fullmatch(r"(\d+)([kKmM]?)", (rate or "").strip())
+    return f"{int(m.group(1)) * 2}{m.group(2)}" if m else rate
+
+
 def _clamp_encoder(cfg: dict) -> str:
     """The H.264 encoder the clamp runs. Reuses the same NVENC → VAAPI → libx264 autodetect as offline video
     work so a node's hardware is probed in exactly one place. Picked at config-generation time because the
@@ -210,18 +220,33 @@ def _clamp_video_args(encoder: str, p: dict) -> tuple:
     # gte(iw,ih) picks the orientation; -2 keeps the aspect ratio (rounded to an even, encodable size).
     scale = ("scale=w='if(gte(iw,ih),-2,min({h},iw))':h='if(gte(iw,ih),min({h},ih),-2)'"
              .format(h=p["height"]))
-    rate = "-b:v {v} -maxrate {v} -bufsize {v}".format(v=p["vbitrate"])
+    # The bitrate is a CEILING, never a target — and getting that wrong is silent and backwards. A plain
+    # `-b:v X` under ffmpeg's DEFAULT rate control pads every stream up to X: measured on the Arc, a
+    # 125 kbps phone source came out at 1441 kbps, an 11.5x INFLATION, hitting hardest exactly the weak
+    # connections this feature exists to protect. Explicit VBR/CRF spends only what the picture needs:
+    #     125 kbps in -> 126 kbps out   (was 1441)
+    #    2.5 Mbps in -> 277 kbps out    (was 1441)
+    #    9.5 Mbps in -> 1485 kbps out   (ceiling still holds)
+    # Each encoder spells capped-quality differently; they are NOT interchangeable, and the wrong spelling
+    # silently reverts to padding rather than erroring. bufsize is 2x the ceiling — a 1x buffer is
+    # effectively CBR and reintroduces the padding.
+    v, buf = p["vbitrate"], _double_rate(p["vbitrate"])
     # Every chain ends in an explicit 4:2:0 `format` filter. Without it the encoder inherits the SOURCE
     # pixel format, and a 4:4:4 input (some capture cards, some screen-share paths) makes libx264 reject
     # `-profile:v main` outright — the clamp would fail on exactly the streams the CPU fallback exists for.
     # 4:2:0 is also the only chroma format browsers reliably decode, so this is what viewers need anyway.
     if encoder == "h264_nvenc":
-        return ("", f"-vf \"fps={p['fps']},{scale},format=nv12\" -c:v h264_nvenc -preset p4 {rate} -g {gop}")
+        # NVENC capped-quality: -cq with `-b:v 0` (a non-zero -b:v would re-assert a target).
+        return ("", f"-vf \"fps={p['fps']},{scale},format=nv12\" -c:v h264_nvenc -preset p4 "
+                    f"-rc vbr -cq 24 -b:v 0 -maxrate {v} -bufsize {buf} -g {gop}")
     if encoder == "h264_vaapi":
+        # VAAPI: -rc_mode VBR. Its ICQ/QVBR modes either aren't supported by the iHD driver or ignore
+        # maxrate entirely (both measured), so VBR is the only mode here that caps without padding.
         return ("-vaapi_device \"$VAAPI_DEVICE\"",
-                f"-vf \"fps={p['fps']},{scale},format=nv12,hwupload\" -c:v h264_vaapi {rate} -g {gop}")
+                f"-vf \"fps={p['fps']},{scale},format=nv12,hwupload\" -c:v h264_vaapi "
+                f"-rc_mode VBR -b:v {v} -maxrate {v} -bufsize {buf} -g {gop}")
     return ("", f"-vf \"fps={p['fps']},{scale},format=yuv420p\" -c:v libx264 -preset veryfast "
-                f"-profile:v main {rate} -g {gop} -sc_threshold 0")
+                f"-profile:v main -crf 23 -maxrate {v} -bufsize {buf} -g {gop} -sc_threshold 0")
 
 
 def _write_clamp_script(cfg: dict) -> None:
@@ -244,10 +269,6 @@ def _write_clamp_script(cfg: dict) -> None:
         ffmpeg, vaapi_dev = "ffmpeg", ""
     hw_pre, hw_post = _clamp_video_args(encoder, p)
     sw_pre, sw_post = _clamp_video_args("libx264", p)
-    # Pixel-format chain the hw_ok probe needs — the same upload/format step the real encode uses, since
-    # that's often where a hardware encoder actually fails (a bare -c:v h264_vaapi with no hwupload would
-    # fail even on a perfectly working card, and the probe would libel it).
-    probe_vf = {"h264_vaapi": "format=nv12,hwupload", "h264_nvenc": "format=nv12"}.get(encoder, "format=yuv420p")
     audio = f"-c:a aac -b:a {p['abitrate']} -ar 48000"
     # `-map 0:a:0?` — the trailing ? makes audio OPTIONAL. A screen share published with no microphone has
     # no audio track at all, and a non-optional map aborts ffmpeg outright ("Stream map ... does not exist"),
@@ -300,10 +321,13 @@ run_sw() {{
 # exactly like a failing encoder, so a perfectly good GPU stream got demoted to libx264 (46% of a core) for
 # its whole duration. Runtime cannot distinguish "encoder unusable" from "publisher blipped"; this probe
 # tests only the thing we actually want to know, and costs ~100ms once per stream.
+# Probes with the REAL encoder arguments, not just `-c:v <encoder>`: rate-control flags are spelled
+# differently per encoder and a wrong one is rejected at open time. Probing the full set means a bad
+# combination falls back to the CPU (with a log line) instead of failing forever on every restart.
 hw_ok() {{
   "$FFMPEG" -hide_banner -loglevel error {hw_pre} \\
     -f lavfi -i testsrc=size=256x144:rate=5:duration=0.2 \\
-    -vf "{probe_vf}" -c:v {encoder} -f null - >/dev/null 2>&1
+    {hw_post} -f null - >/dev/null 2>&1
 }}
 
 START=$(date +%s)

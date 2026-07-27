@@ -131,11 +131,14 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         self.assertIn("hw_ok()", script)
         self.assertNotIn("-lt 10", script)          # no runtime-based demotion, at any threshold
 
-    def test_probe_uses_the_same_upload_chain_as_the_real_encode(self):
-        """A bare -c:v h264_vaapi with no hwupload fails even on a working card — the probe would then
-        libel the encoder and send every stream to the CPU."""
+    def test_probe_uses_the_real_encoder_arguments(self):
+        """The probe must test the FULL argument set, not just -c:v. Rate-control flags are spelled
+        differently per encoder and are rejected at open time, so probing a reduced set would pass and
+        then the real encode would fail forever on every restart."""
         _, script = _render(self.tmp, stream_clamp_encoder="h264_vaapi")
-        self.assertIn('-vf "format=nv12,hwupload" -c:v h264_vaapi -f null -', script)
+        probe = script[script.index("hw_ok()"):script.index("START=")]
+        for flag in ("-c:v h264_vaapi", "-rc_mode VBR", "-maxrate 1500k", "hwupload", "-f null -"):
+            self.assertIn(flag, probe, flag)
 
     def test_cpu_encoder_skips_the_probe(self):
         _, script = _render(self.tmp, stream_clamp_encoder="libx264")
@@ -187,6 +190,30 @@ class TestClampParams(unittest.TestCase):
                              "stream_clamp_encoder": "h264_nvenc"})
         self.assertEqual(p, {"height": "1080", "fps": "60", "vbitrate": "3M",
                              "abitrate": "96k", "encoder": "h264_nvenc"})
+
+    def test_bitrate_is_a_ceiling_not_a_target(self):
+        """Measured on the Arc: under ffmpeg's DEFAULT rate control, `-b:v 1500k` padded a 125 kbps phone
+        source up to 1441 kbps — an 11.5x inflation, the opposite of the point, worst on the weakest
+        connections. Each encoder needs its own capped-quality spelling, and the wrong one silently
+        reverts to padding rather than erroring, so assert the exact flags."""
+        p = S._clamp_params(BASE)
+        self.assertIn("-rc_mode VBR", S._clamp_video_args("h264_vaapi", p)[1])
+        self.assertIn("-crf 23", S._clamp_video_args("libx264", p)[1])
+        nvenc = S._clamp_video_args("h264_nvenc", p)[1]
+        self.assertIn("-rc vbr", nvenc)
+        self.assertIn("-cq 24", nvenc)
+        self.assertIn("-b:v 0", nvenc)          # a non-zero -b:v re-asserts a target and pads again
+
+    def test_vbv_buffer_is_twice_the_ceiling(self):
+        """A 1x buffer is effectively CBR and reintroduces the padding this is meant to remove."""
+        for enc in ("h264_vaapi", "h264_nvenc", "libx264"):
+            self.assertIn("-bufsize 3000k", S._clamp_video_args(enc, S._clamp_params(BASE))[1], enc)
+
+    def test_double_rate_units(self):
+        self.assertEqual(S._double_rate("1500k"), "3000k")
+        self.assertEqual(S._double_rate("3M"), "6M")
+        self.assertEqual(S._double_rate("800"), "1600")
+        self.assertEqual(S._double_rate("junk"), "junk")     # unrecognised passes through, never crashes
 
     def test_gop_tracks_fps_for_clean_segment_cuts(self):
         _, post = S._clamp_video_args("libx264", S._clamp_params({"stream_clamp_fps": "60"}))

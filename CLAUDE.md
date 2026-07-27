@@ -290,6 +290,16 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   which saves nothing (the bitrate ceiling already bounds bandwidth) and just looks bad. Covered by
   `tests/test_stream_clamp.py`, which runs the real filter through ffmpeg and checks actual pixel
   dimensions — the string-only assertion passed while this was wrong.
+  (6) The bitrate must be a **ceiling, not a target**, and each encoder spells that differently — VAAPI
+  `-rc_mode VBR`, NVENC `-rc vbr -cq N -b:v 0`, x264 `-crf N -maxrate`, all with `bufsize = 2x` (a 1x
+  buffer is CBR and pads again). Under ffmpeg's DEFAULT rate control a plain `-b:v 1500k` pads every
+  stream UP to 1500k: a 125 kbps phone source measured **1441 kbps out, an 11.5x inflation** — the exact
+  opposite of the feature's purpose, worst on the weakest connections. The wrong spelling silently
+  reverts to padding instead of erroring, which is why the tests assert the exact flags.
+  (7) The `runOnReady` encoder must be picked by **probing**, never by "the transcode died quickly so the
+  encoder must be broken". A WHIP/phone publisher renegotiates a second after go-live, which kills the
+  source and looks identical to encoder failure — that demoted a working GPU stream to libx264 (46% of a
+  core) for its whole duration in production. `clamp.sh:hw_ok` probes with the REAL argument set (15ms).
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Services
