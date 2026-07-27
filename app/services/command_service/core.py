@@ -96,6 +96,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sleepwell": "Turn an attached image into a short MP4 set to the Sleep Well clip: sleepwell",
         "horse": "Turn an attached image into a short MP4 set to the horse clip: horse",
+        "knightrider": "Turn an attached image into a short MP4 set to the Knight Rider theme: knightrider",
         "sopranos": "Turn an attached image into an MP4 set to the Sopranos theme clip: sopranos",
         "cheers": "Turn an attached image into an MP4 set to the Cheers theme clip: cheers",
         "munsters": "Turn an attached image into an MP4 set to the Munsters theme clip: munsters",
@@ -184,7 +185,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
-        "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse",
+        "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
@@ -679,6 +680,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._sleepwell_command(attachments)
         elif command == "horse":
             return await self._horse_command(attachments)
+        elif command == "knightrider":
+            return await self._knightrider_command(attachments)
         elif command == "sopranos":
             return await self._sopranos_command(attachments)
         elif command == "cheers":
