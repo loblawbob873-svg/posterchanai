@@ -6,7 +6,7 @@ when a WHITELISTED user replies to / likes / reposts a bridged "puppet" note, pe
 action on the fediverse through THAT user's own linked Pleroma account:
 
     Nostr kind-1 reply  → Pleroma reply        (post_status in_reply_to)
-    Nostr kind-7 like   → Pleroma favourite
+    Nostr kind-7 like   → Pleroma favourite ('+'), else an emoji reaction (unicode or custom) — _react
     Nostr kind-6 repost → Pleroma reblog
 
 Gating: the author must be on the bridge WHITELIST — a PosterChan user with a linked Pleroma account
@@ -576,6 +576,48 @@ async def _crosspost(db, user, ev: dict) -> None:
         logger.warning("[fedi-writeback] cross-post failed (ev %s): %s", eid, e)
 
 
+# A NIP-30 custom-emoji reaction: the content is exactly ":shortcode:" (optionally :name@host: for a
+# remote pack) and an ["emoji", shortcode, url] tag carries the image.
+_SHORTCODE_RE = _re.compile(r"^:([A-Za-z0-9_+\-]+(?:@[A-Za-z0-9.\-]+)?):$")
+
+
+async def _react(inst: str, token: str, target_id: str, ev: dict) -> None:
+    """Perform a Nostr kind-7 as the closest fediverse action.
+
+    This used to be a bare favourite for EVERY reaction, which silently threw the emoji away: picking
+    :blobcat: (or 🔥) in the client federated as an anonymous ❤ like. Pleroma/Akkoma carry the emoji
+    natively (PUT …/reactions/<emoji>) for unicode AND for a custom emoji the reacting instance knows,
+    so send the real thing and keep the favourite only for a plain NIP-25 like.
+
+    The emoji is accepted both as `:shortcode:` and bare `shortcode`, so try the canonical form first
+    and the bare one after. If the instance rejects BOTH (4xx — it has no such emoji, or predates emoji
+    reactions) fall back to a favourite: the like still carries the intent. Anything else (5xx, network)
+    is transient and re-raised, so the caller leaves the event un-seen and the next replay retries it
+    rather than permanently downgrading the reaction to a like."""
+    content = (ev.get("content") or "").strip()
+    if content in ("", "+"):
+        await pleroma_service.favourite_status(inst, token, target_id)   # server-idempotent
+        return
+    emoji = "\U0001f44e" if content == "-" else content    # NIP-25 downvote → 👎, never a "like"
+    m = _SHORTCODE_RE.match(emoji)
+    forms = [emoji, m.group(1)] if m else [emoji]
+    last = None
+    for form in forms:
+        try:
+            await pleroma_service.emoji_react(inst, token, target_id, form)   # server-idempotent
+            return
+        except Exception as e:
+            last = e
+            code = getattr(getattr(e, "response", None), "status_code", 0)
+            if not 400 <= code < 500:
+                raise
+    # A '-' gets no fallback: favouriting a downvote would invert what the user said.
+    logger.info("[fedi-writeback] instance rejected emoji reaction %r (%s)%s", emoji, last,
+                "" if content == "-" else " — favouriting instead")
+    if content != "-":
+        await pleroma_service.favourite_status(inst, token, target_id)
+
+
 async def _delete_federated(db, user, ev: dict) -> bool:
     """NIP-09 delete (kind 5) → delete the fediverse status this note became. True if nothing failed.
 
@@ -672,7 +714,7 @@ async def _handle(db, ev: dict) -> None:
             logger.debug("[fedi-writeback] could not resolve target for ev %s", eid)
             return
         if kind == 7:
-            await pleroma_service.favourite_status(inst, token, target_id)   # server-idempotent
+            await _react(inst, token, target_id, ev)   # emoji reaction when it IS one, else favourite
         elif kind == 6:
             await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
         elif kind == 1:
