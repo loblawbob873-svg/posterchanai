@@ -876,7 +876,9 @@
       catch(err){ const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); } };
     const p=document.getElementById('mb-post');
     if(p) p.onclick=async()=>{ try{ const u=await up();
-        if(PC.compose) PC.compose(u); else { await navigator.clipboard.writeText(u); toast("link copied — paste it into a post"); } }
+        // compose() takes an OPTIONS OBJECT — passing the bare URL string destructured to nothing and
+        // opened an empty composer with no link in it.
+        if(PC.compose) PC.compose({ text:u }); else { await navigator.clipboard.writeText(u); toast("link copied — paste it into a post"); } }
       catch(err){ const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); } };
   }
 
