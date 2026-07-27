@@ -42,6 +42,16 @@ _RESPAWN_MAX = 5
 _respawn_times: list = []
 
 
+def _relay_from_public_base(public_base: str) -> str:
+    """`https://host/git` -> `wss://host/relay` (http -> ws). "" when the base isn't a usable URL —
+    the announcement then simply carries no `relays` tag, exactly as before."""
+    from urllib.parse import urlparse
+    pu = urlparse((public_base or "").strip())
+    if not pu.scheme or not pu.netloc:
+        return ""
+    return "%s://%s/relay" % ("wss" if pu.scheme == "https" else "ws", pu.netloc)
+
+
 def _read_config() -> dict:
     """Read the git-host settings from the Nostr datastore (same mechanism the relay uses). The DSN
     is reused from the relay setting (same Postgres `posterchan_relay` the hook reads)."""
@@ -75,6 +85,12 @@ def _read_config() -> dict:
             "bind": g("git_server_bind", "127.0.0.1"),
             "port": gi("git_server_port", 3053),
             "public_base": g("git_server_public_base", ""),
+            # Relay to advertise in a new repo's 30617 `relays` tag. NIP-34 clients publish the
+            # kind-30618 repo state THERE, so a repo announced without it is unpushable by ngit
+            # ("state event failed to reach any git server relay") even though the git side is fine.
+            # Explicit setting wins; otherwise derive from the public base, since this node's relay is
+            # served at /relay on the same host that fronts /git (https://x/git -> wss://x/relay).
+            "relay_url": g("client_relay_url", "") or _relay_from_public_base(g("git_server_public_base", "")),
             "allowlist": g("git_server_allowlist", ""),
             "repo_max_mb": gi("git_server_repo_max_mb", 512),
             "total_gb": gi("git_server_total_gb", 20),

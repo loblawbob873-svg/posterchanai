@@ -826,6 +826,12 @@ class _Handler(BaseHTTPRequestHandler):
                 tags.append(["description", str(body["description"])[:1000]])
             if clone:
                 tags.append(["clone", clone])
+            # WHERE to publish the kind-30618 repo state. ngit pushes to the relays named here and
+            # aborts the whole push if it can't reach one ("state event failed to reach any git server
+            # relay") — so a repo announced without this tag is clonable but not pushable by ngit.
+            relay = (_CONFIG.get("relay_url", "") or "").strip()
+            if relay:
+                tags.append(["relays", relay])
             tags.append(["maintainers", owner_hex])
             tags.append(["alt", "git repository: %s" % str(body.get("name") or repo_id)[:80]])
             out["announce_tags_30617"] = tags
