@@ -253,6 +253,17 @@ _REZE_DANCE_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "reze_dance.mov"),
     "/var/lib/posterchanai/assets/reze_dance.mov",
 ]
+_VIBE_AUDIO_CANDIDATES = [
+    os.environ.get("VIBE_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "vibe.mp3"),
+    "/var/lib/posterchanai/assets/vibe.mp3",
+]
+_VIBE_DURATION = 8.0
+_VIBE_DANCE_CANDIDATES = [
+    os.environ.get("VIBE_DANCE_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "vibe_dance.mov"),
+    "/var/lib/posterchanai/assets/vibe_dance.mov",
+]
 _FELIZ_AUDIO_CANDIDATES = [
     os.environ.get("FELIZ_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "feliz.mp3"),

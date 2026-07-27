@@ -86,7 +86,7 @@ worked steps**). Cards are ephemeral — they aren't saved.
 `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`,
 `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `wasteland`, `mixalot`, `thug`,
 `feltedtables`, `prayer`, `nakedman` (a fat cartoon man dances with a huge penis over the
-image → 8s clip).
+image → 8s clip), `vibe` (a cute anime girl dances over the image → 8s clip).
 
 **Enhance** (generic — no gag, just make a post stand out): `glow` (on an attached image →
 gentle breathing zoom + colour pop + a soft light sweeping across → short MP4), `glow <text>`

@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
 
 def _hava_audio_path() -> str:
     """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
@@ -1027,6 +1027,64 @@ def reze_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"reze failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _vibe_audio_path() -> str:
+    """First existing vibe mp3 from the candidate list ("" if none)."""
+    for p in _VIBE_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _vibe_dance_path() -> str:
+    """First existing vibe dance overlay (.mov) from the candidate list ("" if none)."""
+    for p in _VIBE_DANCE_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_vibe(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the cel-anime dancing girl onto the image, set to the vibe clip. MP4 bytes.
+    An ANIMATED overlay effect like reze, but the overlay is real anime footage keyed off a
+    green screen (not drawn shapes), so she reads as anime instead of chibi doodles."""
+    from app.services.media_service import image_gif_overlay_video
+    if isinstance(image_data, list):  # vibe is single-image (overlay), not a slideshow
+        image_data = image_data[0][1]
+    audio = _vibe_audio_path()
+    if not audio:
+        raise RuntimeError("Vibe audio (assets/vibe.mp3) is missing on the server")
+    overlay = _vibe_dance_path()
+    if not overlay:
+        raise RuntimeError("Vibe dance overlay (assets/vibe_dance.mov) is missing on the server")
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_VIBE_DURATION, audio_path=audio, height_frac=0.6)
+
+
+def vibe_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a vibe MP4. Mirrors reze_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_vibe(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_vibe.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 💖 Vibe\n\n💖 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"vibe failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 

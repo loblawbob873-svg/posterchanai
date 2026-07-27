@@ -10,7 +10,7 @@ NO_CAPTION_COMMANDS = (
     "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked",
     "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing",
     "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar",
-    "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "sopranos",
+    "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "sopranos",
     "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily",
     "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece",
     "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
