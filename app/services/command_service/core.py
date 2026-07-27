@@ -2,7 +2,7 @@
 from typing import TYPE_CHECKING
 
 from ._common import Callable, ChatService, Optional, SearchService, Session, Tuple, extract_youtube_urls, is_youtube_url, logger, re, summarize_youtube
-from .finance import _FinanceMixin
+from .bill import _BillMixin
 from .search import _SearchMixin
 from .gen import _GenMixin
 from .media import _MediaMixin
@@ -17,7 +17,7 @@ from .effects1 import _Effects1Mixin
 from .effects2 import _Effects2Mixin
 
 
-class CommandService(_FinanceMixin, _SearchMixin, _GenMixin, _MediaMixin, _TorrentsMixin, _SystemMixin, _CommsMixin, _ProductivityMixin, _Effects1Mixin, _Effects2Mixin):
+class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _TorrentsMixin, _SystemMixin, _CommsMixin, _ProductivityMixin, _Effects1Mixin, _Effects2Mixin):
     COMMANDS = {
         "files": "Search for files in your storage",
         "help": "Show this help message",

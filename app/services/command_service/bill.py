@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class _FinanceMixin:
+class _BillMixin:
     # ------------------------------------------------------------------ bill (snap a bill) ---
     # A photo of a bill → OCR → one small extraction call → a reminder before it's due, and (in the
     # web client) a one-tap file into your encrypted Budget. Three systems you already have, joined

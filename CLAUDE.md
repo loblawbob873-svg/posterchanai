@@ -236,7 +236,9 @@ open a fresh `SessionLocal` and capture any needed config up front.
   **NIP-44-encrypted to the user's OWN key** — not the server-held storage key the rest of the app
   uses. That is the point: nobody but that user can read their finances, so there is no server-side
   `budget`/`pay` and none on Telegram either. Replaces a separate self-hosted Budget Manager Flask
-  app (`finance_service.py`, `finance_api_base`, `User.finance_api_key` — all removed).
+  app — `finance_service.py`, the `finance_api_base` setting (incl. its relay doc) and the
+  `User.finance_api_key` column are all gone. The surviving `bill` command lives in
+  `command_service/bill.py` (`_BillMixin`).
   **Gotcha:** the doc is replaceable, so every write is a read-modify-write of the whole document
   and they MUST stay serialized (`chain` in budget.js) or concurrent saves silently drop changes.
   Summary math is ported verbatim from the old Flask app — `settled(row) = paid OR hidden this
