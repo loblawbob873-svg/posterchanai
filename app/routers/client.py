@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.services import settings_store, tor_service
+from app.services import emoji_service, settings_store, tor_service
 from app.services.nostr import nostr_service, event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -214,6 +214,62 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         "connect4_bot_npub": _game_bot_npub(db, "--connect4"),
         "blackjack_bot_npub": _game_bot_npub(db, "--blackjack"),
         "holdem_bot_npub": _game_bot_npub(db, "--holdem"),
+    })
+
+
+def _emoji_base(request: Request) -> str:
+    """Public base for custom-emoji URLs. These are written INTO published notes as NIP-30 tags, so
+    they must be absolute and reachable from other clients — derived from the (proxied) request the
+    same way `_blossom_url` derives the media base, and pinned to the onion for onion visitors."""
+    onion = tor_service.request_onion_host(request)
+    if onion:
+        return f"http://{onion}/client/emoji"
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}/client/emoji"
+
+
+@router.get("/emojis")
+async def client_emojis(request: Request):
+    """The instance's custom emoji, for the client's picker.
+
+    Deliberately COMPACT — shortcode, pack and filename, with the absolute base sent once — because
+    an instance can have thousands (the pack this was built against has 3336, and repeating the full
+    URL per entry tripled the payload the picker downloads on a phone). The client rebuilds
+    `<base>/<pack>/<file>` for the NIP-30 tag and appends `?t=1` for the grid thumbnail."""
+    out = [{"s": e["shortcode"], "p": e["pack"], "f": e["shortcode"] + e["ext"]}
+           for e in emoji_service.index()]
+    return JSONResponse({"base": _emoji_base(request), "emojis": out},
+                        headers={"Cache-Control": "public, max-age=60",
+                                 "Access-Control-Allow-Origin": "*"})
+
+
+@router.get("/emoji/{pack}/{name}")
+async def client_emoji_file(pack: str, name: str, t: int = 0):
+    """One emoji image. `?t=1` serves the cached 72px still the picker grid uses. The path is only
+    ever resolved THROUGH the index (never joined onto the request), so a crafted pack/name can't
+    escape the emoji directory. Immutable + CORS: other Nostr clients fetch these cross-origin."""
+    shortcode = os.path.splitext(name)[0]
+    entry = emoji_service.lookup(pack, shortcode)
+    if not entry:
+        raise HTTPException(status_code=404, detail="no such emoji")
+    path, media = entry["path"], None
+    if t:
+        thumb = emoji_service.thumbnail(pack, shortcode)
+        if thumb:
+            path, media = thumb, "image/webp"
+    if not media:
+        import mimetypes
+        media = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media, headers={
+        # A thumbnail is a DERIVED file at a stable URL, so it gets a day — long enough to make the
+        # grid free on re-open, short enough that replacing an emoji in Admin doesn't leave the old
+        # art in pickers for a week. The full image is what notes point at: cache it hard.
+        "Cache-Control": "public, max-age=86400" if t else "public, max-age=604800",
+        "Access-Control-Allow-Origin": "*",
+        # These are operator-uploaded files served from a public, unauthenticated path — never let a
+        # browser sniff one into something it can execute.
+        "X-Content-Type-Options": "nosniff",
     })
 
 

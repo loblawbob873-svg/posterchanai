@@ -164,6 +164,7 @@
     return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
   }
   async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text){
+    if(!InstEmoji.loaded && InstEmoji.SC_RE.test(text||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     const now = Math.floor(Date.now()/1000);
     const randPast = () => now - Math.floor(Math.random()*2*86400);   // NIP-59 timing privacy
     async function wrapFor(recipient){
@@ -172,7 +173,9 @@
       // `recipient` here mis-filed our own outgoing DM under our self-thread (so it never showed in
       // the peer's thread), while the peer still got `toPeer` and could reply. Mirrors the worker
       // (signer-worker.js nip17wrap), which wraps ONE peer-addressed rumor for both copies.
-      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: [['p', peer]], content: text };
+      // NIP-30 tags ride INSIDE the rumor, so a custom emoji renders in the peer's client too (the
+      // wrap layers are opaque — a tag on the outside would be both useless and a metadata leak).
+      const rumor = { pubkey: myPk, created_at: now, kind: 14, tags: InstEmoji.tagsFor(text, [['p', peer]]), content: text };
       rumor.id = await _eventId(rumor);                          // unsigned rumor — id only, no sig
       const sealContent = await nip44enc(recipient, JSON.stringify(rumor));
       const seal = await signEvent({ kind: 13, created_at: randPast(), tags: [], content: sealContent });
@@ -308,7 +311,7 @@
       nip44dec: (peer, ct) => Relay.worker.call('nip44dec', { peer, ct }).then(r=>r.pt),
       nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
-      nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text }),
+      nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text, tags: InstEmoji.tagsFor(text, [['p', peer]]) }),
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
     };
   }
@@ -319,8 +322,12 @@
   // - NIP-89 client tag: brands events "via PosterChan AI". Skipped for legacy NIP-04 DMs (kind 4) — a
   //   public client tag on a private message leaks metadata. Added only if absent (replaceable lists
   //   preserve non-p tags across republishes, so re-adding would accumulate duplicates).
-  function _enrichTags(kind, tags){
+  function _enrichTags(kind, tags, content){
     tags = (tags||[]).slice();
+    // NIP-30: any instance custom emoji used in the content ships its URL with the event, so other
+    // clients render the picture instead of the bare :shortcode:. Central, so EVERY publish path
+    // (notes, replies, reactions, articles, group chat) gets it without remembering to.
+    tags = InstEmoji.tagsFor(content, tags);
     if(kind===1 && ClientSettings.get('xmrStampNotes', false)){ try{ const my=xmrOf(profOf(ME.pubkey)); if(my && !tags.some(t=>t&&t[0]==='monero_address')) tags.push(['monero_address', my]); }catch(_){} }
     if(kind!==4 && !tags.some(t=>t&&t[0]==='client')) tags.push(['client','PosterChan AI']);
     return tags;
@@ -361,7 +368,10 @@
     // client can tip you straight from a post. Off by default — attaching a receiving address to EVERY post
     // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
     // Profile if you want max tippability. Your address is still readable from your kind-0 profile regardless.
-    tags = _enrichTags(kind, tags);
+    // A shortcode can be TYPED, not just picked, and the emoji map only loads when the picker opens
+    // — so fetch it here before tagging rather than silently publishing a bare :shortcode:.
+    if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
+    tags = _enrichTags(kind, tags, content);
     const ev = await sign(kind, content, tags);
     Store.saveEvent(ev); invalidateCounts(); applySobLive(ev);   // optimistic: show it instantly
     const r = await Relay.publish(ev);
@@ -5812,7 +5822,8 @@
     if(!ME){ toast('log in first'); return null; }
     const relay=_groupRelay, gid=_groupId; if(!relay||!gid){ toast('no group open'); return null; }
     try{   // catch signer rejections (extension/NIP-46 decline) too, so a write never fails silently
-      const ev=await sign(kind, content, [['h', gid], ...(extraTags||[])]);
+      if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
+      const ev=await sign(kind, content, InstEmoji.tagsFor(content, [['h', gid], ...(extraTags||[])]));
       const r=await Relay.publishAuthed(relay, ev, ch=>sign(22242, '', [['relay', relay], ['challenge', ch]]));
       if(!r.ok){ toast('group: '+(r.msg||'rejected')); return null; }
       return ev;
@@ -6310,6 +6321,68 @@
     return safe.replace(/:([a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?):/g,(m,sc)=>
       map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
   }
+  // ---------- instance custom emoji (NIP-30) ----------
+  // The operator's emoji packs (Admin → Site → Custom Emoji, served by /client/emojis). Loaded ONCE,
+  // lazily, on the first picker open — a real pack is thousands of entries, so it is never part of
+  // startup. Typing/picking a :shortcode: is all the user does; `tagsFor` turns it into the NIP-30
+  // ["emoji", code, url] tags that make it render in EVERY client, not just this one.
+  const InstEmoji = {
+    list:[], map:{}, loaded:false, _p:null,
+    SC_RE:/:[A-Za-z0-9_+\-]+:/,
+    CACHE_KEY:'pc_emoji_index', CACHE_TTL:3600,   // stale after an hour → refreshed in the BACKGROUND
+                                                  // (the cached copy is always used immediately)
+    // The INDEX is cached in localStorage (its own key — not the ClientSettings blob, which is
+    // rewritten on every setting change). That covers all three shells identically: web PWA, the
+    // Electron desktop app (which loads /client live) and the APK (whose service worker is
+    // deliberately media-only, so it would never cache this JSON). The IMAGES need nothing extra —
+    // they are <img> requests, which sw.js already stores cache-first in MEDIA_CACHE, cross-origin
+    // included (the emoji route sends CORS + long max-age, so the APK caches them too).
+    _fromCache(){
+      try{
+        const raw=localStorage.getItem(this.CACHE_KEY); if(!raw) return null;
+        const c=JSON.parse(raw);
+        return (c && Array.isArray(c.emojis) && c.base) ? c : null;
+      }catch(_){ return null; }
+    },
+    _apply(base, emojis){
+      this.list=(emojis||[]).map(e=>({s:e.s, p:e.p, u:`${base}/${e.p}/${e.f}`, t:`${base}/${e.p}/${e.f}?t=1`}));
+      this.map={}; this.list.forEach(e=>{ this.map[e.s]=e.u; });
+      this.loaded=true; return this.list;
+    },
+    _fetch(){
+      // The server sends {base, emojis:[{s,p,f}]} — one base for thousands of entries, so the
+      // payload stays ~200 KB (30 KB gzipped) instead of repeating a full URL per emoji.
+      return fetch('/client/emojis').then(r=>r.json()).then(j=>{
+        const base=(j&&j.base)||'/client/emoji', emojis=(j&&j.emojis)||[];
+        try{ localStorage.setItem(this.CACHE_KEY, JSON.stringify({at:Math.floor(Date.now()/1000), base, emojis})); }
+        catch(_){ }   // quota / private mode → run uncached
+        return this._apply(base, emojis);
+      });
+    },
+    load(){
+      if(this.loaded) return Promise.resolve(this.list);
+      if(this._p) return this._p;
+      const c=this._fromCache();
+      if(c){
+        this._apply(c.base, c.emojis);                       // instant: no network on the picker's open
+        if((Math.floor(Date.now()/1000)-(c.at||0)) > this.CACHE_TTL) this._fetch().catch(()=>{});
+        return Promise.resolve(this.list);                   // …and refresh in the background when stale
+      }
+      this._p = this._fetch().catch(()=>{ this.loaded=true; return []; });
+      return this._p;
+    },
+    // ["emoji", shortcode, url] for every KNOWN shortcode in `content`. Unknown ones are left as
+    // plain text (they may be someone else's emoji, quoted) and a tag is never duplicated.
+    tagsFor(content, tags){
+      if(!this.loaded || !content) return tags;
+      const out=(tags||[]).slice(); const have=new Set(out.filter(t=>t&&t[0]==='emoji').map(t=>t[1]));
+      (String(content).match(/:([A-Za-z0-9_+\-]+):/g)||[]).forEach(m=>{
+        const sc=m.slice(1,-1);
+        if(this.map[sc] && !have.has(sc)){ have.add(sc); out.push(['emoji', sc, this.map[sc]]); }
+      });
+      return out;
+    },
+  };
   function applyEmojis(htmlStr, ev){
     const map=emojiTagMap(ev); if(!Object.keys(map).length) return htmlStr;
     // Alternate the regex so it CONSUMES whole HTML tags untouched, then matches a :shortcode: only in
@@ -7103,10 +7176,52 @@
     document.addEventListener('keydown', onKey, true);
     return detach;
   }
+  // Recently-used picks (unicode chars and :shortcodes: alike) — the top row of the picker, because
+  // with thousands of instance emoji the handful you actually use is otherwise unfindable.
+  const EMOJI_RECENT_MAX=24;
+  function _emojiRecent(){ return (ClientSettings.get('emojiRecent', [])||[]).slice(0, EMOJI_RECENT_MAX); }
+  function _emojiRemember(e){
+    const cur=_emojiRecent().filter(x=>x!==e); cur.unshift(e);
+    ClientSettings.set('emojiRecent', cur.slice(0, EMOJI_RECENT_MAX));
+  }
+  // One button. Custom emoji are an <img> of the 72px THUMBNAIL (the full art can be megabytes and
+  // the grid shows hundreds at once); `data-e` carries what gets inserted/published either way.
+  function _emojiBtn(e){
+    if(typeof e==='string') return `<button data-e="${enc(e)}" title="${enc(e)}">${e}</button>`;
+    return `<button class="ce" data-e=":${enc(e.s)}:" title=":${enc(e.s)}:">`
+         + `<img src="${enc(e.t||e.u)}" alt=":${enc(e.s)}:" loading="lazy" decoding="async"></button>`;
+  }
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
-    pop.innerHTML=REACTION_EMOJIS.map(x=>`<button data-e="${x}">${x}</button>`).join('');
+    pop.innerHTML=`<div class="ep-head" hidden><input class="ep-q" type="search" placeholder="search emoji…" autocomplete="off" spellcheck="false"></div><div class="ep-grid"></div>`;
+    const grid=$('.ep-grid',pop), head=$('.ep-head',pop), q=$('.ep-q',pop);
+    // Render in CHUNKS and top up on scroll. An instance can have thousands of emoji; building that
+    // many buttons up front freezes a phone for seconds and downloads every thumbnail at once.
+    const CHUNK=120; let _items=[], _n=0;
+    const _more=()=>{
+      if(_n>=_items.length) return;
+      const slice=_items.slice(_n, _n+CHUNK); _n+=slice.length;
+      grid.insertAdjacentHTML('beforeend', slice.map(_emojiBtn).join(''));
+      _wire();
+      // Top up until the box is full, but never more than a few chunks: if the grid measures 0 (not
+      // laid out yet) this test is always true, and unbounded it would build every emoji at once.
+      if(_n < CHUNK*3 && grid.scrollHeight<=grid.clientHeight+8) _more();
+    };
+    const _show=items=>{ _items=items; _n=0; grid.innerHTML=''; _more();
+      if(!items.length) grid.innerHTML='<div class="ep-empty">no match</div>'; };
+    grid.addEventListener('scroll',()=>{ if(grid.scrollTop+grid.clientHeight > grid.scrollHeight-160) _more(); });
+    // Recent first, then the built-in unicode set, then the instance's own packs.
+    const _all=()=>{
+      const by={}; InstEmoji.list.forEach(e=>{ by[e.s]=e; });
+      const recRaw=_emojiRecent();
+      const rec=recRaw.map(x=> x.startsWith(':') ? (by[x.slice(1,-1)]||null) : x).filter(Boolean);
+      // A recent is SHOWN in the recents row, so drop it from the rows below — without this the same
+      // emoji appears twice a few centimetres apart, which reads as a rendering bug.
+      const used=new Set(recRaw);
+      return rec.concat(REACTION_EMOJIS.filter(x=>!used.has(x)),
+                        InstEmoji.list.filter(e=>!used.has(':'+e.s+':')));
+    };
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
     let _detachKeys=()=>{};
@@ -7128,9 +7243,28 @@
     };
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
-    // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works
-    $$('[data-e]',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); onPick(b.dataset.e, close); });
-    _detachKeys=_popKeys(pop, '[data-e]', b=>onPick(b.dataset.e, close), close);
+    // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works. Buttons arrive
+    // in chunks, so wiring is per-button and idempotent rather than one pass over the grid.
+    function _wire(){
+      $$('[data-e]:not([data-w])',pop).forEach(b=>{ b.dataset.w='1';
+        b.onmousedown=ev=>{ ev.preventDefault(); _emojiRemember(b.dataset.e); onPick(b.dataset.e, close); }; });
+    }
+    _wire();
+    // Arrows/hjkl drive the grid; everything else goes to the search box so you can type into it.
+    _detachKeys=_popKeys(pop, '[data-e]', b=>{ _emojiRemember(b.dataset.e); onPick(b.dataset.e, close); }, close,
+                         {inText:['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Home','End']});
+    // Paint the built-in set instantly, then fold in recents + the instance packs once they land.
+    _show(REACTION_EMOJIS);
+    InstEmoji.load().then(list=>{
+      if(!pop.isConnected) return;
+      if(list.length) head.hidden=false;   // no custom emoji on this instance → no search box either
+      _show(_all());
+      _placePop(pop, anchorBtn);           // the head appearing changes the height → re-anchor
+    });
+    if(q) q.oninput=()=>{
+      const s=q.value.trim().toLowerCase().replace(/:/g,'');
+      _show(s ? InstEmoji.list.filter(e=>e.s.toLowerCase().includes(s)) : _all());
+    };
     return close;
   }
   function pickEmoji(id,pk,btn){
@@ -7796,7 +7930,7 @@
     _cache:null, _cacheAt:0,
     _proof(){ return selfProof(); },   // shared with Drafts → opening Drafts never triggers a 2nd signer prompt
     async create(kind, content, tags, whenTs){
-      const t=_enrichTags(kind, tags);   // same enrichment as publish() → a scheduled post is identical
+      const t=_enrichTags(kind, tags, content);   // same enrichment as publish() → a scheduled post is identical
       const ev=await sign(kind, content, t, whenTs);   // signed with the FUTURE created_at = the scheduled time
       try{
         const r=await fetch('/client/scheduled',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -10644,7 +10778,8 @@
     if(!peer) return false; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
-    arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true }); arr.sort((a,b)=>a.t-b.t);
+    arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true,
+               em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
     // "everyone EOSE'd" test is never met and every incoming DM was classified as login backlog: no
@@ -11086,7 +11221,8 @@
       if(m.text==null) body = '<span class="muted small">decrypting…</span>';
       else {
         const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
-        body = mq ? `<span class="b-quote">${enc(mq[1])}</span>${linkify(mq[2])}` : linkify(m.text);
+        const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
+        body = mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(m.text));
       }
       return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
         + `<span class="b-txt">${body}</span>`

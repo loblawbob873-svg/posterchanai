@@ -96,6 +96,11 @@ class SettingsResponse(BaseModel):
     # favicon, login splash and header (Admin → Site Settings). Blank → the default logo. Stored in
     # the relay like every other setting.
     site_logo_url: str = ""
+    # Instance custom emoji (Pleroma/Akkoma-style packs): the directory holding them, managed from
+    # Admin → Site Settings → Custom Emoji and offered in the web client's emoji picker. Relative
+    # paths resolve against the install root; blank switches the feature off. The FILES are per-node
+    # operator content (gitignored) — only this path is a setting.
+    custom_emoji_dir: str = "assets/emoji"
     # Native image generation (diffusers / torch-XPU). image_timeout also bounds the
     # image load-balancer request when chat_server_urls is configured.
     image_timeout: str = "300000"  # image request timeout in ms

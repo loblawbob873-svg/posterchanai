@@ -104,3 +104,7 @@ turnserver/pion-turn
 # streamserver/ holds only generated artifacts (the MediaMTX binary, generated config, and MediaMTX's
 # auto-generated WebRTC/MoQ certs) — never track any of it.
 streamserver/
+
+# Instance custom emoji (Pleroma/Akkoma-style packs, Admin → Site Settings → Custom emoji
+# directory). Operator content — hundreds of MB of images, per-node, never committed.
+assets/emoji/

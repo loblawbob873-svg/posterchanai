@@ -21,6 +21,7 @@ from app.auth import get_current_user_optional, get_current_user, create_access_
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, effects_api
 from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss, markets
+from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
 from app.routers.misskey import router as misskey_router
@@ -195,6 +196,7 @@ app.include_router(files.router)  # Register files router first to avoid conflic
 app.include_router(chat.router)
 app.include_router(chat.ws_only_router)  # /ws/chat/{id} for clients that omit /api prefix
 app.include_router(admin.router)
+app.include_router(admin_emoji.router)  # /api/admin/emoji/* (instance custom emoji packs)
 app.include_router(tts.router)
 app.include_router(stt.router)
 app.include_router(image_api.router)

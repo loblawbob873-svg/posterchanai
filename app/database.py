@@ -200,6 +200,10 @@ def init_db():
             # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
             "client_default_theme": "cyberpunk",
             "site_logo_url": "",
+            # Instance custom emoji packs (Admin → Site Settings → Custom Emoji). The directory is
+            # seeded so a fresh node just works once an operator drops a pack in; it stays empty
+            # until then, and the client's picker simply shows no custom section.
+            "custom_emoji_dir": "assets/emoji",
             # Nostr ↔ Fediverse bridge — non-secret defaults (instance_url/token/blocked_domains are
             # deployment-specific, left to the schema defaults). Master switch OFF so deploying the
             # code is inert until an admin configures a read account in Admin → Services.

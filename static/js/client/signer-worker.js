@@ -69,8 +69,10 @@ self.onmessage = async (e) => {
       // ---- NIP-17 private DMs (gift-wrapped via NIP-59 seal + NIP-44 encryption), local key only ----
       case 'nip17wrap': {                      // args.peer (hex), args.text -> two kind-1059 wraps
         if (!SK) return reply(id, false, null, 'no local key');
+        // args.tags (when given) already includes the p-tag plus any NIP-30 custom-emoji tags the
+        // page built for this message — the worker has no access to the emoji map.
         const rumor = { kind: 14, created_at: Math.floor(Date.now()/1000),
-                        tags: [['p', args.peer]], content: args.text };
+                        tags: args.tags || [['p', args.peer]], content: args.text };
         // a gift wrap for the recipient AND one to ourselves so we keep a copy of what we sent
         const toPeer = NT.nip59.wrapEvent(rumor, SK, args.peer);
         const toSelf = NT.nip59.wrapEvent(rumor, SK, PK);
