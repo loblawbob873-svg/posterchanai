@@ -19,7 +19,11 @@ async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
     learned nothing until they went looking. A DM badges the client on every device they read from and
     survives being offline. Mirrors uptime_service._alert_nostr / access_notify_service: operator key →
     LOCAL relay, which federates outward. Best-effort — a failed ping must never sink a finished run."""
+    # SAY what happened, always. A notification that is silently skipped is indistinguishable from one
+    # that is broken — "I didn't get an agent DM" was unanswerable from the logs because the success
+    # path logged nothing at all. (Same reasoning as uptime_service's "alert not sent (channel off)".)
     if not npub:
+        logger.info("[node] agent-done DM skipped — the launching user has no linked npub")
         return
     try:
         from app.services import keystore, settings_store
@@ -44,7 +48,9 @@ async def _agent_done_dm(npub: str, goal: str, banner: str) -> None:
                 + "The full transcript is in the chat you started it from (PosterChan AI).")
         port = settings_store.get_int("nostr_relay_port", 3052)
         ok, err = await publish_event(port, nip17.wrap(sk, hexpk, text))
-        if not ok:
+        if ok:
+            logger.info(f"[node] agent-done DM sent to {npub[:16]}…")
+        else:
             logger.warning(f"[node] agent-done DM not published: {err}")
     except Exception as e:
         logger.warning(f"[node] agent-done DM failed: {e}")
@@ -172,7 +178,9 @@ async def _agent_bg(targets, goal, uid, chat_service, notify, stop=None):
         # Then ping the user on the SOCIAL side, so a run they walked away from actually reaches them
         # (the in-app toast needs a live socket; a DM badges every device and waits). Skipped when THEY
         # cancelled it — telling someone about the thing they just stopped is noise, not news.
-        if not _stopped():
+        if _stopped():
+            logger.info("[node] agent-done DM skipped — the run was cancelled by the user")
+        else:
             await _agent_done_dm(npub, goal, banner)
         # Then hand back what the agent BUILT: each sandbox's /workspace as a downloadable .tar.gz.
         # Delivered as its own `agent_files` payload so each interface stores it its own way (web →
