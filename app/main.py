@@ -59,14 +59,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 class _ScopedCORS(CORSMiddleware):
-    """App-wide CORS for the Capacitor app — but NEVER for /blossom. Blossom sets its own wide-open
-    (Access-Control-Allow-Origin: *) CORS per-route and must accept ANY origin: it's fetched/uploaded
-    cross-origin by arbitrary Nostr clients AND by our own web client (served on poster.place but
-    hitting media.poster.place — a different origin). Letting this narrow, credentialed allowlist
-    handle the preflight 400'd every browser upload/list ('blossom broken'). Skipping /blossom here
-    hands the request straight to Blossom's own OPTIONS handler, restoring the pre-Capacitor behavior."""
+    """App-wide CORS for the Capacitor app — but NEVER for /blossom or /git. Both set their own
+    wide-open (Access-Control-Allow-Origin: *) CORS per-route and must accept ANY origin: they're
+    fetched cross-origin by arbitrary Nostr clients AND by our own web client (served on poster.place
+    but hitting media.poster.place — a different origin). Letting this narrow, credentialed allowlist
+    handle the preflight 400'd every browser upload/list ('blossom broken'), and did the same to every
+    in-browser git client reading a hosted repo (gitworkshop.dev: "blocked by CORS"). It fails twice
+    over: it answers the preflight 400 for an origin not on the allowlist, and it appends
+    Allow-Credentials: true, which a browser REJECTS when combined with Origin: * — so the route's own
+    correct header was neutralised by this one. Skipping both prefixes hands the request to their own
+    OPTIONS handlers."""
+    _OWN_CORS = ("/blossom", "/git/")   # trailing slash: must not swallow a future /gitea-style route
+
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path", "").startswith("/blossom"):
+        if scope.get("type") == "http" and scope.get("path", "").startswith(self._OWN_CORS):
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
