@@ -891,10 +891,34 @@ def _consider_png_path() -> str:
     return ""
 
 
-def add_consider(data: bytes) -> bytes:
-    """Composite the (transparent) "consider the following" cutout over an image,
-    scaled large and anchored to the bottom-right. Returns JPEG bytes."""
+def _strip_baked_caption(ov):
+    """Drop the baked-in "Consider the Following" plate off the top of the cutout so the caption can be
+    drawn as a speech bubble instead. The plate is a solid grey/white banner: from the top, drop every
+    row whose visible pixels are almost all achromatic, stopping at the (colourful) art. Leaves the
+    image untouched if that would eat a third of it — i.e. the asset has no baked banner."""
+    W, H = ov.size
+    px = ov.load()
+    cut = 0
+    for y in range(int(H * 0.34)):
+        vis = [px[x, y] for x in range(W) if px[x, y][3] > 8]
+        if len(vis) < W * 0.25:
+            break                                   # past the plate (or a gap above it)
+        if sum(1 for p in vis if max(p[:3]) - min(p[:3]) <= 24) < len(vis) * 0.9:
+            break                                   # colour — this is the art, not the plate
+        cut = y + 1
+    if not cut:
+        return ov
+    ov = ov.crop((0, cut, W, H))
+    return ov.crop(ov.getbbox() or (0, 0, ov.size[0], ov.size[1]))
+
+
+def add_consider(data: bytes, caption: str = "Consider the following") -> bytes:
+    """Composite the (transparent) "consider the following" cutout over an image, scaled large and
+    anchored to the bottom-right, with the line said in a SPEECH BUBBLE — the same dialogue renderer
+    `shrug`/`would`/`theraped` use (character.draw_dialogue_caption), so the two styles match. The
+    cutout ships with the line baked into a grey plate; that plate is stripped first. Returns JPEG."""
     from PIL import Image, ImageOps
+    from .character import draw_dialogue_caption
     try:
         from pillow_heif import register_heif_opener
         register_heif_opener()
@@ -918,7 +942,7 @@ def add_consider(data: bytes) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         with Image.open(png) as ov_src:
-            ov = ov_src.convert("RGBA")
+            ov = _strip_baked_caption(ov_src.convert("RGBA"))
         ow, oh = ov.size
         # Scale the cutout to ~80% of the image height, but never wider than 95% of
         # the image (so it still fits on portrait images), keeping its aspect ratio.
@@ -928,7 +952,10 @@ def add_consider(data: bytes) -> bytes:
         # Anchor to the bottom-right corner (small margin).
         margin = max(int(W * 0.01), 2)
         x, y = W - nw - margin, H - nh - margin
-        img.alpha_composite(ov, (max(x, 0), max(y, 0)))
+        x, y = max(x, 0), max(y, 0)
+        img.alpha_composite(ov, (x, y))
+        # She says it: same bubble/font/fit rules as the shrug rabbi, in the gutter beside her.
+        draw_dialogue_caption(img, caption, y, x, min(W, x + nw))
 
         img = img.convert("RGB")
         out = io.BytesIO()

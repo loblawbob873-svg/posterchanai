@@ -264,30 +264,19 @@ def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
     return still_to_alpha_video(still, dur=float(dur or 6.0))
 
 
-def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
-    """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
-    with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
-    stays the focal point and the text reads as dialogue rather than a meme banner.
+def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int):
+    """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
+    bubble in the wider gutter beside them with the tail on them, or — when no gutter can hold
+    readable text — a plain white meme banner above their head.
 
-    Reuses the proven meme font/wrap/stroke helpers rather than reimplementing text layout, and takes
-    the art from the _CHARACTERS registry — drop a pointing pose at assets/characters/<key>.png and it
-    is used automatically.
+    Shared by every character effect (`shrug`/`would`/`theraped`/`consider`) so the dialogue style
+    can never drift between them. `char_top`/`char_left`/`char_right` are the character's bounds.
+    Returns (beside, caption_bottom); caption_bottom is where the pointing arrow may start.
     """
-    from PIL import Image as _Img, ImageDraw as _Draw, ImageOps as _Ops
-    from io import BytesIO as _BIO
+    from PIL import ImageDraw as _Draw
     from ._common import _load_meme_font, _wrap_text_to_width
 
-    cp = _character_path(char_key) or _character_path(fallback)
-    if not cp:
-        raise ValueError(f"{char_key}: no character asset found ({char_key}.png or {fallback})")
-    has_pose = bool(_character_path(char_key))   # dedicated art already points; don't draw a 2nd arrow
-
-    text = (caption or char_key).strip().upper()
-    with _Img.open(_BIO(data)) as im:
-        im = _Ops.exif_transpose(im)
-        base = im.convert("RGBA")
-
-    base, char_top, char_left, char_right = _composite_char_bottom_center(base, cp)
+    text = (text or "").strip().upper()
     W, H = base.size
     draw = _Draw.Draw(base)
     margin = max(int(W * 0.03), 6)
@@ -401,10 +390,39 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
         draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(255, 255, 255),
                             stroke_width=stroke, stroke_fill=(0, 0, 0), anchor="ma", align="center")
 
+    return beside, (margin if beside else y + th)
+
+
+def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
+    """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
+    with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
+    stays the focal point and the text reads as dialogue rather than a meme banner.
+
+    Reuses the proven meme font/wrap/stroke helpers rather than reimplementing text layout, and takes
+    the art from the _CHARACTERS registry — drop a pointing pose at assets/characters/<key>.png and it
+    is used automatically.
+    """
+    from PIL import Image as _Img, ImageDraw as _Draw, ImageOps as _Ops
+    from io import BytesIO as _BIO
+
+    cp = _character_path(char_key) or _character_path(fallback)
+    if not cp:
+        raise ValueError(f"{char_key}: no character asset found ({char_key}.png or {fallback})")
+    has_pose = bool(_character_path(char_key))   # dedicated art already points; don't draw a 2nd arrow
+
+    with _Img.open(_BIO(data)) as im:
+        im = _Ops.exif_transpose(im)
+        base = im.convert("RGBA")
+
+    base, char_top, char_left, char_right = _composite_char_bottom_center(base, cp)
+    _beside, caption_bottom = draw_dialogue_caption(base, caption or char_key,
+                                                    char_top, char_left, char_right)
+
     # The format IS the point: she indicates the image above. The stock animegirl still has no arm-up
     # pose, so draw an explicit arrow above her. Skipped once real pointing art is installed.
     if not has_pose:
-        _draw_point_arrow(draw, W, char_top, (y + th) if not beside else margin, H)
+        W, H = base.size
+        _draw_point_arrow(_Draw.Draw(base), W, char_top, caption_bottom, H)
 
     buf = _BIO()
     base.convert("RGB").save(buf, "JPEG", quality=90)
