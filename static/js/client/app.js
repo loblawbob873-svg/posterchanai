@@ -9315,7 +9315,7 @@
           if(ptr.mk) this._mkWrapped=ptr.mk;
           let idx=null;
           if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
-            this._lastIndexSha=ptr.indexSha;        // remember it so the NEXT save GCs this superseded blob
+            this._lastIndexSha=ptr.indexSha;        // remembered so the grid can hide the index blob itself
             // Own try: a signer that can't unwrap the master key, an offline media host or a 404'd blob
             // must fall through to the _pullBlocked check below, NOT escape to the outer catch — which
             // would leave us looking like a fresh empty drive that is safe to overwrite.
