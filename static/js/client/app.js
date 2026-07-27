@@ -8626,7 +8626,9 @@
     // /client/file is cookie-gated, and against a cleartext instance the cookie can't exist — pass the
     // same short-lived ownership token in the query instead. Central here so every <img>/<video>/link
     // that goes through _absUrl is covered at once rather than at each construction site.
-    if(_fileTok && _cleartextInstance() && u.indexOf('/client/file/')===0 && u.indexOf('t=')<0)
+    // /[?&]t=/ — NOT indexOf('t='), which any future param ending in t (format=, count=) would satisfy,
+    // silently skipping the token and 403ing the image.
+    if(_fileTok && _cleartextInstance() && u.indexOf('/client/file/')===0 && !/[?&]t=/.test(u))
       u += (u.indexOf('?')<0?'?':'&') + 't=' + encodeURIComponent(_fileTok);
     return _serverOrigin()+u;
   }
@@ -10045,8 +10047,13 @@
     }
     pane.innerHTML=orphanBar+`<div class="files-grid">${files.map(f=>{
         const isImg=/^image\//.test(f.mime)||f.kind==='generated';
-        const thumb=isImg?`<img src="${enc(thumbUrl(f.url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
-        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(f.url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(f.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
+        // /client/ai-files returns ROOT-RELATIVE urls, so they must go through _absUrl: in the bundled
+        // app the page origin is https://localhost, and an <img src>/<a href> resolves against the PAGE
+        // (it never sees the fetch shim) — so the raw path pointed the whole grid at localhost. _absUrl
+        // is also what attaches the ?t= ownership token when the instance is cleartext (an .onion).
+        const url=_absUrl(f.url);
+        const thumb=isImg?`<img src="${enc(thumbUrl(url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
       }).join('')}</div>`;
     $$('.del',pane).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
     $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
@@ -13701,7 +13708,10 @@
     // without an external request, which would defeat the point. We report what's installed, whether the
     // current instance is an onion, and let the connection be the proof.
     { const row=$('#us-tor-row'), st=$('#us-tor-state'), sb=$('#us-tor-start'), ob=$('#us-tor-open');
-      const O=(window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.Orbot)||null;
+      // _capPlugin, NOT a bare Capacitor.Plugins.Orbot: a natively-registered plugin whose JS we don't
+      // import isn't pre-attached to Capacitor.Plugins (see _capPlugin's comment), and the bare lookup
+      // would come back null — silently REMOVING the whole panel on exactly the devices it's for.
+      const O=_capPlugin('Orbot','isInstalled');
       if(row && st){
         if(!O){ row.remove(); }
         else{

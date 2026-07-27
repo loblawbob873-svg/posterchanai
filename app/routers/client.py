@@ -2864,17 +2864,24 @@ async def client_file_auth(data: FileAuthReq, request: Request):
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     tok = _mint_file_cookie(pk)
-    # The token is also returned in the body so the caller can pass it as ?t= — an .onion instance is
-    # plain http, and a `Secure` cookie is refused over a non-HTTPS connection, so the APK (whose page
-    # origin is https://localhost) has NO working cookie path to an onion host. The token proves the
-    # same thing either way; it's the caller's OWN capability, minted from their OWN signature.
-    resp = JSONResponse({"ok": True, "expires_in": _FILE_TTL, "token": tok})
-    # SameSite=None so the APK's WebView (a different origin from the API host) still sends it;
-    # Secure keeps that safe. Over the onion neither applies (see above) — drop both so a direct
-    # Tor Browser visit, which IS same-site, still gets a usable cookie instead of a rejected one.
-    onion = bool(tor_service.request_onion_host(request))
+    # Is this request on a connection where a cookie CAN'T work? An .onion is plain http, and a `Secure`
+    # cookie (which SameSite=None requires) is refused over a non-HTTPS connection — so the APK, whose
+    # page origin is https://localhost, has no cookie path to an onion host at all.
+    proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower() \
+        or request.url.scheme
+    cleartext = proto != "https"
+    # Only THEN hand the token to script, as a ?t= fallback. The cookie is HttpOnly on purpose ("script
+    # never needs to read it"), so widening that everywhere to serve the onion case would be a straight
+    # downgrade for the HTTPS majority that never needs it.
+    body = {"ok": True, "expires_in": _FILE_TTL}
+    if cleartext:
+        body["token"] = tok
+    resp = JSONResponse(body)
+    # SameSite=None so the APK's WebView (a different origin from the API host) still sends it; Secure
+    # keeps that safe. Over cleartext neither applies (see above) — drop both so a direct Tor Browser
+    # visit, which IS same-site, still gets a usable cookie instead of one the browser rejects outright.
     resp.set_cookie(_FILE_COOKIE, tok, max_age=_FILE_TTL, httponly=True,
-                    secure=not onion, samesite="lax" if onion else "none", path="/client/file")
+                    secure=not cleartext, samesite="lax" if cleartext else "none", path="/client/file")
     return resp
 
 

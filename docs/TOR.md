@@ -101,6 +101,15 @@ design. So there is no cookie that can work — not a bug to fix, a dead end to 
 - **`/client/file`** (decrypted AI-chat artifacts) can't send a header at all — those URLs sit in
   `<img src>`. `/client/file-auth` therefore also returns the token in its body, and `_absUrl` appends
   it as `?t=` when the instance is cleartext. Same token, same ownership proof, different envelope.
+  The body only carries the token **on a cleartext request**: the cookie is HttpOnly on purpose
+  ("script never needs to read it"), so exposing it to script on HTTPS too — where it is never used —
+  would be a straight downgrade for the majority of traffic.
+
+Anything that reaches the server by **top-level navigation** rather than `fetch` can carry neither the
+bearer nor a cookie, so it stays broken over an onion in the APK. Today that's the **Admin panel**,
+which is an `<iframe src>`. No cookie configuration fixes it — a cross-site iframe needs `SameSite=None`,
+which needs `Secure`, which cleartext refuses. Use Tor Browser against `http://<onion>/admin` instead,
+where the request is same-site and the normal cookie works.
 
 The same reasoning applies to a plain-HTTP LAN instance (`http://nas.lan:3051`), which is why the client
 gates on "is the instance cleartext" rather than "is it an onion".

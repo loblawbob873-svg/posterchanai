@@ -116,5 +116,25 @@ class TestOnionAwareUrls(unittest.TestCase):
                          "http://abc.onion/blossom/" + "a" * 64)
 
 
+class TestFileTokenFallback(unittest.TestCase):
+    """/client/file is cookie-gated, and over cleartext (an .onion, a LAN box) the APK has no cookie
+    path at all — its page origin is https://localhost, so the cookie must be SameSite=None, which
+    needs Secure, which browsers refuse over http. ?t= carries the same proof instead."""
+
+    def test_query_token_is_accepted_exactly_like_the_cookie(self):
+        from app.routers import client as c
+        pk = "a" * 64
+        tok = c._mint_file_cookie(pk)
+        self.assertEqual(c._file_cookie_pubkey(tok), pk)          # cookie form
+        self.assertEqual(c._file_cookie_pubkey(tok), pk)          # same token, ?t= form
+        self.assertNotEqual(c._file_cookie_pubkey("garbage"), pk)  # and it is still a real check
+
+    def test_token_is_not_a_bearer_for_someone_elses_files(self):
+        """The token must bind to ONE pubkey — otherwise ?t= would be a universal read capability."""
+        from app.routers import client as c
+        tok = c._mint_file_cookie("a" * 64)
+        self.assertNotEqual(c._file_cookie_pubkey(tok), "b" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()
