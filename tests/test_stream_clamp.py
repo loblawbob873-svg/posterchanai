@@ -122,6 +122,25 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         _, script = _render(self.tmp)
         self.assertIn(f"*{S.CLAMP_SUFFIX})", script)
 
+    def test_encoder_health_is_probed_not_inferred_from_runtime(self):
+        """Measured in production, not hypothetical: a WHIP/phone publisher renegotiates a second or two
+        after go-live, which kills the SOURCE and takes the transcode down with it. A "died early therefore
+        the encoder is broken" rule reads that as hardware failure and demotes a perfectly good GPU stream
+        to libx264 (46% of a core) for its entire duration. Runtime cannot tell those two apart."""
+        _, script = _render(self.tmp)
+        self.assertIn("hw_ok()", script)
+        self.assertNotIn("-lt 10", script)          # no runtime-based demotion, at any threshold
+
+    def test_probe_uses_the_same_upload_chain_as_the_real_encode(self):
+        """A bare -c:v h264_vaapi with no hwupload fails even on a working card — the probe would then
+        libel the encoder and send every stream to the CPU."""
+        _, script = _render(self.tmp, stream_clamp_encoder="h264_vaapi")
+        self.assertIn('-vf "format=nv12,hwupload" -c:v h264_vaapi -f null -', script)
+
+    def test_cpu_encoder_skips_the_probe(self):
+        _, script = _render(self.tmp, stream_clamp_encoder="libx264")
+        self.assertIn('[ "libx264" = "libx264" ]', script)
+
     def test_backs_off_instead_of_respawn_looping(self):
         """MediaMTX restarts runOnReady the instant it exits and applies no backoff, so a node with no
         usable ffmpeg would spin for the whole stream."""

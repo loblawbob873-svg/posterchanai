@@ -244,6 +244,10 @@ def _write_clamp_script(cfg: dict) -> None:
         ffmpeg, vaapi_dev = "ffmpeg", ""
     hw_pre, hw_post = _clamp_video_args(encoder, p)
     sw_pre, sw_post = _clamp_video_args("libx264", p)
+    # Pixel-format chain the hw_ok probe needs — the same upload/format step the real encode uses, since
+    # that's often where a hardware encoder actually fails (a bare -c:v h264_vaapi with no hwupload would
+    # fail even on a perfectly working card, and the probe would libel it).
+    probe_vf = {"h264_vaapi": "format=nv12,hwupload", "h264_nvenc": "format=nv12"}.get(encoder, "format=yuv420p")
     audio = f"-c:a aac -b:a {p['abitrate']} -ar 48000"
     # `-map 0:a:0?` — the trailing ? makes audio OPTIONAL. A screen share published with no microphone has
     # no audio track at all, and a non-optional map aborts ffmpeg outright ("Stream map ... does not exist"),
@@ -288,27 +292,38 @@ run_sw() {{
   exec "$FFMPEG" {sw_pre} $COMMON -i "$IN" {sw_post} $OUTOPTS "$OUT"
 }}
 
-# A hardware encoder can probe fine and still fail to OPEN (driver mismatch, render node busy, no free
-# session left on a consumer NVENC). Detect that fast: a failure within the first few seconds means the
-# encoder is unusable, so drop to CPU for this stream instead of letting MediaMTX's runOnReadyRestart
-# restart-loop us forever on the same error. A failure after that is a normal end-of-stream or a blip, and
-# is left to MediaMTX to restart.
+# Ask the hardware encoder DIRECTLY whether it works, with a throwaway encode of a few synthetic frames.
+#
+# The obvious alternative — "if the real transcode died within N seconds, assume the encoder is broken and
+# drop to CPU" — is wrong, and was measured to be wrong in production: a WHIP/phone publisher renegotiates
+# a second or two after going live, which kills the SOURCE and takes our ffmpeg down with it. That looks
+# exactly like a failing encoder, so a perfectly good GPU stream got demoted to libx264 (46% of a core) for
+# its whole duration. Runtime cannot distinguish "encoder unusable" from "publisher blipped"; this probe
+# tests only the thing we actually want to know, and costs ~100ms once per stream.
+hw_ok() {{
+  "$FFMPEG" -hide_banner -loglevel error {hw_pre} \\
+    -f lavfi -i testsrc=size=256x144:rate=5:duration=0.2 \\
+    -vf "{probe_vf}" -c:v {encoder} -f null - >/dev/null 2>&1
+}}
+
 START=$(date +%s)
-( run_hw ) && exit 0
-END=$(date +%s)
-if [ "{encoder}" != "libx264" ] && [ $((END - START)) -lt 10 ]; then
-  echo "clamp: {encoder} failed after $((END - START))s — falling back to libx264" >&2
+if [ "{encoder}" = "libx264" ] || hw_ok; then
+  # Any later failure is a source-side problem, NOT the encoder — exit and let MediaMTX's
+  # runOnReadyRestart bring us back, which re-probes and stays on hardware.
+  ( run_hw ) && exit 0
+else
+  echo "clamp: {encoder} is not usable on this node — encoding $SRC on the CPU instead" >&2
   ( run_sw ) && exit 0
 fi
 
-# Reaching here means the transcode failed outright (no ffmpeg on this node, both encoders unusable, …).
+# Reaching here means the transcode failed outright (no ffmpeg on this node, the encoder died, …).
 # MediaMTX restarts a runOnReady command as soon as it exits and applies no backoff of its own, so an
 # instant failure would respawn us in a tight loop for the entire length of the stream. Hold the exit down
 # to one attempt every few seconds. Viewers are unaffected either way: with no clamped path published, the
 # HLS proxy falls back to serving the source (see _upstream_path).
 END=$(date +%s)
 [ $((END - START)) -lt 5 ] && sleep 5
-echo "clamp: transcode unavailable for $SRC — viewers will be served the unclamped source" >&2
+echo "clamp: transcode attempt for $SRC ended — viewers get the unclamped source until it recovers" >&2
 exit 1
 """
     _CLAMP_SCRIPT.write_text(script)
