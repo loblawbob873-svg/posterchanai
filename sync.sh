@@ -31,7 +31,12 @@ else
 fi
 
 git commit -a -m fix || true
-# Deploy to PRODUCTION (origin = git.poster.place).
+# Deploy to PRODUCTION. `origin` is now the NOSTR repo on the built-in GRASP host
+# (nostr://<npub>/relay.poster.place/posterchanai -> https://poster.place/git/<npub>/posterchanai.git);
+# Gitea is gone. ngit publishes the signed 30618 that authorizes the push to the repo's relays, one of
+# which (wss://poster.place/git) IS the hosting node's relay — the one pre-receive reads.
+# Needs git-remote-nostr on PATH; it is installed in /usr/local/bin on every node so this works from
+# a non-interactive ssh and from sudo, not just from an interactive login shell.
 git push origin master
 
 # Also push to the public `github` mirror (master → main). This TRIGGERS the Android app build:
@@ -41,30 +46,9 @@ git push origin master
 # on unrelated deploys. NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
 git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 
-# Third mirror: the NOSTR repo on the built-in GRASP host (git-over-nostr, NIP-34) — so the
-# self-hosted repo tracks origin instead of drifting. Best-effort, never blocks a deploy.
-# The mirror must run on the node that HOSTS the repo (push auth is a maintainer signature and only
-# the hosting node's operator key owns it, and only that node's relay is read by the pre-receive
-# hook), so the script self-skips on a proxy node — which is why it is invoked BOTH here and inside
-# the nas.lan block below: whichever node hosts does the work, the other prints "skipping".
-# See docs/GIT_OVER_NOSTR.md; provisioning/announcing is scripts/grasp_selfhost.py.
-# WHO owns the mirrored nostr repo. The owner pubkey IS the clone-URL path segment, so this decides
-# which hosted directory the mirror pushes to. It is stated HERE, explicitly and in version control,
-# rather than via a setting: grasp_mirror.py also honours `grasp_mirror_owner`, but a standalone script
-# cannot persist a write to the operator-signed settings doc, so setting it from a script read back
-# EMPTY and the mirror silently kept updating the node-owned copy while the real repo drifted.
-# Empty = fall back to the hosting node's own operator key.
-_GRASP_OWNER="npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr"
-
-_grasp_mirror() {
-    for _py in venv-unified/bin/python venv/bin/python; do
-        if [ -x "$_py" ]; then
-            "$_py" scripts/grasp_mirror.py --owner "$_GRASP_OWNER" || echo "[sync] WARN: GRASP nostr mirror failed"
-            return
-        fi
-    done
-}
-_grasp_mirror
+# NOTE: scripts/grasp_mirror.py is no longer called from here. It existed to copy commits from a
+# Gitea `origin` onto the nostr repo; now that `origin` IS the nostr repo, the push above already put
+# them there and mirroring would be a circular no-op. The script is kept for manual/recovery use.
 
 # Mirror the freshly-built APK to a local path so poster.place/apk serves the bytes DIRECTLY from this
 # server (behind Cloudflare — a nearby CDN edge, with Range/resume), which downloads far more reliably on
@@ -76,6 +60,8 @@ _grasp_mirror
 # (root /srv/posterchanai → a git clone), decoupling asset loading from server1 so the restart below
 # can't break the page with "Loading failed for <script>". Pull on EVERY webui change or it serves
 # stale JS/CSS. (See memory: project_client_nginx_cache.)
+# Also on the nostr repo now. It runs under sudo, which is why git-remote-nostr lives in
+# /usr/local/bin rather than ~/.local/bin — sudo's secure_path would not find the latter.
 ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master" \
     || echo "[sync] WARN: router.lan static git pull failed"
 
@@ -115,17 +101,11 @@ _wait_gpu_free() {
     fi
 }
 cd ~/posterchanai
+# Pulls from the nostr repo (origin) over https://poster.place/git — no Gitea. The mirror step that
+# used to follow this is gone: the push in the parent script already published these commits to the
+# nostr repo, so there is nothing left to mirror.
 git fetch origin
 git reset --hard origin/master
-# Mirror the freshly-reset tree to the nostr repo (this node hosts the GRASP repos; on a node that
-# doesn't, the script just prints 'skipping'). Runs BEFORE the restart so the relay it publishes the
-# signed 30618 to is still up. Best-effort — a mirror failure must never break the deploy.
-for _py in venv-unified/bin/python venv/bin/python; do
-    if [ -x \"\$_py\" ]; then
-        \"\$_py\" scripts/grasp_mirror.py --owner 'npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr' || echo \"[sync] WARN: GRASP nostr mirror failed on nas\"
-        break
-    fi
-done
 _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 sudo systemctl restart posterchanai
 # nas is cut over: its bots now run via the in-app manager (botframework/ + Admin → Bots).

@@ -27,10 +27,12 @@ resets/restarts `nas.lan`. **`git commit -a` does NOT stage new untracked files*
 any new file before running it, or it ships a broken (ImportError) tree to every node.
 `sync.sh` deploys **code only**, not Python deps (use `install.sh` option 6 for deps).
 
-**Two remotes — `origin` is production, `github` is the public mirror.** `origin`
-(`git.poster.place`, Gitea) is what `sync.sh`/`git push` deploys to **production**, so push
-there **first**. The `github` remote (`github.com/loblawbob873-svg/posterchanai`) is a **public
-mirror** whose default branch is `main`, mapped from local `master`: push to it explicitly with
+**Two remotes — `origin` is the NOSTR repo (production), `github` is the public mirror. Gitea is
+gone.** `origin` is `nostr://npub1fdtthaq…/relay.poster.place/posterchanai`, served by the built-in
+GRASP host at `https://poster.place/git/<owner-npub>/posterchanai.git` (see
+`docs/GIT_OVER_NOSTR.md`). That is what `sync.sh`/`git push` deploys to **production**, so push there
+**first**. The `github` remote (`github.com/loblawbob873-svg/posterchanai`) is a **public mirror**
+whose default branch is `main`, mapped from local `master`: push to it explicitly with
 `git push github master:main`. **Both remotes get every push, with no prompting** — finish a change
 by committing and pushing to `origin` first (deploy), then mirroring the same commits to `github`,
 so the public mirror never falls behind production. Keep local `master` tracking `origin` (so plain
@@ -41,37 +43,24 @@ git push                     # or ./sync.sh — origin/production first
 git push github master:main  # mirror, same commits, every time
 ```
 
-**Third target — the NOSTR repo** (the built-in GRASP git-over-nostr host, see
-`docs/GIT_OVER_NOSTR.md`). Every commit that reaches `origin` is also mirrored to the self-hosted
-repo `npub1fdtthaq…/posterchanai` — owned by the AUTHOR's npub, with the hosting node's operator key
-kept in `maintainers` so it can still sign mirror pushes (clone:
-`https://poster.place/git/<owner-npub>/posterchanai.git`) — so it
-tracks production instead of drifting. `sync.sh` does this automatically via
-`scripts/grasp_mirror.py` — no extra command when you deploy with `./sync.sh`.
-
 Push authorization is a **Nostr signature, not a connection**: only a maintainer of
 `30617:<owner>:posterchanai` can move a ref, and the `pre-receive` hook reads the **hosting node's**
-relay Postgres. So the mirror only works **on the node that hosts the repo** (`nas.lan` here — its
-operator key owns it); `sync.sh` calls the script on both server1 and nas and the non-hosting one
-prints `skipping`. The script publishes a maintainer-signed **30618** naming the new tip and pushes
-with a **NIP-98** header (either proof alone authorizes it), and is idempotent + best-effort — a
-mirror failure prints a WARN and never breaks a deploy.
+(nas) relay Postgres. server1 and nas run separate relays with separate event stores, so the repo
+announcement lists **`wss://poster.place/git`** — that endpoint proxies to *nas's* relay, which is why
+a push signed on server1 is visible to nas's hook. Everything is a public URL: no `nas.lan`, no SSH.
 
-If you push by hand instead of `./sync.sh`, mirror it too:
+`scripts/grasp_mirror.py` is **no longer part of a deploy**. It existed to copy commits from a Gitea
+`origin` onto the nostr repo; now that `origin` IS the nostr repo, `git push` already does it. The
+script is kept for manual/recovery use only. (Provisioning/announcing is `scripts/grasp_selfhost.py`.)
 
-```
-ssh nas.lan 'cd ~/posterchanai && git fetch origin && git reset --hard origin/master \
-             && venv/bin/python scripts/grasp_mirror.py'
-```
+**All three nodes pull from `origin` over nostr**, including `nas.lan` (`~/posterchanai`) and
+`router.lan` (`/srv/posterchanai`, root-owned, served as `/static`). That needs `git-remote-nostr`,
+which is installed in **`/usr/local/bin`** on every node — NOT `~/.local/bin`, because `sync.sh`
+drives those pulls over non-interactive ssh and under `sudo`, neither of which sees a user PATH.
 
-(Provisioning/announcing a repo is a different script — `scripts/grasp_selfhost.py`.)
-
-**Who owns the mirrored repo.** The owner pubkey IS the clone-URL path segment, so it decides which
-directory the mirror pushes to. `grasp_selfhost.py` announces under the NODE's operator key; this repo
-was later re-announced under the author's npub with the operator kept in `maintainers` (so the node can
-still sign the 30618 that authorizes each push). The `grasp_mirror_owner` setting tells
-`grasp_mirror.py` which owner to target — without it the mirror defaults to the operator key and would
-keep updating the node-owned copy while the real repo drifts.
+**Who owns the repo.** The owner pubkey IS the clone-URL path segment, so it decides which hosted
+directory a push lands in. This repo is announced under the author's npub (`npub1fdtthaq…`) with the
+hosting node's operator key (`npub19q5ezl4…`) kept in `maintainers`, so nas can still sign for it.
 
 **Big pushes are chunked, and that's now handled.** Git switches to `Transfer-Encoding: chunked` once a
 pack exceeds `http.postBuffer` (1 MB default) — the shape of any first full push. `git_host_main.py`
