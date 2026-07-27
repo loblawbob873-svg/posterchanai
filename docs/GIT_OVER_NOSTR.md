@@ -128,23 +128,47 @@ A repo can be marked **private** at create time (`private=true`; default configu
   is in the repo's ACCESS set = maintainers (owner ∪ 30617.maintainers, read from Postgres) ∪ the
   per-repo `readers` list. No/invalid/unlisted auth → **401**, and **nothing is served** (refs never
   leak — git-http-backend is never even spawned). Fail-closed: any error (DB unreachable, etc.) → 401.
-- **ngit reads private repos via a Basic envelope.** ngit's remote helper is libgit2-based: it can
-  never set `Authorization: Nostr`, so before this it could not read a private repo at all. It *can*
-  run a git credential helper, so the read gate (and ONLY the read gate — `allow_basic=True` is
-  passed nowhere else) also accepts the same base64 NIP-98 event as the **password half of HTTP
-  Basic**. Every check is unchanged: BIP-340 re-verify, `u` bound to this repo, freshness, ACL
-  membership. It is a second envelope for one signed token, not a second way to authenticate — an
-  ordinary password still fails (covered in `tests/test_git_push_auth.py`). The 401 advertises both
-  `Nostr` and `Basic`, because libgit2 only attempts a scheme the server actually offers.
+- **Plain git reads private repos via a Basic envelope.** The read gate (and ONLY the read gate —
+  `allow_basic=True` is passed nowhere else) also accepts the same base64 NIP-98 event as the
+  **password half of HTTP Basic**, so a client that can only do username/password still presents a
+  real signed token. Every check is unchanged: BIP-340 re-verify, `u` bound to this repo, freshness,
+  ACL membership. It is a second envelope for one signed token, not a second way to authenticate —
+  an ordinary password still fails (covered in `tests/test_git_push_auth.py`). The 401 advertises
+  both `Nostr` and `Basic`, since a client only attempts a scheme the server offers.
   Client side: `scripts/git-credential-nostr` mints a **fresh** token per request (git invokes a
   helper on every request, so nothing goes stale inside the 300s read window) and **requires
   `credential.useHttpPath=true`** — without the path it cannot bind the token to a repo, so it emits
-  nothing and fails closed.
-- **A private repo that you want to reach over `nostr://` must still be announced.** ngit resolves
-  `nostr://<npub>/<id>` *from* the 30617 — with none published there is nothing to resolve, so
-  "private + unannounced" is reachable only by direct clone URL. Publishing the 30617 to the local
-  relay keeps the CODE gated, but `relay.poster.place` is anonymously readable, so the repo
-  **identifier is public** even when the repo is not. Announce such repos with no description.
+  nothing and fails closed. Setup:
+
+      git config --global 'credential.https://poster.place.helper' \
+        '!/path/to/venv/bin/python /path/to/scripts/git-credential-nostr'
+      git config --global 'credential.https://poster.place.useHttpPath' true
+
+### ngit CANNOT read a private repo on this host — use SSH for those
+
+Measured against ngit 2.6.3, not assumed: it sends **no NIP-98** (no `27235`/`nip98`/`extraHeader`
+anywhere in the binary) and it **never invokes a git credential helper** (checked with a logging
+helper — zero invocations). So neither the native `Nostr` scheme nor the Basic envelope above can
+authenticate it, and a private repo here is unreachable over `nostr://`. Worse, the failure is
+**silent**: unable to list refs, ngit reports `Everything up-to-date` and pushes nothing.
+
+The working shape for a **private** repo is nostr for metadata, an authenticated git server ngit can
+actually speak for transport — i.e. SSH:
+
+    ngit init --name <id> --clone ssh://git@git.poster.place:2200/<user>/<repo>.git \
+              --relay wss://relay.poster.place --relay ws://nas.lan:3052
+
+`/opt/admintools` and `/opt/gentoo-installer` are set up this way and both clone from a bare
+`nostr://` URL. The built-in GRASP host stays the right home for **public** repos.
+
+- **Announcing at all makes the identifier public.** ngit resolves `nostr://<npub>/<id>` *from* the
+  30617, so an unannounced repo has nothing to resolve. `relay.poster.place` serves anonymous reads,
+  so the repo **id is public even when the code is not** — announce private repos with no
+  description.
+- **Push relays matter.** `pre-receive` reads the **hosting node's** relay Postgres, and the two
+  nodes have separate event stores, so a 30618 published only to `relay.poster.place` (server1) is
+  invisible to nas. List the hosting node's relay (`ws://nas.lan:3052`) in the repo's relays or
+  pushes fail to authorize.
 - The NIP-98 header is re-verified (BIP-340 sig, `u` bound to this repo, created_at freshness). The
   method tag is **not** required for reads (a `git clone` reuses one static `http.extraHeader` across
   the info/refs GET + the upload-pack POST); the repo binding + freshness + access-set membership are

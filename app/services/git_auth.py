@@ -182,11 +182,17 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
     TLS. Push keeps require_method=True (writes are higher-stakes).
 
     allow_basic=True additionally accepts the SAME base64 event carried as the password half of an
-    `Authorization: Basic <b64 user:pass>` header. That exists solely so ngit can read private repos:
-    its libgit2 transport has no NIP-98 support and cannot set an arbitrary header, but it does run
-    git credential helpers (see `scripts/git-credential-nostr`). Every check below is unchanged, so
-    this is a second envelope for the same signed token, not a second way to authenticate. Enabled
-    for the READ gate only — push never sets it.
+    `Authorization: Basic <b64 user:pass>` header, so any client that can only do username/password
+    can still present a NIP-98 token — `scripts/git-credential-nostr` mints a fresh one per request.
+    Every check below is unchanged, so this is a second envelope for the same signed token, not a
+    second way to authenticate. Enabled for the READ gate only — push never sets it.
+
+    This does NOT make ngit work with private repos, which is what it was originally written for.
+    ngit 2.6.3 was measured: it sends no NIP-98 AND never invokes a git credential helper (verified
+    with a logging helper — it was not called once), so it simply cannot authenticate. The envelope
+    is still what lets plain `git clone https://…/<id>.git` read a private repo with no manual
+    header wrangling. Private repos reached over `nostr://` need an authenticated git server ngit
+    can actually speak to (SSH), not this.
 
     NOTE on replay: the ±max_skew freshness window plus URL binding is the practical guard; a nonce
     cache isn't feasible across independent one-shot hook processes / stateless request handlers. The

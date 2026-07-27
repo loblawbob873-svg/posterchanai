@@ -43,9 +43,10 @@ _FORWARD_REQ_HEADERS = (
 # / Transfer-Encoding are handled by StreamingResponse, not copied.
 #
 # www-authenticate is REQUIRED, not cosmetic: it is the host's 401 challenge for a private repo. A
-# client only authenticates against a scheme the server advertises — libgit2 (ngit) gives up outright
-# and git-core never runs its credential helper — so dropping it made every private repo unreadable
-# through a proxy node while working fine when hitting the host directly.
+# client only authenticates against a scheme the server advertises, so without it git-core never runs
+# its credential helper — dropping it made every private repo unreadable through a proxy node while
+# working fine when hitting the host directly, which is exactly the bug that direct-to-host testing
+# hides. Test private-repo auth through the public URL, not against :3053.
 _FORWARD_RESP_HEADERS = ("content-type", "cache-control", "expires", "pragma", "content-encoding",
                          "www-authenticate")
 
