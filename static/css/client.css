@@ -1924,7 +1924,7 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 /* Discover: torrents (NIP-35) + git repos (NIP-34) cards — themed via vars */
 .tor-card{cursor:default}
 /* Discover → Git repo cards — a tidy grid of tiles, same family as the Streams grid. */
-.repo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;padding:14px 0}
+.repo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;padding:14px 0}
 .repo-card{display:flex;flex-direction:column;gap:8px;background:var(--panel2);border:1px solid var(--line);
   border-radius:14px;padding:14px 16px;cursor:pointer;transition:.16s;animation:fade .25s}
 .repo-card:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 20px rgba(var(--accent2-rgb),.18);transform:translateY(-3px)}
@@ -1947,9 +1947,30 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
 .repo-card-desc{color:var(--muted);font-size:13px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:1.4em}
 .repo-card-by{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin-top:auto}
+/* Where the code lives. Muted by default (it's context, not a headline); repos on THIS host get the
+   accent, because those are the ones you can browse, clone and push without leaving. */
+.repo-host{margin-left:auto;flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:11px;font-weight:700;letter-spacing:.2px;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+.repo-host.here{border-color:rgba(var(--accent-rgb),.5);color:var(--neon);background:rgba(var(--accent-rgb),.12)}
+/* Section headers for the grouped "All repos" view. */
+.repo-sec{display:flex;align-items:center;gap:8px;margin:18px 0 2px;font-size:12.5px;font-weight:800;
+  letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+.repo-sec:first-child{margin-top:6px}
+.repo-sec .repo-n{font-style:normal;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--muted);letter-spacing:0}
+.repo-sec::after{content:"";flex:1;height:1px;background:var(--line)}
 .repo-card-av{width:20px;height:20px;border-radius:50%;object-fit:cover}
-.repo-card-by .name{color:var(--text);cursor:pointer}.repo-card-by .name:hover{color:var(--neon)}
-.repo-card-acts{display:flex;gap:6px;flex-wrap:wrap}
+/* A profile whose `name` is a raw hex pubkey is common on an open relay, and 64 chars ran straight
+   through the host chip and out of the card. Clip it instead. */
+.repo-card-by .name{color:var(--text);cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repo-card-by .name:hover{color:var(--neon)}
+/* One row, always. Three default-size buttons overflowed a 240px card and wrapped "Web" onto a line of
+   its own, which made every card in the grid a different height — the single ugliest thing about the
+   All-repos wall. They shrink to fit instead. */
+.repo-card-acts{display:flex;gap:5px;flex-wrap:nowrap}
+.repo-card-acts>.btn{flex:1 1 auto;min-width:0;padding:5px 8px;font-size:12px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 .tor-title{font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;word-break:break-word}
 .tor-desc{margin:8px 0;line-height:1.5;color:var(--text);white-space:pre-wrap;word-wrap:break-word;font-size:15px}
 .tor-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}

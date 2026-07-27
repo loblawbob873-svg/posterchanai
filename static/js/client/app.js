@@ -3599,6 +3599,23 @@
   // Falls back to 'all' when you're signed out or own none, otherwise the default view is empty.
   // Sticky for the session (not persisted), so switching to 'all' survives leaving and re-entering.
   let _repoScope='mine';
+  // Where a repo's code actually lives — the clone URL's host. In "All repos" this is the single most
+  // useful fact about a stranger's announcement (a relay federates in repos hosted anywhere), and it's
+  // what separates "I can browse this here" from "this is a pointer to someone else's server".
+  function _repoHostname(e){
+    const c=(e.tags.find(t=>t[0]==='clone')||[])[1]||'';
+    try{
+      const u=new URL(c);
+      // http(s) only. Other schemes in the wild (htree://<npub>/<repo>, nostr://…) put an npub or a
+      // relay token where the host goes, and rendering that as a "host" is just a wall of base32.
+      if(u.protocol!=='http:' && u.protocol!=='https:') return '';
+      return u.hostname.replace(/^www\./,'');
+    }catch(_){ return ''; }
+  }
+  function _repoHostedHere(e){
+    const h=_repoHostname(e); if(!h) return false;
+    try{ return h===new URL(_gitHostBase()||self.location.origin).hostname; }catch(_){ return false; }
+  }
   // Yours = you announced it, OR you're in its maintainers tag — the same set that can push to it.
   function _repoIsMine(e){
     if(!ME||!ME.pubkey) return false;
@@ -3684,7 +3701,9 @@
     _kbSel=-1; _gitKbBind();   // reset keyboard selection on (re)entry; bind the vim-style handler once
     // 80 was fine for a grid you scroll. Once it is a SEARCHABLE list the cap becomes a correctness
     // problem: searching a truncated set reports "no match" for a repo that is really on the relay.
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:500 }]); }catch(_){}
+    // Ask for the relay's MAXIMUM (store.py clamps to 5000) rather than omitting the field: a filter
+    // with no limit is read as `limit or 500`, so leaving it out is the 500 cap, not the absence of one.
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[30617], limit:5000 }]); }catch(_){}
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
@@ -3722,9 +3741,17 @@
       const base=scoped();
       const terms=((q&&q.value)||'').toLowerCase().split(/\s+/).filter(Boolean);
       const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
-      $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
-        : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
-           : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
+      // "All" is a directory of everything the web of trust ever federated in, so a flat grid sorted by
+      // recency reads as noise. Split it by WHERE THE CODE IS: repos on this host are browsable and
+      // pushable right here; the rest are pointers to other people's servers. One flat grid otherwise —
+      // grouping a search result (or your own handful) would be ceremony around three cards.
+      const sec=(label,arr)=> arr.length?`<div class="repo-sec">${enc(label)}<i class="repo-n">${arr.length}</i></div>${grid(arr)}`:'';
+      const grouped = _repoScope==='all' && !terms.length && hits.length>6;
+      $('#repo-results',feed).innerHTML = !hits.length
+        ? (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
+           : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`)
+        : grouped ? sec('On this host', hits.filter(_repoHostedHere)) + sec('Elsewhere on nostr', hits.filter(e=>!_repoHostedHere(e)))
+                  : grid(hits);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
     };
@@ -3895,7 +3922,8 @@
     return `<article class="repo-card" data-id="${e.id}" data-pk="${e.pubkey}">
       <div class="repo-card-hd"><span class="repo-card-ico">🌱</span><span class="repo-card-name">${enc(name)}</span></div>
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
-      <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+      <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
+        _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
       <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()">🔗 Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
     </article>`;
   }
