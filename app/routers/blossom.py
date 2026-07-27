@@ -185,6 +185,15 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     if not blossom_service.is_pubkey_allowed(db, pubkey):
         return _err(403, "not authorized to upload (needs the can_blossom privilege)")
 
+    # Per-user quota — AFTER authorization, so someone who may not upload at all gets a plain 403
+    # rather than a confusing quota message (and we don't run the aggregate for them). Skipped unless
+    # an admin set one, so the default costs nothing. It exists because blobs are now kept forever
+    # (blossom_blob_ttl_days=0): with no age sweep and no cap, one uploader can fill the disk for
+    # every other user on the node.
+    over, used, limit = blossom_service.quota_exceeded(db, pubkey, len(data))
+    if over:
+        return _err(413, f"storage quota reached ({used // (1024**3)} of {limit // (1024**3)} GB used)")
+
     mime = request.headers.get("content-type", "") or "application/octet-stream"
     # X-No-Mirror: client opt-out of DR mirroring (encrypted music — don't push it to public backups).
     no_mirror = request.headers.get("x-no-mirror", "") in ("1", "true", "yes")

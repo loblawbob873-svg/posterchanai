@@ -84,6 +84,7 @@ def _cfg(db: Session) -> dict:
         "public_url": g("blossom_public_url", "").rstrip("/"),
         "ttl_days": gi("blossom_blob_ttl_days", 0),
         "max_upload_mb": gi("blossom_max_upload_mb", 100),
+        "user_quota_gb": gi("blossom_user_quota_gb", 0),   # 0 = unlimited (see usage_for_pubkey)
         "backend": backend,
         "blob_dir": g("blossom_storage_path", "") or _DEFAULT_BLOB_DIR,
         "storage_url": storage_url,
@@ -1029,6 +1030,58 @@ def add_owner(db: Session, sha256: str, pubkey_hex: str) -> None:
     except Exception as e:
         db.rollback()
         logger.warning("[blossom] could not record owner %s/%s: %s", sha256[:12], pubkey_hex[:12], e)
+
+
+def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
+    """Give `sha256` a TTL of `days` from now, so the existing cleanup sweep reclaims it later.
+
+    Used for SUPERSEDED Files-index blobs. Deleting them immediately is what left a wiped index with
+    nothing to restore from, and never deleting them leaks ~133 KB per save forever — a TTL is the
+    honest middle: the old index stays recoverable for a month, then goes. Only ever moves the expiry
+    LATER (never sooner) and never touches a blob that has none, so it cannot shorten the life of
+    something else that happens to share these bytes."""
+    if not sha256 or days <= 0:
+        return False
+    try:
+        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+        if blob is None:
+            return False
+        want = int(time.time()) + days * 86400
+        if blob.expires_at and blob.expires_at >= want:
+            return False                     # already expiring at or after that — leave it alone
+        blob.expires_at = want
+        db.commit()
+        _meta_drop(sha256)
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("[blossom] could not stamp TTL on %s: %s", sha256[:12], e)
+        return False
+
+
+def usage_for_pubkey(db: Session, pubkey_hex: str) -> int:
+    """Total bytes this pubkey references, counted through the owners table so a shared blob is
+    charged to everyone holding it (dedup saves the DISK, it shouldn't hand out free quota)."""
+    from app.models import BlossomBlobOwner
+    from sqlalchemy import func
+    v = (db.query(func.coalesce(func.sum(BlossomBlob.size), 0))
+           .join(BlossomBlobOwner, BlossomBlobOwner.sha256 == BlossomBlob.sha256)
+           .filter(BlossomBlobOwner.pubkey == pubkey_hex).scalar())
+    return int(v or 0)
+
+
+def quota_exceeded(db: Session, pubkey_hex: str, incoming: int) -> tuple[bool, int, int]:
+    """(over?, used, limit_bytes) for `pubkey_hex` taking `incoming` more bytes.
+
+    Skipped entirely when no quota is configured — the default — so the aggregate never runs on the
+    upload hot path unless an admin has opted in. Without SOME cap nothing bounds growth at all now
+    that blobs are kept forever, and one uploader can fill the disk for everybody."""
+    limit_gb = _cfg(db)["user_quota_gb"]
+    if not limit_gb or limit_gb <= 0:
+        return False, 0, 0
+    limit = int(limit_gb) * 1024 ** 3
+    used = usage_for_pubkey(db, pubkey_hex)
+    return (used + max(0, incoming)) > limit, used, limit
 
 
 def is_owner(db: Session, sha256: str, pubkey_hex: str) -> bool:

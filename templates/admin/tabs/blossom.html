@@ -39,6 +39,11 @@
             <small>Uploads larger than this are rejected (HTTP 413).</small>
         </div>
         <div class="form-group">
+            <label for="blossom_user_quota_gb">Per-user storage quota (GB)</label>
+            <input type="number" id="blossom_user_quota_gb" name="blossom_user_quota_gb" min="0" placeholder="0 = unlimited">
+            <small><strong>0 (default) = unlimited.</strong> Total bytes each npub may store here; further uploads get HTTP 413. Shared files are charged to everyone who holds them — dedup saves the disk, it shouldn't hand out free quota. Worth setting on a multi-user node: blobs are kept forever unless <em>Blob TTL</em> is set, so nothing else bounds growth.</small>
+        </div>
+        <div class="form-group">
             <label for="blossom_cache_mb">In-RAM read cache (MB)</label>
             <input type="number" id="blossom_cache_mb" name="blossom_cache_mb" placeholder="512">
             <small>Serves hot blobs from memory to save disk I/O / SSD wear and skip the cross-node

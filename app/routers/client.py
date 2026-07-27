@@ -3074,6 +3074,7 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
 
 # ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----
 _FILES_INDEX_BAKS = 5      # how many replaced index versions to keep (see _files_index_backup)
+_FILES_INDEX_BAK_DAYS = 30  # how long a superseded index BLOB stays recoverable before the sweep takes it
 
 
 class FilesIndexReq(BaseModel):
@@ -3129,6 +3130,19 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             await _files_index_backup(store, port, sk, prev, shrinking)
 
         await store.put_doc(port, sk, "pcai:files-index", data.index)
+
+        # The index the client just replaced points at a Blossom blob that is now superseded. The
+        # client used to DELETE it immediately, which is what left a wiped index with nothing to
+        # restore from; keeping it forever leaks ~133 KB per save. Stamp it with a TTL instead, so it
+        # stays recoverable for a month and is then reclaimed by the sweep that already exists.
+        try:
+            old_sha = prev.get("indexSha") if isinstance(prev, dict) else None
+            new_sha = data.index.get("indexSha")
+            if old_sha and old_sha != new_sha:
+                from app.services import blossom_service
+                blossom_service.expire_blob_in(db, old_sha, _FILES_INDEX_BAK_DAYS)
+        except Exception as e:
+            logger.debug("[client] files-index: could not age out the old index blob: %s", e)
         return JSONResponse({"ok": True})
     doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})

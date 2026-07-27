@@ -511,6 +511,8 @@ class SettingsResponse(BaseModel):
     blossom_public_url: Optional[str] = None
     blossom_blob_ttl_days: Optional[int] = None
     blossom_max_upload_mb: Optional[int] = None
+    blossom_user_quota_gb: Optional[int] = None   # per-user storage cap in GB (0/blank = unlimited).
+    # Matters because blossom_blob_ttl_days=0 (keep forever) means nothing bounds growth by age.
     blossom_storage_backend: Optional[str] = None
     blossom_storage_path: Optional[str] = None
     blossom_cache_mb: Optional[int] = None
