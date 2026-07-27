@@ -95,6 +95,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "reze": "Turn an attached image into a short MP4 set to the reze clip: reze",
         "vibe": "Put a cute anime girl dancing over an attached image for 8s: vibe",
         "rebecca": "Put Rebecca dancing with a thumbs up over an attached image for 8s: rebecca",
+        "makima": "Makima finger-guns whoever is in an attached image for 8s: makima",
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sleepwell": "Turn an attached image into a short MP4 set to the Sleep Well clip: sleepwell",
         "horse": "Turn an attached image into a short MP4 set to the horse clip: horse",
@@ -184,14 +185,14 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "collage", "meme", "theraped", "would", "shrug", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca",
+        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
-    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "nakedman"}
+    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman"}
     OVERLAY_MOTIONS = {"glow"}
     # --- effect modifier combination rules (ONE source of truth: the command path, the
     # media API and the web studio all resolve combos through check_motion_combo) ---
@@ -680,6 +681,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._vibe_command(attachments)
         elif command == "rebecca":
             return await self._rebecca_command(attachments)
+        elif command == "makima":
+            return await self._makima_command(attachments)
         elif command == "feliz":
             return await self._feliz_command(attachments)
         elif command == "sleepwell":
@@ -772,7 +775,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             "`glow` `trippy`, which stack on top. E.g. `dildo zoom trippy`, "
             "`whoabuddy pulse glow`. A second movement is refused rather than half-applied, "
             "and `alive` (3D parallax needs a still) is refused on the effects that always "
-            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` — where the other movements work fine.\n"
+            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` `makima` — where the other movements work fine.\n"
         )
 
         return {"type": "text", "content": help_text}

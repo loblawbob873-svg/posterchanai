@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _REBECCA_AUDIO_CANDIDATES, _REBECCA_DANCE_CANDIDATES, _REBECCA_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _REBECCA_AUDIO_CANDIDATES, _REBECCA_DANCE_CANDIDATES, _REBECCA_DURATION, _MAKIMA_AUDIO_CANDIDATES, _MAKIMA_SHOOT_CANDIDATES, _MAKIMA_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
 
 def _hava_audio_path() -> str:
     """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
@@ -1029,6 +1029,67 @@ def reze_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"reze failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _makima_audio_path() -> str:
+    """First existing makima mp3 (the gunshots) from the candidate list ("" if none)."""
+    for p in _MAKIMA_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _makima_shoot_path() -> str:
+    """First existing makima shooting overlay (.mov) from the candidate list ("" if none)."""
+    for p in _MAKIMA_SHOOT_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_makima(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite Makima finger-gunning the viewer onto the image. MP4 bytes.
+    An ANIMATED overlay like rebecca: a generated sprite animated here (recoil + muzzle flashes)
+    rather than keyed footage — see scripts/gen_makima_shoot.py. The audio is bare gunshots, timed
+    to the exact frames the overlay fires on."""
+    from app.services.media_service import image_gif_overlay_video
+    if isinstance(image_data, list):  # makima is single-image (overlay), not a slideshow
+        image_data = image_data[0][1]
+    audio = _makima_audio_path()
+    if not audio:
+        raise RuntimeError("Makima audio (assets/makima.mp3) is missing on the server")
+    overlay = _makima_shoot_path()
+    if not overlay:
+        raise RuntimeError("Makima overlay (assets/makima_shoot.mov) is missing on the server")
+    # Same reasoning as rebecca: her canvas carries recoil/flash headroom, so she only fills ~88%
+    # of it and needs a slightly larger frac to land at the same on-screen size.
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_MAKIMA_DURATION, audio_path=audio, height_frac=0.68)
+
+
+def makima_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a makima MP4. Mirrors rebecca_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_makima(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_makima.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🔫 Makima\n\n🔫 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"makima failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 

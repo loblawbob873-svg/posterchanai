@@ -48,6 +48,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _makima_command(self, attachments: Optional[list]) -> dict:
+        """Makima finger-guns whoever is in an attached image for 8s: `makima`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `makima`."}
+
+        import asyncio
+        from app.services.effects_service import makima_attachments
+
+        outputs, summary = await asyncio.to_thread(makima_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _rebecca_command(self, attachments: Optional[list]) -> dict:
         """Put Rebecca dancing with a thumbs up over an attached image for 8s: `rebecca`."""
         from app.services.media_service import is_image

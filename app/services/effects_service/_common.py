@@ -253,6 +253,17 @@ _REZE_DANCE_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "reze_dance.mov"),
     "/var/lib/posterchanai/assets/reze_dance.mov",
 ]
+_MAKIMA_AUDIO_CANDIDATES = [
+    os.environ.get("MAKIMA_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "makima.mp3"),
+    "/var/lib/posterchanai/assets/makima.mp3",
+]
+_MAKIMA_DURATION = 8.0
+_MAKIMA_SHOOT_CANDIDATES = [
+    os.environ.get("MAKIMA_SHOOT_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "makima_shoot.mov"),
+    "/var/lib/posterchanai/assets/makima_shoot.mov",
+]
 _REBECCA_AUDIO_CANDIDATES = [
     os.environ.get("REBECCA_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "rebecca.mp3"),

@@ -1599,6 +1599,13 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
     # A GIF loops with -ignore_loop 0; an alpha video loops with -stream_loop -1.
     is_gif_overlay = gif_path.lower().endswith(".gif")
     overlay_loop = ["-ignore_loop", "0"] if is_gif_overlay else ["-stream_loop", "-1"]
+    # `-stream_loop` restarts the CONTAINER, and the restart lands the first frame of each repeat
+    # a couple of frames late — every loop after the first ran ~0.2s behind, which desynced
+    # `makima`'s muzzle flashes from her gunshots and dropped some one-frame flashes outright.
+    # Re-stamping the decoded frames at the overlay's own rate makes the loop seamless: frame N is
+    # simply at N/rate, whatever the container did at the seam.
+    overlay_fps = _probe_rate(gif_path) if not is_gif_overlay else 0.0
+    retime = f"setpts=N/{overlay_fps:.6f}/TB," if overlay_fps > 0 else ""
 
     tmp_dir = tempfile.mkdtemp(prefix="media_overlay_")
     in_suffix = _ext(source_filename) or ".jpg"
@@ -1641,14 +1648,19 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         if _bg_h > 0:
             ov_h = max(2, int(_bg_h * height_frac) // 2 * 2)
             base = (
-                "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];"
-                f"[1:v]format=rgba,fps=12,scale=-2:{ov_h}[ov];"
+                # `overlay` emits one frame per BACKGROUND frame, so the background's clock is the
+                # output's clock. The parallax loop runs at its own rate and is itself
+                # `-stream_loop`ed, which held the overlay ~2 frames behind for the whole render —
+                # `makima`'s flashes fired 0.17s after her gunshots. Resampling BOTH branches to
+                # 12fps puts them on one clock and the two line up exactly.
+                "[0:v]fps=12,scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];"
+                f"[1:v]format=rgba,{retime}fps=12,scale=-2:{ov_h}[ov];"
                 "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
             )
         else:
             base = (
                 "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
-                "[1:v]format=rgba,fps=12[g];"
+                f"[1:v]format=rgba,{retime}fps=12[g];"
                 f"[g][bg0]scale2ref=w=-1:h=rh*{height_frac:.3f}[ov][bg];"
                 "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
             )
@@ -1697,6 +1709,29 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         raise RuntimeError(f"gif-overlay→video failed (tried {candidates}): {last_err}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _probe_rate(path: str) -> float:
+    """Video frame rate in fps (0.0 if unknown), from the stream's r_frame_rate ("12/1")."""
+    ffmpeg = resolve_ffmpeg()
+    ffprobe = ffmpeg[:-6] + "ffprobe" if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    try:
+        out = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=r_frame_rate", "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, timeout=60, text=True,
+        )
+        for line in (out.stdout or "").splitlines():
+            line = line.strip()
+            if "/" in line:
+                num, den = line.split("/", 1)
+                if float(den):
+                    return float(num) / float(den)
+            elif line.replace(".", "", 1).isdigit():
+                return float(line)
+        return 0.0
+    except Exception:
+        return 0.0
 
 
 def _probe_dim(path: str, dim: str) -> int:

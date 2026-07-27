@@ -74,17 +74,13 @@ def apply_character(outputs: List[OutputFile], name: str) -> List[OutputFile]:
     return result
 
 
-def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.38):
+def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.52,
+                                  max_width_frac: float = 0.34):
     """Place the character bottom-CENTRE (the pointing-up meme anchor) rather than bottom-right like
     apply_character. Returns (image, top_y, left_x, right_x) so a caption can be placed in whichever
     gutter beside her is wider, clear of the art."""
     from PIL import Image as _Img
     W, H = base.size
-    # Size by height BUT cap against width. Height-only 38% made her 729px wide on a 1080x1920 phone
-    # photo: she swallowed BOTH gutters (111px each vs the 194px minimum), so the caption had nowhere to
-    # sit beside her and fell back to a banner above her head — which reads as "the text is far from the
-    # character". Landscape test images never hit it, which is why it survived several rounds of review.
-    ch = max(2, min(int(H * height_frac), int(W * height_frac)))
     char = _character_still(char_path)
     # CROP to the opaque silhouette first. The assets are 460x460 canvases with the figure inset —
     # would.png carries 114px of empty pixels to the RIGHT of the old man. Without this the returned
@@ -97,7 +93,18 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.3
             char = char.crop(_bb)
     except Exception:
         pass
+    # Size by HEIGHT, then cap her actual WIDTH — the two used to be conflated as
+    # `height_frac * min(W, H)`, which is a width cap only by accident. On a 1080x1920 phone photo
+    # that made her 0.38*1080 tall, i.e. 21% of the frame — the "too small on a high-res photo"
+    # complaint — while what the cap was really protecting (a gutter each side for the caption)
+    # depends on how WIDE she is, not on the shorter edge. Capping the width directly lets the
+    # height frac be honest on every aspect ratio.
+    ch = max(2, int(H * height_frac))
     cw = max(1, int(char.width * ch / char.height))
+    max_cw = max(2, int(W * max_width_frac))
+    if cw > max_cw:
+        ch = max(2, int(ch * max_cw / cw))
+        cw = max_cw
     char = char.resize((cw, ch), _Img.LANCZOS)
     y = max(0, H - ch)
     x = max(0, (W - cw) // 2)
