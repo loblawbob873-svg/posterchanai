@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _REBECCA_AUDIO_CANDIDATES, _REBECCA_DANCE_CANDIDATES, _REBECCA_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
 
 def _hava_audio_path() -> str:
     """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
@@ -1001,8 +1001,10 @@ def add_reze(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
     overlay = _reze_dance_path()
     if not overlay:
         raise RuntimeError("Reze dance overlay (assets/reze_dance.mov) is missing on the server")
+    # 0.62 rather than the old 0.5: that was tuned for the two-chibi 700x520 canvas, where each
+    # figure was only half the width. The keyed asset is ONE dancer filling her frame.
     return image_gif_overlay_video(image_data, source_filename, overlay,
-                                   duration=_REZE_DURATION, audio_path=audio, height_frac=0.5)
+                                   duration=_REZE_DURATION, audio_path=audio, height_frac=0.62)
 
 
 def reze_attachments(
@@ -1027,6 +1029,68 @@ def reze_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"reze failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _rebecca_audio_path() -> str:
+    """First existing rebecca mp3 from the candidate list ("" if none)."""
+    for p in _REBECCA_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def _rebecca_dance_path() -> str:
+    """First existing rebecca dance overlay (.mov) from the candidate list ("" if none)."""
+    for p in _REBECCA_DANCE_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_rebecca(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the dancing, thumbs-up Rebecca onto the image, set to the rebecca clip. MP4 bytes.
+    Another ANIMATED overlay (chimp/clay/reze/vibe). Unlike those, the overlay is not keyed footage
+    but a sprite this node generated and animated — see scripts/gen_rebecca_dance.py. The asset is
+    ONE beat-cycle and the renderer loops it, so it's a fraction of the size of a full-length clip."""
+    from app.services.media_service import image_gif_overlay_video
+    if isinstance(image_data, list):  # rebecca is single-image (overlay), not a slideshow
+        image_data = image_data[0][1]
+    audio = _rebecca_audio_path()
+    if not audio:
+        raise RuntimeError("Rebecca audio (assets/rebecca.mp3) is missing on the server")
+    overlay = _rebecca_dance_path()
+    if not overlay:
+        raise RuntimeError("Rebecca dance overlay (assets/rebecca_dance.mov) is missing on the server")
+    # 0.70, not vibe's 0.60: her sprite sits on a canvas with headroom for the hop and the tilt,
+    # so she only fills ~86% of it — the extra frac buys back that margin and lands her at the
+    # same on-screen size as the keyed-footage overlays.
+    return image_gif_overlay_video(image_data, source_filename, overlay,
+                                   duration=_REBECCA_DURATION, audio_path=audio, height_frac=0.70)
+
+
+def rebecca_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a rebecca MP4. Mirrors vibe_attachments
+    (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_rebecca(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_rebecca.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 👍 Rebecca\n\n👍 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"rebecca failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 

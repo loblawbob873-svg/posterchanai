@@ -253,6 +253,17 @@ _REZE_DANCE_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "reze_dance.mov"),
     "/var/lib/posterchanai/assets/reze_dance.mov",
 ]
+_REBECCA_AUDIO_CANDIDATES = [
+    os.environ.get("REBECCA_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "rebecca.mp3"),
+    "/var/lib/posterchanai/assets/rebecca.mp3",
+]
+_REBECCA_DURATION = 8.0
+_REBECCA_DANCE_CANDIDATES = [
+    os.environ.get("REBECCA_DANCE_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "rebecca_dance.mov"),
+    "/var/lib/posterchanai/assets/rebecca_dance.mov",
+]
 _VIBE_AUDIO_CANDIDATES = [
     os.environ.get("VIBE_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "vibe.mp3"),

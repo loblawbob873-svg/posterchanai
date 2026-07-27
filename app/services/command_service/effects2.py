@@ -48,6 +48,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _rebecca_command(self, attachments: Optional[list]) -> dict:
+        """Put Rebecca dancing with a thumbs up over an attached image for 8s: `rebecca`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `rebecca`."}
+
+        import asyncio
+        from app.services.effects_service import rebecca_attachments
+
+        outputs, summary = await asyncio.to_thread(rebecca_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _feliz_command(self, attachments: Optional[list]) -> dict:
         """Turn an attached image into a short MP4 set to the feliz clip: `feliz`."""
         from app.services.media_service import is_image

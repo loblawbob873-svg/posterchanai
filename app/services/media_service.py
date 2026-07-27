@@ -1622,16 +1622,36 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         except Exception as e:
             logger.warning(f"parallax overlay background failed ({e}); using still")
 
-        # scale2ref sizes the GIF to `height_frac` of the image height (aspect kept),
-        # then overlay centres it horizontally and anchors it to the bottom edge.
-        base = (
-            "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
-            "[1:v]format=rgba,fps=12[g];"
-            # NB: in scale2ref `rh` is the REFERENCE (the background image) height;
-            # `main_h` is the overlay's own height — using it ignores the image size.
-            f"[g][bg0]scale2ref=w=-1:h=rh*{height_frac:.3f}[ov][bg];"
-            "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
-        )
+        # The overlay is sized to `height_frac` of the PHOTO's height, then centred horizontally
+        # and anchored to the bottom edge.
+        #
+        # This used to be `scale2ref=w=-1:h=rh*frac`, which silently DISTORTED every animated
+        # overlay: scale2ref resolves `w=-1` against the REFERENCE, not the overlay's own aspect,
+        # so the overlay came out with the photo's aspect ratio — a 504x560 dancer rendered
+        # 720x360 on a landscape photo (2.2x too wide) and 360x720 on a portrait one. Measuring
+        # the photo here and scaling by an absolute height (`-2` = even width, aspect kept) is
+        # both correct and independent of scale2ref's argument semantics.
+        _bg_h = 0
+        try:
+            from PIL import Image as _PILImage
+            with _PILImage.open(io.BytesIO(image_data)) as _probe:
+                _bg_h = int(_probe.size[1])
+        except Exception as e:
+            logger.warning(f"overlay: could not read image height ({e}); falling back to scale2ref")
+        if _bg_h > 0:
+            ov_h = max(2, int(_bg_h * height_frac) // 2 * 2)
+            base = (
+                "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];"
+                f"[1:v]format=rgba,fps=12,scale=-2:{ov_h}[ov];"
+                "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
+            )
+        else:
+            base = (
+                "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg0];"
+                "[1:v]format=rgba,fps=12[g];"
+                f"[g][bg0]scale2ref=w=-1:h=rh*{height_frac:.3f}[ov][bg];"
+                "[bg][ov]overlay=x=(W-w)/2:y=H-h:shortest=0"
+            )
 
         candidates = _video_encoder_candidates(ffmpeg)
         if _video_encoder_cache and _video_encoder_cache in candidates:

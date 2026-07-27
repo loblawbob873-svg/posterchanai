@@ -84,6 +84,7 @@ _HELP_SECTIONS = {
         "• ✨ Effects → 🤔 Consider — overlay the 'consider the following' cutout\n"
         "• ✨ Effects → 🗣️ Clay — overlay the Clay Davis 'Shiiiit' clip (bg removed)\n"
         "• ✨ Effects → 💖 Vibe — a cute anime girl dances over the image → 8s clip\n"
+        "• ✨ Effects → 👍 Rebecca — Rebecca dances with a thumbs up over the image → 8s clip\n"
         "• ✨ Effects → 🎸 Wasteland — turn the image into a Teenage Wasteland video\n"
         "• ✨ Effects → 🍑 Mixalot — turn the image into a Baby Got Back video\n"
         "• ✨ Effects → 😎 Thug — turn the image into a THUG LIFE video\n"
@@ -96,7 +97,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse` or `knightrider` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `rebecca`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse` or `knightrider` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -295,7 +296,7 @@ _FX_MEMES = [
     ("🏳️‍🌈 Gay", "gay"), ("🥷 Blacked", "blacked"),
     ("✡️ Kosher", "kosher"), ("🤔 Consider", "consider"),
     ("🐵 Chimp", "chimp"), ("🗣️ Clay", "clay"),
-    ("💖 Vibe", "vibe"),
+    ("💖 Vibe", "vibe"), ("👍 Rebecca", "rebecca"),
     ("😎 Thug", "thug"), ("🔵 Blue", "blue"),
 ]
 _TRANSLATE_LANGS = [
