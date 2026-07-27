@@ -2248,8 +2248,13 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 /* Emoji picker. A COLUMN (search box + scrolling grid) rather than one scrolling wrap: with the
    instance's custom packs the list runs to thousands, so the search has to stay pinned while the
    grid under it scrolls. The grid — not the popover — owns the scrolling and the height cap. */
+/* NO backdrop-filter here, unlike the other popovers. This one opens OVER the composer modal, which
+   is itself two blur layers (.modal-bg blur(4) + .glass blur(7)) — a third one on top means every
+   scroll of a grid holding hundreds of images re-blurs the whole stack, which is exactly why the
+   picker crawled in "New post" while the identical picker on the timeline (no modal behind it) was
+   fine. A solid panel behind it costs nothing and reads better over a busy backdrop anyway. */
 .emoji-pop{position:fixed;z-index:360;display:flex;flex-direction:column;width:312px;max-width:92vw;padding:9px;
-  background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--neon);border-radius:14px;
+  background:var(--bg2);border:1px solid var(--neon);border-radius:14px;contain:layout paint;
   box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3),0 0 26px rgba(var(--accent-rgb),.3);animation:pop .14s ease-out}
 @keyframes pop{from{opacity:0;transform:translateY(-6px) scale(.96)}to{opacity:1;transform:none}}
 .ep-head{padding:0 0 8px;flex:0 0 auto}
@@ -2275,6 +2280,10 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
    the grid stays a grid. `loading=lazy` + the server's 72px thumbnails keep scrolling cheap. */
 .emoji-pop button.ce{padding:3px}
 .emoji-pop button.ce img{display:block;width:30px;height:30px;object-fit:contain}
+/* Off-screen cells are skipped entirely by the compositor — with a 3000-emoji pack the grid holds
+   hundreds of <img> and painting them all on every scroll frame was the other half of the New-post
+   slowdown. The intrinsic size keeps the scrollbar honest while they're skipped. */
+.ep-grid>button{content-visibility:auto;contain-intrinsic-size:36px 36px}
 .ep-empty{padding:14px 6px;color:var(--muted);font-size:13px;width:100%;text-align:center}
 
 /* per-post "☰ more" menu popover (bookmark / copy id / delete / block) */

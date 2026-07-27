@@ -2535,6 +2535,14 @@ def compress_effect_outputs(outputs: List[OutputFile],
             if out and len(out) < len(data):
                 logger.info("[effects] compressed %s: %d → %d bytes", name, len(data), len(out))
                 f = {**f, "data": out}
+                if ct.startswith("image/") and not ct.endswith("/jpeg"):
+                    # compress_image ALWAYS emits JPEG, so the name and the declared type have to
+                    # follow the bytes. Leaving a JPEG called "x.png"/image/png is not cosmetic: the
+                    # AI-chat client fetches an artifact and wraps it in a Blob with that declared
+                    # type, and a blob: URL is never content-sniffed — the picture just fails to
+                    # display (while a direct link, which is sniffed, still works).
+                    f["filename"] = os.path.splitext(name)[0] + ".jpg"
+                    f["content_type"] = "image/jpeg"
         except Exception as e:
             logger.warning("effect output compress failed for %s, sending original: %s", name, e)
         result.append(f)
