@@ -167,9 +167,34 @@ class _Handler(BaseHTTPRequestHandler):
         log.info("git-host %s - %s", self.address_string(), fmt % args)
 
     # ---- helpers -----------------------------------------------------------
+    # CORS for every response. In-browser nostr git clients (gitworkshop.dev and anything else doing
+    # git over fetch()) read a repo straight from its announced clone URL, and with no ACAO header
+    # they can render the 30617 announcement but never the CODE. A public repo is world-readable over
+    # plain HTTP already, so `*` grants nothing new; private repos are still refused by the read gate
+    # before any of this. NO Allow-Credentials — a browser rejects `credentials: true` together with
+    # `origin: *`, which is the failure mode that looks like CORS is configured when it isn't.
+    _CORS = (("Access-Control-Allow-Origin", "*"),
+             ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+             ("Access-Control-Allow-Headers", "Authorization, Content-Type, Git-Protocol, Pragma, Range"),
+             ("Access-Control-Expose-Headers", "Content-Type, Content-Length, Www-Authenticate"),
+             ("Access-Control-Max-Age", "600"))
+
+    def _send_cors(self):
+        for k, v in self._CORS:
+            self.send_header(k, v)
+
+    def do_OPTIONS(self):
+        """CORS preflight. An in-browser client sends this before any request carrying
+        Authorization/Git-Protocol; without an answer the real request is never made."""
+        self.send_response(204)
+        self._send_cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _deny(self, code: int, msg: str, *, auth: bool = False):
         body = (msg + "\n").encode()
         self.send_response(code)
+        self._send_cors()
         if auth:
             # WWW-Authenticate advertises the NIP-98 scheme so a GRASP client knows to sign a header.
             self.send_header("WWW-Authenticate", 'Nostr realm="grasp"')
@@ -193,6 +218,7 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj).encode("utf-8")
         try:
             self.send_response(status)
+            self._send_cors()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
@@ -1166,6 +1192,7 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 headers.append((k, v))
         self.send_response(status)
+        self._send_cors()
         for k, v in headers:
             self.send_header(k, v)
         # git streams a chunked body; use chunked transfer so we don't need Content-Length.

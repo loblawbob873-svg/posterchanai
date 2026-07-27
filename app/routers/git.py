@@ -11,7 +11,7 @@ repos aren't disclosed anonymously.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.auth import get_current_user
@@ -28,13 +28,19 @@ router = APIRouter(prefix="/api/git", tags=["git"])
 smart_router = APIRouter(tags=["git"])
 
 
-@smart_router.api_route("/git/{repo_path:path}", methods=["GET", "POST"])
+@smart_router.api_route("/git/{repo_path:path}", methods=["GET", "POST", "OPTIONS"])
 async def git_smart_proxy(repo_path: str, request: Request):
     """Thin reverse-proxy of a git smart-HTTP request to the hosting node (git_server_proxy_url).
     404 when this node isn't a proxy (empty git_server_proxy_url). No auth here — the hosting node
     authorizes the forwarded NIP-98/30618, exactly like the Blossom storage proxy."""
     if not git_proxy.proxy_enabled():
         raise HTTPException(status_code=404, detail="not a git proxy node")
+    # Answer the CORS preflight HERE rather than forwarding it: an in-browser git client sends
+    # OPTIONS before any request carrying Authorization/Git-Protocol, and the git host speaks only
+    # GET/POST — the preflight used to fall through to a 400, which reads to the browser as "this
+    # origin may not talk to that server" and blocks the real request that would have succeeded.
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=git_proxy.cors_headers())
     return await git_proxy.proxy_git_request(request, repo_path)
 
 

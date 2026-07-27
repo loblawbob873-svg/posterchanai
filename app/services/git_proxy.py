@@ -51,6 +51,28 @@ _FORWARD_RESP_HEADERS = ("content-type", "cache-control", "expires", "pragma", "
                          "www-authenticate")
 
 
+def cors_headers() -> dict:
+    """CORS for the git smart-HTTP endpoints.
+
+    Browser-based nostr git clients (gitworkshop.dev and anything else using in-browser git) fetch a
+    repo straight from its announced clone URL, so with no ACAO header they can render the 30617 but
+    never the CODE — gitworkshop showed exactly that: "blocked by CORS — direct and proxy both
+    failed". A PUBLIC repo is world-readable over plain HTTP anyway, so `*` grants nothing new.
+
+    Deliberately NO Access-Control-Allow-Credentials: the app's global CORS middleware sets it, and a
+    browser REJECTS `credentials: true` combined with `origin: *` — leaving both is how you get a
+    header that looks present and still fails. Private repos stay protected: the read gate runs
+    before this and answers 401 (the browser then just can't read the 401 body).
+    `Www-Authenticate` is exposed so a client can see which auth schemes were offered."""
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, Git-Protocol, Pragma, Range",
+        "Access-Control-Expose-Headers": "Content-Type, Content-Length, Www-Authenticate",
+        "Access-Control-Max-Age": "600",
+    }
+
+
 def proxy_enabled() -> bool:
     return bool((settings_store.get("git_server_proxy_url", "") or "").strip())
 
@@ -114,6 +136,7 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
         v = resp.headers.get(k)
         if v is not None:
             out_headers[k] = v
+    out_headers.update(cors_headers())
     # The host sends TWO www-authenticate challenges (Nostr and Basic) and a dict keeps only the
     # first, which would drop exactly the Basic one ngit needs. Re-emit every value as its own raw
     # header (RFC 7235 permits repeating the field) instead of comma-joining them, since a client
