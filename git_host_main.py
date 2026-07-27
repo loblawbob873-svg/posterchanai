@@ -173,6 +173,11 @@ class _Handler(BaseHTTPRequestHandler):
         if auth:
             # WWW-Authenticate advertises the NIP-98 scheme so a GRASP client knows to sign a header.
             self.send_header("WWW-Authenticate", 'Nostr realm="grasp"')
+            # ...and Basic, because ngit's libgit2 transport only attempts a scheme the server
+            # actually offers — with Nostr alone it gives up instead of calling a credential helper.
+            # The "password" it then sends is a base64 NIP-98 event (see git_auth.verify_nip98
+            # allow_basic); this line advertises an envelope, it does not accept passwords.
+            self.send_header("WWW-Authenticate", 'Basic realm="grasp"')
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
@@ -233,7 +238,8 @@ class _Handler(BaseHTTPRequestHandler):
         # static header across the info/refs GET + upload-pack POST). Wider freshness window than push.
         needle = "%s.git" % repo_id
         signer = git_auth.verify_nip98(header, None, needle, allowed,
-                                       max_skew=_CONFIG.get("read_skew", 300), require_method=False)
+                                       max_skew=_CONFIG.get("read_skew", 300), require_method=False,
+                                       allow_basic=True)
         if signer:
             log.info("[git-host] private read granted %s -> %s/%s", signer[:12], owner_hex[:12], repo_id)
             return True

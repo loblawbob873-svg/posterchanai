@@ -188,6 +188,14 @@ def create_repo(owner_hex: str, repo_id: str, *, announcement_addr: str = "",
     reader_hex = _norm_reader_list(readers)
     for k, v in (("http.receivepack", "true"),
                  ("http.uploadpack", "true"),
+                 # ngit's remote helper is libgit2-based and asks for a specific OID (`want <sha>`)
+                 # taken from the 30618 state rather than negotiating from the advertised refs.
+                 # git-upload-pack refuses that unless SHA1-in-want is allowed, so every `git fetch
+                 # nostr://…` died with "cannot fetch a specific object from the remote repository".
+                 # Reachable-only (not allowAnySHA1InWant) so unreferenced/dangling objects — e.g.
+                 # left by a force-push — still can't be fetched by anyone who guesses their sha.
+                 ("uploadpack.allowTipSHA1InWant", "true"),
+                 ("uploadpack.allowReachableSHA1InWant", "true"),
                  ("receive.fsckObjects", "true"),
                  ("receive.denyNonFastForwards", "false"),
                  ("receive.denyDeletes", "false"),

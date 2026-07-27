@@ -163,7 +163,8 @@ def decide_push_ref(ref: str, old_sha: str, new_sha: str, maintainers,
 # --------------------------------------------------------------------------- NIP-98
 
 def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
-                 allowed, *, max_skew: int = 60, require_method: bool = True) -> str | None:
+                 allowed, *, max_skew: int = 60, require_method: bool = True,
+                 allow_basic: bool = False) -> str | None:
     """Verify a NIP-98 (kind 27235) `Authorization: Nostr <base64-event>` header. Fail-closed.
 
     Returns the signer's hex pubkey iff ALL hold, else None:
@@ -180,6 +181,13 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
     method tag match both — the repo binding + freshness + access-set membership are the guard, over
     TLS. Push keeps require_method=True (writes are higher-stakes).
 
+    allow_basic=True additionally accepts the SAME base64 event carried as the password half of an
+    `Authorization: Basic <b64 user:pass>` header. That exists solely so ngit can read private repos:
+    its libgit2 transport has no NIP-98 support and cannot set an arbitrary header, but it does run
+    git credential helpers (see `scripts/git-credential-nostr`). Every check below is unchanged, so
+    this is a second envelope for the same signed token, not a second way to authenticate. Enabled
+    for the READ gate only — push never sets it.
+
     NOTE on replay: the ±max_skew freshness window plus URL binding is the practical guard; a nonce
     cache isn't feasible across independent one-shot hook processes / stateless request handlers. The
     header alone can't push without valid git objects matching the signed state, and it's bound to one
@@ -189,9 +197,24 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
         return None
     try:
         parts = header.strip().split(None, 1)
-        if len(parts) != 2 or parts[0].lower() != "nostr":
+        if len(parts) != 2:
             return None
-        raw = base64.b64decode(parts[1], validate=True).decode("utf-8")
+        scheme = parts[0].lower()
+        if scheme == "nostr":
+            b64_event = parts[1]
+        elif allow_basic and scheme == "basic":
+            # ngit's transport is libgit2 and cannot emit `Authorization: Nostr`, but it DOES run
+            # git credential helpers, which can only return a username/password pair. So carry the
+            # very same base64 NIP-98 event as the Basic *password* (`git-credential-nostr` mints a
+            # fresh one per request). Nothing is weakened: the event below is still BIP-340 verified,
+            # bound to this repo by its `u` tag, freshness-checked and ACL-checked. Reads only.
+            userpass = base64.b64decode(parts[1], validate=True).decode("utf-8")
+            if ":" not in userpass:
+                return None
+            b64_event = userpass.split(":", 1)[1]
+        else:
+            return None
+        raw = base64.b64decode(b64_event, validate=True).decode("utf-8")
         ev = json.loads(raw)
         if not isinstance(ev, dict) or int(ev.get("kind", 0)) != NIP98_KIND:
             return None

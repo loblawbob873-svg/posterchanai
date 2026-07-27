@@ -171,6 +171,41 @@ def main():
     signer = git_auth.verify_nip98(h_tamper, None, needle, readers, require_method=False, max_skew=300)
     check("read-gate: tampered NIP-98 (bad sig) DENIED", signer is None)
 
+    # --- Basic-envelope NIP-98 (ngit / libgit2 cannot send `Authorization: Nostr`) ---------------
+    # Same signed token, carried as the password half of HTTP Basic. Every other check must still
+    # apply — this is an envelope, not a second way in.
+    def basic_header(sk, method, url, created_at=None, user="npub1xxx"):
+        raw = nip98_header(sk, method, url, created_at).split(" ", 1)[1]
+        return "Basic " + base64.b64encode(("%s:%s" % (user, raw)).encode()).decode()
+
+    b_ok = basic_header(MAINT_SK, "GET", url)
+    signer = git_auth.verify_nip98(b_ok, None, needle, readers, require_method=False, max_skew=300,
+                                   allow_basic=True)
+    check("basic-envelope: allowlisted reader GRANTS", signer == MAINT)
+    # opt-in only: the push path never passes allow_basic, so the same header must be refused there
+    signer = git_auth.verify_nip98(b_ok, None, needle, readers, require_method=False, max_skew=300)
+    check("basic-envelope: REFUSED when allow_basic not set (push path unchanged)", signer is None)
+    # the wrapped token is still fully checked
+    signer = git_auth.verify_nip98(basic_header(RANDO_SK, "GET", url), None, needle, readers,
+                                   require_method=False, max_skew=300, allow_basic=True)
+    check("basic-envelope: non-allowlisted signer DENIED", signer is None)
+    signer = git_auth.verify_nip98(basic_header(MAINT_SK, "GET", url, created_at=int(time.time()) - 100000),
+                                   None, needle, readers, require_method=False, max_skew=300, allow_basic=True)
+    check("basic-envelope: stale token DENIED", signer is None)
+    signer = git_auth.verify_nip98(basic_header(MAINT_SK, "GET", "https://poster.place/git/npub1xxx/other.git/info/refs"),
+                                   None, needle, readers, require_method=False, max_skew=300, allow_basic=True)
+    check("basic-envelope: token bound to another repo DENIED", signer is None)
+    # a REAL password (not a NIP-98 event) must never authenticate
+    pw = "Basic " + base64.b64encode(b"npub1xxx:hunter2").decode()
+    signer = git_auth.verify_nip98(pw, None, needle, readers, require_method=False, max_skew=300,
+                                   allow_basic=True)
+    check("basic-envelope: ordinary password DENIED (no HTTP passwords)", signer is None)
+    # malformed Basic payloads must not raise
+    for bad in ("Basic " + base64.b64encode(b"nocolon").decode(), "Basic !!!not-base64!!!", "Basic "):
+        signer = git_auth.verify_nip98(bad, None, needle, readers, require_method=False,
+                                       max_skew=300, allow_basic=True)
+        check("basic-envelope: malformed payload DENIED (%r)" % bad[:24], signer is None)
+
     passed = sum(_results)
     total = len(_results)
     print("\n%d/%d checks passed" % (passed, total))
