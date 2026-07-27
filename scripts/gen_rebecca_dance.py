@@ -29,10 +29,12 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-PROMPT = ("anime girl, cyberpunk edgerunners style, short messy platinum blonde hair with dark roots, "
-          "cybernetic arms, cropped hoodie and shorts, giving a big thumbs up with a wide cheeky grin, "
-          "full body, standing, energetic, vibrant colours, clean anime cel shading, anime key visual, "
-          "simple flat white background")
+# Naming the character and letting the model recall her beats describing her: a long "platinum
+# blonde hair, cybernetic arms, cropped hoodie" prompt fought the model's own knowledge and produced
+# a generic white-haired girl. This wording gets the mint twin-tails, the black-and-yellow bomber and
+# the chunky boots right; everything after the first three sentences is only what the EFFECT needs.
+PROMPT = ("Rebecca from Cyberpunk Edgerunners. Cute. Anime. Full body, standing, giving a big "
+          "thumbs up, plain white background")
 NEGATIVE = ("text, letters, watermark, signature, blurry, monochrome, greyscale, sketch, lineart, "
             "extra fingers, deformed hands, malformed limbs, cropped, out of frame, multiple people, "
             "photo, realistic, 3d render, busy background")
@@ -126,7 +128,9 @@ def main():
     raw, sprite = os.path.join(tmp, "raw.png"), os.path.join(tmp, "sprite.png")
 
     generate_sprite(raw)
-    cut_out(raw, sprite)
+    # 620px, not the 900 default: the sprite's height drives the frame size, and 900 made the
+    # ProRes asset ~14 MB for no visible gain (the overlay renders at ~0.7x the photo height).
+    cut_out(raw, sprite, max_h=620)
     n = render_dance(sprite, frames)
     print(f"rendered {n} frames")
 

@@ -109,7 +109,9 @@ def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
     """A rounded dialogue bubble behind the caption with a tail aimed at the character, so the text
     reads as her SAYING it rather than as a caption laid over the picture. Drawn under the text; the
     caller then renders the words in dark ink on the white fill."""
-    pad = max(6, scale // 3)
+    # Generous padding: with the caption measured at its real anchor the bubble hugs the ink exactly,
+    # and a third of `scale` left the words looking wedged against the border on every side.
+    pad = max(9, scale // 2)
     x0, y0 = cx - tw // 2 - pad, cy - pad
     x1, y1 = cx + tw // 2 + pad, cy + th + pad
     r = max(6, min(pad * 2, (y1 - y0) // 3))
@@ -344,8 +346,17 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
         cx, y = W // 2, max(margin, min(char_top - th - margin, H - th - margin))
     if beside:
         # Dialogue: bubble first, then dark ink on it (a white stroke-outlined caption would vanish).
-        _draw_speech_bubble(draw, cx, y, tw, th, toward_left=(side == "right"), scale=max(6, font.size // 3))
-        draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(20, 18, 26),
+        #
+        # Size the bubble from where the words ACTUALLY land, not from `tw`/`th`. Those come from a
+        # bbox measured at the origin with the default anchor, but the caption is drawn with
+        # anchor="ma" — the two differ by the ascender-to-cap-top gap, which grows with the font
+        # size, so the bubble sat too high and the text rested on (or crossed) its bottom border.
+        # Measuring at the real draw position with the real anchor pads the caption evenly instead.
+        _txt = "\n".join(lines)
+        _ink = draw.multiline_textbbox((cx, y), _txt, font=font, anchor="ma", align="center")
+        _draw_speech_bubble(draw, (_ink[0] + _ink[2]) // 2, _ink[1], _ink[2] - _ink[0], _ink[3] - _ink[1],
+                            toward_left=(side == "right"), scale=max(6, font.size // 3))
+        draw.multiline_text((cx, y), _txt, font=font, fill=(20, 18, 26),
                             anchor="ma", align="center")
     else:
         draw.multiline_text((cx, y), "\n".join(lines), font=font, fill=(255, 255, 255),
