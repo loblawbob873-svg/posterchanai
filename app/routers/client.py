@@ -3761,6 +3761,12 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             # CPU together. Bounded, so a wedged render can't leave this request hanging indefinitely.
             async with _meme_slot():
                 out = await asyncio.to_thread(meme_builder_service.render, data.edit, sources)
+                # Same auto-compress the effects get: a Meme Builder timeline over a phone-camera
+                # layer renders tens of MB, and this MP4 goes straight into a post/upload.
+                from app.services import media_service as _ms
+                out = (await asyncio.to_thread(_ms.compress_effect_outputs,
+                                               [{"filename": "meme.mp4", "data": out,
+                                                 "content_type": "video/mp4"}]))[0]["data"]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except RuntimeError as e:

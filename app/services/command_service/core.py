@@ -335,13 +335,14 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             command, arg, last_prompt, stop_check, attachments, node_notify,
         )
         # Only auto-compress EFFECT outputs — not the `compress`/`clip`/`convert`/`ytdl`
-        # media tools, where the user controls quality (and `compress` already ran).
+        # media tools, where the user controls quality (and `compress` already ran). Videos AND
+        # images: a stamp on a phone photo came back at the photo's full resolution.
         if (command in self.MOTION_EFFECTS and isinstance(result, dict)
                 and result.get("type") == "files" and result.get("files")):
             import asyncio
             from app.services import media_service
             result["files"] = await asyncio.to_thread(
-                media_service.compress_output_videos, result["files"],
+                media_service.compress_effect_outputs, result["files"],
             )
         # TikTok-style branding end-card on effect VIDEOS: per-user avatar/@username + the
         # PosterChan mascot + "made with PosterChanAI". Gated by `effect_outro_enabled` (default on).

@@ -348,7 +348,7 @@ async def process_media(
         # Shrink oversized effect videos before delivery (same as the command path).
         # Skip the media tools (compress already ran; clip/convert are user-controlled).
         if outputs and command not in ("compress", "clip", "convert"):
-            outputs = await asyncio.to_thread(media_service.compress_output_videos, outputs)
+            outputs = await asyncio.to_thread(media_service.compress_effect_outputs, outputs)
         # TikTok-style branding end-card. If the caller supplied the fediverse poster's
         # identity (brand_handle/brand_avatar), it's a per-user card with their @handle +
         # avatar; otherwise the STATIC "made with PosterChanAI" card. Gated, best-effort.

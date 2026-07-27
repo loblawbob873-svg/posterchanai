@@ -2489,26 +2489,54 @@ def _smaller_output(
 
 
 EFFECT_VIDEO_COMPRESS_THRESHOLD = 3_000_000  # bytes; bigger effect videos get compressed
+# Images get a lower bar: a stamp/meme on a 12 MP phone photo comes back as a several-MB JPEG at
+# a resolution nothing displays, and unlike a video it is cheap to re-encode.
+EFFECT_IMAGE_COMPRESS_THRESHOLD = 1_200_000
 
 
-def compress_output_videos(outputs: List[OutputFile],
-                           threshold: int = EFFECT_VIDEO_COMPRESS_THRESHOLD) -> List[OutputFile]:
-    """Run each video output bigger than `threshold` through `compress_video` (the
-    same pass as the `compress` command), so an effect on a high-res photo doesn't
-    hand back a ~10 MB clip. Images and small videos pass through unchanged; the
-    original is kept on any failure. Shared by the web/Telegram command path and the
-    fedi-bot media_api path so every interface delivers compressed effect videos."""
+def _has_alpha(data: bytes) -> bool:
+    """True if these image bytes carry transparency (so re-encoding to JPEG would destroy it).
+    Errs on the side of True: an unreadable image is left alone rather than flattened."""
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            return im.mode in ("RGBA", "LA", "PA") or "transparency" in (im.info or {})
+    except Exception:
+        return True
+
+
+def compress_effect_outputs(outputs: List[OutputFile],
+                            video_threshold: int = EFFECT_VIDEO_COMPRESS_THRESHOLD,
+                            image_threshold: int = EFFECT_IMAGE_COMPRESS_THRESHOLD) -> List[OutputFile]:
+    """Auto-compress rendered outputs on their way back to the user: videos through
+    `compress_video` and images through `compress_image` — the same passes the `compress`
+    command runs. An effect on a modern phone photo otherwise hands back a ~10 MB clip or a
+    12 MP JPEG, which then has to travel to Telegram/Blossom/the fediverse.
+
+    Only files OVER the per-type threshold are touched, a result that isn't actually smaller
+    is discarded, and any failure keeps the original — compression must never cost the user
+    their render. Shared by the web/Telegram command path, the fedi-bot media_api path and
+    the Meme Builder, so every interface delivers the same thing."""
     result: List[OutputFile] = []
     for f in outputs or []:
         data = f.get("data")
         ct = (f.get("content_type") or "").lower()
-        if ct.startswith("video/") and data and len(data) > threshold:
-            try:
-                compressed = compress_video(data, f.get("filename", "video.mp4"))
-                if compressed and len(compressed) < len(data):
-                    f = {**f, "data": compressed}
-            except Exception as e:
-                logger.warning(f"effect video compress failed, sending original: {e}")
+        name = f.get("filename", "file")
+        try:
+            if ct.startswith("video/") and data and len(data) > video_threshold:
+                out = compress_video(data, name)
+            elif ct.startswith("image/") and data and len(data) > image_threshold:
+                # compress_image re-encodes as JPEG, which is wrong for two kinds of output: a GIF
+                # (an animation — it would become one frame) and anything with an alpha channel (a
+                # sticker/overlay would gain a white background).
+                out = None if (ct.endswith("/gif") or _has_alpha(data)) else compress_image(data)
+            else:
+                out = None
+            if out and len(out) < len(data):
+                logger.info("[effects] compressed %s: %d → %d bytes", name, len(data), len(out))
+                f = {**f, "data": out}
+        except Exception as e:
+            logger.warning("effect output compress failed for %s, sending original: %s", name, e)
         result.append(f)
     return result
 
