@@ -782,12 +782,47 @@ _EMOJI_STOP = {
     "why", "how", "all", "any", "our", "out", "get", "got", "just", "like", "about", "into", "over",
     "than", "then", "some", "more", "most", "one", "two", "can", "will", "would", "could", "should",
     "http", "https", "www", "com", "nostr",
+    # Filler that matches something in a 3000-emoji pack while meaning nothing ("soy_right" for
+    # "right now", "good_night_left_side" for "good"). Content words stay in.
+    "now", "right", "really", "very", "still", "back", "well", "thing", "things", "time", "today",
+    "here", "where", "want", "need", "make", "made", "take", "went", "going", "gone", "everyone",
+    "know", "think" if False else "guys", "much", "many", "even", "also", "been", "being", "does",
 }
 
 
+# A post's own words rarely appear in a pack ("deployed", "server"), and a small model's keywords are
+# hit and miss, so each mood word also tries a few words the packs DO use. Cheap, deterministic, and
+# it is what stops the button answering "nothing matched this post".
+_EMOJI_SYN = {
+    "happy": ["smile", "joy", "grin", "comfy"], "smile": ["happy", "grin"],
+    "sad": ["cry", "tears", "sadge", "depressed"], "cry": ["sad", "tears", "sob"],
+    "angry": ["rage", "mad", "seethe", "anger"], "rage": ["angry", "mad", "seethe"],
+    "funny": ["laugh", "lol", "kek", "lmao"], "laugh": ["kek", "lol", "laughing"],
+    "love": ["heart", "kiss", "hug"], "like": ["heart", "based"],
+    "think": ["thinking", "hmm", "ponder"], "confused": ["huh", "think", "wtf"],
+    "tired": ["sleep", "sleepy", "yawn"], "sleep": ["sleepy", "tired"],
+    "food": ["eat", "hungry", "yum"], "drink": ["beer", "coffee", "drunk"],
+    "money": ["cash", "rich", "greed"], "bitcoin": ["btc", "sats", "money"],
+    "computer": ["pc", "code", "hacker"], "work": ["job", "boss", "office"],
+    "yes": ["nod", "based", "agree"], "no": ["nope", "cope", "disagree"],
+    "cool": ["based", "chad", "sunglasses"], "scared": ["fear", "spook", "panic"],
+    "surprised": ["shock", "wow", "gasp"], "shrug": ["idk", "whatever"],
+    "cat": ["blobcat", "kitty"], "dog": ["doge", "puppy"],
+}
+# Last resort when a post matches nothing at all: the reactions almost every pack carries.
+_EMOJI_GENERIC = ["kek", "lol", "laugh", "smug", "think", "thinking", "shrug", "based",
+                  "comfy", "cope", "sad", "heart"]
+
+
 def _emoji_words(text: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z']{3,}", (text or "").lower())
-            if w not in _EMOJI_STOP]
+    words = [w for w in re.findall(r"[a-z']{3,}", (text or "").lower())
+             if w not in _EMOJI_STOP]
+    out = list(words)
+    for w in words:
+        for syn in _EMOJI_SYN.get(w, []):
+            if syn not in out:
+                out.append(syn)
+    return out
 
 
 def _emoji_rank(words: list[str], limit: int) -> list[dict]:
@@ -797,14 +832,21 @@ def _emoji_rank(words: list[str], limit: int) -> list[dict]:
     returned five spellings of the same idea ("angry_cat, cat_angry, cry_angry…") and covered one
     concept out of the whole post."""
     best: dict = {}                              # word -> (score, entry)
+    uniq = set(words)
+    # Poor man's stemming: "laughing" must find :laugh:, "angrily" :angry:. Comparing 5-char prefixes
+    # costs nothing and is what takes a typical post from 2 suggestions to 5.
+    stems = {w: w[:5] for w in uniq if len(w) >= 5}
     for e in emoji_service.index():
         sc = e["shortcode"].lower()
         toks = set(t for t in re.split(r"[^a-z0-9]+", sc) if t)
-        for w in set(words):
+        for w in uniq:
             if w in toks:
                 score = 10 + len(w)
-            elif len(w) >= 4 and w in sc:
-                score = 4 + len(w) // 2
+            elif len(w) >= 4 and any(len(t) >= 4 and (t.startswith(w) or w.startswith(t)) for t in toks):
+                score = 4 + len(w) // 2                # prefix-of-a-token only: bare substring
+                                                       # matching made "hard" hit riCHARDspencer…
+            elif w in stems and any(len(t) >= 5 and t[:5] == stems[w] for t in toks):
+                score = 3 + len(w) // 2
             else:
                 continue
             cur = best.get(w)
@@ -851,10 +893,14 @@ async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
         svc = get_inference_service(db)
         res = await svc.chat_completion(
             [{"role": "system", "content": (
-                "You label social posts for an emoji picker. Reply with 8 lowercase single-word English "
-                "keywords describing the post's SUBJECTS and MOOD (things, animals, feelings, reactions) "
-                "— comma-separated, no explanation, no hashtags. Prefer plain concrete words like: happy "
-                "sad angry laugh cry cat dog food coffee beer money rage love confused shrug think.")},
+                "You pick reaction emoji for a social post on an irreverent, meme-literate instance. "
+                "Reply with 8 lowercase single words, comma-separated, no explanation, no hashtags.\n"
+                "FIRST 4: the funniest REACTION to this post — imagine the wittiest reply-guy. Use meme "
+                "reaction words like kek smug cope seethe based chad wojak pepe soyjak sadge comfy "
+                "gigachad clown copium rage tism doubt shrug facepalm popcorn.\n"
+                "LAST 4: literal SUBJECTS and MOOD from the post (things, animals, feelings) like cat "
+                "dog coffee beer money bitcoin food sleep angry happy sad laugh love tired.\n"
+                "Be funny before you are literal.")},
              {"role": "user", "content": text[:1500]}],
             max_tokens=60, temperature=0.3)
         out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
@@ -864,6 +910,10 @@ async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
 
     base = _emoji_base(request)
     picked = _emoji_rank(words, want)
+    if not picked:
+        # "nothing matched this post" is a useless answer from a 3000-emoji pack — fall back to the
+        # generic reactions rather than making the user go and search the picker themselves.
+        picked = _emoji_rank(_EMOJI_GENERIC, want)
     return JSONResponse({"emojis": [{"s": e["shortcode"],
                                      "u": f"{base}/{e['pack']}/{e['shortcode']}{e['ext']}"}
                                     for e in picked]})
