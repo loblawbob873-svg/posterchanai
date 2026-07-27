@@ -7194,8 +7194,8 @@
   function openEmojiPopover(anchorBtn, onPick){
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
-    pop.innerHTML=`<div class="ep-head" hidden><input class="ep-q" type="search" placeholder="search emoji…" autocomplete="off" spellcheck="false"></div><div class="ep-grid"></div>`;
-    const grid=$('.ep-grid',pop), head=$('.ep-head',pop), q=$('.ep-q',pop);
+    pop.innerHTML=`<div class="ep-head" hidden><input class="ep-q" type="search" placeholder="search emoji…" autocomplete="off" spellcheck="false"><div class="ep-tabs"></div></div><div class="ep-grid"></div>`;
+    const grid=$('.ep-grid',pop), head=$('.ep-head',pop), q=$('.ep-q',pop), tabs=$('.ep-tabs',pop);
     // Render in CHUNKS and top up on scroll. An instance can have thousands of emoji; building that
     // many buttons up front freezes a phone for seconds and downloads every thumbnail at once.
     const CHUNK=120; let _items=[], _n=0;
@@ -7211,16 +7211,33 @@
     const _show=items=>{ _items=items; _n=0; grid.innerHTML=''; _more();
       if(!items.length) grid.innerHTML='<div class="ep-empty">no match</div>'; };
     grid.addEventListener('scroll',()=>{ if(grid.scrollTop+grid.clientHeight > grid.scrollHeight-160) _more(); });
-    // Recent first, then the built-in unicode set, then the instance's own packs.
-    const _all=()=>{
+    // TABS, like Pleroma's picker: recents, the built-in unicode set, then one per instance pack —
+    // 3336 emoji in one endless scroll is unusable, and packs are how an operator organises them.
+    const _recents=()=>{
       const by={}; InstEmoji.list.forEach(e=>{ by[e.s]=e; });
-      const recRaw=_emojiRecent();
-      const rec=recRaw.map(x=> x.startsWith(':') ? (by[x.slice(1,-1)]||null) : x).filter(Boolean);
-      // A recent is SHOWN in the recents row, so drop it from the rows below — without this the same
-      // emoji appears twice a few centimetres apart, which reads as a rendering bug.
-      const used=new Set(recRaw);
-      return rec.concat(REACTION_EMOJIS.filter(x=>!used.has(x)),
-                        InstEmoji.list.filter(e=>!used.has(':'+e.s+':')));
+      return _emojiRecent().map(x=> x.startsWith(':') ? (by[x.slice(1,-1)]||null) : x).filter(Boolean);
+    };
+    const _tabItems=t=> t==='recent' ? _recents()
+                      : t==='std'    ? REACTION_EMOJIS
+                                     : InstEmoji.list.filter(e=>e.p===t);
+    let _tab='std';
+    const _setTab=(t, keepQuery)=>{
+      _tab=t;
+      $$('.ep-tab',pop).forEach(b=>b.classList.toggle('on', b.dataset.tab===t));
+      if(!keepQuery && q) q.value='';
+      grid.scrollTop=0; _show(_tabItems(t));
+    };
+    const _buildTabs=()=>{
+      const packs=[...new Set(InstEmoji.list.map(e=>e.p))];
+      const first={}; InstEmoji.list.forEach(e=>{ if(!first[e.p]) first[e.p]=e; });
+      const chip=(id,label,icon,img)=>`<button type="button" class="ep-tab" data-tab="${enc(id)}" title="${enc(label)}">`
+        + (img?`<img src="${enc(img)}" alt="" loading="lazy">`:enc(icon))+`<span>${enc(label)}</span></button>`;
+      const out=[];
+      if(_recents().length) out.push(chip('recent','Recent','🕘'));
+      out.push(chip('std','Emoji','😀'));
+      packs.forEach(p=>out.push(chip(p, p==='_'?'Custom':p, '', (first[p]||{}).t)));
+      tabs.innerHTML=out.join('');
+      $$('.ep-tab',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); _setTab(b.dataset.tab); });
     };
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
@@ -7253,17 +7270,24 @@
     // Arrows/hjkl drive the grid; everything else goes to the search box so you can type into it.
     _detachKeys=_popKeys(pop, '[data-e]', b=>{ _emojiRemember(b.dataset.e); onPick(b.dataset.e, close); }, close,
                          {inText:['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Home','End']});
-    // Paint the built-in set instantly, then fold in recents + the instance packs once they land.
+    // Paint the built-in set instantly, then add the tab bar once the instance packs land.
     _show(REACTION_EMOJIS);
     InstEmoji.load().then(list=>{
       if(!pop.isConnected) return;
-      if(list.length) head.hidden=false;   // no custom emoji on this instance → no search box either
-      _show(_all());
+      if(!list.length) return;             // no custom emoji here → no search box, no tabs, as before
+      head.hidden=false;
+      _buildTabs();
+      _setTab(_recents().length ? 'recent' : 'std');
       _placePop(pop, anchorBtn);           // the head appearing changes the height → re-anchor
     });
+    // Search looks across EVERY pack (that's the point of a search box with thousands of emoji);
+    // clearing it drops back to the tab you were on.
     if(q) q.oninput=()=>{
       const s=q.value.trim().toLowerCase().replace(/:/g,'');
-      _show(s ? InstEmoji.list.filter(e=>e.s.toLowerCase().includes(s)) : _all());
+      if(!s){ _setTab(_tab, true); return; }
+      $$('.ep-tab',pop).forEach(b=>b.classList.remove('on'));
+      grid.scrollTop=0;
+      _show(InstEmoji.list.filter(e=>e.s.toLowerCase().includes(s)));
     };
     return close;
   }

@@ -2256,8 +2256,19 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .ep-q{width:100%;box-sizing:border-box;background:rgba(var(--accent-rgb),.06);color:var(--text);
   border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px;outline:none}
 .ep-q:focus{border-color:var(--neon);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3)}
+/* Pack tabs (Pleroma-style): recents, the unicode set, then one chip per instance pack. Scrolls
+   sideways rather than wrapping — a node with a dozen packs must not push the grid off the sheet. */
+.ep-tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;padding:8px 0 0;scrollbar-width:none}
+.ep-tabs::-webkit-scrollbar{display:none}
+.emoji-pop .ep-tab{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
+  font-size:12px;line-height:1;padding:6px 9px;border-radius:8px;color:var(--muted);
+  border:1px solid transparent;max-width:132px}
+.emoji-pop .ep-tab:hover{transform:none;background:rgba(var(--accent-rgb),.12)}
+.emoji-pop .ep-tab.on{color:var(--text);background:rgba(var(--accent-rgb),.16);border-color:var(--neon)}
+.emoji-pop .ep-tab img{width:16px;height:16px;object-fit:contain;display:block}
+.emoji-pop .ep-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ep-grid{display:flex;flex-wrap:wrap;align-content:flex-start;gap:3px;overflow-y:auto;
-  max-height:min(52vh,308px);overscroll-behavior:contain}
+  max-height:min(52vh,308px);overscroll-behavior:contain;padding-top:8px}
 .emoji-pop button{background:transparent;border:none;font-size:22px;cursor:pointer;padding:5px 7px;border-radius:9px;line-height:1;transition:.1s}
 .emoji-pop button:hover{background:rgba(var(--accent-rgb),.18);transform:scale(1.18)}
 /* Custom (image) emoji: a fixed box so a 4 MB source and a 32px sticker occupy the same cell and
@@ -2288,7 +2299,9 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
   .menu-pop.sheet button{font-size:17px;padding:15px 16px}
   /* Bottom sheet on phones: bigger touch targets, and the GRID takes the sheet's height (the sheet
      is a column, so its own max-height must not be what scrolls). */
-  .emoji-pop.sheet .ep-grid{justify-content:center;max-height:calc(78vh - 60px - env(safe-area-inset-bottom))}
+  .emoji-pop.sheet .ep-grid{justify-content:center;max-height:calc(78vh - 118px - env(safe-area-inset-bottom))}
+  .emoji-pop.sheet .ep-tab{font-size:13px;padding:8px 11px}
+  .emoji-pop.sheet .ep-tab img{width:18px;height:18px}
   .emoji-pop.sheet button{font-size:26px;padding:8px 10px}
   .emoji-pop.sheet button.ce{padding:5px}
   .emoji-pop.sheet button.ce img{width:38px;height:38px}
