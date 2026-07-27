@@ -3118,6 +3118,13 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             # how a drive lost 417 filenames and folders. Refusing here covers every client that will
             # ever exist. A genuine mass-delete re-sends with force=true.
             logger.warning("[client] files-index: REFUSED a collapsing write for %s (%s)", pk[:12], drop)
+            # The client uploads the index BLOB before sending this pointer, so a refusal leaves that
+            # blob referenced by nothing. Give it a short TTL: it is reclaimed if the save is never
+            # retried, and un-expired below if the same bytes are later accepted.
+            in_use = await _index_shas_in_use(store, port, sk, prev)
+            cand = data.index.get("indexSha")
+            if in_use is not None and cand not in in_use:
+                _expire_unreferenced_index(db, cand, 7)
             return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True},
                                 status_code=409)
 
@@ -3130,7 +3137,22 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             shrinking = old_n is not None and new_n is not None and new_n < old_n
             evicted_sha = await _files_index_backup(store, port, sk, prev, shrinking)
 
-        await store.put_doc(port, sk, "pcai:files-index", data.index)
+        # CHECK THE WRITE. put_doc returns False when the relay rejects or never acks it; answering
+        # {"ok": true} regardless told the client to clear its dirty flag and drop the edit — reporting
+        # success for a write that did not happen, which is the same failure this endpoint now exists
+        # to prevent on the client's side.
+        if not await store.put_doc(port, sk, "pcai:files-index", data.index):
+            logger.warning("[client] files-index: relay REJECTED the write for %s", pk[:12])
+            in_use = await _index_shas_in_use(store, port, sk, prev)
+            cand = data.index.get("indexSha")
+            if in_use is not None and cand not in in_use:
+                _expire_unreferenced_index(db, cand, 7)
+            return JSONResponse({"ok": False, "error": "relay rejected the write, not saved"},
+                                status_code=503)
+
+        # This index is now LIVE, so make sure it carries no expiry from an earlier refused attempt
+        # at the same bytes — otherwise a retry that finally succeeds still gets swept later.
+        _expire_unreferenced_index(db, data.index.get("indexSha"), 0)
 
         # Age out only the index blob that just fell OUT of backup retention. A merely superseded
         # blob is still referenced by the backup written above, and expiring that one left the version
@@ -3147,6 +3169,48 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": True})
     doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
+
+
+async def _index_shas_in_use(store, port: int, sk: bytes, prev) -> set:
+    """Every index blob sha currently referenced by the LIVE doc or by a retained backup slot.
+
+    A refused save's blob is normally unreferenced garbage — but if the user reverted to an earlier
+    state, the identical bytes may be exactly what a backup slot points at. Expiring that would
+    schedule deletion of a version the history still promises, which is the same defect as expiring a
+    blob the moment it was superseded. Cheap: the slots are five known d-tags."""
+    used = set()
+    if isinstance(prev, dict) and prev.get("indexSha"):
+        used.add(prev["indexSha"])
+    try:
+        for i in range(1, _FILES_INDEX_BAKS + 1):
+            # strict: a relay failure must RAISE, not read as "this slot references nothing" —
+            # that empty answer would let the caller expire a blob a backup still needs.
+            doc = await store.get_doc(port, f"pcai:files-index-bak:{i}", seckey=sk, strict=True)
+            if isinstance(doc, dict) and doc.get("indexSha"):
+                used.add(doc["indexSha"])
+    except Exception as e:
+        logger.debug("[client] files-index: could not read backup slots: %s", e)
+        return None          # unknown → the caller must not expire anything
+    return used
+
+
+def _expire_unreferenced_index(db, sha: str | None, days: int) -> None:
+    """Give an index blob a short TTL (days>0) or clear one (days=0). Best-effort, never raises.
+
+    The client uploads the encrypted index blob BEFORE the server has agreed to store the pointer, so
+    a refused or rejected write leaves that blob referenced by nothing at all — and since the client
+    no longer deletes blobs and the global age sweep is off, it would sit there forever. The server
+    knows the sha from the very pointer it rejected, which makes this precise rather than a guess."""
+    if not sha:
+        return
+    try:
+        from app.services import blossom_service
+        if days > 0:
+            blossom_service.expire_blob_in(db, sha, days)
+        else:
+            blossom_service.clear_blob_expiry(db, sha)
+    except Exception as e:
+        logger.debug("[client] files-index: TTL touch on %s failed: %s", str(sha)[:12], e)
 
 
 def _files_index_count(doc) -> int | None:

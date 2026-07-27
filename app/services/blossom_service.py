@@ -1059,6 +1059,25 @@ def expire_blob_in(db: Session, sha256: str, days: int) -> bool:
         return False
 
 
+def clear_blob_expiry(db: Session, sha256: str) -> bool:
+    """Remove a blob's TTL — it has become permanently referenced (e.g. a refused index save that was
+    later accepted). The inverse of expire_blob_in; both are needed or a retry inherits the expiry."""
+    if not sha256:
+        return False
+    try:
+        blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
+        if blob is None or blob.expires_at is None:
+            return False
+        blob.expires_at = None
+        db.commit()
+        _meta_drop(sha256)
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("[blossom] could not clear TTL on %s: %s", sha256[:12], e)
+        return False
+
+
 def usage_for_pubkey(db: Session, pubkey_hex: str) -> int:
     """Total bytes this pubkey references, counted through the owners table so a shared blob is
     charged to everyone holding it (dedup saves the DISK, it shouldn't hand out free quota)."""
