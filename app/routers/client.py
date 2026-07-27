@@ -776,6 +776,99 @@ async def suggest_hashtags(request: Request, db: Session = Depends(get_db)):
     return JSONResponse({"hashtags": " ".join(tags)})
 
 
+_EMOJI_STOP = {
+    "the", "and", "for", "you", "your", "with", "that", "this", "from", "have", "has", "but", "not",
+    "are", "was", "were", "its", "it's", "they", "them", "there", "their", "what", "when", "who",
+    "why", "how", "all", "any", "our", "out", "get", "got", "just", "like", "about", "into", "over",
+    "than", "then", "some", "more", "most", "one", "two", "can", "will", "would", "could", "should",
+    "http", "https", "www", "com", "nostr",
+}
+
+
+def _emoji_words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z']{3,}", (text or "").lower())
+            if w not in _EMOJI_STOP]
+
+
+def _emoji_rank(words: list[str], limit: int) -> list[dict]:
+    """Pick instance emoji for a bag of words by matching the SHORTCODE — which IS the filename
+    (`gordonramsay_rage3`, `blobcat_heart`). Whole-token hits beat substring hits, and the result is
+    ONE emoji PER WORD, walked in the order given (LLM keywords first): scoring globally instead
+    returned five spellings of the same idea ("angry_cat, cat_angry, cry_angry…") and covered one
+    concept out of the whole post."""
+    best: dict = {}                              # word -> (score, entry)
+    for e in emoji_service.index():
+        sc = e["shortcode"].lower()
+        toks = set(t for t in re.split(r"[^a-z0-9]+", sc) if t)
+        for w in set(words):
+            if w in toks:
+                score = 10 + len(w)
+            elif len(w) >= 4 and w in sc:
+                score = 4 + len(w) // 2
+            else:
+                continue
+            cur = best.get(w)
+            # Tie-break on the SHORTEST shortcode: ":shrug:" is a better answer than ":loli_shrug:".
+            if not cur or (score, -len(sc)) > (cur[0], -len(cur[1]["shortcode"])):
+                best[w] = (score, e)
+    out, seen = [], set()
+    for w in words:                              # order = priority; duplicates fall out via `seen`
+        hit = best.get(w)
+        if not hit or hit[1]["shortcode"] in seen:
+            continue
+        seen.add(hit[1]["shortcode"])
+        out.append(hit[1])
+        if len(out) >= limit:
+            break
+    return out
+
+
+@router.post("/emoji-suggest")
+async def suggest_emoji(request: Request, db: Session = Depends(get_db)):
+    """Suggest up to 5 INSTANCE custom emoji for a draft post — the composer's AI → Suggest emoji.
+
+    The pack is thousands of entries, so the names never go near the prompt. Instead the LLM turns the
+    post into a handful of keywords (a tiny, fast call any local model can do) and those keywords are
+    matched against the emoji SHORTCODES here. Falls back to matching the post's own words when there
+    is no LLM, so the button still does something useful on a Nostr-only node."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "write something first"}, status_code=400)
+    try:
+        want = max(1, min(int(body.get("limit") or 5), 10))
+    except Exception:
+        want = 5
+    if not emoji_service.index():
+        return JSONResponse({"error": "this instance has no custom emoji"}, status_code=404)
+
+    words = _emoji_words(text)
+    try:
+        from app.services.inference_factory import get_inference_service
+        svc = get_inference_service(db)
+        res = await svc.chat_completion(
+            [{"role": "system", "content": (
+                "You label social posts for an emoji picker. Reply with 8 lowercase single-word English "
+                "keywords describing the post's SUBJECTS and MOOD (things, animals, feelings, reactions) "
+                "— comma-separated, no explanation, no hashtags. Prefer plain concrete words like: happy "
+                "sad angry laugh cry cat dog food coffee beer money rage love confused shrug think.")},
+             {"role": "user", "content": text[:1500]}],
+            max_tokens=60, temperature=0.3)
+        out = (res.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        words = _emoji_words(out) + words            # LLM keywords first: they rank higher by order
+    except Exception as e:
+        logger.warning("[client] emoji-suggest LLM unavailable, using post words only: %s", e)
+
+    base = _emoji_base(request)
+    picked = _emoji_rank(words, want)
+    return JSONResponse({"emojis": [{"s": e["shortcode"],
+                                     "u": f"{base}/{e['pack']}/{e['shortcode']}{e['ext']}"}
+                                    for e in picked]})
+
+
 @router.get("/server-stats")
 async def client_server_stats():
     """Public server statistics for the Server Stats page. No auth: these are aggregate counts only.

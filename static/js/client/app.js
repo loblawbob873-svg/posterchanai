@@ -2520,6 +2520,28 @@
       } else setSt('no hashtags: '+((r&&r.error)||'try again'));
     }catch(_){ setSt('hashtags failed'); }
   }
+  // AI → 😀 Suggest emoji: the node reads the draft, picks up to 5 INSTANCE custom emoji (matching its
+  // keywords against the emoji filenames server-side — the pack is thousands of names, far too many to
+  // put in a prompt) and appends them. Re-running replaces only the block we appended last time, never
+  // emoji the user typed. Shared by the timeline composer and the New post / Reply modal.
+  async function _aiEmojiSuggest(ta, setSt){
+    const body=(ta.value||'').trim();
+    if(!body){ toast('write something first'); return; }
+    setSt('picking emoji…');
+    try{
+      const r=await fetch('/client/emoji-suggest',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text:body, limit:5})}).then(r=>r.json());
+      const list=(r&&r.emojis)||[];
+      if(!list.length){ setSt(r&&r.error ? ('no emoji: '+r.error) : 'nothing matched this post'); return; }
+      const block=list.map(e=>':'+e.s+':').join(' ');
+      const prev=ta.dataset.aiEmoji||'';
+      let base=body;
+      if(prev && base.endsWith(prev)) base=base.slice(0, base.length-prev.length).replace(/\s+$/,'');
+      ta.value = base + (base?' ':'') + block; ta.dataset.aiEmoji=block;
+      setSt(''); ta.dispatchEvent(new Event('input',{bubbles:true}));
+      InstEmoji.load();   // warm the map so publish() can tag them without a round trip
+    }catch(_){ setSt('emoji suggestion failed'); }
+  }
   // Guests get this where the composer would be: whose instance this is, and the two things they might
   // want to do about it. It sits ABOVE the timeline rather than in a corner because that is the moment
   // someone decides whether to join — the old bottom bar said "log in to interact" without ever saying
@@ -2676,11 +2698,12 @@
     { const ab=$('#tl-cmp-ai',box); if(ab) ab.onclick=e=>{ e.stopPropagation();
         // The label carries the state: this is a toggle in a menu that closes on pick, so without the ✓
         // there is nothing anywhere telling you the next post will be framed.
-        openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate'],
+        openMenuPopover(ab, [['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate'],
                              ['card', (_tlBgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]], a=>{
           const setSt=m=>{ st.textContent=m; };
           if(a==='enhance') _aiEnhance(ta, setSt);
           else if(a==='tags') _aiHashtags(ta, setSt);
+          else if(a==='emoji') _aiEmojiSuggest(ta, setSt);
           else if(a==='card') _aiFramedCard(ta, setSt, {
             framed: _tlBgFramed, hasBg: !!_tlBg, set: v=>{ _tlBgFramed=v; _tlBgPreview(); },
             reveal: ()=>{ if(bgsRow && bgsRow.classList.contains('hidden')) toggleBg(); } });
@@ -8517,9 +8540,11 @@
           reveal: ()=>{ const strip=$('#cmp-bg-strip',root), b=$('#cmp-bg-btn',root);
             if(strip && strip.classList.contains('hidden')){ strip.classList.remove('hidden'); if(b) b.classList.add('active'); } } });
         if(aiBtn) aiBtn.onclick=(e)=>{ e.stopPropagation();
-          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['translate','🌐 Translate']];
+          const items=[['enhance','✨ AI Enhancer'],['tags','# Hashtags'],['emoji','😀 Suggest emoji'],['translate','🌐 Translate']];
           if($('#cmp-bg-strip',root)) items.push(['card', (_bgFramed?'🖼️ Framed card ✓':'🖼️ Framed card')]);
-          openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags(); else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
+          openMenuPopover(aiBtn, items, a=>{ if(a==='enhance') doEnhance(); else if(a==='tags') doTags();
+            else if(a==='emoji') _aiEmojiSuggest(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; });
+            else if(a==='card') doCard(); else if(a==='translate') composeTranslate(ta, aiBtn); }); };
       }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
