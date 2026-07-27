@@ -77,8 +77,8 @@ def apply_character(outputs: List[OutputFile], name: str) -> List[OutputFile]:
 def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.52,
                                   max_width_frac: float = 0.48):
     """Place the character bottom-CENTRE (the pointing-up meme anchor) rather than bottom-right like
-    apply_character. Returns (image, top_y, left_x, right_x) so a caption can be placed in whichever
-    gutter beside her is wider, clear of the art."""
+    apply_character. Returns (image, top_y, left_x, right_x, mouth_y) so a caption can be placed in
+    whichever gutter beside her is wider, clear of the art, and level with her mouth."""
     from PIL import Image as _Img
     W, H = base.size
     char = _character_still(char_path)
@@ -114,7 +114,59 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.5
     y = max(0, H - ch)
     x = max(0, (W - cw) // 2)
     base.alpha_composite(char, (x, y))
-    return base, y, x, min(W, x + cw)
+    mf = _char_mouth_frac(char_path)
+    return base, y, x, min(W, x + cw), (y + int(ch * mf) if mf is not None else None)
+
+
+_MOUTH_CACHE = {}
+
+
+def mouth_frac(img) -> float | None:
+    """Where the character's MOUTH sits, as a fraction of `img`'s height — the line a speech bubble
+    should be level with. None when no face is found (the caller keeps its own fallback).
+
+    Detected on the TOP 45% of the figure, upscaled: on a full-body pose the head is a few percent
+    of the frame and the detectors simply miss it at native scale (`would` returned nothing at all,
+    which is how his bubble ended up down by his knees). The art is composited onto white first —
+    a bare alpha cutout gives the cascades no contrast to work with.
+    """
+    try:
+        from PIL import Image as _Img
+        from .faces import _locate_mouth
+        from io import BytesIO as _BIO
+        bb = img.getbbox()
+        if bb:
+            img = img.crop(bb)
+        W, H = img.size
+        top = img.crop((0, 0, W, max(2, int(H * 0.45))))
+        scale = max(1.0, 560.0 / max(1, top.width))
+        if scale > 1.0:
+            top = top.resize((int(top.width * scale), int(top.height * scale)), _Img.LANCZOS)
+        flat = _Img.new("RGB", top.size, (255, 255, 255))
+        flat.paste(top, mask=top.split()[-1] if top.mode == "RGBA" else None)
+        buf = _BIO(); flat.save(buf, "PNG")
+        hit = _locate_mouth(buf.getvalue())
+        if not hit:
+            return None
+        return float(hit[1] / scale / H)
+    except Exception as e:
+        logger.debug("mouth detection failed: %s", e)
+        return None
+
+
+def _char_mouth_frac(char_path: str) -> float | None:
+    """mouth_frac() for a character ASSET, cached per file — detection costs 0.1-1.2s and the art
+    never changes between renders, so it must not run per request."""
+    try:
+        key = (char_path, os.path.getmtime(char_path))
+    except OSError:
+        return None
+    if key not in _MOUTH_CACHE:
+        try:
+            _MOUTH_CACHE[key] = mouth_frac(_character_still(char_path))
+        except Exception:
+            _MOUTH_CACHE[key] = None
+    return _MOUTH_CACHE[key]
 
 
 def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
@@ -265,7 +317,7 @@ def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
 
 
 def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int,
-                          band_cap: int = 0):
+                          band_cap: int = 0, mouth_y: int = None):
     """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
     bubble in the wider gutter beside them with the tail on them, or — when no gutter can hold
     readable text — a plain white meme banner above their head.
@@ -274,7 +326,8 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     can never drift between them. `char_top`/`char_left`/`char_right` are the character's bounds.
     `band_cap` (px, 0 = off) narrows the gutter the bubble may use — a character composited LARGE
     leaves a gutter far wider than they are, and filling it makes the bubble dwarf them; capping it
-    at their own width keeps the compact block look. Returns (beside, caption_bottom);
+    at their own width keeps the compact block look. `mouth_y` is the character's mouth line: the
+    bubble is centred on it so the words come out of their MOUTH. Returns (beside, caption_bottom);
     caption_bottom is where the pointing arrow may start.
     """
     from PIL import ImageDraw as _Draw
@@ -376,11 +429,13 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
         gap = max(int(W * 0.015), 6)
         cx = (char_left - gap - tw // 2) if side == "left" else (char_right + gap + tw // 2)
         cx = max(margin + tw // 2, min(cx, W - margin - tw // 2))
-        # char_top is the top of the RAISED ARM, so anchoring near it put the bubble up level with his
-        # finger. Centre it on the head/upper torso instead (~38% down the character) so it reads as
-        # speech coming from him.
+        # Level with the MOUTH — that is what makes it read as speech. `mouth_y` is detected from the
+        # art (see mouth_frac); the 38% fallback is for art with no findable face and is only ever
+        # approximately the head: char_top is the top of the RAISED ARM on a pointing pose, so a
+        # fraction of the figure lands wherever the pose happens to put the chest.
         char_h = H - char_top
-        y = max(margin, min(char_top + int(char_h * 0.38) - th // 2, H - th - margin))
+        anchor = mouth_y if mouth_y is not None else (char_top + int(char_h * 0.38))
+        y = max(margin, min(anchor - th // 2, H - th - margin))
     else:
         cx, y = W // 2, max(margin, min(char_top - th - margin, H - th - margin))
     if beside:
@@ -425,9 +480,10 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
         im = _Ops.exif_transpose(im)
         base = im.convert("RGBA")
 
-    base, char_top, char_left, char_right = _composite_char_bottom_center(base, cp)
+    base, char_top, char_left, char_right, mouth_y = _composite_char_bottom_center(base, cp)
     _beside, caption_bottom = draw_dialogue_caption(base, caption or char_key,
-                                                    char_top, char_left, char_right)
+                                                    char_top, char_left, char_right,
+                                                    mouth_y=mouth_y)
 
     # The format IS the point: she indicates the image above. The stock animegirl still has no arm-up
     # pose, so draw an explicit arrow above her. Skipped once real pointing art is installed.

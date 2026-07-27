@@ -906,10 +906,26 @@ def _strip_baked_caption(ov):
         if sum(1 for p in vis if max(p[:3]) - min(p[:3]) <= 24) < len(vis) * 0.9:
             break                                   # colour — this is the art, not the plate
         cut = y + 1
-    if not cut:
-        return ov
-    ov = ov.crop((0, cut, W, H))
+    if cut:
+        ov = ov.crop((0, cut, W, H))
     return ov.crop(ov.getbbox() or (0, 0, ov.size[0], ov.size[1]))
+
+
+_CONSIDER_MOUTH: dict = {}
+
+
+def _consider_mouth_frac(png_path: str, ov):
+    """Her mouth line as a fraction of the (banner-stripped) cutout's height, so the bubble sits
+    level with it like the other character effects. Cached per asset — the detection behind it costs
+    up to a second and the art never changes."""
+    from .character import mouth_frac
+    try:
+        key = (png_path, os.path.getmtime(png_path))
+    except OSError:
+        return None
+    if key not in _CONSIDER_MOUTH:
+        _CONSIDER_MOUTH[key] = mouth_frac(ov)
+    return _CONSIDER_MOUTH[key]
 
 
 def _figure_columns(ov) -> Tuple[int, int]:
@@ -978,7 +994,9 @@ def add_consider(data: bytes, caption: str = "Consider the following") -> bytes:
         # cutout box (the noose hangs well to her left), and cap the bubble at her own width so it
         # stays the compact block the rabbi gets instead of filling the whole gutter.
         fl, fr = _figure_columns(ov)
-        draw_dialogue_caption(img, caption, y, x + fl, min(W, x + fr), band_cap=max(fr - fl, 1))
+        mf = _consider_mouth_frac(png, ov)
+        draw_dialogue_caption(img, caption, y, x + fl, min(W, x + fr), band_cap=max(fr - fl, 1),
+                              mouth_y=(y + int(nh * mf) if mf is not None else None))
 
         img = img.convert("RGB")
         out = io.BytesIO()
