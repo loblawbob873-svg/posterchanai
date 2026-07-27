@@ -9379,17 +9379,35 @@
       try{ this._norm();
         this._dirty=false;   // capture point: edits AFTER this re-mark dirty (and reschedule) so pull won't clobber them
         const idx={folders:this.data.folders, files:this.data.files, encFolders:this.data.encFolders}; const json=JSON.stringify(idx);
-        const ptr={}; if(this._mkWrapped) ptr.mk=this._mkWrapped;
+        // `n` is the entry count in PLAINTEXT. The index body may be an encrypted blob the server
+        // cannot read, so without this it has no way to notice a save collapsing 400 files to 1 —
+        // which is the write it must refuse. Cheap, leaks only a magnitude.
+        const ptr={n:Object.keys(idx.files||{}).length}; if(this._mkWrapped) ptr.mk=this._mkWrapped;
         if(json.length < 45000){ ptr.folders=idx.folders; ptr.files=idx.files; ptr.encFolders=idx.encFolders; }   // small → inline (NIP-44 doc)
         else {                                                                       // large → encrypted Blossom blob
           const mk=await this._ensureMK(); ptr.mk=this._mkWrapped;
-          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {noMirror:true});
+          // MIRRORED (no noMirror): every ordinary photo is DR-copied to a second host, and the one
+          // file holding every filename and folder was the sole exception — backwards. It is
+          // ciphertext, so the mirror learns nothing, and it is the blob worth having off-site.
+          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}));
           ptr.indexSha=_shaFromUrl(url);
         }
         const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
-        await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+        const sr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr})});
-        if(ptr.indexSha && this._lastIndexSha && this._lastIndexSha!==ptr.indexSha) _delBlobSilent(this._lastIndexSha);   // GC the superseded index blob
+        // The server refuses a write that would collapse the index (409). Treat that as the save
+        // FAILING — keep the edit local and say so — rather than reporting success for a write the
+        // server threw away. A deliberate mass-delete is what `force` is for.
+        if(sr && sr.status===409){
+          this._dirty=true;
+          try{ toast('⚠️ That change would have wiped most of your file list, so the server refused it. Nothing was lost.'); }catch(_){}
+          console.warn('files-index: server refused a collapsing save');
+          return;
+        }
+        if(!sr || !sr.ok) throw new Error('files-index save HTTP '+(sr?sr.status:'?'));
+        // The superseded index blob is deliberately KEPT. It is ~133 KB and it is the only
+        // standalone backup of every filename and folder on the drive — deleting it to reclaim
+        // that space is what left a wiped index with nothing to restore from.
         if(ptr.indexSha) this._lastIndexSha=ptr.indexSha;
       }catch(e){
         // The edit is NOT saved, so it must not stay marked clean: `_dirty=false` was set at the
@@ -9466,7 +9484,7 @@
     try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
     if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
-      if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); _gcOrphanIndexBlobs(list); }
+      if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane), list); else _renderFilesGrid($('#bl-grid',pane), list); }
     // Label saved-stream recordings ("Past streams") so they don't show as anonymous video blobs. This is
     // a cosmetic cross-reference of the user's own VOD list — fetch it ONCE (cached), in the BACKGROUND,
     // and re-render the grid when it lands. Never block the drive's first paint on this (a slow/hung
@@ -9743,35 +9761,11 @@
   // if it has NO file metadata, is octet-stream, small, AND decrypts with the master key to an object
   // shaped like an index ({files, folders}) — so it can never touch a real user file (those have meta,
   // and random/other ciphertext fails AES-GCM auth and is skipped).
-  let _idxGcDone=false;
-  async function _gcOrphanIndexBlobs(list){
-    // CRITICAL: wait until pull() actually LOADED the index (_pullOk), not merely until it finished
-    // (_pullDone). Before it has, _lastIndexSha is null and FilesIdx.files is empty, so the user's LIVE
-    // index blob (which is {files,folders}-shaped) would not be excluded and would be deleted,
-    // destroying the whole index. A pull that fetched the pointer but could NOT read the blob sets
-    // _pullDone too — and in that state this GC was one decrypt away from deleting the only surviving
-    // copy of a drive's folders. Re-runs after pull's .then() re-renders.
-    if(_idxGcDone || !FilesIdx._pullOk) return;
-    _idxGcDone=true;
-    try{
-      const cur=FilesIdx._lastIndexSha;
-      // Index blobs are small JSON ciphertext — only consider small octet-stream blobs, and cap tight
-      // (fetch+AES-decrypt per candidate is CPU; don't churn through big media on every session).
-      const cands=(list||[]).filter(b=> b.sha256!==cur && !FilesIdx.meta(b.sha256) && /octet-stream/.test(b.type||'') && (b.size||0)<512*1024).slice(0,8);
-      if(!cands.length) return;
-      const mk=await FilesIdx._ensureMK(); if(!mk) return;
-      for(const b of cands){
-        try{
-          const r=await fetch(mediaServer()+'/'+b.sha256); if(!r.ok) continue;
-          let obj=null; try{ obj=JSON.parse(new TextDecoder().decode(await _masterDecrypt(mk, new Uint8Array(await r.arrayBuffer())))); }catch(_){ continue; }
-          if(obj && typeof obj==='object' && obj.files && obj.folders) await _delBlobSilent(b.sha256);   // a stale Files index → reclaim it
-        }catch(_){}
-      }
-    }catch(_){}
-  }
-  const _trackUrls={}, _trackUrlOrder=[];   // sha -> decrypted object URL (LRU-capped so a long session doesn't leak)
-  async function _delBlobSilent(sha){ try{ const server=mediaServer(); const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
-    await fetch(server+'/'+sha,{method:'DELETE',headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))}}); }catch(_){} }
+  // The client-side orphan-index-blob GC is GONE. It fetched candidate blobs, tried to decrypt
+  // each, and PERMANENTLY deleted any that parsed as an index — no confirmation, no undo, no
+  // server-side check. It came one successful decrypt from destroying the only surviving copy of a
+  // drive's folder index. Superseded index blobs are ~133 KB; keeping them is free, and they are
+  // the backup. Any reclamation belongs in a server-side sweep with an age floor, not in a browser.
   async function trackUrl(sha){
     if(_trackUrls[sha]) return _trackUrls[sha];
     const m=FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');

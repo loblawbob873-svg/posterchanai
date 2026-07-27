@@ -3073,10 +3073,14 @@ async def scheduled_cancel(data: ScheduledCancelReq, db: Session = Depends(get_d
 
 
 # ----- Files folder index: folder tree + per-file metadata (name/folder), one encrypted doc -----
+_FILES_INDEX_BAKS = 5      # how many replaced index versions to keep (see _files_index_backup)
+
+
 class FilesIndexReq(BaseModel):
     pubkey: str
     auth: str
     index: dict | None = None   # present → save; absent → load
+    force: bool = False         # override the collapse guard — a deliberate mass-delete
 
 
 @router.post("/files-index")
@@ -3097,10 +3101,84 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
     if data.index is not None:
+        # Read the CURRENT index first — strict, so an unreachable relay raises instead of looking
+        # like "there was nothing there", which is the read that makes a destructive write look safe.
+        try:
+            prev = await store.get_doc(port, "pcai:files-index", seckey=sk, strict=True)
+        except Exception as e:
+            logger.warning("[client] files-index: cannot read current index, refusing to write: %s", e)
+            return JSONResponse({"ok": False, "error": "index unavailable, not saved"}, status_code=503)
+
+        drop = _files_index_collapse(prev, data.index)
+        if drop and not data.force:
+            # THE invariant. Everything else protecting this document lives in client code, and the
+            # server cannot choose which build a device runs — a stale bundle, an old APK or a
+            # third-party client can all still send an empty index over a full one. That is exactly
+            # how a drive lost 417 filenames and folders. Refusing here covers every client that will
+            # ever exist. A genuine mass-delete re-sends with force=true.
+            logger.warning("[client] files-index: REFUSED a collapsing write for %s (%s)", pk[:12], drop)
+            return JSONResponse({"ok": False, "error": "refused: " + drop, "collapse": True},
+                                status_code=409)
+
+        # Keep the outgoing version before replacing it. kind 30078 is replaceable, so without this
+        # every overwrite is final and NOTHING — not this bug, not a bad bulk-move, not a fat-fingered
+        # folder delete — is undoable.
+        if isinstance(prev, dict) and prev:
+            await _files_index_backup(store, port, sk, prev)
+
         await store.put_doc(port, sk, "pcai:files-index", data.index)
         return JSONResponse({"ok": True})
     doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
+
+
+def _files_index_count(doc) -> int | None:
+    """How many entries an index doc holds, or None when that can't be known.
+
+    Two shapes: an INLINE index (`files` dict, small drives) and a POINTER to an encrypted Blossom
+    blob (`indexSha`, which the server cannot read). Clients stamp a plaintext `n` on both so the
+    pointer form is still comparable; a pointer from an older client without `n` returns None."""
+    if not isinstance(doc, dict):
+        return None
+    if isinstance(doc.get("n"), int):
+        return doc["n"]
+    if isinstance(doc.get("files"), dict):
+        return len(doc["files"])
+    return None
+
+
+def _files_index_collapse(prev, new) -> str | None:
+    """Describe why `new` looks like it would destroy `prev`, or None if the write is safe."""
+    if not isinstance(prev, dict) or not prev:
+        return None                                  # nothing to lose yet
+    old_n, new_n = _files_index_count(prev), _files_index_count(new)
+    if old_n is not None and new_n is not None:
+        if old_n >= 10 and new_n < old_n // 2:
+            return f"{old_n} entries -> {new_n}"
+        return None
+    # An unmeasurable POINTER being replaced by a tiny INLINE index is the wipe signature itself: the
+    # index only moves to a blob once it exceeds ~45 KB, i.e. hundreds of files. A handful of inline
+    # entries cannot legitimately be that same drive.
+    if prev.get("indexSha") and isinstance(new, dict) and not new.get("indexSha"):
+        n = len(new.get("files") or {})
+        if n < 20:
+            return f"large stored index -> {n} entries"
+    return None
+
+
+async def _files_index_backup(store, port: int, sk: bytes, prev: dict) -> None:
+    """Keep the replaced index as `pcai:files-index-bak:<ts>`, newest _FILES_INDEX_BAKS retained.
+
+    Best-effort by design: a backup that fails must not block the user's save. These are the same
+    operator-preserved kind-30078 docs as the index itself, so the relay's prune never touches them."""
+    import time as _t
+    try:
+        await store.put_doc(port, sk, f"pcai:files-index-bak:{int(_t.time())}", prev)
+        baks = await store.list_docs(port, "pcai:files-index-bak:", seckey=sk)
+        for d in sorted(baks.keys(), reverse=True)[_FILES_INDEX_BAKS:]:
+            await store.delete_doc(port, sk, d)
+    except Exception as e:
+        logger.warning("[client] files-index: backup failed (save continues): %s", e)
 
 
 # ----- music: transcode an upload to Opus (compression) — client then encrypts + uploads to Blossom -----
