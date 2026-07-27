@@ -57,6 +57,10 @@ def main():
     ap.add_argument("--branch", default="master", help="local branch to mirror (pushed to the same name)")
     ap.add_argument("--owner", default="", help="repo owner npub/hex (default: this node's operator key)")
     ap.add_argument("--dry-run", action="store_true", help="report what would be pushed; publish/push nothing")
+    # Realigning the mirror after somebody rewrote already-pushed history (an amend/rebase) is the
+    # ONLY reason to force. It is opt-in and never used by sync.sh: a mirror that force-pushes on
+    # its own would quietly paper over exactly the divergence you want to be told about.
+    ap.add_argument("--force", action="store_true", help="force-update the remote ref (after a history rewrite)")
     args = ap.parse_args()
 
     from app.services import settings_store
@@ -156,7 +160,8 @@ def main():
     header = "Authorization: Nostr %s" % base64.b64encode(
         json.dumps(nip98, separators=(",", ":")).encode()).decode()
 
-    rc, out = _git("-c", "http.extraHeader=%s" % header, "push", url, "%s:%s" % (ref, ref))
+    refspec = ("+%s:%s" if args.force else "%s:%s") % (ref, ref)
+    rc, out = _git("-c", "http.extraHeader=%s" % header, "push", url, refspec)
     if rc != 0:
         _say("push FAILED (rc=%s): %s" % (rc, out[-800:]))
         return 1
