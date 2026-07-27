@@ -413,17 +413,55 @@ async def reblog_status(instance_url: str, access_token: str, status_id: str) ->
         return resp.json()
 
 
+async def unfavourite_status(instance_url: str, access_token: str, status_id: str) -> dict:
+    """Undo a favourite. Idempotent server-side (un-liking what you never liked is a 200)."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/unfavourite"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.post(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def unreblog_status(instance_url: str, access_token: str, status_id: str) -> dict:
+    """Undo a reblog (boost). Idempotent server-side."""
+    url = instance_url.rstrip("/") + f"/api/v1/statuses/{status_id}/unreblog"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.post(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def emoji_react(instance_url: str, access_token: str, status_id: str, emoji: str) -> dict:
     """Add an emoji reaction to a status (Pleroma extension; not on vanilla Mastodon).
     `emoji` is a unicode emoji or a `:shortcode:`. Raises on non-2xx (caller may fall back
     to a plain favourite)."""
-    from urllib.parse import quote
-    url = instance_url.rstrip("/") + f"/api/v1/pleroma/statuses/{status_id}/reactions/{quote(emoji, safe='')}"
+    url = _reaction_url(instance_url, status_id, emoji)
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
         resp = await client.put(url, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+
+async def emoji_unreact(instance_url: str, access_token: str, status_id: str, emoji: str) -> dict:
+    """Remove one of OUR emoji reactions from a status. Same endpoint as emoji_react, DELETE —
+    pass the emoji in the same form it was added with. Idempotent server-side."""
+    url = _reaction_url(instance_url, status_id, emoji)
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.delete(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _reaction_url(instance_url: str, status_id: str, emoji: str) -> str:
+    """PUT adds / DELETE removes — the emoji is a PATH segment, so it must be fully escaped
+    (a `:shortcode:`'s colons and any unicode alike)."""
+    from urllib.parse import quote
+    return (instance_url.rstrip("/")
+            + f"/api/v1/pleroma/statuses/{status_id}/reactions/{quote(emoji, safe='')}")
 
 
 async def resolve_status(instance_url: str, access_token: str, uri: str) -> dict | None:

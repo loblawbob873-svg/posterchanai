@@ -374,6 +374,29 @@ class FediBridgeDelivered(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class FediBridgeAction(Base):
+    """A write-back INTERACTION (favourite / emoji reaction / reblog) performed on the fediverse for one
+    Nostr event — so a later NIP-09 delete of that event can UNDO it.
+
+    Needed because at un-react time the facts are already gone: FediBridgeDelivered only maps notes we
+    POSTED, and the relay hard-deletes the kind-7/6 the moment the kind-5 lands (store._insert_one), so
+    the deleted event's target and emoji can't be read back. `emoji` is stored in the exact form the
+    instance accepted, since removing a reaction means replaying it to the same URL with DELETE.
+    Rows are dropped once undone; they're per-interaction and prunable."""
+    __tablename__ = "fedi_bridge_action"
+    __table_args__ = (Index('ix_fedi_action_event', 'nostr_event_id'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nostr_event_id = Column(String(64), nullable=False)  # the kind-7/6 we acted on
+    nostr_pubkey = Column(String(64), nullable=False)    # its author (scopes the undo to its own actor)
+    platform = Column(String(20), nullable=False)        # "pleroma"
+    instance_url = Column(String(255), nullable=False)   # instance the action was performed on
+    target_id = Column(String(255), nullable=False)      # status id acted upon
+    action = Column(String(12), nullable=False)          # "favourite" | "react" | "reblog"
+    emoji = Column(String(120), nullable=True)           # "react" only, as sent
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class FediBridgeMap(Base):
     """Personal-plane reply routing: maps a Nostr event the bridge delivered to a user (a NIP-17 DM
     or a notification mirror) → the fediverse target to act on when the user replies on Nostr.

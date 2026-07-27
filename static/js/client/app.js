@@ -6503,7 +6503,7 @@
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
           <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
-          <button class="act ${liked?'on':''}" data-a="react" title="react"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
+          <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
           <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
         </div>
@@ -6681,7 +6681,7 @@
   let CIDX = null;
   function invalidateCounts(){ CIDX = null; }
   function buildCounts(){
-    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, sob:{}, tips:{}, tipN:{} };
+    const c = { replies:{}, reactions:{}, reposts:{}, zaps:{}, zapN:{}, myRt:new Set(), myReact:{}, myReactIds:{}, sob:{}, tips:{}, tipN:{} };
     const lastE = e => { for(let i=e.tags.length-1;i>=0;i--) if(e.tags[i][0]==='e') return e.tags[i][1]; return null; };
     for(const e of Store.all()){
       const id = lastE(e); if(!id) continue;
@@ -6699,7 +6699,10 @@
       }
       // myReact holds the DISPLAY HTML (reactDisp), not the raw content — the react button injects it as
       // innerHTML, so a NIP-30 custom emoji has to become its <img> here or the button reads ":shortcode:".
-      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1; if(e.pubkey===ME.pubkey) c.myReact[id]=reactDisp(e);
+      // myReactIds keeps the EVENT ids too — un-reacting is a NIP-09 delete of them, and it collects
+      // ALL of mine on a post (another client may have left several) so one tap clears the lot.
+      else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1;
+        if(e.pubkey===ME.pubkey){ c.myReact[id]=reactDisp(e); (c.myReactIds[id]=c.myReactIds[id]||[]).push(e.id); }
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
       else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(e.pubkey===ME.pubkey) c.myRt.add(id); }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
@@ -6720,6 +6723,7 @@
     return parts.join(' ');
   }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
+  function myReactionIds(id){ if(!CIDX) buildCounts(); return CIDX.myReactIds[id]||[]; }
   // (reaction display: '+' shows as ❤️, a custom emoji as its image — see reactDisp/buildCounts)
 
   // ---------- interactions ----------
@@ -7400,8 +7404,21 @@
     };
     return close;
   }
+  // Tapping the react button when you have ALREADY reacted takes the reaction back (NIP-09 delete of
+  // your kind-7) instead of the old dead-end "already reacted" toast — which left no way to undo a
+  // mis-tap at all, on Nostr or on the fediverse the reaction was written back to.
+  async function unReact(id){
+    const ids=myReactionIds(id); if(!ids.length){ toast('already reacted'); return; }
+    const tags=ids.map(r=>['e', r]); tags.push(['k','7']);   // NIP-09: k = kind being deleted
+    const r=await publish(5, '', tags, {quiet:true});        // '' content: nothing to say about a reaction
+    // Only forget it locally once the relay took the tombstone — otherwise the button would go back to
+    // "not reacted" while the reaction is still live (and still on the fediverse).
+    if(!(r && r.ok)){ toast('couldn’t reach the relay — the reaction was NOT removed'); return; }
+    ids.forEach(x=>{ try{ Store.removeEvent(x); }catch(_){} });
+    invalidateCounts(); decorateCounts(); toast('reaction removed');
+  }
   function pickEmoji(id,pk,btn){
-    if(myReaction(id)){ toast('already reacted'); return; }
+    if(myReaction(id)){ unReact(id); return; }
     openEmojiPopover(btn, (emoji, close)=>{ close(); publish(7,emoji,eTags(id,pk)).then(r=>{ if(r&&r.ok){ toast('reacted '+emoji); decorateCounts(); } }); });   // failure toast by publish() (which also rolls the reaction back)
   }
   // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
@@ -14613,7 +14630,7 @@
       if(c.sob && !n.dataset.celebrate){ n.dataset.celebrate='sob'; n._celebNext=0; _newSob=true; }
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
       setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
-      const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
+      const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); rk.title=mr?'remove your reaction':'react'; const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
       const rt=n.querySelector('.act[data-a="repost"]'); if(rt) rt.classList.toggle('on',c.iRt);
       const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
       const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));

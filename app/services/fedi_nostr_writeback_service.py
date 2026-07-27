@@ -22,7 +22,7 @@ import re as _re
 import time
 from urllib.parse import urlparse
 
-from app.models import FediBridgeDelivered, FediBridgeMap, FediPuppet
+from app.models import FediBridgeAction, FediBridgeDelivered, FediBridgeMap, FediPuppet
 from app.services import pleroma_service, settings_store, keystore
 from app.services.nostr import nip17, bridge_keys, nostr_service
 
@@ -581,8 +581,9 @@ async def _crosspost(db, user, ev: dict) -> None:
 _SHORTCODE_RE = _re.compile(r"^:([A-Za-z0-9_+\-]+(?:@[A-Za-z0-9.\-]+)?):$")
 
 
-async def _react(inst: str, token: str, target_id: str, ev: dict) -> None:
-    """Perform a Nostr kind-7 as the closest fediverse action.
+async def _react(inst: str, token: str, target_id: str, ev: dict) -> tuple:
+    """Perform a Nostr kind-7 as the closest fediverse action. Returns (action, emoji) — what was
+    actually done, so the caller can record it and undo it if the reaction is later deleted.
 
     This used to be a bare favourite for EVERY reaction, which silently threw the emoji away: picking
     :blobcat: (or 🔥) in the client federated as an anonymous ❤ like. Pleroma/Akkoma carry the emoji
@@ -597,7 +598,7 @@ async def _react(inst: str, token: str, target_id: str, ev: dict) -> None:
     content = (ev.get("content") or "").strip()
     if content in ("", "+"):
         await pleroma_service.favourite_status(inst, token, target_id)   # server-idempotent
-        return
+        return ("favourite", None)
     emoji = "\U0001f44e" if content == "-" else content    # NIP-25 downvote → 👎, never a "like"
     m = _SHORTCODE_RE.match(emoji)
     forms = [emoji, m.group(1)] if m else [emoji]
@@ -605,7 +606,7 @@ async def _react(inst: str, token: str, target_id: str, ev: dict) -> None:
     for form in forms:
         try:
             await pleroma_service.emoji_react(inst, token, target_id, form)   # server-idempotent
-            return
+            return ("react", form)     # the ACCEPTED form — an undo replays this exact URL with DELETE
         except Exception as e:
             last = e
             code = getattr(getattr(e, "response", None), "status_code", 0)
@@ -616,6 +617,71 @@ async def _react(inst: str, token: str, target_id: str, ev: dict) -> None:
                 "" if content == "-" else " — favouriting instead")
     if content != "-":
         await pleroma_service.favourite_status(inst, token, target_id)
+        return ("favourite", None)
+    return ("", None)
+
+
+def _record_action(db, ev: dict, inst: str, target_id: str, action: str, emoji) -> None:
+    """Remember an interaction so a NIP-09 delete of it can be undone on the fediverse. Best-effort:
+    failing to record must not undo (or re-run) an action that already succeeded — the cost is only
+    that this one can't be un-done later."""
+    if not action:
+        return
+    try:
+        # A reconnect replays the last _LOOKBACK_SEC and the fediverse action itself is idempotent, so the
+        # same reaction lands here repeatedly across a restart — record it ONCE rather than growing a row
+        # per replay.
+        if db.query(FediBridgeAction).filter(
+                FediBridgeAction.nostr_event_id == ev.get("id", ""),
+                FediBridgeAction.target_id == target_id,
+                FediBridgeAction.action == action).first():
+            return
+        db.add(FediBridgeAction(nostr_event_id=ev.get("id", ""), nostr_pubkey=ev.get("pubkey", ""),
+                                platform="pleroma", instance_url=inst, target_id=target_id,
+                                action=action, emoji=emoji))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[fedi-writeback] could not record %s on %s: %s", action, target_id, e)
+
+
+async def _undo_actions(db, user, ev: dict, target: str) -> tuple:
+    """Undo every fediverse interaction recorded for the deleted event `target`.
+
+    Returns (found, ok). `found` says the deleted event WAS an interaction of ours, so the caller
+    skips the note/tombstone path — it is not a cross-post. `ok` is False only on a transient failure:
+    the row stays and the event is left un-seen so the next replay retries, because an un-react that
+    silently didn't apply is exactly the bug this exists to fix. No row (a plain note, or a reaction
+    made before this was recorded) is (False, True) — nothing to undo."""
+    inst, token = user.pleroma_instance_url, user.pleroma_access_token
+    host = (inst or "").rstrip("/").lower()
+    rows = db.query(FediBridgeAction).filter(
+        FediBridgeAction.nostr_event_id == target,
+        FediBridgeAction.nostr_pubkey == ev.get("pubkey", "")).all()   # only ever this actor's own
+    ok = True
+    for row in rows:
+        # Same rule as _delete_federated: this user's bearer token goes ONLY to the instance that
+        # issued it, never to whatever host the row happens to name.
+        if (row.instance_url or "").rstrip("/").lower() != host:
+            logger.warning("[fedi-writeback] not undoing %s on %s: recorded for %s, account is on %s",
+                           row.action, row.target_id, row.instance_url, inst)
+            continue
+        try:
+            if row.action == "react" and row.emoji:
+                await pleroma_service.emoji_unreact(inst, token, row.target_id, row.emoji)
+            elif row.action == "reblog":
+                await pleroma_service.unreblog_status(inst, token, row.target_id)
+            else:
+                await pleroma_service.unfavourite_status(inst, token, row.target_id)
+            db.delete(row)
+            db.commit()
+            logger.info("[fedi-writeback] undid %s%s on %s (nostr %s)", row.action,
+                        f" {row.emoji}" if row.emoji else "", row.target_id, target[:10])
+        except Exception as e:
+            db.rollback()
+            ok = False
+            logger.warning("[fedi-writeback] could not undo %s on %s: %s", row.action, row.target_id, e)
+    return (bool(rows), ok)
 
 
 async def _delete_federated(db, user, ev: dict) -> bool:
@@ -634,6 +700,14 @@ async def _delete_federated(db, user, ev: dict) -> bool:
     ok = True
     pk = ev.get("pubkey", "")
     for target in targets:
+        # A kind-5 deletes whatever the user made — a cross-posted NOTE (below) or an INTERACTION.
+        # Un-reacting/un-boosting used to do nothing at all here, so removing a reaction on Nostr left
+        # it standing on the fediverse forever. Interactions are undone from their own recorded rows.
+        found, undone = await _undo_actions(db, user, ev, target)
+        if not undone:
+            ok = False
+        if found:
+            continue          # it was a like/reaction/boost, not a note — nothing to delete or tombstone
         rows = db.query(FediBridgeDelivered).filter(
             FediBridgeDelivered.nostr_event_id == target,
             FediBridgeDelivered.nostr_pubkey == pk).all()   # only ever our OWN statuses
@@ -714,9 +788,11 @@ async def _handle(db, ev: dict) -> None:
             logger.debug("[fedi-writeback] could not resolve target for ev %s", eid)
             return
         if kind == 7:
-            await _react(inst, token, target_id, ev)   # emoji reaction when it IS one, else favourite
+            action, emoji = await _react(inst, token, target_id, ev)   # emoji reaction if it IS one, else favourite
+            _record_action(db, ev, inst, target_id, action, emoji)     # so a later kind-5 can undo it
         elif kind == 6:
             await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
+            _record_action(db, ev, inst, target_id, "reblog", None)
         elif kind == 1:
             # Durable idempotency across restart/replay: skip if this reply already federated. Scoped by
             # author so a foreign tombstone can't suppress it.
