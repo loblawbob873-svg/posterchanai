@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files index — recovery check</title>
+<!-- READ-ONLY rescue page. Served from /static so it needs no app restart, and it lives on the same
+     origin as /client, so it sees the same localStorage the app uses.
+
+     It NEVER writes, deletes or uploads anything. That is the whole point: the Files index was lost
+     because something wrote when it should not have, so the tool for finding a surviving copy must be
+     incapable of destroying one. Open it on a device, read the numbers, download the backup. -->
+<style>
+  :root{ --bg:#0b0a12; --panel:#141221; --line:#282438; --text:#e8e6f0; --muted:#9a94b0;
+         --ok:#34d399; --bad:#ef4444; --warn:#fbbf24; }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f6fa; --panel:#fff; --line:#e2e0ec; --text:#16141f; --muted:#67637d; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:21px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+        padding:16px 18px;margin-bottom:12px}
+  .card.good{border-left:4px solid var(--ok)}
+  .card.empty{border-left:4px solid var(--muted)}
+  .verdict{font-size:18px;font-weight:800;margin-bottom:8px}
+  .verdict.good{color:var(--ok)} .verdict.bad{color:var(--bad)}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+       border-bottom:1px solid var(--line);font-size:15px}
+  .row:last-child{border-bottom:0}
+  .row b{font-variant-numeric:tabular-nums}
+  .k{color:var(--muted);word-break:break-all;font-size:12px;margin-bottom:10px}
+  button{background:var(--ok);color:#04121a;border:0;border-radius:10px;padding:13px 20px;
+         font-size:16px;font-weight:700;cursor:pointer;margin-top:14px;width:100%}
+  button.sec{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
+  .note{color:var(--muted);font-size:13px;margin-top:16px;border-left:2px solid var(--line);padding-left:12px}
+  code{background:rgba(127,127,127,.15);padding:1px 5px;border-radius:4px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📁 Files index — recovery check</h1>
+  <div class="sub">Does <b>this device</b> still have your folder index? This page only reads — it
+    never writes, uploads or deletes anything.</div>
+  <div id="out"></div>
+  <div class="note">If this device has your folders, download the backup <b>before</b> opening the
+    Files tab here. Open Files only once the app has been fully relaunched (service worker
+    <code>pc-nostr-v597</code> or newer) — an older cached version can overwrite this copy.</div>
+</div>
+<script>
+(function(){
+  var out = document.getElementById('out');
+  var found = [];
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (!k || k.indexOf('pc_files_idx_') !== 0 || k.slice(-3) === '_mk') continue;
+    var raw = localStorage.getItem(k), d = null;
+    try { d = JSON.parse(raw); } catch (e) { d = null; }
+    var files = (d && d.files && typeof d.files === 'object') ? Object.keys(d.files).length : 0;
+    var folders = (d && Array.isArray(d.folders)) ? d.folders : [];
+    found.push({ key: k, raw: raw, files: files, folders: folders,
+                 mk: !!localStorage.getItem(k + '_mk'), bytes: raw ? raw.length : 0 });
+  }
+  if (!found.length) {
+    out.innerHTML = '<div class="card empty"><div class="verdict bad">Nothing on this device</div>' +
+      'No Files index is stored in this browser. Either the app was never opened here, its storage ' +
+      'was cleared, or this is a different browser/profile than the one you used.<br><br>' +
+      'Try your other devices — phone, the Android app, another computer.</div>';
+    return;
+  }
+  found.sort(function(a, b){ return b.files - a.files; });
+  out.innerHTML = found.map(function(f, n){
+    var good = f.files >= 5;
+    return '<div class="card ' + (good ? 'good' : 'empty') + '">' +
+      '<div class="verdict ' + (good ? 'good' : 'bad') + '">' +
+        (good ? '✅ Found an index with ' + f.files + ' files' : '⚠️ Index present but nearly empty') +
+      '</div>' +
+      '<div class="k">' + f.key + '</div>' +
+      '<div class="row"><span>Files with names/folders</span><b>' + f.files + '</b></div>' +
+      '<div class="row"><span>Folders</span><b>' + (f.folders.length ? f.folders.join(', ') : '—') + '</b></div>' +
+      '<div class="row"><span>Encryption key present</span><b>' + (f.mk ? 'yes' : 'no') + '</b></div>' +
+      '<div class="row"><span>Size</span><b>' + (f.bytes / 1024).toFixed(1) + ' KB</b></div>' +
+      '<button data-n="' + n + '">💾 Download backup</button>' +
+      (f.mk ? '<button class="sec" data-mk="' + n + '">🔑 Download key too</button>' : '') +
+      '</div>';
+  }).join('');
+
+  function save(name, text){
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type: 'application/json'}));
+    a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  out.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    var f = found[b.dataset.n != null ? b.dataset.n : b.dataset.mk];
+    if (b.dataset.mk != null) save('files-index-key.json', localStorage.getItem(f.key + '_mk') || '');
+    else save('files-index-backup.json', f.raw);
+  });
+})();
+</script>
+</body>
+</html>

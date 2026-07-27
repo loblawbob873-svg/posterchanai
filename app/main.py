@@ -1034,7 +1034,10 @@ async def public_status_page(request: Request):
     data = await uptime_service.get_status()
     if not data.get("enabled"):
         raise StarletteHTTPException(status_code=404)
-    site = (settings_store.get("site_name", "") or "this server").strip()
+    # Both of these are commonly unset on a fresh instance, so fall back to something meaningful
+    # rather than to nothing: the app's own icon, and the hostname the visitor actually typed.
+    logo = (settings_store.get("site_logo_url", "") or "/static/icon-192.png").strip()
+    site = (settings_store.get("site_name", "") or "").strip() or (request.url.hostname or "this server")
     try:
         view = uptime_service.status_view(data)
     except Exception as e:
@@ -1044,7 +1047,7 @@ async def public_status_page(request: Request):
         view = {"ok": False, "empty": True, "banner": "Status is temporarily unavailable",
                 "total": 0, "up": 0, "down": 0, "monitors": [], "updated": "just now"}
     return templates.TemplateResponse("status.html", {
-        "request": request, "site": site, "v": view,
+        "request": request, "site": site, "logo": logo, "v": view,
     })
 
 

@@ -20,7 +20,12 @@
   body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
   .wrap{max-width:840px;margin:0 auto;padding:28px 16px 60px}
   h1{margin:0 0 4px;font-size:22px}
-  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .sub{color:var(--muted);font-size:13px}
+  /* Brand row. The logo is decorative: if site_logo_url points somewhere unreachable the alt text
+     stands in and the page is unaffected — a status page must not depend on an image loading. */
+  .brand{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+  .logo{width:52px;height:52px;border-radius:12px;object-fit:contain;flex:0 0 auto}
+  @media (max-width:600px){ .logo{width:42px;height:42px} }
   .banner{border-radius:12px;padding:14px 18px;font-weight:700;border:1px solid var(--line);margin-bottom:18px}
   .banner.ok{border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10);color:var(--up)}
   .banner.bad{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.12);color:var(--down)}
@@ -50,8 +55,13 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>📡 Service status</h1>
-  <div class="sub">{{ site }} · updated {{ v.updated }} · this page refreshes itself every minute</div>
+  <div class="brand">
+    {% if logo %}<img class="logo" src="{{ logo }}" alt="{{ site }}">{% endif %}
+    <div>
+      <h1>Service status</h1>
+      <div class="sub">{{ site }} · updated {{ v.updated }} · refreshes itself every minute</div>
+    </div>
+  </div>
 
   <div class="banner {% if v.empty %}none{% elif v.ok %}ok{% else %}bad{% endif %}">
     {% if v.ok %}🟢{% elif v.empty %}⚪{% else %}🔴{% endif %} {{ v.banner }}
