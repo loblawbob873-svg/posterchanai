@@ -3741,17 +3741,9 @@
       const base=scoped();
       const terms=((q&&q.value)||'').toLowerCase().split(/\s+/).filter(Boolean);
       const hits=terms.length ? base.filter(e=>{ const h=_repoHaystack(e); return terms.every(t=>h.includes(t)); }) : base;
-      // "All" is a directory of everything the web of trust ever federated in, so a flat grid sorted by
-      // recency reads as noise. Split it by WHERE THE CODE IS: repos on this host are browsable and
-      // pushable right here; the rest are pointers to other people's servers. One flat grid otherwise —
-      // grouping a search result (or your own handful) would be ceremony around three cards.
-      const sec=(label,arr)=> arr.length?`<div class="repo-sec">${enc(label)}<i class="repo-n">${arr.length}</i></div>${grid(arr)}`:'';
-      const grouped = _repoScope==='all' && !terms.length && hits.length>6;
-      $('#repo-results',feed).innerHTML = !hits.length
-        ? (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
-           : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`)
-        : grouped ? sec('On this host', hits.filter(_repoHostedHere)) + sec('Elsewhere on nostr', hits.filter(e=>!_repoHostedHere(e)))
-                  : grid(hits);
+      $('#repo-results',feed).innerHTML = hits.length ? grid(hits)
+        : (terms.length ? `<div class="empty">No repo matches “${enc(q.value)}”${_repoScope==='mine'?' in your repos — try “All repos”.':'.'}</div>`
+           : `<div class="empty">No git repos found on the relay yet (NIP-34 · kind 30617). ${_gitHostBase()?'Create one ↑':'Announce yours ↑'}</div>`);
       if(q) q.placeholder=`🔍 Search ${base.length} repo${base.length===1?'':'s'} — name, owner, description…`;
       wire();
     };

@@ -1953,13 +1953,6 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
   font-size:11px;font-weight:700;letter-spacing:.2px;padding:2px 8px;border-radius:999px;
   border:1px solid var(--line);background:var(--panel);color:var(--muted)}
 .repo-host.here{border-color:rgba(var(--accent-rgb),.5);color:var(--neon);background:rgba(var(--accent-rgb),.12)}
-/* Section headers for the grouped "All repos" view. */
-.repo-sec{display:flex;align-items:center;gap:8px;margin:18px 0 2px;font-size:12.5px;font-weight:800;
-  letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
-.repo-sec:first-child{margin-top:6px}
-.repo-sec .repo-n{font-style:normal;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;
-  background:var(--panel2);border:1px solid var(--line);color:var(--muted);letter-spacing:0}
-.repo-sec::after{content:"";flex:1;height:1px;background:var(--line)}
 .repo-card-av{width:20px;height:20px;border-radius:50%;object-fit:cover}
 /* A profile whose `name` is a raw hex pubkey is common on an open relay, and 64 chars ran straight
    through the host chip and out of the card. Clip it instead. */
