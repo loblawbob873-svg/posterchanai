@@ -100,6 +100,10 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="nostrsigner" />
         </intent>
+        <!-- Orbot, by package: unlike the signer (any app registering the scheme will do) there is exactly
+             one Orbot, and we look it up by name via getPackageInfo(), which package visibility gates the
+             same way. Without this the Tor panel reports "Orbot not installed" on a phone that has it. -->
+        <package android:name="org.torproject.android" />
     </queries>
 
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching

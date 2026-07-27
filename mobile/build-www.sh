@@ -43,18 +43,37 @@ shim = '''<script>
 // and read here before any request, so the whole app (API, relay, blossom) targets their chosen domain.
 window.__PC_API_BASE__ = (function(){ try{ var s=localStorage.getItem('pc_instance'); if(s) return String(s).replace(/\\/+$/,''); }catch(e){} return 'https://poster.place'; })();
 window.__PC_SET_INSTANCE__ = function(u){ try{ localStorage.setItem('pc_instance', u); }catch(e){} try{ location.reload(); }catch(e){} };
+// Bearer token for the instance, set by app.js (_setAiToken) once nostr-login returns one, and read
+// per-request by _auth below so a token acquired mid-session applies immediately. Cookies are not
+// usable against a .onion instance — it is plain http, and SameSite=None demands Secure, which the
+// WebView refuses over a non-HTTPS connection — so the header is the only auth that works there.
+// In-memory only: a persisted token would survive a switch of identity or instance.
+window.__PC_TOKEN__ = '';
 window.__PC_APP_BUILD__ = __BUILD__;
 (function(){
   var B = window.__PC_API_BASE__, W = B.replace(/^http/, 'ws');
   var _f = window.fetch.bind(window);
+  // Attach the instance bearer token, but NEVER over an Authorization the caller already set — Blossom
+  // and NIP-98 uploads carry their own `Nostr <base64>` header, and clobbering it would break uploads.
+  function _auth(o){
+    try{
+      var t = window.__PC_TOKEN__; if(!t) return o;
+      var h = o.headers;
+      if (h && typeof h.get === 'function'){ if(!h.get('Authorization')) h.set('Authorization', 'Bearer '+t); return o; }
+      h = Object.assign({}, h || {});
+      var has = false; for (var k in h){ if (String(k).toLowerCase() === 'authorization') has = true; }
+      if (!has) h['Authorization'] = 'Bearer '+t;
+      o.headers = h; return o;
+    }catch(e){ return o; }
+  }
   window.fetch = function(i, o){
     try {
       // Rewrite root-relative URLs to the server AND force credentials:'include' — these are cross-origin
       // (app origin https://localhost → poster.place), so without it the browser never sends the session
       // cookie nor stores Set-Cookie, and every authed call 401-loops (settings, etc.). Paired with the
       // server's SameSite=None cookie + CORS allow-credentials.
-      if (typeof i === 'string' && i.charAt(0) === '/'){ i = B + i; o = Object.assign({}, o, {credentials:'include'}); }
-      else if (i && i.url && i.url.charAt(0) === '/'){ o = Object.assign({}, o, {credentials:'include'}); i = new Request(B + i.url, i); }
+      if (typeof i === 'string' && i.charAt(0) === '/'){ i = B + i; o = _auth(Object.assign({}, o, {credentials:'include'})); }
+      else if (i && i.url && i.url.charAt(0) === '/'){ o = _auth(Object.assign({}, o, {credentials:'include'})); i = new Request(B + i.url, i); }
     } catch(e){}
     return _f(i, o);
   };
@@ -74,6 +93,13 @@ html = html.replace('</head>', shim + '</head>', 1)
 html = re.sub(r'(/static/[^"\'?\s]+)\?v=[0-9]+', r'\1', html)
 # manifest is a PWA concept; harmless but 404s locally — remove it
 html = re.sub(r'<link[^>]+rel=["\']manifest["\'][^>]*>', '', html)
+# STRIP upgrade-insecure-requests. The shell is fetched over HTTPS, so the server emits that CSP (it's
+# right for the web PWA: the page is https and mixed content would be blocked). Baked into the APK it is
+# actively wrong — the bundle's page is https://localhost but the INSTANCE may legitimately be cleartext
+# (an .onion, which is plain HTTP by design, or a LAN box), and the CSP silently rewrites every fetch /
+# WebSocket / <img> to https://<that host>, which does not exist. The app is allowed to speak cleartext
+# on purpose (usesCleartextTraffic + allowMixedContent); this meta would override that for no benefit.
+html = re.sub(r'<meta[^>]+upgrade-insecure-requests[^>]*>', '', html, flags=re.I)
 open(p, 'w', encoding='utf-8').write(html)
 print('www/index.html built (bundled mode injected)')
 PY

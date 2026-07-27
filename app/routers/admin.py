@@ -499,7 +499,10 @@ def set_onion(body: OnionToggle, admin: User = Depends(get_admin_user)):
     if tor_service.primary_service() is None:
         raise HTTPException(status_code=409, detail="Enable the Managed Tor Service first.")
     target = f"127.0.0.1:{os.getenv('POSTERCHANAI_PORT', '3051')}"
-    addr = tor_service.set_onion(body.enabled, target)
+    # The relay rides the same onion on its own port (see TorService.onion_relay_port) — without it
+    # the onion serves the client shell but has no relay to talk to.
+    addr = tor_service.set_onion(body.enabled, target,
+                                 relay_port=settings_store.get_int("nostr_relay_port", 3052))
     settings_store.put("onion_enabled", "true" if body.enabled else "false")
     return {"enabled": body.enabled, "address": addr}
 

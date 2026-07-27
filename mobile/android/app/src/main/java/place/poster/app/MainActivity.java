@@ -7,6 +7,7 @@ import com.getcapacitor.BridgeActivity;
 import place.poster.app.nip55.Nip55Plugin;
 import place.poster.app.screenshare.ScreenSharePlugin;
 import place.poster.app.share.ShareTargetPlugin;
+import place.poster.app.tor.OrbotPlugin;
 
 public class MainActivity extends BridgeActivity {
     // Increments on every distinct incoming SEND intent (cold-start launch + each warm onNewIntent). The JS
@@ -27,6 +28,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
         registerPlugin(Nip55Plugin.class);
+        registerPlugin(OrbotPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
     }

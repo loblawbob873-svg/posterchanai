@@ -1066,7 +1066,9 @@
     document.getElementById('instance-cur').textContent='currently: '+cur;
     document.getElementById('instance-save').onclick=()=>{
       let u=(inp.value||'').trim(); if(!u) return;
-      if(!/^https?:\/\//i.test(u)) u='https://'+u; u=u.replace(/\/+$/,'');
+      // .onion → http:// (hidden services are plain HTTP; see the same rule in Settings' norm()).
+      if(!/^https?:\/\//i.test(u)) u=(/\.onion$/i.test(u.split('/')[0].split(':')[0]) ? 'http://' : 'https://')+u;
+      u=u.replace(/\/+$/,'');
       if(u===cur){ toast('already connected to '+u); return; }
       // switching instance keeps your Nostr key (portable) but re-establishes the server session on reload
       if(window.__PC_SET_INSTANCE__) window.__PC_SET_INSTANCE__(u);
@@ -8607,10 +8609,27 @@
   // self.location.origin is https://localhost — useless off-device (the AI/relay/other users can't fetch it)
   // — so prefer the real server base injected by the app shim. PWA: __PC_API_BASE__ undefined → own origin.
   function _serverOrigin(){ return (window.__PC_API_BASE__) || (self.location&&self.location.origin) || ''; }
+  // True when the bundled app talks to a PLAIN-HTTP instance (an .onion, or a LAN box). The page origin
+  // is https://localhost, so every API call is cross-origin → the session cookie must be SameSite=None,
+  // which browsers only honour with Secure, which they in turn refuse to set over http. There is simply
+  // no cookie that can work here; auth rides the Authorization header (see _setAiToken) and, for the
+  // <img src> URLs that can't carry a header, a ?t= capability token. Declared HERE, above _absUrl's
+  // only reader, so the `let` can't be read from its temporal dead zone.
+  function _cleartextInstance(){ const b=window.__PC_API_BASE__||''; return !!b && b.slice(0,5)==='http:'; }
+  let _fileTok = '';   // short-lived /client/file ownership token; filled by ensureFileAuth()
   // Absolutize a root-relative URL to the instance origin. Critical in the bundled app: an <img>/<video>
   // src resolves against the PAGE origin (https://localhost), NOT through the fetch shim — so a server URL
   // like /api/files/… or /blossom/… would load from localhost. No-op for already-absolute URLs and in the PWA.
-  function _absUrl(u){ u=(u==null?'':String(u)); return (u.charAt(0)==='/' && u.charAt(1)!=='/') ? _serverOrigin()+u : u; }
+  function _absUrl(u){
+    u=(u==null?'':String(u));
+    if(!(u.charAt(0)==='/' && u.charAt(1)!=='/')) return u;
+    // /client/file is cookie-gated, and against a cleartext instance the cookie can't exist — pass the
+    // same short-lived ownership token in the query instead. Central here so every <img>/<video>/link
+    // that goes through _absUrl is covered at once rather than at each construction site.
+    if(_fileTok && _cleartextInstance() && u.indexOf('/client/file/')===0 && u.indexOf('t=')<0)
+      u += (u.indexOf('?')<0?'?':'&') + 't=' + encodeURIComponent(_fileTok);
+    return _serverOrigin()+u;
+  }
   function _blossomBuiltin(){ return { url:_serverOrigin()+'/blossom', proto:'blossom' }; }
   function uploadTarget(){
     if(ClientSettings.get('blossomEnabled')){
@@ -9994,7 +10013,11 @@
       const r = await fetch('/client/file-auth', {method:'POST', credentials:'include',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth))})});
-      if(r.ok){ _fileAuthAt = Date.now(); return true; }
+      if(r.ok){ _fileAuthAt = Date.now();
+        // Keep the token itself for _cleartextInstance() contexts, where the cookie never lands (see
+        // _absUrl). Harmless otherwise — the cookie is used and this is never appended.
+        try{ const j=await r.clone().json(); _fileTok = (j && j.token) || ''; }catch(_){ }
+        return true; }
     }catch(_){ }
     return false;
   }
@@ -11642,6 +11665,14 @@
   let _aiAuthP=null;
   let _aiToken='';      // bearer token from nostr-login; needed for the chat WS in the bundled app, where the
                         // session cookie is on the remote instance and can't be read from document.cookie
+  // Hand it to the bundled-app fetch shim, which attaches it as `Authorization: Bearer` to every request
+  // it retargets at the instance. That is what makes an .onion instance work AT ALL from the APK: the
+  // onion is plain http, and a `Secure` cookie (which SameSite=None requires) is refused by the WebView
+  // over a non-HTTPS connection — so there is no cookie to send, ever. The bearer path is scheme-agnostic.
+  // Kept in MEMORY only, deliberately: persisting it would leave a working 30-day credential for the
+  // previous identity in localStorage on a shared install, and it buys nothing — ensureAiSession() mints
+  // one on demand, which is why the authed callers already await it (news.js, settings, budget).
+  function _setAiToken(t){ _aiToken = t || ''; try{ window.__PC_TOKEN__ = _aiToken; }catch(_){} }
   async function ensureAiSession(){
     if(_aiAuth) return _aiAuth;
     if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
@@ -11650,7 +11681,7 @@
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
         const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
-        if(r && r.access_token) _aiToken = r.access_token;
+        if(r && r.access_token) _setAiToken(r.access_token);
         if(r && r.user){ _aiAuth = r.user; return _aiAuth; }   // cache only a GOOD session
         return { can_ai:false, error:!r };                      // transient failure → not cached, retryable
       }catch(_){ return { can_ai:false, error:true }; }
@@ -13405,7 +13436,14 @@
             <div class="instance-pick" id="us-instance-pick"></div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(window.__PC_API_BASE__)}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
           </label>
-          <div class="muted small">Which PosterChan server this app talks to (your Nostr key stays the same — it's portable). Switching reloads the app. Tap a quick-pick or type a domain.</div>` : ''}
+          <div class="muted small">Which PosterChan server this app talks to (your Nostr key stays the same — it's portable). Switching reloads the app. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor.</div>
+          <div class="fld" id="us-tor-row" style="margin-top:10px">🧅 Tor
+            <div class="muted small" id="us-tor-state" style="margin-top:4px">Checking for Orbot…</div>
+            <span class="input-row" style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-ghost small" id="us-tor-start">Start Orbot</button>
+              <button class="btn btn-ghost small" id="us-tor-open">Open Orbot</button>
+            </span>
+          </div>` : ''}
           <label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>
         </div>
@@ -13639,7 +13677,11 @@
         // the input isn't a valid host (needs a dot + a TLD, or is localhost/an IP).
         const norm=u=>{
           u=(u||'').trim(); if(!u) return '';
-          if(!/^https?:\/\//i.test(u)) u='https://'+u; u=u.replace(/\/+$/,'');
+          // A bare .onion gets http://, not https:// — a hidden service is plain HTTP (Tor itself is the
+          // encryption + authentication), and our own onion publishes port 80 only, so defaulting to
+          // https there produces an address that can never connect. An explicit scheme is respected.
+          if(!/^https?:\/\//i.test(u)) u=(/\.onion$/i.test(u.split('/')[0].split(':')[0]) ? 'http://' : 'https://')+u;
+          u=u.replace(/\/+$/,'');
           let host=''; try{ host=new URL(u).hostname; }catch(_){ return ''; }
           const ok = host==='localhost' || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
           return ok ? u : '';
@@ -13654,6 +13696,29 @@
           else { try{ localStorage.setItem('pc_instance', u); }catch(_){} location.reload(); } };
         pick.querySelectorAll('.instance-chip').forEach(b=> b.onclick=()=>_switch(b.dataset.u));
         go.onclick=()=>_switch(inp.value);
+      } }
+    // Tor / Orbot (native app only). We never claim traffic IS on Tor — an app can't honestly know that
+    // without an external request, which would defeat the point. We report what's installed, whether the
+    // current instance is an onion, and let the connection be the proof.
+    { const row=$('#us-tor-row'), st=$('#us-tor-state'), sb=$('#us-tor-start'), ob=$('#us-tor-open');
+      const O=(window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.Orbot)||null;
+      if(row && st){
+        if(!O){ row.remove(); }
+        else{
+          const onion=/\.onion$/i.test((()=>{try{return new URL(window.__PC_API_BASE__||'').hostname;}catch(_){return '';}})());
+          const paint=inst=>{
+            st.innerHTML = (inst
+              ? 'Orbot is installed. Add <b>PosterChan</b> to Orbot’s app list (or turn on full-device VPN mode) to route this app over Tor.'
+              : 'Orbot is not installed. It’s the Tor app for Android — install it to reach <code>.onion</code> instances.')
+              + (onion ? '<br>This app is pointed at a <b>.onion</b> instance, so it will only connect while Orbot is routing it.'
+                       : '<br>This app is on a clearnet instance; Tor is optional.');
+            if(sb) sb.style.display = inst ? '' : 'none';
+            if(ob) ob.textContent = inst ? 'Open Orbot' : 'Get Orbot';
+          };
+          O.isInstalled().then(r=>paint(!!(r&&r.installed))).catch(()=>paint(false));
+          if(sb) sb.onclick=()=>{ O.start().then(r=>toast(r&&r.requested?'asked Orbot to start':'could not reach Orbot')).catch(()=>toast('could not reach Orbot')); };
+          if(ob) ob.onclick=()=>{ O.openApp().catch(()=>{}); };
+        }
       } }
     // Hide-DM-preview toggle: persist per-device and re-render Messages so it applies immediately.
     { const hd=$('#set-hide-dm-prev'); if(hd) hd.onchange=()=>{

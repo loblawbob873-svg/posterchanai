@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import User
-from app.services import settings_store
+from app.services import settings_store, tor_service
 from app.services.nostr import nostr_service, event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,13 @@ def _default_theme(db: Session) -> str:
 
 
 def _relay_url(request: Request, db: Session) -> str:
+    # Reached over our .onion? Then the admin's clearnet relay URL is exactly the wrong answer — it
+    # would drag every socket back out an exit node (or just fail, for an onion-only client). Tor
+    # forwards TCP and not paths, so the relay rides the onion on its OWN port (see tor_service
+    # .onion_relay_port), which is the same shape as the direct-access fallback below.
+    onion = tor_service.request_onion_host(request)
+    if onion:
+        return f"ws://{onion}:{_setting(db, 'nostr_relay_port', '3052')}/relay"
     explicit = _setting(db, "client_relay_url")
     if explicit:
         return explicit
@@ -83,7 +90,14 @@ def _blossom_url(request: Request, db: Session) -> str:
     """Public base URL the client uploads blobs to. Mirrors the relay URL logic and the Blossom
     router's own `_base_url`: use the admin-set `blossom_public_url` if present, otherwise DERIVE it
     from the (proxied) request so a fresh node works out of the box — the admin sets a real domain
-    for production. Without this the client would get an empty URL and uploads would silently fail."""
+    for production. Without this the client would get an empty URL and uploads would silently fail.
+
+    Onion visitors get the onion base instead of the configured clearnet one: an upload's response URL
+    is what ends up EMBEDDED IN THE NOTE the user publishes, so a clearnet media host would (a) exit Tor
+    for every image and (b) stamp the instance's real domain into their posts."""
+    onion = tor_service.request_onion_host(request)
+    if onion:
+        return f"http://{onion}/blossom"
     explicit = _setting(db, "blossom_public_url").rstrip("/")
     if explicit:
         return explicit
@@ -2842,18 +2856,25 @@ class FileAuthReq(BaseModel):
 
 
 @router.post("/file-auth")
-async def client_file_auth(data: FileAuthReq):
+async def client_file_auth(data: FileAuthReq, request: Request):
     """Exchange a signed ownership proof for the short-lived cookie /client/file requires."""
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    resp = JSONResponse({"ok": True, "expires_in": _FILE_TTL})
+    tok = _mint_file_cookie(pk)
+    # The token is also returned in the body so the caller can pass it as ?t= — an .onion instance is
+    # plain http, and a `Secure` cookie is refused over a non-HTTPS connection, so the APK (whose page
+    # origin is https://localhost) has NO working cookie path to an onion host. The token proves the
+    # same thing either way; it's the caller's OWN capability, minted from their OWN signature.
+    resp = JSONResponse({"ok": True, "expires_in": _FILE_TTL, "token": tok})
     # SameSite=None so the APK's WebView (a different origin from the API host) still sends it;
-    # Secure keeps that safe. HttpOnly: script never needs to read it.
-    resp.set_cookie(_FILE_COOKIE, _mint_file_cookie(pk), max_age=_FILE_TTL, httponly=True,
-                    secure=True, samesite="none", path="/client/file")
+    # Secure keeps that safe. Over the onion neither applies (see above) — drop both so a direct
+    # Tor Browser visit, which IS same-site, still gets a usable cookie instead of a rejected one.
+    onion = bool(tor_service.request_onion_host(request))
+    resp.set_cookie(_FILE_COOKIE, tok, max_age=_FILE_TTL, httponly=True,
+                    secure=not onion, samesite="lax" if onion else "none", path="/client/file")
     return resp
 
 
@@ -2869,7 +2890,10 @@ async def client_file(npub: str, conv: str, name: str, request: Request, db: Ses
         return JSONResponse({"error": "invalid npub"}, status_code=400)
     # Ownership required: the sha256 alone is NOT authorisation (see _FILE_COOKIE above). The cookie
     # must prove the SAME key the file belongs to, so one user's proof can't read another's files.
-    if _file_cookie_pubkey(request.cookies.get(_FILE_COOKIE, "")) != pk:
+    # Cookie first; ?t= is the fallback for contexts where a cross-origin cookie can't survive (the
+    # APK against an .onion — plain http, so the Secure cookie is refused). Same token, same proof.
+    _tok = request.cookies.get(_FILE_COOKIE, "") or request.query_params.get("t", "")
+    if _file_cookie_pubkey(_tok) != pk:
         return JSONResponse({"error": "not authorized"}, status_code=403)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     m = re.match(r'^enc_([0-9a-fA-F]{64})\.(\w+)$', name or "")

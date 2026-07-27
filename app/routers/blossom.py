@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import BlossomBlob
-from app.services import blossom_service
+from app.services import blossom_service, tor_service
 from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,12 @@ def _strip_ext(token: str) -> str:
 
 
 def _base_url(request: Request, db: Session) -> str:
+    # An upload over our .onion must come back as an onion URL: this string is what the client puts in
+    # the note / hands to other users, so returning the clearnet media host would exit Tor for every
+    # view AND stamp the instance's real domain into an onion user's posts. Mirrors client._blossom_url.
+    onion = tor_service.request_onion_host(request)
+    if onion:
+        return f"http://{onion}/blossom"
     cfg = blossom_service._cfg(db)
     if cfg["public_url"]:
         return cfg["public_url"]

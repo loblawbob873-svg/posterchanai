@@ -36,6 +36,7 @@ class TorService:
         data_dir: str = "/var/lib/posterchanai/tor",
         onion_enabled: bool = False,
         onion_target: str = "",
+        onion_relay_port: int = 0,
     ):
         self.listen_host = listen_host
         self.socks_port = socks_port
@@ -48,6 +49,11 @@ class TorService:
         # the local "host:port" to forward to (the app's port).
         self.onion_enabled = onion_enabled
         self.onion_target = onion_target
+        # The Nostr relay is a SEPARATE server on its own port — in production nginx routes /relay to it,
+        # but a hidden service forwards TCP, not paths, so port 80 alone leaves the onion with no relay
+        # and the whole client dead. Map the relay's port through the same onion too, so the client can
+        # reach ws://<onion>:<relay_port>/relay. 0 = don't publish it.
+        self.onion_relay_port = int(onion_relay_port or 0)
         self.onion_dir = self.data_dir / "onion_service"
 
         self._process: Optional[subprocess.Popen] = None
@@ -128,6 +134,8 @@ HiddenServiceDir {self.onion_dir}
 HiddenServiceVersion 3
 HiddenServicePort 80 {self.onion_target}
 """
+            if self.onion_relay_port:
+                config += f"HiddenServicePort {self.onion_relay_port} 127.0.0.1:{self.onion_relay_port}\n"
         logger.info(f"[TOR] Creating torrc: SOCKS {self.listen_host}:{self.socks_port}, DNS {self.listen_host}:{self.dns_port}, exits={self.exit_nodes}, onion={'on' if self.onion_enabled else 'off'}")
         torrc_path.write_text(config)
         return torrc_path
@@ -140,13 +148,15 @@ HiddenServicePort 80 {self.onion_target}
         except Exception:
             return None
 
-    def reload_onion(self, enabled: bool, target: str = "") -> bool:
+    def reload_onion(self, enabled: bool, target: str = "", relay_port: int = 0) -> bool:
         """Turn the hidden service on/off LIVE: rewrite the torrc and SIGHUP Tor — it reloads its
         config and creates (or drops) the .onion without a full process restart. Keys in onion_dir
         persist, so re-enabling yields the SAME address. Returns True if the reload signal was sent."""
         self.onion_enabled = enabled
         if target:
             self.onion_target = target
+        if relay_port:
+            self.onion_relay_port = int(relay_port)
         try:
             self._create_torrc()
             if self._process and self._process.poll() is None:
@@ -344,6 +354,7 @@ def start_tor_service(
     data_dir: str = "/var/lib/posterchanai/tor",
     onion_enabled: bool = False,
     onion_target: str = "",
+    onion_relay_port: int = 0,
 ) -> Optional[TorService]:
     """Start ONE Tor instance and return it. Call once per daemon — the second daemon uses its own
     ports + data dir + exit region so the HTTP proxy can load-balance across two independent circuits.
@@ -357,6 +368,7 @@ def start_tor_service(
         data_dir=data_dir,
         onion_enabled=onion_enabled,
         onion_target=onion_target,
+        onion_relay_port=onion_relay_port,
     )
     if service.start():
         _services.append(service)
@@ -382,13 +394,13 @@ def primary_service():
     return _services[0] if _services else None
 
 
-def set_onion(enabled: bool, target: str = ""):
+def set_onion(enabled: bool, target: str = "", relay_port: int = 0):
     """Enable/disable the deployment's .onion on the primary daemon (live SIGHUP reload). Returns the
     .onion address (may be None on the very first enable — Tor needs a moment; poll get_onion_address)."""
     svc = primary_service()
     if not svc:
         return None
-    svc.reload_onion(enabled, target)
+    svc.reload_onion(enabled, target, relay_port)
     return svc.get_onion_address()
 
 
@@ -396,3 +408,25 @@ def get_onion_address():
     """The deployment's current .onion address (from the primary daemon), or None."""
     svc = primary_service()
     return svc.get_onion_address() if svc else None
+
+
+def request_onion_host(request) -> str:
+    """The onion hostname THIS request came in on, or "" if it didn't.
+
+    Callers use it to hand an onion visitor onion-flavoured URLs (relay, Blossom, media) instead of
+    the admin-configured clearnet ones — otherwise the .onion site is a facade that immediately
+    pushes every socket, every blob and every upload back out an exit node, which is both broken
+    (an onion-only client can't reach them at all) and a deanonymisation hazard.
+
+    Host is client-controlled, so it must MATCH the address Tor actually generated for us — an
+    arbitrary `Host: evil.onion` must never become a URL we hand out.
+    """
+    try:
+        host = (request.headers.get("host") or request.url.netloc or "").strip().lower()
+    except Exception:
+        return ""
+    host = host.split(":")[0]
+    if not host.endswith(".onion"):
+        return ""
+    ours = (get_onion_address() or "").strip().lower()
+    return host if ours and host == ours else ""
