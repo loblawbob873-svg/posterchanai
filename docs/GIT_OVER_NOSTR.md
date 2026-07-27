@@ -161,16 +161,23 @@ reports `Everything up-to-date` and pushes nothing. Two independent causes, both
    truncating at the npub — so `https://poster.place/git/<npub>/<x>.git` implies a relay at
    `wss://poster.place/git`. Nothing answered there, so pushes died with `state event failed to
    reach any git server relay`. Fixed in the router's nginx: `location = /git` (exact match, so the
-   longer smart-HTTP paths still reach the app) proxies to the relay on `:3052`.
+   longer smart-HTTP paths still reach the app) proxies to a relay on `:3052`.
 
-With both in place a private repo works over **HTTPS on this host** — no SSH:
+**That endpoint must be the HOSTING node's relay.** `pre-receive` reads its own node's relay
+Postgres for the 30617 maintainer ACL and the 30618 authorizing the push, and server1/nas run
+separate relays with separate event stores — so `location = /git` proxies to **nas**, not server1.
+Pointing it at server1's relay silently appears to work only if the client also publishes to nas by
+some other route; on its own it rejects every push.
+
+With both in place a private repo works over **HTTPS, using only public URLs** — no SSH, no LAN
+hostnames (a `ws://nas.lan:3052` in the relay list works from the LAN and strands anyone off it):
 
     ngit init --name <id> --clone https://poster.place/git/<npub>/<id>.git \
-              --relay wss://relay.poster.place --relay ws://nas.lan:3052
+              --relay wss://relay.poster.place --relay wss://poster.place/git
 
-`/opt/admintools` and `/opt/gentoo-installer` are set up this way: both clone from a bare `nostr://`
-URL (`fetch: succeeded over https`), pushes are authorized by the signed 30618, and anonymous
-`info/refs` still 401s.
+`/opt/admintools` and `/opt/gentoo-installer` are set up this way on both server1 and router.lan:
+they clone from a bare `nostr://` URL (`fetch: succeeded over https`), pushes are authorized by the
+signed 30618 reaching nas through `wss://poster.place/git`, and anonymous `info/refs` still 401s.
 
 - **Announcing at all makes the identifier public.** ngit resolves `nostr://<npub>/<id>` *from* the
   30617, so an unannounced repo has nothing to resolve. `relay.poster.place` serves anonymous reads,
