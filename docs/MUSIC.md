@@ -1,9 +1,8 @@
 # Music Generation (`musicgeni`)
 
-Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), running
-**natively in-process** on the same torch stack as image and video gen — no separate server.
-Available in the **web UI** and **Telegram** (intentionally *not* the Misskey/Pleroma bots — abuse
-surface).
+Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), served by a
+self-hosted ACE-Step REST server (`acestep.service`). Available in the **web UI** and **Telegram**
+(intentionally *not* the Misskey/Pleroma bots — abuse surface).
 
 ```
 musicgeni <description>                 # auto-writes lyrics → a song WITH vocals
@@ -32,23 +31,25 @@ style caption) from your description, so plain `musicgeni <description>` produce
 singing. Add `instrumental` / `no vocals` to the description (or end with a bare `|`) to skip
 lyrics.
 
-## No separate server (was: the ACE-Step service)
+## Why a separate ACE-Step server
 
-Music generation is **in-process**: `diffusers` ships `AceStepPipeline`, so ACE-Step loads exactly
-like the Wan/LTX video pipelines (`app/services/music_local.py`) — same venv, same torch, same GPU
-lock.
+ACE-Step needs **Python 3.11–3.12** and a `torch`/`transformers` stack that conflicts with the main
+app venv, and it ships its own REST server. So it runs as its own systemd service and the app is an
+HTTP client. `./install.sh --music` sets it up.
 
-It used to be a separate process, because ACE-Step needed Python 3.11–3.12 and a conflicting
-torch/transformers stack, wasn't on PyPI, and shipped its own REST server. That meant a git clone
-into `~/ACE-Step-1.5`, a `uv`-provisioned interpreter, an `acestep.service` systemd unit, an HTTP
-hop, and hand-swapped torch on Intel XPU / AMD ROCm with torchcodec dropped. All of that is gone.
+**In-process generation is NOT available yet.** `diffusers` does ship an `AceStepPipeline`, and the
+client for it is written (`app/services/music_local.py`, behind the `music_native` setting, default
+**off**) — but no published ACE-Step checkpoint is in diffusers format. None carry `model_index.json`,
+so `from_pretrained` 404s: verified against `ACE-Step/Ace-Step1.5`, `acestep-v15-xl-{base,turbo}`,
+`ACE-Step-v1-3.5B` and the Comfy-Org mirror, on every branch and PR ref.
 
-The turbo DiT is an 8-step model and fits a **12 GB** GPU. Weights land in `~/.cache/huggingface` on
-first use (`./install.sh --music` can prefetch them).
+The released weights are a **transformers custom-code** model (`auto_map` →
+`modeling_acestep_v15_turbo.AceStepConditionGenerationModel`, loaded with `trust_remote_code`) plus a
+diffusers VAE. The pipeline wants `AceStepTransformer1DModel` / `AceStepConditionEncoder` — different
+classes with a different state-dict layout — so the local checkpoint cannot simply be pointed at it;
+it would need a weight port. Flip `music_native` on only once an official diffusers checkpoint exists.
 
-**Falling back to an external server:** set `music_api_base` and the old REST path is used instead.
-That exists for a diffusers too old to carry the pipeline, or a node still running the service —
-nothing new depends on it.
+The turbo DiT fits a **12 GB** GPU.
 
 ## Load balancing, locking & VRAM swap (same as image gen)
 
@@ -73,14 +74,12 @@ node so concurrent requests queue instead of OOMing one GPU. A node may safely l
 
 ## Setup
 
-Nothing to install — `diffusers` is already in `requirements.txt`.
-
 ```bash
-./install.sh --music     # optional: prefetch the weights + retire a legacy acestep.service
+./install.sh --music     # clones ACE-Step, installs it with uv, registers acestep.service
 ```
 
-Then **Admin → Music**: enable music. Leave Local Server URL **blank** to use the built-in engine.
-Set Remote Servers only if you want to fan out to other nodes.
+Then **Admin → Music**: enable music and set Local Server URL to `http://localhost:8001`. Remote
+Servers fan out to other nodes. `⬇ Download music model` fetches/warms the weights.
 
 
 ## Admin → Music settings
