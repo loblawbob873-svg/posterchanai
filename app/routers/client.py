@@ -1181,6 +1181,53 @@ class MemeApplyEffectReq(BaseModel):
     arg: str | None = None       # optional effect argument (caption text, motion modifier, …)
 
 
+_MEDIA_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+async def _fetch_media_guarded(url: str, own: set, *, timeout: float = 30.0, max_redirects: int = 3):
+    """GET a layer/source image, following redirects WITHOUT losing the SSRF guard.
+
+    follow_redirects=False was refusing every Blossom host that 302s to a CDN: a 302 is not a 4xx, so
+    raise_for_status() passes and the caller gets an EMPTY body (measured: blossom.primal.net -> 302
+    0 bytes; following it -> 200 939KB). But httpx's own follow_redirects would chase a hop straight
+    past the guard, which is the SSRF hole the guard exists to close. So each hop is re-validated
+    here, exactly like the first request.
+
+    Returns (bytes, content_type). Raises HTTPException on a refused/unfetchable source.
+    """
+    import httpx
+    from urllib.parse import urlparse, urljoin
+    from app.services.rss_service import looks_fetchable, is_safe_host
+
+    u = (url or "").strip()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=8.0),
+                                 follow_redirects=False) as c:
+        for _hop in range(max_redirects + 1):
+            if urlparse(u).scheme not in ("http", "https"):
+                raise HTTPException(status_code=400, detail="bad image url")
+            host = (urlparse(u).hostname or "").lower()
+            if host not in own:
+                if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
+                    raise HTTPException(status_code=400, detail="refused image source")
+            try:
+                resp = await c.get(u, headers={"User-Agent": _MEDIA_UA})
+            except Exception:
+                raise HTTPException(status_code=502, detail="could not fetch the layer image")
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("location") or ""
+                if not loc:
+                    raise HTTPException(status_code=502, detail="could not fetch the layer image")
+                u = urljoin(u, loc)          # re-validated at the top of the next iteration
+                continue
+            try:
+                resp.raise_for_status()
+            except Exception:
+                raise HTTPException(status_code=502, detail="could not fetch the layer image")
+            return resp.content, (resp.headers.get("content-type", "") or "image/jpeg")
+    raise HTTPException(status_code=502, detail="too many redirects fetching the layer image")
+
+
 @router.post("/meme/apply-effect")
 async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Session = Depends(get_db)):
     """Apply a FULL effect to a Meme Builder layer's IMAGE — the SAME engine as the Effects studio and
@@ -1222,31 +1269,14 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     # as private — which would refuse every Blossom blob the user just uploaded. Exempt them exactly like
     # /meme/render does (these are URLs this node itself mints + serves, not an SSRF primitive); everything
     # else still goes through the guard.
-    import httpx
     from urllib.parse import urlparse
-    from app.services.rss_service import looks_fetchable, is_safe_host
     u = (data.url or "").strip()
-    if urlparse(u).scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="bad image url")
     own = set()
     for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
         h = urlparse(_setting(db, key) or "").hostname
         if h:
             own.add(h.lower())
-    host = (urlparse(u).hostname or "").lower()
-    if host not in own:
-        if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
-            raise HTTPException(status_code=400, detail="refused image source")
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0), follow_redirects=False) as c:
-            resp = await c.get(u)
-            resp.raise_for_status()
-            img = resp.content
-            ct = resp.headers.get("content-type", "") or "image/jpeg"
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=502, detail="could not fetch the layer image")
+    img, ct = await _fetch_media_guarded(u, own)
     if not img:
         raise HTTPException(status_code=400, detail="empty image")
     if len(img) > 80 * 1024 * 1024:
