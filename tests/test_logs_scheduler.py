@@ -62,6 +62,49 @@ class TestRenderBoard(unittest.TestCase):
         self.assertIsNone(L._render_board(""))
 
 
+class TestErrorSamples(unittest.TestCase):
+    """The evidence lines under the Errors row. A count alone ('11 journal + 8 dmesg errors') never
+    said WHAT was wrong, which is the whole reason these exist."""
+
+    RAW = ("== journal ==\n"
+           "12\tkernel: ata3.00: failed command: READ FPDMA QUEUED\n"
+           "3\tnginx: upstream timed out while reading response header\n"
+           "== dmesg ==\n"
+           "4\tata3: SATA link down (SStatus 0 SControl 330)\n")
+
+    def test_counts_sources_and_verbatim_text(self):
+        out = L._parse_error_samples(self.RAW)
+        self.assertEqual(out[0], "↳ ×12 kernel: ata3.00: failed command: READ FPDMA QUEUED")
+        self.assertEqual(out[1], "↳ ×3 nginx: upstream timed out while reading response header")
+        # dmesg lines carry no unit prefix of their own, so the source is labelled
+        self.assertEqual(out[2], "↳ ×4 dmesg: ata3: SATA link down (SStatus 0 SControl 330)")
+
+    def test_ignores_noise_and_caps_the_list(self):
+        self.assertEqual(L._parse_error_samples("== journal ==\nnot a count row\n"), [])
+        self.assertEqual(L._parse_error_samples(""), [])
+        many = "== journal ==\n" + "".join(f"{i}\tline {i}\n" for i in range(20))
+        self.assertEqual(len(L._parse_error_samples(many)), L._ERROR_SAMPLE_MAX)
+
+    def test_strips_chars_that_break_telegram_markdown(self):
+        out = L._parse_error_samples("== journal ==\n1\tkernel: *** `oops` in foo_bar.service\n")
+        self.assertEqual(out, ["↳ ×1 kernel: oops in foo_bar.service"])   # `_` kept: it's in unit names
+
+    def test_attached_under_the_errors_row(self):
+        board = L._render_board("disk|green|ok\nsmart|green|ok\nraid|none|no md\n"
+                                "services|green|none failed\nswap|green|0 used\nerrors|red|12 errors")
+        out = L._with_error_samples(board, L._parse_error_samples(self.RAW)).splitlines()
+        self.assertEqual(out[5], "📜 Errors (6h): 🔴 12 errors")
+        self.assertTrue(out[6].startswith("↳ ×12 kernel:"))     # evidence sits with the count
+
+    def test_appended_when_there_is_no_errors_row(self):
+        # agent leg failed -> body is an error string, but the raw evidence is still worth showing
+        out = L._with_error_samples("⚠️ agent error: boom", L._parse_error_samples(self.RAW))
+        self.assertTrue(out.startswith("⚠️ agent error: boom\n↳ ×12 kernel:"))
+
+    def test_no_samples_leaves_the_board_untouched(self):
+        self.assertEqual(L._with_error_samples("💾 Disk: 🟢 ok", []), "💾 Disk: 🟢 ok")
+
+
 class TestSelectedNodes(unittest.TestCase):
     def test_default_includes_local_plus_all_configured(self):
         with mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas"}), \

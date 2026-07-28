@@ -84,6 +84,31 @@ sudo -n dmesg -T --level=err,warn 2>&1 | grep -v 'IN=.*OUT=' |
   sed -E 's/^\[[^]]*\] //; s/[0-9]+/#/g' | cut -c1-110 | sort | uniq -c | sort -rn | head -6
 """.strip()
 
+# Sample lines behind the "Errors (6h)" row. A bare count ("11 journal + 8 dmesg errors", "10 SMART
+# errors, 2 I/O timeouts") says something is wrong but never WHAT, which makes the row unactionable —
+# you can't tell a dying disk from a chatty nginx. So the top repeat-groups are fetched
+# DETERMINISTICALLY (like _node_uptime, NOT via the model, which paraphrases the specifics away) and
+# printed verbatim underneath. Grouping keeps one REAL sample line per group: the counting pass in
+# _HEALTH_SHELL blanks digits/hex, which is right for tallying repeats and unreadable as evidence.
+# The dmesg leg keeps _HEALTH_SHELL's proven filters (err/warn only, minus firewall IN=/OUT= spam) —
+# without --level the keyword-matched result was mostly boot-time chatter like 'ata1: SATA max UDMA'.
+# `--since` needs util-linux >= 2.37; the fallback covers the whole ring buffer rather than nothing.
+_ERROR_SAMPLE_SHELL = r"""
+g() { awk '{ k=$0; gsub(/[0-9a-f]{8,}/,"",k); gsub(/[0-9]+/,"#",k);
+             if (!(k in s)) s[k]=$0; c[k]++ }
+       END { for (k in c) printf "%d\t%s\n", c[k], s[k] }' | sort -rn | head -"$1" | cut -c1-180; }
+echo '== journal =='
+sudo -n journalctl --since -6h -p err --no-pager -q 2>/dev/null |
+  sed -E 's/^[A-Z][a-z]{2} +[0-9]+ [0-9:]+ [^ ]+ //' | g 5
+echo '== dmesg =='
+{ sudo -n dmesg -T --level=err,warn --since '6 hours ago' 2>/dev/null ||
+  sudo -n dmesg -T --level=err,warn 2>/dev/null; } |
+  grep -v 'IN=.*OUT=' | sed -E 's/^\[[^]]*\] //' | g 4
+""".strip()
+
+# Cap on how much evidence rides along: enough to identify the fault, not enough to bury the board.
+_ERROR_SAMPLE_MAX = 8
+
 # Deterministic status board — Python owns the emojis + layout so they're identical on every node.
 # The model only supplies a status word + short detail per subsystem (an easy single-shot task);
 # the icons and ordering below are never the model's job.
@@ -105,6 +130,8 @@ _BOARD_SYS = (
     "'services' is ONLY failed systemd units — green when none failed. Journal/dmesg/log errors "
     "belong to 'errors', NEVER to 'services'. "
     "<detail> is a terse phrase, e.g. '/ 33%, /raid 63%' or 'sda,sdb,nvme PASSED' or 'none failed'. "
+    "For 'errors', NAME the sources rather than only counting them — 'ata3 I/O errors, nginx upstream "
+    "timeouts' beats '10 SMART errors, 2 I/O timeouts', which identifies nothing. "
     "Use ONLY figures that literally appear in the input — never compute or invent a percentage."
 )
 
@@ -132,6 +159,69 @@ def _render_board(raw: str) -> Optional[str]:
             status, detail = rows[key]
             lines.append(f"{_BOARD_ICON[key]} {_BOARD_LABEL[key]}: {_STATUS_EMOJI[status]} {detail}")
     return "\n".join(lines)
+
+
+def _clean_sample(line: str) -> str:
+    """Drop the characters that would unbalance Telegram MarkdownV1 in an arbitrary log line. `_` is
+    deliberately left alone — it's everywhere in unit and device names, and telegram_service already
+    retries a failed parse as plain text, so mangling every name is the worse trade."""
+    return re.sub(r"\s{2,}", " ", re.sub(r"[*`]", "", line)).strip()
+
+
+def _parse_error_samples(raw: str) -> list:
+    """'<count>\\t<line>' rows under the '== journal ==' / '== dmesg ==' markers → display lines."""
+    out, source = [], ""
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("=="):
+            source = stripped.strip("= ").strip().lower()
+            continue
+        m = re.match(r"^\s*(\d+)\t(.+)$", line.rstrip())
+        if not m:
+            continue
+        text = _clean_sample(m.group(2))
+        if not text:
+            continue
+        # journal lines carry their own unit prefix ("kernel:", "nginx:"); dmesg lines don't, so say
+        # where they came from — otherwise the two sources are indistinguishable in the list.
+        prefix = "dmesg: " if source == "dmesg" else ""
+        out.append(f"↳ ×{m.group(1)} {prefix}{text}")
+    return out[:_ERROR_SAMPLE_MAX]
+
+
+async def _error_samples(db, admin, name: str, target: str) -> list:
+    """Top journal/dmesg error groups for a node, each with one verbatim sample line.
+
+    Best-effort and independent of the agent: it returns [] on any failure (so the board is never
+    blocked by it) and it runs even when the agent leg errored, which is exactly when raw evidence
+    is worth the most."""
+    try:
+        if target.startswith("nostr:"):
+            raw = await node_service.run_agent_over_nostr(target[6:], _ERROR_SAMPLE_SHELL, mode="shell") or ""
+        else:
+            job = await node_service.run_to_completion(db, name, target, _ERROR_SAMPLE_SHELL,
+                                                       user_id=admin.id, timeout=45)
+            raw = job.output or ""
+        return _parse_error_samples(raw)
+    except Exception as e:
+        logger.warning(f"error-sample fetch failed for {name}: {e}")
+        return []
+
+
+def _with_error_samples(board: str, samples: list) -> str:
+    """Attach the sample lines directly under the 'Errors (6h)' row, so the evidence sits with the
+    count it explains. Appended at the end when there's no such row (e.g. a raw-output fallback body
+    or an agent error), rather than dropped."""
+    if not samples:
+        return board
+    block = "\n".join(samples)
+    lines = (board or "").splitlines()
+    head = f"{_BOARD_ICON['errors']} {_BOARD_LABEL['errors']}"
+    for i, line in enumerate(lines):
+        if line.startswith(head):
+            lines.insert(i + 1, block)
+            return "\n".join(lines)
+    return f"{(board or '').rstrip()}\n{block}".strip()
 
 
 async def _node_uptime(db, admin, name: str, target: str) -> str:
@@ -356,6 +446,9 @@ async def build_health_report(db, admin: User, notify=None) -> str:
         except Exception as e:
             logger.error(f"Health check failed for node {name}: {e}")
             body = f"⚠️ agent error: {e}"
+        # The counts on the errors row are a summary, not evidence — attach the actual top log lines
+        # so the row can be acted on without opening a shell on the node.
+        body = _with_error_samples(body, await _error_samples(db, admin, name, target))
         uptime = await _node_uptime(db, admin, name, target)
         header = f"━━━━━━━━━━━━━━\n🖥️ *{name}*  ·  `{where}`"
         if uptime:
