@@ -342,12 +342,18 @@ async def _find_pleroma_user(db: Session, instance_url: str, acct: str) -> User 
         logger.info("[social-login] %d unlabelled pleroma links on %s — probing the first %d",
                     len(stale), instance_url, _ACCT_BACKFILL_LIMIT)
         stale = stale[:_ACCT_BACKFILL_LIMIT]
-    found = None
-    for u in stale:
+    async def _who(u):
         try:
-            got = _acct_of(await verify_credentials(instance_url, u.pleroma_access_token), instance_url)
+            return u, _acct_of(await verify_credentials(instance_url, u.pleroma_access_token), instance_url)
         except Exception:
-            continue     # revoked/expired token — leave it unlabelled, it just isn't a match
+            return u, ""     # revoked/expired token — leave it unlabelled, it just isn't a match
+
+    # CONCURRENTLY: this runs inside someone's login. Sequentially, 25 probes against a slow instance
+    # is 25 round trips stacked end to end — long enough that the person gives up and retries, which
+    # starts the whole thing again.
+    import asyncio
+    found = None
+    for u, got in await asyncio.gather(*[_who(u) for u in stale]):
         if not got:
             continue
         u.pleroma_acct = got
