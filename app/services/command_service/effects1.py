@@ -693,10 +693,11 @@ class _Effects1Mixin:
         from app.services.effects_service import soyjack_attachments
         return await self._reaction_command(attachments, "soyjack", soyjack_attachments)
 
-    async def _anyways_command(self, attachments: Optional[list]) -> dict:
-        """The puppet side-eyes an attached image: `anyways`."""
-        from app.services.effects_service import anyways_attachments
-        return await self._reaction_command(attachments, "anyways", anyways_attachments)
+    async def _lookingaway_command(self, attachments: Optional[list]) -> dict:
+        """The monkey puppet looks away from an attached image, then turns to you: `lookingaway`
+        (`anyways` is the original name, kept as an alias in COMMAND_ALIASES)."""
+        from app.services.effects_service import lookingaway_attachments
+        return await self._reaction_command(attachments, "lookingaway", lookingaway_attachments)
 
     async def _shrug_command(self, attachments: Optional[list]) -> dict:
         """Rabbi shrugs "Whaddya gonna do?" on an attached image: `shrug`."""

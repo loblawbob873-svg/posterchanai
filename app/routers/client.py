@@ -1109,7 +1109,9 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
     if not _fwded and not blossom_service.is_enabled(db):
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
-    name = (data.name or "").strip().lower()
+    # Resolve an alias BEFORE the catalogue check: a client holding a cached catalogue still sends the
+    # effect's old name, and rejecting it here would 400 a pick that the renderer handles fine.
+    name = mb.canonical_alpha_effect(data.name)
     catalog = {e["name"]: e for e in mb.alpha_effect_catalog()}
     if name not in catalog:
         raise HTTPException(status_code=400, detail="unknown effect")

@@ -55,7 +55,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "shrug": "Rabbi shrugs at an attached image: \"Whaddya gonna do?\": shrug",
         "carl": "Carl points at an attached image: carl",
         "soyjack": "Two soyjaks point and yell at an attached image: soyjack",
-        "anyways": "The puppet side-eyes an attached image: anyways",
+        "lookingaway": "The monkey puppet looks away from an attached image, then turns to you: lookingaway",
         "dildo": "Scatter dildos all over an attached image: dildo",
         "poo": "Scatter poop all over an attached image: poo",
         "cum": "Scatter cum all over an attached image: cum",
@@ -183,9 +183,15 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "savedsearches": "pins",
         "savedsearch": "pins",
         "saved": "pins",
+        # `anyways` was the ORIGINAL name for the monkey-puppet meme and is what people have typed
+        # for months, so it keeps working — but the effect is listed under what the meme is actually
+        # called. Resolved centrally in execute_command, so Telegram (which matches literally) accepts
+        # it too. `char anyways` also still resolves: the ART aliases live in _common.py.
+        "anyways": "lookingaway",
+        "lookaway": "lookingaway",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
+        "collage", "meme", "theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
@@ -603,8 +609,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._carl_command(attachments)
         elif command == "soyjack":
             return await self._soyjack_command(attachments)
-        elif command == "anyways":
-            return await self._anyways_command(attachments)
+        elif command == "lookingaway":
+            return await self._lookingaway_command(attachments)
         elif command == "dildo":
             return await self._dildo_command(attachments)
         elif command == "poo":

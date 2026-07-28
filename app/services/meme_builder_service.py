@@ -180,9 +180,10 @@ def sound_names() -> list:
 _ALPHA_CHARACTERS = [
     # (name, label) — the character-overlay effects worth having as a transparent layer. `shrug` is
     # intentionally NOT here: it is exposed separately below because it carries audio and its own pose.
-    # `anyways` is the two-panel "looking away" meme, not a pose — it is rendered by
+    # `lookingaway` is the two-panel monkey-puppet meme, not a pose — it is rendered by
     # render_lookingaway_alpha, so the label promises the turn that the clip actually performs.
-    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("anyways", "🙈 Looking away (turns to camera)"),
+    # (`anyways` is the original command name and still resolves; see COMMAND_ALIASES.)
+    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
     ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
 ]
 
@@ -209,8 +210,20 @@ def alpha_effect_catalog() -> list:
         if _ch._character_path(key):
             # A still pose holds for as long as you like; the two-panel turn has its own beat.
             out.append({"name": key, "label": f"🧍 {label}", "audio": False,
-                        "dur": _ch.LOOKINGAWAY_ALPHA_DUR if key == "anyways" else 6.0})
+                        "dur": _ch.LOOKINGAWAY_ALPHA_DUR if key == "lookingaway" else 6.0})
     return out
+
+
+# Names a caller may still be holding for an effect the catalogue now lists under its real name. A
+# client caches the catalogue, and `anyways` is what people have typed for months, so both have to
+# keep resolving — mirrors CommandService.COMMAND_ALIASES for the command path.
+_ALPHA_ALIASES = {"anyways": "lookingaway", "lookaway": "lookingaway"}
+
+
+def canonical_alpha_effect(name: str) -> str:
+    """An effect name resolved to the one the catalogue actually lists."""
+    n = (name or "").strip().lower()
+    return _ALPHA_ALIASES.get(n, n)
 
 
 def render_alpha_effect(name: str, dur: float = None) -> tuple:
@@ -218,7 +231,7 @@ def render_alpha_effect(name: str, dur: float = None) -> tuple:
     (mov_bytes, has_audio). Raises ValueError for a name not in the catalogue, RuntimeError on a render
     failure. `dur` (seconds) is an optional length hint honoured by the effects that support it."""
     from app.services.effects_service import nakedman as _nm, character as _ch
-    name = (name or "").strip().lower()
+    name = canonical_alpha_effect(name)
     allowed = {e["name"]: e for e in alpha_effect_catalog()}
     meta = allowed.get(name)
     if not meta:
@@ -227,9 +240,9 @@ def render_alpha_effect(name: str, dur: float = None) -> tuple:
         data = _nm.render_nakedman_alpha(dur=dur or 8.0)
     elif name == "shrug":
         data = _ch.render_shrug_alpha(dur=dur)
-    elif name == "anyways":
-        # NOT render_character_alpha: that resolves `anyways` to the one-panel anyways.png, which is
-        # half the meme — the puppet looking away, never turning back. See render_lookingaway_alpha.
+    elif name == "lookingaway":
+        # NOT render_character_alpha: that resolves the name to the one-panel anyways.png, which is
+        # half the meme — the puppet mid-side-eye, with no turn. See render_lookingaway_alpha.
         data = _ch.render_lookingaway_alpha(dur=dur)
     else:
         data = _ch.render_character_alpha(name, dur=dur or 6.0)

@@ -547,7 +547,7 @@ _CHARACTERS = {
     "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "anyways"]
+CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
