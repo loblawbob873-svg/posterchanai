@@ -134,10 +134,21 @@ switch. Reused by the web UI websocket (`app/routers/chat.py`) and Telegram.
 `COMMANDS` and to those Telegram lists, or it works in the web UI but falls through to the LLM
 on Telegram.
 
-**Gotcha (commands that consume uploads):** a command operating on uploaded files
-(`compress`/`clip`/`convert`/`translate`) must be wired into each interface's media path
-separately: `app/routers/chat.py` (`build_media_attachments` is gated by a command allowlist) and
-the Telegram media-action keyboard/callbacks in `app/routers/telegram.py`.
+**Gotcha (commands that consume uploads):** whether a command is handed the upload's raw BYTES is
+`CommandService.wants_attachments()` — `MEDIA_TOOL_COMMANDS` (`compress`/`clip`/`convert`/
+`translate`/…) plus the effect sets, aliases resolved. Both chat paths and Telegram
+(`_TG_EFFECTS`/`_TG_RAW_MEDIA_COMMANDS` in `app/routers/telegram/messages.py`) derive from it, so a
+NEW media tool goes in `MEDIA_TOOL_COMMANDS`, and a new/renamed EFFECT needs nothing. They used to
+be four hand-copied literals of ~99 names: renaming `anyways` → `lookingaway` left the effect
+running with `attachments=None` (it answered "attach an image"), and the Telegram copies had
+already lost `goon`/`hag`. `tests/test_effect_command_coverage.py` fails if a copy comes back.
+The Telegram media-action keyboard/callbacks are still wired per command.
+
+**Gotcha (effect aliases):** an alias whose target is an EFFECT must be resolved before anything
+gated on `command in MOTION_EFFECTS` — `execute_command` resolves at its public entry for exactly
+that reason (the outro end-card and auto-compress are keyed on the name), and every endpoint that
+validates against the catalogue (`/meme/effect`, `/meme/apply-effect`, `/effects/run`) aliases
+BEFORE the allowlist check, since clients cache the catalogue and keep sending the old name.
 
 **Media:** generic ffmpeg/Pillow/PyMuPDF helpers live in `app/services/media_service.py`
 (`compress_*`, `clip_video`/`clip_attachment`, `convert_*`, `parse_timecode`). Video ops share
