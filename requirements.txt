@@ -136,8 +136,10 @@ faster-whisper>=1.0.0
 # --system-site-packages" approach SILENTLY BREAKS when the system Python is upgraded past the
 # venv's (e.g. nas: system went to 3.14, libtorrent built for 3.14 only, but the venv is 3.13 ->
 # ImportError -> "Torrent client not configured"). The wheel avoids that version-skew entirely.
-# Fallback system packages: Gentoo `emerge net-libs/libtorrent-rasterbar`, Debian
-# `apt install python3-libtorrent` (then create the venv with --system-site-packages).
+# Wheels are published for CPython 3.9-3.13 (manylinux x86_64); install.sh pins the venv to 3.13/3.12
+# for exactly this reason. Outside that range pip has no wheel and falls back to a source build, which
+# is the ONLY situation where an OS package is relevant — and it is a trap, not a fix: the distro build
+# tracks the SYSTEM Python, so it stops importing the moment that moves past the venv's.
 libtorrent>=2.0.0
 torpy
 

@@ -964,7 +964,8 @@ Built-in BitTorrent client with **required Tor proxy support** for anonymous dow
 
 **Setup:**
 
-1. Install libtorrent with Python bindings (see Requirements section)
+1. Nothing to install — `libtorrent` comes from `requirements.txt` as a prebuilt PyPI wheel
+   (no OS package; see "Built-in Torrent Client" under Requirements for the Python-version caveat)
 2. Enable in Admin > Services > BitTorrent Client
 3. Configure download path and optional proxy
 
@@ -2020,31 +2021,30 @@ Key packages:
 
 ### Built-in Torrent Client (Optional)
 
-The built-in torrent client uses `libtorrent-rasterbar` with Python bindings. All traffic is routed through an HTTP proxy (for Tor anonymity).
+The built-in torrent client uses `libtorrent-rasterbar` (a C++ library) through its Python bindings.
+Peer **data** is routed through the HTTP proxy → Tor; **trackers** connect directly so UDP trackers
+still work (see "Torrent anonymity model" below).
 
-**Gentoo:**
+**No OS package is needed.** `libtorrent` ships prebuilt **manylinux wheels on PyPI** that statically
+bundle boost, so it installs like any other dependency — no compiler, no portage, no apt:
+
 ```bash
-# Enable Python USE flag
-echo "net-libs/libtorrent-rasterbar python" >> /etc/portage/package.use/libtorrent
-emerge -av net-libs/libtorrent-rasterbar
-
-# Verify Python bindings are installed
-python3 -c "import libtorrent; print(libtorrent.version)"
+pip install -r requirements.txt          # libtorrent is already listed
+python -c "import libtorrent; print(libtorrent.version)"
 ```
 
-**Debian/Ubuntu:**
-```bash
-apt install python3-libtorrent
-```
+**The one real constraint is the venv's Python version.** Wheels are published for **CPython
+3.9–3.13** (x86_64 manylinux). If a node's venv uses a Python outside that range, pip has no wheel to
+install and falls back to building from source, which is where the "you need the OS package" belief
+comes from. Keep node venvs inside the supported range and the problem does not arise.
 
-**Virtual Environment Setup:**
-
-If using a venv, create it with system site-packages access:
-```bash
-python -m venv venv --system-site-packages
-```
-
-The libtorrent service will automatically detect system-installed packages even in a regular venv.
+> **Do NOT use the old system-package route** (`emerge net-libs/libtorrent-rasterbar` /
+> `apt install python3-libtorrent` plus `python -m venv --system-site-packages`). It silently breaks
+> the moment the system Python moves past the venv's: the OS package is built for the new ABI, the
+> venv is on the old one, and the import fails with the unhelpful "Torrent client not configured".
+> The wheel avoids that version skew entirely because it lives in the venv and matches its ABI.
+> Keeping a system copy installed alongside is harmless but useless — a venv created without
+> `--system-site-packages` cannot see it at all.
 
 ### Image Generation Dependencies (requirements-image.txt)
 
