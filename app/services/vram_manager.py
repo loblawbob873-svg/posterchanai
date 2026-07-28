@@ -28,6 +28,32 @@ _current_mode: Optional[Literal["llm", "image", "music", "video"]] = None
 _swap_lock = threading.Lock()
 
 
+def _native_music_active() -> bool:
+    """True when music generates in-process (diffusers has the pipeline AND no external server is
+    explicitly configured) — the same test music_factory routes on."""
+    try:
+        from app.services import music_local, settings_store
+        if (settings_store.get("music_api_base", "") or "").strip():
+            return False
+        return music_local.is_available()
+    except Exception:
+        return False
+
+
+def _unload_native_music(db: Session):
+    """Free the in-process music model. Before music was native, prepare_for_* reclaimed its VRAM by
+    stopping the acestep PROCESS; with the model in our own address space that no longer frees
+    anything, so switching to LLM/image/video would leave a multi-GB bf16 pipe resident alongside the
+    newly loaded model — an OOM on exactly the shared 12/16GB GPUs this is meant to protect."""
+    try:
+        from app.services import music_local
+        svc = music_local.get_music_service(db)
+        if svc.is_loaded():
+            svc.unload_model()
+    except Exception as e:
+        logger.debug(f"native music unload skipped: {e}")
+
+
 def _unload_native_video(db: Session):
     """Free the in-process video-generation model (Wan/diffusers) if it's loaded. Called whenever we
     swap to another GPU task so video never co-resides with LLM/image."""
@@ -148,6 +174,7 @@ def prepare_for_llm(db: Session) -> bool:
             logger.error(f"Error unloading image model: {e}")
 
         _unload_native_video(db)
+        _unload_native_music(db)
         _ensure_llm_loaded(db)
         _current_mode = "llm"
         logger.info("VRAM ready for LLM")
@@ -197,6 +224,7 @@ def prepare_for_image(db: Session) -> bool:
             logger.error(f"Error unloading LLM: {e}")
 
         _unload_native_video(db)
+        _unload_native_music(db)
         _ensure_image_loaded(db)
         _current_mode = "image"
         logger.info("VRAM ready for image generation")
@@ -213,9 +241,13 @@ def prepare_for_music(db: Session) -> bool:
     music_factory so only one model uses the GPU at a time."""
     global _current_mode
 
-    # If video previously stopped the music server (video_free_music), bring it back up and wait for
-    # it before we generate against it. No-op unless managed.
-    _ensure_music_server(db)
+    # LEGACY external server only. _ensure_music_server polls localhost:8001 for up to 90s
+    # SYNCHRONOUSLY, and this runs on the single uvicorn worker — so with the acestep daemon retired
+    # it would block the whole app (chat, image, admin, every user) for 90s before each song, and
+    # could even restart the old server into VRAM outside the GPU lock. Native music manages its own
+    # weights, so skip the whole dance unless a REST server is actually configured.
+    if not _native_music_active():
+        _ensure_music_server(db)
 
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
@@ -261,9 +293,12 @@ def prepare_for_video(db: Session) -> bool:
     settings = _get_vram_settings(db)
     vram_mode = settings["vram_mode"]
 
-    # Free the co-located music server's VRAM (stop acestep) so the large video model fits. Gated by
-    # video_free_music; no-op elsewhere. Done regardless of vram_mode (acestep is a separate process).
-    _music_service_ctl(db, "stop")
+    # Free music's VRAM so the large video model fits. Music is now IN-PROCESS, so unloading the
+    # pipe is what actually reclaims it — `_music_service_ctl(db, "stop")` only ever stopped the
+    # retired external daemon and is a no-op today, kept solely for a node still running one.
+    _unload_native_music(db)
+    if not _native_music_active():
+        _music_service_ctl(db, "stop")
 
     if vram_mode == "dedicated":
         _current_mode = "video"

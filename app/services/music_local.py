@@ -212,11 +212,15 @@ class MusicService:
             logger.info(f"[music] rendered in {time.time()-t0:.1f}s")
             wav = _to_wav_bytes(audio, self._sample_rate)
             self._last_used = time.time()
+            # Return a bare EXTENSION, not a MIME type: every consumer treats slot 2 as a file
+            # suffix (media_service.make_music_video builds f"song.{audio_ext}"), so "audio/mpeg"
+            # here yields the path "song.audio/mpeg" -> FileNotFoundError, swallowed by that
+            # function's broad except -> the branded video silently degrades to raw audio.
             if fmt and fmt.lower() != "wav":
-                enc, ctype = _transcode(wav, fmt)
+                enc, _ctype = _transcode(wav, fmt)
                 if enc:
-                    return enc, ctype
-            return wav, "audio/wav"
+                    return enc, fmt.lower()
+            return wav, "wav"
         finally:
             self._generating -= 1
             self._last_used = time.time()
