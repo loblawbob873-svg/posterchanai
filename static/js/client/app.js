@@ -1581,8 +1581,6 @@
       setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
     }
     window.addEventListener('popstate', ()=>{ _navPushed=Math.max(0,_navPushed-1); if(ME) routeFromPath(); });   // back/forward
-    { const bb=document.getElementById('view-back');
-      if(bb) bb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView('home'); }; }
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
@@ -2202,8 +2200,7 @@
   // _routing set, so nothing is pushed and this stays 0 — Back then goes Home instead of walking out of
   // the app entirely, which is what history.back() would do on a single-entry history.
   let _navPushed=0;
-  function _showBack(on){ const b=document.getElementById('view-back'); if(b) b.classList.toggle('hidden', !on); }
-  function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _showBack(true); _syncRightbar(); }
+  function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
   function switchView(v){
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
@@ -2214,7 +2211,6 @@
     // rail, opening a view is exactly the moment to hand it back to the content.
     try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
-    _showBack(false);   // a nav view IS the root of the stack; only detail views (via _clearNav) offer Back
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
       // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
@@ -10994,7 +10990,11 @@
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
   function notifList(){
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
+    // THIS list is the gate that decides what a notification even is — subscribing to a kind and giving it
+    // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
+    // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
+    // they were fetched, toasted live, and then dropped from the list that actually renders.
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
@@ -14846,11 +14846,20 @@
     // working relay hint), SAY so instead of silently presenting the reply as though it were the root.
     const missingParent = (root.id===ev.id && replyParentId(ev)) ? replyParentId(ev) : null;
     // root post first (highlighted if IT was the clicked one), then the count, then its reply subtree
-    let html = missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
+    // Every other detail view puts a "←" in its own header (art-back, repo-back, st-back…); the thread
+    // was the one that never did, which is why an issue opened from a repo had no visible way out. Bare
+    // "←", not "← Repos": a thread is reached from a feed, a notification, a profile or a repo, so it
+    // cannot name one destination — it walks the history it came through instead.
+    let html = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back">←</button></div>`;
+    html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
     html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
+    { const tb=$('#th-back',feed);
+      // Pop real history when we pushed an entry; a cold deep link pushed none, and history.back() there
+      // would leave the app rather than return to it.
+      if(tb) tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView('home'); }; }
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }
@@ -15952,7 +15961,7 @@
   // FOLLOWS EVERYONE BACK. le-back / ae-back are left out too: those read "← Cancel" and abandon an edit
   // in progress, which is not something a navigation key should do by accident.
   const _BACK_BTNS = ['#fc-back','#ch-back','#comm-back','#art-back','#st-back','#li-back','#dm-back',
-                      '#grp-back','#badm-back'];
+                      '#grp-back','#badm-back','#th-back','#repo-back'];
   function _backBtn(){
     for(const sel of _BACK_BTNS){
       const b=document.querySelector(sel);

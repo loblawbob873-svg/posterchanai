@@ -228,10 +228,6 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
 
     <main class="main">
         <header class="topbar glass">
-            <!-- Detail views (issue thread, repo, article, listing, stream, community) had NO visible way
-                 out — only the browser/Android Back gesture, which desktop users never see. Shown/hidden by
-                 _clearNav()/switchView, the same signal that already means "this is a detail view". -->
-            <button type="button" id="view-back" class="view-back hidden" title="Back" aria-label="Back">←</button>
             <h2 id="view-title">Nostrverse</h2>
             <!-- The ▦ media-grid toggle moved into the timeline's own tab row (it only ever applied to
                  Home/Nostrverse), which lets the whole topbar hide on those views — see body.tl-view. -->
