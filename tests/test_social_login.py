@@ -113,5 +113,37 @@ class TestProviderGate(unittest.TestCase):
             self.assertEqual(p["pleroma_instance"], "https://detroitriotcity.com")
 
 
+class TestRedirectOrigin(unittest.TestCase):
+    """The redirect_uri must be the PUBLIC https origin, not uvicorn's view of the request.
+
+    TLS stops at the reverse proxy, so the raw request is plain http on a LAN hop. Both providers
+    match the redirect_uri exactly against the registered one, and Google refuses http for a Web
+    client — so getting this wrong is not a cosmetic URL, it is every sign-in failing.
+    """
+    def _req(self, headers, scheme="http", netloc="192.168.0.9:3051"):
+        return mock.Mock(headers=headers, url=mock.Mock(scheme=scheme, netloc=netloc))
+
+    def test_forwarded_proto_beats_the_raw_scheme(self):
+        r = self._req({"x-forwarded-proto": "https", "host": "poster.place"})
+        self.assertEqual(sl._base_url(r), "https://poster.place")
+
+    def test_forwarded_host_beats_the_raw_netloc(self):
+        r = self._req({"x-forwarded-proto": "https", "x-forwarded-host": "poster.place",
+                       "host": "192.168.0.9:3051"})
+        self.assertEqual(sl._base_url(r), "https://poster.place")
+
+    def test_proxy_chain_takes_the_first_hop(self):
+        # X-Forwarded-* accumulate comma-separated through Cloudflare → nginx; the client-facing
+        # value is the FIRST, and passing the whole list would build a syntactically broken URI.
+        r = self._req({"x-forwarded-proto": "https, http", "x-forwarded-host": "poster.place, nas.lan"})
+        self.assertEqual(sl._base_url(r), "https://poster.place")
+
+    def test_no_proxy_headers_never_downgrades_to_http(self):
+        # Direct hit with nothing forwarded: fall back to what the request claims, and https last —
+        # an http redirect_uri is rejected by Google outright, so it is never the safer default.
+        self.assertEqual(sl._base_url(self._req({"host": "poster.place"}, scheme="")),
+                         "https://poster.place")
+
+
 if __name__ == "__main__":
     unittest.main()

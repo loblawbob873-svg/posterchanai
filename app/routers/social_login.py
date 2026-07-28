@@ -82,7 +82,21 @@ def _on(key: str) -> bool:
 
 
 def _base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    """The origin as the OUTSIDE world sees it — which is NOT what uvicorn sees.
+
+    TLS is terminated at the reverse proxy, so `request.base_url` reads `http://…` (the same trap
+    streams.py:_public_origin and files.py already document). Here it would be fatal rather than
+    cosmetic: this string becomes the OAuth `redirect_uri`, which both providers match EXACTLY
+    against the registered one and echo back at the token exchange. Google rejects plain http for a
+    Web-application client outright, so every sign-in would end at redirect_uri_mismatch.
+    Trust the proxy's X-Forwarded-* (only this app is exposed through it), falling back to what the
+    request itself claims, and finally to https — never to http.
+    """
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    proto = proto or request.url.scheme or "https"
+    host = host or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}".rstrip("/")
 
 
 def _error_page(msg: str, status: int = 400) -> HTMLResponse:
