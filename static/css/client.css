@@ -786,6 +786,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .rb-github{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:9px;color:var(--text);
   border:1px solid var(--line);border-radius:12px;padding:11px;font-weight:600;transition:.15s}
 .rb-github:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:var(--glow-cy)}
+/* Same shape as the GitHub link directly below it — they read as one pair of actions. width:100% because
+   a <button> does not stretch to its flex parent the way the <a> does. */
+.rb-report{margin-top:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:9px;
+  color:var(--text);background:none;border:1px solid var(--line);border-radius:12px;padding:11px;
+  font:inherit;font-weight:600;cursor:pointer;transition:.15s}
+.rb-report:hover{border-color:var(--neon);color:var(--neon);box-shadow:var(--glow)}
 /* No box: .glass gave it a border on all four sides AND a translucent panel, so every view header read as
    a floating rectangle with the city skyline murkily visible through it. The title is just a heading on the
    page now, matching the borderless side panels. Safe to be transparent because .main is a flex COLUMN —

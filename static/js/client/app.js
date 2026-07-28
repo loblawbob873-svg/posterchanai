@@ -1424,6 +1424,24 @@
     // instance this install talks to (build-www.sh sets __PC_API_BASE__; it's absent on the web).
     { const _b=window.__PC_API_BASE__;
       if(_b) $$('.rb-app[data-path]').forEach(a=>{ a.href=_b+a.dataset.path; a.target='_blank'; a.rel='noopener'; }); }
+    // 🐛 Report a bug — resolve THIS instance's repo and open the same New-issue modal the repo view uses,
+    // so there is one issue composer rather than a second one that would drift from it. `issues_repo` is
+    // read from CFG when a fork sets it; the fallback is our own 30617 coordinate, which is what the
+    // shortcut is for. No server change needed for the button to work today.
+    { const rb=$('#rb-report');
+      if(rb) rb.onclick=async()=>{
+        if(GUEST){ _guestPrompt(); return; }
+        const m=/^30617:([0-9a-f]{64}):(.*)$/i.exec((CFG&&CFG.issues_repo)||_ISSUES_REPO);
+        if(!m){ toast('no issue repo configured for this instance'); return; }
+        rb.disabled=true;
+        try{
+          try{ await Relay.ready(); }catch(_){}       // a click straight after launch would REQ a dead socket
+          let evs=[]; try{ evs=await Relay.query([{ authors:[m[1]], kinds:[30617], '#d':[m[2]] }]); }catch(_){}
+          const repo=evs.sort((a,b)=>b.created_at-a.created_at)[0];
+          if(!repo){ toast('could not reach the repo — try Discover → Git'); return; }
+          Store.saveEvent(repo); newRepoIssue(repo);
+        } finally { rb.disabled=false; }
+      }; }
     _maybeIosInstallHint();   // iPhone-only "Add to Home Screen" cue (no-op everywhere else)
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
@@ -3974,10 +3992,23 @@
   // Shareable web link to a repo = poster.place/<naddr> for its 30617 coordinate. Opens the repo view
   // directly (openNaddr routes kind-30617 → openRepo) for anyone, logged in or not — this is what
   // "share this project" hands out. (A repo's own `web` tag is usually the generic client URL.)
-  function _repoShareUrl(e){
+  // Where 🐛 Report a bug files to when the server doesn't name one (CFG.issues_repo). This is the
+  // PosterChanAI repo's own 30617 coordinate — a fork overrides it rather than editing this line.
+  const _ISSUES_REPO='30617:4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6:posterchanai';
+  function _repoNaddr(e){
     try{ const relays=[CFG&&CFG.relay_url].filter(Boolean);
-      return _webLink(NT().nip19.naddrEncode({identifier:_repoTag(e,'d'), pubkey:e.pubkey, kind:30617, relays})); }
+      return NT().nip19.naddrEncode({identifier:_repoTag(e,'d'), pubkey:e.pubkey, kind:30617, relays}); }
     catch(_){ return ''; }
+  }
+  function _repoShareUrl(e){ const n=_repoNaddr(e); return n?_webLink(n):''; }
+  // Everyone responsible for a repo: its 30617 author plus the `maintainers` tag — NIP-34 puts them as
+  // extra VALUES on one tag (["maintainers", pk, pk, …]), not one tag each, which is why this slices.
+  function _repoPeople(e){
+    const out=[], seen=new Set();
+    const add=pk=>{ if(/^[0-9a-f]{64}$/i.test(pk||'') && !seen.has(pk)){ seen.add(pk); out.push(pk); } };
+    add(e&&e.pubkey);
+    ((e&&e.tags)||[]).filter(t=>t[0]==='maintainers').forEach(t=>t.slice(1).forEach(add));
+    return out;
   }
   // True only when a repo's `web` tag is a REAL external forge (GitHub/Gitea/…), not our own origin —
   // "Web" on poster.place/client just reopens the generic app, so we hide it there in favour of Share.
@@ -4036,6 +4067,10 @@
   }
   function openRepo(e){
     if(!e) return;
+    // Put the repo in history. It was never a history entry, so Back from an issue popped straight PAST
+    // it to whatever came before — the "no way back from an issue" dead end. The naddr doubles as the
+    // shareable/reloadable URL: routeFromPath → openNaddr already routes a 30617 back to openRepo.
+    { const n=_repoNaddr(e); if(n) _navUrl('/'+n); }
     VIEW='repo'; _clearNav(); _gitKbBind(); $('#view-title').textContent='Repo';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const name=_repoTag(e,'name')||_repoTag(e,'d')||'(unnamed repo)';
@@ -4147,7 +4182,9 @@
     box.innerHTML = evs.length ? evs.map(_collabRow).join('') : `<div class="rv-empty muted small">${emptyMsg}</div>`;
     const cid = sel==='#rv-issues'?'#rv-c-issues':sel==='#rv-patches'?'#rv-c-patches':'';
     if(cid){ const c=$(cid,feed); if(c) c.textContent = evs.length?String(evs.length):''; }
-    $$('.collab-row',box).forEach(r=> r.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(r.dataset.pk); return; } renderThread(r.dataset.id); });
+    // openThread, not renderThread: renderThread swaps the view WITHOUT pushing a URL, so an issue
+    // opened this way had no history entry and Back could not return to the repo.
+    $$('.collab-row',box).forEach(r=> r.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(r.dataset.pk); return; } openThread(r.dataset.id); });
     $$('[data-prof]',box).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     decorateProfiles();
   }
@@ -4212,6 +4249,12 @@
           const body=ta.value.trim();
           if(!subj){ st.textContent='A subject is required.'; return; }
           const tags=[['a', addr], ['subject', subj]];
+          // Address the owner + maintainers. Without a `p` tag a 1621 notifies NOBODY — not our
+          // notifications, not push, not any other nostr client — so an issue could sit unread forever;
+          // that is the actual reason filing one felt like shouting into a void. It also covers REPLIES
+          // for free: NIP-10 replyTags() carries a parent's `p` tags forward, so everyone on the issue
+          // stays on the thread without a second mechanism watching for them.
+          _repoPeople(repo).forEach(pk=>{ if(pk!==(ME&&ME.pubkey)) tags.push(['p',pk]); });
           imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
           st.textContent='publishing…';
           try{ const r=await publish(1621, body, tags);
@@ -10904,7 +10947,7 @@
     })();
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111], limit:150 }], {   // 42=chat, 1111=community comments
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         if(VIEW==='notifications') renderNotifications(); } },
@@ -10929,6 +10972,8 @@
       : ev.kind===6?'reposted you'
       : ev.kind===42?'💬 messaged you in chat'
       : ev.kind===1111?'👥 replied to you in a community'
+      : ev.kind===1621?'🐛 opened an issue on your repo'
+      : ev.kind===1617?'🩹 sent a patch to your repo'
       : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
     try{ if(window.Notification && Notification.permission==='granted') new Notification('PosterChan', { body:`${who} ${what}`.replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(), icon:p.picture||LOGO }); }catch(_){}   // OS notif is plain text → drop shortcodes
@@ -11056,7 +11101,7 @@
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
   function _notifMatch(e){
     switch(_notifFilter){
-      case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===42 || e.kind===1111;   // incl. chat + community replies; a tip note belongs in Zaps, not here
+      case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===42 || e.kind===1111 || e.kind===1621 || e.kind===1617;   // incl. chat + community replies + git issues/patches; a tip note belongs in Zaps, not here
       case 'reactions': return e.kind===7||e.kind===6;
       case 'zaps': return e.kind===9735 || !!_tipNote(e);   // Lightning zaps + BCH/Monero address tips share the ⚡ tab
       case 'follows': return e.kind===3;
@@ -11117,7 +11162,7 @@
         more.textContent='Loading older…'; more.disabled=true;
         const oldest=all[all.length-1].created_at;
         try{
-          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,42,1111], until: oldest-1, limit:100 }]);
+          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,42,1111,1621,1617], until: oldest-1, limit:100 }]);
           older.forEach(e=>{ if(e.pubkey!==ME.pubkey) Store.saveEvent(e); });
         }catch(_){}
       }
@@ -11227,7 +11272,7 @@
     // your message, which would be the wrong target). For a reaction/repost/zap, open the post they
     // acted on (the last referenced e-tag).
     const ref=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
-    const tgt = (e.kind===1 || e.kind===42) ? e.id : (ref||e.id);
+    const tgt = (e.kind===1 || e.kind===42 || e.kind===1621 || e.kind===1617) ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
@@ -11236,6 +11281,9 @@
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
     else if(e.kind===42){cls='reply';ic='💬';txt='in chat'+_notifSaid(e);}
     else if(e.kind===1111){cls='reply';ic='👥';txt='commented'+_notifSaid(e);}
+    // NIP-34 collaboration on a repo you own/maintain. The `subject` tag IS the title, so show it
+    // instead of _notifSaid's content preview — an issue body's first line is rarely the headline.
+    else if(e.kind===1621||e.kind===1617){cls='reply';ic=e.kind===1617?'🩹':'🐛';const _s=_repoTag(e,'subject');txt=(e.kind===1617?'sent a patch':'opened an issue')+(_s?': <b>'+enc(_s.slice(0,80))+'</b>':_notifSaid(e));}
     else if(_tipNote(e)){const _tn=_tipNote(e);cls='zap';ic=_tn.icon;txt=`tipped you${_tn.amt?` <b>${enc(_tn.amt)} ${enc(_tn.unit)}</b>`:''}`;}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied'+_notifSaid(e);}
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
