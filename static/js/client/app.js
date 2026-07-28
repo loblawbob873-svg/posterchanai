@@ -2231,7 +2231,10 @@
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
-    if(VIEW!=='ai' && _ai && _ai.ws){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
+    // Keep the socket alive when a render is STILL RUNNING: closing it is what made "leave and come
+    // back" lose the result — the reply was queued server-side and only surfaced if you happened to
+    // reopen that exact conversation. Held open, the result arrives and just badges the AI nav.
+    if(VIEW!=='ai' && _ai && _ai.ws && !_ai.awaiting){ try{ _ai.ws.onclose=null; _ai.ws.close(); }catch(_){} _ai.ws=null; }
     if(VIEW!=='translate') ltTeardown();   // leaving Live Translate mid-record → release the mic stream
     if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
     if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
@@ -12681,6 +12684,13 @@
   // ----- the chat itself (ported from the old web UI; talks to /api/ws/chat over the session) -----
   // `hist` is what you have SENT, oldest first — ↑/↓ in the compose box walk it. `histIdx` is -1 whenever
   // you are editing your own live draft (which `histDraft` holds while you browse away from it).
+  // The AI conversation id is REMEMBERED. It used to live only in memory, so leaving the view and
+  // coming back created a brand-new empty chat while the render landed in the previous one — the
+  // "started a generation, left, lost it" report. The result was never gone (the server persists
+  // media into the message), it was just in a conversation nothing reopened.
+  const _AI_CONV_KEY='aiLastConv';
+  function _aiRememberConv(id){ try{ ClientSettings.set(_AI_CONV_KEY, id||0); }catch(_){ } }
+  function _aiLastConv(){ try{ return +(ClientSettings.get(_AI_CONV_KEY,0)||0)||0; }catch(_){ return 0; } }
   let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false,
               hist:[], histIdx:-1, histDraft:'', histApplying:false };
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
@@ -12853,7 +12863,12 @@
     });
   }
 
+  function _aiBadge(on){
+    const b=document.getElementById('ai-badge'); if(!b) return;
+    if(on){ b.textContent='●'; b.classList.remove('hidden'); } else b.classList.add('hidden');
+  }
   async function aiMount(feed){
+    _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
       <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none">🤖</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
@@ -13021,7 +13036,12 @@
     let convs=[]; try{ convs=await fetch('/api/conversations').then(r=>r.json()); }catch(_){}
     const sel=$('#ai-conv'); if(!sel) return;
     sel.innerHTML=(convs||[]).map(c=>`<option value="${c.id}">${enc(c.title||'New Chat')}</option>`).join('');
-    if(convs && convs.length) aiOpenConversation(convs[0].id);
+    // Prefer the conversation we were LAST in (a render may have finished there while you were
+    // elsewhere) over "the newest row", which is not the same thing once you have several chats.
+    const _last=_aiLastConv();
+    const _has=(convs||[]).some(c=>c.id===_last);
+    if(_has) aiOpenConversation(_last);
+    else if(convs && convs.length) aiOpenConversation(convs[0].id);
     else aiNewConversation();
   }
   async function aiNewConversation(){
@@ -13056,7 +13076,7 @@
     toast('chat deleted');
   }
   async function aiOpenConversation(id){
-    if(!id) return; _ai.convId=id; _ai.streamEl=null; _ai.streamBuf=""; _ai.decks={};   // decks re-hydrate from [[FC]] markers on render — drop the old set so it can't leak across opens
+    if(!id) return; _ai.convId=id; _aiRememberConv(id); _ai.streamEl=null; _ai.streamBuf=""; _ai.decks={};   // decks re-hydrate from [[FC]] markers on render — drop the old set so it can't leak across opens
     const sel=$('#ai-conv'); if(sel && sel.value!=String(id)) sel.value=String(id);
     const box=$('#ai-msgs'); if(box) box.innerHTML='<div class="spinner"></div>';
     let conv=null; try{ conv=await fetch('/api/conversations/'+id).then(r=>r.json()); }catch(_){}
@@ -13737,6 +13757,9 @@
       aiAddMessage('assistant', aiFormat(d.content||'')); _ai.awaiting=false;
       aiSpeak(d.content||'', true);
     } else if(d.type==='response'){
+      // Landed while you were on another view — the socket is deliberately kept open for an
+      // in-flight render, so say so instead of leaving it to be discovered.
+      if(VIEW!=='ai'){ _aiBadge(true); try{ toast('🤖 your AI result is ready'); }catch(_){} }
       aiAddMessage('assistant', aiRenderResponse(d.data||{})); _ai.awaiting=false;
     } else if(d.type==='error'){
       aiAddMessage('assistant', `<span class="ai-err">⚠ ${enc(d.message||'error')}</span>`);
