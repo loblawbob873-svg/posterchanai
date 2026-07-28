@@ -1,11 +1,14 @@
 """Native (in-process) music generation — ACE-Step via diffusers, on the SAME torch stack as image
 and video gen.
 
-This replaces the external `acestep-api` REST server. That server existed because ACE-Step used to
-need its own Python 3.11-3.12 environment with a conflicting torch stack and wasn't on PyPI, so it
-was a separate git checkout, a uv-provisioned interpreter and its own systemd unit. `diffusers` now
-ships `AceStepPipeline`, so the model is just another pipeline we can load like Wan/LTX for video —
-no clone, no uv, no acestep.service, no HTTP hop, and no per-GPU torch swap.
+NOT ACTIVE BY DEFAULT — gated behind the `music_native` setting (default off), because no published
+ACE-Step checkpoint is in diffusers format: none carry model_index.json, so from_pretrained 404s
+(checked ACE-Step/Ace-Step1.5, acestep-v15-xl-{base,turbo}, ACE-Step-v1-3.5B and the Comfy-Org
+mirror, every branch and PR ref). The released weights are a transformers custom-code model
+(auto_map -> modeling_acestep_v15_turbo, trust_remote_code) plus a diffusers VAE, so they cannot be
+pointed at AceStepPipeline without a weight port. Music is served by the external acestep-api server
+(see docs/MUSIC.md); this module is the ready-to-go client for the day an official diffusers
+checkpoint ships — flip music_native then.
 
 Deliberately mirrors video_service: module-level singleton, `_load_lock` around load/unload, an idle
 monitor that unloads after `music_idle_timeout`, and an in-flight counter so the monitor can't unload
