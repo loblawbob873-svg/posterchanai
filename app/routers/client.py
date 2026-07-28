@@ -1110,7 +1110,7 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
     name = (data.name or "").strip().lower()
-    catalog = {e["name"] for e in mb.alpha_effect_catalog()}
+    catalog = {e["name"]: e for e in mb.alpha_effect_catalog()}
     if name not in catalog:
         raise HTTPException(status_code=400, detail="unknown effect")
 
@@ -1149,9 +1149,10 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
             logger.warning("[meme] effect render failed (%s) for %s: %s", name, pk[:12], e)
             raise HTTPException(status_code=500, detail=str(e))
 
-    # A sensible default LENGTH for the timeline layer so the whole clip plays (nakedman is ~8s, the
-    # shrug clip ~2.7s, a static character 6s). The user trims from there like any layer.
-    nominal = dur or (8.0 if name == "nakedman" else 2.7 if name == "shrug" else 6.0)
+    # The LENGTH of the timeline layer, so the whole clip plays. Comes from the catalogue entry, which
+    # is where the renderer's own beat is decided — this used to be a ladder of magic numbers here, and
+    # it silently gave the two-panel "looking away" turn (3.5s) a 6s slot.
+    nominal = dur or float(catalog[name].get("dur") or 6.0)
     if _fwded:
         # Rendered on behalf of another node: hand back the raw clip + the metadata it can't recompute.
         # That node stores it and builds the URL, so this one needs no blob store of its own.

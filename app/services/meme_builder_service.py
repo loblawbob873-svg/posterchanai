@@ -180,7 +180,9 @@ def sound_names() -> list:
 _ALPHA_CHARACTERS = [
     # (name, label) — the character-overlay effects worth having as a transparent layer. `shrug` is
     # intentionally NOT here: it is exposed separately below because it carries audio and its own pose.
-    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("anyways", "🙄 Anyways (puppet)"),
+    # `anyways` is the two-panel "looking away" meme, not a pose — it is rendered by
+    # render_lookingaway_alpha, so the label promises the turn that the clip actually performs.
+    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("anyways", "🙈 Looking away (turns to camera)"),
     ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
 ]
 
@@ -188,22 +190,26 @@ _ALPHA_CHARACTERS = [
 def alpha_effect_catalog() -> list:
     """The full effects that can be added as a transparent LAYER, filtered to what actually resolves on
     THIS node (so the client never offers a broken pick). Each entry:
-      {"name": str, "label": str, "audio": bool}
-    `audio` reports whether the layer will carry sound, so the picker can hint it. Mirrors
-    sound_names()/_sound_path(): discovered/validated against real files, never a hard-coded list that
-    can drift from the installed assets."""
+      {"name": str, "label": str, "audio": bool, "dur": float}
+    `audio` reports whether the layer will carry sound, so the picker can hint it. `dur` is the clip's
+    natural length, so the caller can give the timeline layer a slot the clip actually fills — it lives
+    HERE, next to the renderer that decides it, rather than as a ladder of magic numbers at the caller.
+    Mirrors sound_names()/_sound_path(): discovered/validated against real files, never a hard-coded
+    list that can drift from the installed assets."""
     from app.services.effects_service import nakedman as _nm, character as _ch
     out = []
     # nakedman is drawn procedurally, so it is always available; its audio is a bundled asset.
     out.append({"name": "nakedman", "label": "🍆 Naked man (dancing)",
-                "audio": bool(_nm._nakedman_audio_path())})
+                "audio": bool(_nm._nakedman_audio_path()), "dur": 8.0})
     # shrug needs its pose art; audio is a bundled asset.
     if _ch._character_path("shrug"):
         out.append({"name": "shrug", "label": "🤷 Shrug",
-                    "audio": bool(_ch._shrug_audio_path())})
+                    "audio": bool(_ch._shrug_audio_path()), "dur": 2.7})
     for key, label in _ALPHA_CHARACTERS:
         if _ch._character_path(key):
-            out.append({"name": key, "label": f"🧍 {label}", "audio": False})
+            # A still pose holds for as long as you like; the two-panel turn has its own beat.
+            out.append({"name": key, "label": f"🧍 {label}", "audio": False,
+                        "dur": _ch.LOOKINGAWAY_ALPHA_DUR if key == "anyways" else 6.0})
     return out
 
 
@@ -221,6 +227,10 @@ def render_alpha_effect(name: str, dur: float = None) -> tuple:
         data = _nm.render_nakedman_alpha(dur=dur or 8.0)
     elif name == "shrug":
         data = _ch.render_shrug_alpha(dur=dur)
+    elif name == "anyways":
+        # NOT render_character_alpha: that resolves `anyways` to the one-panel anyways.png, which is
+        # half the meme — the puppet looking away, never turning back. See render_lookingaway_alpha.
+        data = _ch.render_lookingaway_alpha(dur=dur)
     else:
         data = _ch.render_character_alpha(name, dur=dur or 6.0)
     return data, bool(meta["audio"])

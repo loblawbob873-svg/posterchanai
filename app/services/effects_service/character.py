@@ -314,6 +314,52 @@ def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
     return still_to_alpha_video(still, dur=float(dur or 6.0))
 
 
+# The two-panel beat, shared by the catalogue so the Meme Builder gives the layer a timeline slot the
+# clip actually fills (1.6s away + 1.9s looking — see add_lookingaway_video; the punchline holds longer).
+LOOKINGAWAY_ALPHA_DUR = 3.5
+
+
+def render_lookingaway_alpha(dur: float = None) -> bytes:
+    """The two-panel "looking away" meme as a transparent LAYER: the puppet looks AWAY, then turns to
+    the camera. The Meme Builder variant of add_lookingaway_video — same two shots and the same beats,
+    but on transparency with no source image, so it composites over whatever is on the timeline.
+
+    `anyways` used to come through here as render_character_alpha, which resolves the name to the
+    ORIGINAL one-panel anyways.png — so the layer was a single still of the puppet. The turn IS the
+    joke, so that could only ever be half the meme (the command path got the two panels in 404aeb52;
+    this path never did).
+
+    Both panels are cropped against a SHARED bbox and scaled by ONE ratio. Per-panel cropping moves the
+    figure between the frames — the shipped art's bboxes already differ by a pixel (y0 1 vs 0) — and on
+    a hard cut a shifted figure reads as a twitch instead of a turn.
+    """
+    from PIL import Image as _Img
+    from app.services.media_service import frames_to_alpha_video
+    away, look = _lookingaway_panels()
+    if not (away and look):
+        # Degrade to the original single still rather than failing the pick — the same policy the
+        # command path takes when the two-panel art isn't installed.
+        return render_character_alpha("anyways", dur=dur or 6.0)
+    panels = [_character_still(away), _character_still(look)]
+    boxes = [p.getbbox() for p in panels]
+    if all(boxes):
+        shared = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                  max(b[2] for b in boxes), max(b[3] for b in boxes))
+        panels = [p.crop(shared) for p in panels]
+    w, h = panels[0].size
+    if max(w, h) > 720:
+        r = 720 / float(max(w, h))
+        size = (max(2, int(w * r)), max(2, int(h * r)))
+        panels = [p.resize(size, _Img.LANCZOS) for p in panels]
+    total = max(1.0, min(float(dur or LOOKINGAWAY_ALPHA_DUR), 30.0))
+    # Hold each panel as a run of identical frames: it's a CUT, not an animation, so the rate only has
+    # to be fine enough to land the cut where the beats say (1/8s) and to scrub smoothly.
+    fps = 8
+    n_away = max(1, int(round(total * (1.6 / LOOKINGAWAY_ALPHA_DUR) * fps)))
+    n_look = max(1, int(round(total * (1.9 / LOOKINGAWAY_ALPHA_DUR) * fps)))
+    return frames_to_alpha_video([panels[0]] * n_away + [panels[1]] * n_look, fps=fps)
+
+
 def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int,
                           band_cap: int = 0, mouth_y: int = None):
     """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
