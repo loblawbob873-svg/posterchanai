@@ -127,9 +127,11 @@ def _download_music(db):
     from app.services.locks import GPUResourceLock
     from app.services.vram_manager import prepare_for_music
     cfg = music_service.get_settings(db)
-    external = bool((cfg.get("base_url_explicit") or "").strip())
-
-    if external or not music_local.is_available():
+    # Decide the SAME way music_factory._generate_local does, or the button warms a path generation
+    # never takes: with music_native off it would snapshot_download a checkpoint nothing loads while
+    # songs are actually served by the external ACE-Step server.
+    from app.services.vram_manager import _native_music_active
+    if not _native_music_active():
         body = music_service.build_request_body(cfg, "ambient test tone", "", duration=10, steps=4)
         base = cfg.get("base_url") or music_service.DEFAULT_BASE_URL
         _set("music", "running", "warming up the external ACE-Step server…")
