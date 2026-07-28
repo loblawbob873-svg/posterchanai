@@ -4667,18 +4667,27 @@
     // try therefore claimed success on every failure, which is exactly what "it says copied but the
     // clipboard is empty" was: navigator.clipboard rejects (no permission / not a trusted gesture), we
     // fall back here, the fallback silently fails, and the user is told it worked.
+    // Copy from the REAL, visible input — not a hidden textarea. A WebView (the APK/desktop shell, where
+    // navigator.clipboard is commonly rejected outright) will refuse execCommand('copy') on an off-screen
+    // element, which is why this reported success while the clipboard stayed empty. A password field is
+    // unmasked only for the instant of the copy so the stream key is never left on screen.
     const fb=()=>{
       let ok=false;
+      const wasType=el ? el.type : '';
       try{
-        const ta=document.createElement('textarea');
-        ta.value=val; ta.readOnly=true;             // readOnly: stops iOS popping the keyboard
-        ta.style.cssText='position:fixed;top:0;left:0;opacity:0';
-        document.body.appendChild(ta);
-        ta.select(); ta.setSelectionRange(0, val.length);   // iOS ignores select() on its own
-        ok=document.execCommand('copy');
-        document.body.removeChild(ta);
-      }catch(_){ ok=false; }
-      toast(ok ? 'copied' : 'copy failed — long-press the box to select it');
+        if(el){
+          if(wasType==='password') el.type='text';
+          el.focus();
+          el.select(); if(el.setSelectionRange) el.setSelectionRange(0, val.length);
+          ok=document.execCommand('copy');
+          if(wasType==='password') el.type='password';
+        }
+      }catch(_){ ok=false; try{ if(el && wasType==='password') el.type='password'; }catch(__){} }
+      if(ok){ toast('copied'); return; }
+      // Still no clipboard: reveal it and leave it selected so the value can be copied by hand. Telling
+      // someone "copy failed" while the key stays masked leaves them with no way to get it at all.
+      try{ if(el){ if(wasType==='password') el.type='text'; el.focus(); el.select(); } }catch(_){}
+      toast('couldn’t reach the clipboard — it’s selected, long-press → Copy');
     };
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
   }
