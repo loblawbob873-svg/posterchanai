@@ -536,6 +536,22 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
 .tagline{text-align:center;color:var(--muted);margin:4px 0 22px;font-size:13px;letter-spacing:2px;text-transform:uppercase}
 .auth-pane{display:flex;flex-direction:column;gap:2px}
+/* Login card sections. The pane used to be one column of identical full-width buttons with dividers
+   between them, so every route in — extension, remote signer, pasted key, brand-new identity — read as
+   equally likely. Grouping gives the card three obvious blocks and lets the key paste fold away. */
+.auth-sec{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.auth-sec-t{color:var(--muted);font-size:12px;letter-spacing:.6px;text-transform:uppercase}
+.auth-sec .btn{margin:0}
+.auth-more{border:1px solid var(--line);border-radius:12px;padding:0 12px;margin-bottom:14px}
+.auth-more>summary{cursor:pointer;padding:11px 0;font-size:14px;color:var(--text);list-style:none}
+.auth-more>summary::-webkit-details-marker{display:none}
+.auth-more>summary::after{content:'▾';float:right;color:var(--muted);transition:.15s}
+.auth-more[open]>summary::after{transform:rotate(180deg)}
+.auth-more>summary:hover{color:var(--cyan)}
+.auth-more .input{margin:0 0 8px}
+.auth-more .btn{margin:0 0 12px}
+.auth-foot{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.auth-foot .btn{margin:0}
 .divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:12px 0}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 .auth-error{color:#ff6b8b;font-size:13px;min-height:18px;text-align:center;margin-top:6px}
@@ -3718,6 +3734,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .cmp-tools,.cmp-left{gap:6px}
 }
 body.modal-open .mobilenav{display:none}
+/* …and the same while the LOGIN GATE is up: that bar belongs to the app behind it, and showAuth only
+   hides #app — the nav is its SIBLING, so on a phone it stayed painted across the bottom of the login
+   card. Keyed off the gate's own class (it sits before .mobilenav in the DOM), so nothing has to
+   remember to toggle a body class on every path in and out of the gate. */
+.auth-gate:not(.hidden) ~ .mobilenav{display:none}
 
 /* ===== In-app confirm (replaces native confirm(); a native dialog wedges the Electron renderer's focus) ===== */
 .btn-danger{background:linear-gradient(135deg,var(--danger,#d61f4e),#a01436);border:none;color:#fff;box-shadow:0 0 12px rgba(214,31,78,.4)}

@@ -108,18 +108,30 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
             <span>🎨 AI art</span><span>🎵 music</span><span>🎬 video</span><span>♟ games</span><span>⚡ zaps</span>
         </div>
 
+        <!-- Grouped by HOW you sign in, not as one stack of same-weight buttons: signers first (the
+             key never leaves your device), then the paste-a-key path folded away behind a disclosure
+             — it is the least safe option and was sitting in the middle of the card, and last the
+             way in for someone with no key at all. Every id here is bound in bindAuth(); the panes
+             below (#auth-amber / #auth-signup) are unchanged. -->
         <div id="auth-login" class="auth-pane">
-            <button id="btn-nip07" class="btn btn-neon full">⚡ Sign in with extension (NIP-07)</button>
-            <!-- NIP-55 (Android app only): signs through a signer installed on THIS phone, no bunker URI
-                 and no relay round trip. app.js unhides it only when the OS reports a signer, and relabels
-                 it with that signer's own name; in a browser it stays hidden. -->
-            <button id="btn-nip55" class="btn btn-cyan full hidden">📲 Sign in with Amber (this device)</button>
-            <button id="btn-amber" class="btn btn-cyan full">📡 Sign in with Amber / remote signer</button>
-            <div class="divider"><span>or</span></div>
-            <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">
-            <button id="btn-nsec-login" class="btn btn-cyan full">Login with key</button>
-            <div class="divider"><span>new here?</span></div>
-            <button id="btn-show-signup" class="btn btn-ghost full">✦ Create a new identity</button>
+            <div class="auth-sec">
+                <span class="auth-sec-t">Sign in with your signer</span>
+                <button id="btn-nip07" class="btn btn-neon full">⚡ Browser extension (NIP-07)</button>
+                <!-- NIP-55 (Android app only): signs through a signer installed on THIS phone, no bunker URI
+                     and no relay round trip. app.js unhides it only when the OS reports a signer, and relabels
+                     it with that signer's own name; in a browser it stays hidden. -->
+                <button id="btn-nip55" class="btn btn-cyan full hidden">📲 Amber on this device</button>
+                <button id="btn-amber" class="btn btn-cyan full">📡 Amber / remote signer</button>
+            </div>
+            <details id="auth-key" class="auth-more">
+                <summary>🔑 I have a secret key (nsec)</summary>
+                <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">
+                <button id="btn-nsec-login" class="btn btn-cyan full">Login with key</button>
+            </details>
+            <div class="auth-foot">
+                <span class="muted small">New here?</span>
+                <button id="btn-show-signup" class="btn btn-ghost full">✦ Create a new identity</button>
+            </div>
             <div id="auth-error" class="auth-error"></div>
         </div>
 
