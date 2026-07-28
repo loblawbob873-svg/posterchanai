@@ -8392,6 +8392,10 @@
     // Cyberpunk console. The only swatch with an `fx` renderer: a gradient alone can't be a terminal,
     // it needs code behind the words, scanlines over them and type that glows in its own colour.
     {id:'console', colors:['#03130c','#0a2c1c','#04160f'], fg:'#5cff9d', fx:'console', mono:true, glow:true},
+    // Same console renderer, black and blue instead of green, and set smaller — `console` is a headline
+    // on a terminal, this is a readout. textScale is what makes that a property of the swatch rather
+    // than a second copy of the type block.
+    {id:'mainvolume', colors:['#000000','#03080f','#000000'], fg:'#8ecbff', fx:'console', mono:true, glow:true, textScale:0.7},
     // Holiday themes — festive gradient + decorative emoji framed around the text.
     {id:'christmas',    colors:['#b71c1c','#1b5e20'],          deco:['🎄','❄️','🎁']},
     {id:'halloween',    colors:['#ff7518','#0d0d0d','#6a0dad'], deco:['🎃','👻','🦇']},
@@ -8503,8 +8507,12 @@
     // Monospace is not a font swap, it's the whole point of the console swatch — proportional type on a
     // terminal reads as a poster of a terminal. 700 rather than 800: mono faces go muddy at 800.
     const font=s=>bg.mono ? `700 ${s}px ${_MONO}` : `800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
-    const floor=LONG?26:30;
-    let fs=LONG?64:112, lines=[];
+    // `textScale` shrinks BOTH the starting size and the floor. Scaling only the start would let the
+    // fit loop walk right back down to the unscaled floor, so a long draft would come out the same size
+    // as every other swatch — the setting would appear to work and then quietly not.
+    const _ts=bg.textScale||1;
+    const floor=Math.round((LONG?26:30)*_ts);
+    let fs=Math.round((LONG?64:112)*_ts), lines=[];
     for(; fs>=floor; fs-=2){ ctx.font=font(fs); lines=_bgWrap(ctx,t,maxW); const lh=fs*(LONG?1.34:1.22);
       if(lines.length*lh<=maxH && lines.every(l=>ctx.measureText(l).width<=maxW)) break; }
     const lh=fs*(LONG?1.34:1.22), y0=H/2 - (lines.length*lh)/2 + lh/2, x=LONG?pad:W/2;
