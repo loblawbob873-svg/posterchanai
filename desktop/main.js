@@ -309,6 +309,20 @@ ipcMain.handle('pc:instance:set', (_e, url) => {
   return true;
 });
 ipcMain.on('pc:retry', () => { if (win) win.loadURL(clientUrl()); });
+// Clipboard for the loaded instance. BOTH web paths are dead in this shell: navigator.clipboard is
+// removed outright when the instance is reached over plain http (not a secure context — see the note at
+// the top of this file), and execCommand('copy') is refused as well, so the Go Live stream key simply
+// could not be copied. Writing text is a far narrower capability than the file:-only instance controls,
+// but it is still gated on the instance origin so an embedded third party can't scribble on the
+// clipboard. Write-only by design: nothing here can READ what the user has copied.
+ipcMain.handle('pc:clip:write', (e, text) => {
+  const from = (e && e.senderFrame && e.senderFrame.url) || (e && e.sender && e.sender.getURL()) || '';
+  if (!isOurs(from)) { console.warn('[clip] denied', from); return false; }
+  const s = String(text == null ? '' : text);
+  if (!s || s.length > 8192) return false;    // a stream key/url is short; refuse to be a bulk channel
+  clipboard.writeText(s);
+  return true;
+});
 // Screen picker: thumbnails as data URLs so the page stays a plain, network-free file:// document.
 ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
   id: s.id,

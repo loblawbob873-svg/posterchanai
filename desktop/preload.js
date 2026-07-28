@@ -4,6 +4,15 @@
  * repoint the app at another server. */
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Clipboard WRITE, exposed to the loaded instance as well as the shell page — unlike the controls below
+// it cannot repoint the app or enumerate anything, and the main process still checks the caller is the
+// instance origin. It exists because this shell has no working web clipboard: navigator.clipboard is
+// absent over plain http (not a secure context) and execCommand('copy') is refused, which left the
+// Go Live stream key impossible to copy. Write-only — the page can never read the user's clipboard.
+contextBridge.exposeInMainWorld('pcClip', {
+  write: (s) => ipcRenderer.invoke('pc:clip:write', String(s == null ? '' : s)),
+});
+
 if (location.protocol === 'file:') {
   contextBridge.exposeInMainWorld('pcShell', {
     getInstance: () => ipcRenderer.invoke('pc:instance:get'),

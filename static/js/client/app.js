@@ -4693,6 +4693,10 @@
     // unavailable and execCommand('copy') returns false — so on the APK there is no web fix, only a
     // native one (verified against APK 1.0.509, which shipped the execCommand rewrite and still failed).
     // Plain browsers don't have Capacitor and fall straight through to the standard paths below.
+    // Desktop shell (Electron): same story as the APK — no web clipboard at all — so it exposes a
+    // write-only native bridge. Absent in every browser, so this costs nothing elsewhere.
+    if(window.pcClip && window.pcClip.write){
+      window.pcClip.write(val).then(okNative=>{ okNative ? toast('copied') : fb(); }).catch(fb); return; }
     const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
     if(cap && cap.write){ cap.write({ string: val }).then(()=>toast('copied')).catch(fb); return; }
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
