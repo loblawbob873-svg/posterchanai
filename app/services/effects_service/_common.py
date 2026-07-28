@@ -540,6 +540,11 @@ _CHARACTERS = {
     # NOT "pointing" — that alias belongs to theraped above, and a duplicate key here would silently
     # steal it (last one wins in a dict literal).
     "soyjack": "soyjack.png", "soyjak": "soyjack.png", "soy": "soyjack.png", "soyjaks": "soyjack.png",
+    # The "looking away" monkey-puppet is a TWO-panel meme (look away -> look at camera). Both panels
+    # are cut from one source against a SHARED bbox, so the figure sits identically in each and only
+    # the eyes move — a per-panel crop makes the head jump on the cut. `anyways` is the original
+    # command name and stays an alias; `lookingaway` is what the meme is actually called.
+    "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
 CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "anyways"]

@@ -117,23 +117,56 @@ def _download_image(db):
     _set("image", "done", "Image model(s) ready." + (" (base + anime)" if anime else ""))
 
 
-# ---------- music: warm up ACE-Step so it downloads its model now ----------
+# ---------- music: fetch the ACE-Step weights (and prove they load) ----------
 def _download_music(db):
+    """Fetch the model, then load it once so a failure surfaces HERE rather than on someone's first
+    song. Music is in-process now (diffusers AceStepPipeline), so this no longer pokes a REST server
+    — that path is kept only for a node still pointed at one via music_api_base."""
     import asyncio
-    from app.services import music_service
+    from app.services import music_service, music_local
     from app.services.locks import GPUResourceLock
     from app.services.vram_manager import prepare_for_music
     cfg = music_service.get_settings(db)
-    base = cfg.get("base_url") or music_service.DEFAULT_BASE_URL
-    body = music_service.build_request_body(cfg, "ambient test tone", "", duration=10, steps=4)
-    _set("music", "running", "warming up ACE-Step (downloads the model on first run)…")
+    external = bool((cfg.get("base_url_explicit") or "").strip())
 
-    async def _run():
-        async with GPUResourceLock("Music", "model download", cpu_mode=(cfg.get("device") == "cpu")):
-            prepare_for_music(db)
-            await music_service.generate_once(base, body, timeout=1800.0, fmt=cfg.get("fmt", "mp3"))
-    asyncio.run(_run())
-    _set("music", "done", "Music model ready.")
+    if external or not music_local.is_available():
+        body = music_service.build_request_body(cfg, "ambient test tone", "", duration=10, steps=4)
+        base = cfg.get("base_url") or music_service.DEFAULT_BASE_URL
+        _set("music", "running", "warming up the external ACE-Step server…")
+
+        async def _run():
+            async with GPUResourceLock("Music", "model download", cpu_mode=(cfg.get("device") == "cpu")):
+                prepare_for_music(db)
+                await music_service.generate_once(base, body, timeout=1800.0, fmt=cfg.get("fmt", "mp3"))
+        asyncio.run(_run())
+        _set("music", "done", "Music model ready (external server).")
+        return
+
+    model_id = music_local._get_settings(db)["model"]
+    # DOWNLOAD FIRST, outside the GPU lock: it is the long, purely-network part, and holding the GPU
+    # through a multi-GB fetch would block chat/image/video for the whole download.
+    _set("music", "running", f"downloading {model_id} (large, one-time)…")
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(model_id)
+    except Exception as e:
+        _set("music", "error", f"download failed: {e}")
+        return
+    # Then load once, under the lock, so an OOM or a backend incompatibility is reported here.
+    _set("music", "running", "verifying the model loads on this GPU…")
+    svc = music_local.get_music_service(db)
+    try:
+        prepare_for_music(db)
+        svc.load_model(db)
+    except Exception as e:
+        _set("music", "error", f"downloaded, but loading failed: {e}")
+        return
+    finally:
+        try:
+            svc.unload_model()      # don't hold VRAM just because someone pressed Download
+        except Exception:
+            pass
+    _set("music", "done", "Music model downloaded and verified.")
 
 
 _FNS = {"chat": _download_chat, "tools": _download_tools, "image": _download_image, "music": _download_music}

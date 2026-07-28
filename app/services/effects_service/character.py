@@ -588,8 +588,81 @@ def soyjack_attachments(attachments):
         return [], f"Could not apply soyjack to {filename}: {e}"
 
 
+def _lookingaway_panels():
+    """(away, look) panel paths, or ("","") when the two-panel art isn't installed."""
+    out = []
+    for suffix in ("a", "b"):
+        p = ""
+        for base in _CHARS_DIR_CANDIDATES:
+            cand = os.path.join(base, f"lookingaway_{suffix}.png")
+            if os.path.exists(cand):
+                p = cand
+                break
+        out.append(p)
+    return (out[0], out[1]) if all(out) else ("", "")
+
+
+def add_lookingaway_video(data: bytes) -> bytes:
+    """The two-panel "looking away" meme as a 2-shot MP4: the puppet looks AWAY, then turns to the
+    camera. That turn IS the joke, so a single still can only ever be half the meme.
+
+    Both shots composite onto the SAME source image, so only the puppet's eyes change between them.
+    """
+    import subprocess, tempfile
+    from app.services.media_service import resolve_ffmpeg
+    away, look = _lookingaway_panels()
+    if not (away and look):
+        raise RuntimeError("looking-away art (assets/characters/lookingaway_[ab].png) is missing")
+    shots = [(_composite_char_on_image(data, away), 1.6),    # beat on the turn: the second shot
+             (_composite_char_on_image(data, look), 1.9)]    # holds longer than the first
+    with tempfile.TemporaryDirectory() as tmp:
+        listing = []
+        for i, (jpg, dur) in enumerate(shots):
+            fp = os.path.join(tmp, f"shot{i}.jpg")
+            with open(fp, "wb") as fh:
+                fh.write(jpg)
+            listing.append(f"file '{fp}'\nduration {dur}")
+        # Repeat the last file with a TINY duration. The usual idiom repeats it with none at all, but
+        # ffmpeg then holds it for the previous entry's duration — which silently doubled the final
+        # shot (measured 5.46s for a 1.6+1.9 pair) and left the meme sitting on its punchline.
+        listing.append(f"file '{os.path.join(tmp, f'shot{len(shots)-1}.jpg')}'\nduration 0.04")
+        lp = os.path.join(tmp, "list.txt")
+        with open(lp, "w") as fh:
+            fh.write("\n".join(listing) + "\n")
+        out = os.path.join(tmp, "out.mp4")
+        p = subprocess.run([resolve_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+                            "-f", "concat", "-safe", "0", "-i", lp,
+                            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", out],
+                           capture_output=True, timeout=180)
+        if p.returncode != 0 or not os.path.exists(out):
+            raise RuntimeError(f"ffmpeg failed: {p.stderr[-200:]}")
+        with open(out, "rb") as fh:
+            return fh.read()
+
+
 def anyways_attachments(attachments):
-    return _pointing_attachments(attachments, "anyways", "Anyways", add_anyways)
+    """Two-panel when the art is installed (video/mp4), else the original single still."""
+    from ._common import _human_size, is_image
+    away, look = _lookingaway_panels()
+    if not (away and look):
+        return _pointing_attachments(attachments, "anyways", "Anyways", add_anyways)
+    images = [(f, d, ct) for f, d, ct in (attachments or []) if is_image(f, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_lookingaway_video(data)
+        out: OutputFile = {"filename": f"{stem}_lookingaway.mp4", "data": result,
+                           "content_type": "video/mp4"}
+        return [out], f"## 🙄 Looking away\n\n🙄 {filename}: {_human_size(len(result))}"
+    except Exception as e:
+        logger.error(f"lookingaway failed for {filename}: {e}", exc_info=True)
+        return _pointing_attachments(attachments, "anyways", "Anyways", add_anyways)
+
+
+lookingaway_attachments = anyways_attachments   # the meme's real name; `anyways` stays an alias
 
 
 def shrug_attachments(attachments):
