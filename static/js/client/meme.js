@@ -63,6 +63,13 @@
     const en=(j&&j.enhance)||[], fx=(j&&j.effects)||[];
     EFFECTS = en.concat(fx).map(e=>({ name:e.name, label:e.name, desc:e.desc||'' }));
   }).catch(()=>{});
+  // The subset of effects that can be rendered onto a TRANSPARENT canvas (/client/meme/effects: the
+  // dancing man, the shrug, the character overlays). Those are the ones that can stand on their own as a
+  // LAYER — everything in EFFECTS above needs a base image to transform, which is why these are a
+  // separate, shorter list and not a filter over that one. Filtered server-side to the assets that
+  // actually resolve on this node, so the picker never offers a broken pick.
+  let ALPHA_FX = [];
+  fetch('/client/meme/effects').then(r=>r.json()).then(j=>{ ALPHA_FX=(j&&j.effects)||[]; }).catch(()=>{});
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -234,6 +241,7 @@
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
         <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
+        <button class="btn btn-cyan small" id="mb-add-effect" title="Add an effect (dancing man, shrug, a character) as its own layer you can drag, resize and time">✨ Add effect</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
         <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
         <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
@@ -828,6 +836,69 @@
     finally{ _fxBusy = false; if(st) st.textContent=''; }
   }
 
+  // Add an effect as its OWN layer — the other half of the story from applyMemeEffect above, which
+  // transforms a layer's image and replaces it. Here the server renders the effect onto a transparent
+  // canvas (VP9-alpha .webm), stores it to Blossom, and hands back a URL we hang on the timeline as an
+  // ordinary video layer: so it composites over whatever is beneath it and gets the drag/resize handles,
+  // the trim widget and the sound control for free, with no special layer type to teach the renderer.
+  //
+  // Shares _fxBusy with applyMemeEffect on purpose: both are the same heavy server render, and the
+  // server's own per-user cooldown would 429 the second one anyway — better to say so before sending it.
+  function pickEffect(){
+    if(!ALPHA_FX.length){ toast('no add-as-layer effects available on this server'); return; }
+    const rows = ALPHA_FX.map((e,i)=>`<button class="btn btn-ghost full" data-i="${i}" style="text-align:left">`
+      + `${enc(e.label||e.name)}${e.audio?' <span class="muted small">🔊 with sound</span>':''}</button>`).join('');
+    // Say WHERE it will land before the pick, because that depends on the selection: matching the
+    // selected layer is what you want when you're dressing up a photo, and a bare "it appeared
+    // somewhere" is the thing that makes an overlay feel broken.
+    const base = P.layers.find(x=>x.id===sel && _isVisual(x));
+    PC.modal(`<h3>✨ Add an effect layer</h3>
+      <div class="muted small" style="margin-bottom:8px">Rendered on a transparent background, so it sits over
+      whatever is beneath it. ${base ? 'It will be placed over the selected layer' : 'It will start at the beginning of the build'} —
+      then drag, resize and re-time it like any other layer.</div>
+      ${rows}`, root=>{
+      root.querySelectorAll('button[data-i]').forEach(btn=>btn.onclick=async()=>{
+        const e = ALPHA_FX[+btn.dataset.i]; if(!e) return;
+        PC.closeModal();
+        if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
+        _fxBusy = true;
+        const st=document.getElementById('mb-status');
+        if(st) st.textContent='rendering '+(e.label||e.name)+'…';
+        try{
+          const auth = await selfProof();
+          const r = await fetch('/client/meme/effect',{ method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ pubkey: ME.pubkey, auth, name: e.name }) });
+          const j = await r.json().catch(()=>({}));
+          if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
+          // NOT addLayer(): that appends media at the END of the timeline (right for a clip that plays
+          // after the others, wrong for an overlay — it would render over nothing and look like the
+          // effect never arrived). An overlay is timed to what it sits on instead.
+          const nominal = (+j.dur>0) ? +j.dur : 4;
+          const box = base ? { x:base.x, y:base.y, w:base.w, h:base.h }
+                           : { x:0, y:Math.round((P.h - Math.round(P.h/2))/2), w:P.w, h:Math.round(P.h/2) };
+          // The clip is SILENT (VP9 alpha can't carry an audio stream) — when the effect has a sound the
+          // server returns its NAME, which rides the layer's existing `sound` field and mixes on render.
+          const ov = Object.assign({ id: nid(), type:'video', src:j.url, name:(e.label||e.name).slice(0,24),
+            start: base ? (+base.start||0) : 0,
+            dur: base ? ((+base.dur>0) ? +base.dur : nominal) : nominal,
+            trim:0, opacity:1, effect:'none', volume:1, mute:false, fit:'contain',
+            sound:j.sound||'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'' }, box);
+          // Draw ABOVE the layer it dresses up, but still BELOW any caption — a caption buried under an
+          // overlay is the same bug addLayer guards against for ordinary media.
+          let at = base ? P.layers.indexOf(base) + 1 : P.layers.length;
+          const firstText = P.layers.findIndex(x=>x.type==='text');
+          if(firstText>=0 && at>firstText) at = firstText;
+          P.layers.splice(at, 0, ov);
+          sel = ov.id;                 // selected on arrival, so it can be dragged/resized immediately
+          if(st) st.textContent='';
+          save(); render();
+          toast('effect layer added — drag or resize it');
+        }catch(err){ if(st) st.textContent=''; toast('effect failed: '+((err&&err.message)||err)); }
+        finally{ _fxBusy = false; }
+      });
+    });
+  }
+
   async function doRender(){
     if(!P.layers.length){ toast('add a layer first'); return; }
     // Guard on MODULE state, not just the button's disabled flag: any repaint/render() of the view replaces
@@ -1037,6 +1108,7 @@
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
     on('mb-add-audio','click',pickAudio);
+    on('mb-add-effect','click',pickEffect);
     on('mb-add-blossom','click',pickBlossom);
     on('mb-save','click',saveProject);
     on('mb-open','click',openProject);
