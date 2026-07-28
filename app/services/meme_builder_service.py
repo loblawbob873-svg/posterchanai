@@ -139,8 +139,13 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
         alpha = (f":alpha='if(lt(t,{start:.3f}),0,"
                  f"if(lt(t,{start + f:.3f}),(t-{start:.3f})/{f:.3f},"
                  f"if(lt(t,{end - f:.3f}),1,max(0,({end:.3f}-t)/{f:.3f}))))'")
+    # ONE drawtext PER LINE (see the caller): this build of ffmpeg honours a newline in the textfile
+    # as a break AND draws a notdef box for the LF itself — "line one[]" — so the control character
+    # must never reach drawtext at all. `_line_dy` shifts each line down by a line height.
+    y_off = int(_num(layer.get("_line_dy"), 0, 200, 0)) * int(round(size * 1.18))
+    y_expr = f"{y + y_off}"
     return (f"drawtext={fontfile}textfile='{{TEXTFILE}}':fontsize={size}:fontcolor={colour}:"
-            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y}{alpha}:"
+            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y_expr}{alpha}:"
             f"enable='between(t,{start:.3f},{end:.3f})'")
 
 
@@ -305,16 +310,30 @@ def render(edit: dict, sources: dict) -> bytes:
                 txt = str(layer.get("text") or "")[:500]
                 if not txt.strip():
                     continue
-                tf = os.path.join(tmp, f"t{n}.txt")
-                with open(tf, "w", encoding="utf-8") as fh:
-                    fh.write(txt)
-                dt = _drawtext(layer, w, h).replace("{TEXTFILE}", tf)
+                # Split on newlines and emit one drawtext per line — a raw LF in the textfile renders
+                # as a tofu box in this ffmpeg build (verified: "line one[]" / "line two"). Blank lines
+                # still consume a line height so the spacing the user typed is preserved.
+                _lines = txt.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+                def _chain(lay):
+                    parts = []
+                    for _i, _ln in enumerate(_lines):
+                        if not _ln.strip():
+                            continue
+                        _tf = os.path.join(tmp, f"t{n}_{_i}.txt")
+                        with open(_tf, "w", encoding="utf-8") as _fh:
+                            _fh.write(_ln)
+                        _l = dict(lay); _l["_line_dy"] = _i
+                        parts.append(_drawtext(_l, w, h).replace("{TEXTFILE}", _tf))
+                    return ",".join(parts)
+                dt = _chain(layer)
+                if not dt:
+                    continue
                 # The own-stream path draws onto a canvas whose OWN timeline runs 0..dur (the shift to the
                 # project timeline happens later via setpts), so drawtext's enable window and fade ramp must
                 # be layer-local. Using the project-absolute start there meant any caption with start>0 was
                 # enabled for frames that canvas never has — the text simply never appeared.
                 _local = dict(layer); _local["start"] = 0.0
-                dt_local = _drawtext(_local, w, h).replace("{TEXTFILE}", tf)
+                dt_local = _chain(_local)
                 fxn = (layer.get("effect") or "none").strip().lower()
                 if fxn in ("", "none", "fade"):
                     # Cheap path: draw straight onto the composite (and fade is handled inside _drawtext as
