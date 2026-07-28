@@ -451,7 +451,15 @@ def render(edit: dict, sources: dict) -> bytes:
             effect = (layer.get("effect") or "none").lower()
 
             if kind == "image":
-                cmd += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
+                if str(path).lower().endswith(".gif"):
+                    # A GIF is demuxed by the GIF demuxer, which has NO `loop` option — `-loop`
+                    # belongs to image2. Passing it did not degrade to a still: ffmpeg aborted with
+                    # "Option loop not found" and the WHOLE render failed, so one GIF layer broke the
+                    # entire meme. `-ignore_loop 0` is the GIF spelling, and it also makes an ANIMATED
+                    # gif animate and repeat for the length of its slot instead of freezing on frame 1.
+                    cmd += ["-ignore_loop", "0", "-t", f"{dur:.3f}", "-i", path]
+                else:
+                    cmd += ["-loop", "1", "-t", f"{dur:.3f}", "-i", path]
             else:
                 # A VP9-alpha .webm layer (e.g. an effect overlay) MUST be decoded with libvpx-vp9 —
                 # ffmpeg's native `vp9` decoder silently ignores the alpha layer, so the overlay would
