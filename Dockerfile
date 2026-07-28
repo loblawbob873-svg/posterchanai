@@ -107,8 +107,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #  fonts : DejaVu Bold + Liberation Sans Bold (meme captions & the Effects
 #          text overlays — the BLACKED wordmark prefers the Helvetica-clone
 #          Liberation face) + Noto color emoji (screenshots/cards)
-#  bt    : system libtorrent (the venv is created with --system-site-packages
-#          so the torrent feature can import it)
+#  bt    : tor + geoip only. libtorrent is NOT an apt package here — it comes from
+#          requirements.txt as a prebuilt manylinux wheel that statically bundles boost, so it
+#          matches the venv's ABI and is newer (2.0.13) than Ubuntu's python3-libtorrent (2.0.10),
+#          which pip's copy shadowed anyway. See requirements.txt for the wheel's Python range.
 # NOTE: the per-user Debian SANDBOX (Admin → node_exec_sandbox_enabled, OFF by default) shells out to
 # the `docker` CLI (docker-outside-of-docker). It is NOT installed here to keep the image lean — add
 # `docker.io` (or docker-ce-cli) to the list below AND mount /var/run/docker.sock + `group_add` in
@@ -126,7 +128,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-deu \
         libgl1 libglib2.0-0 libjpeg-turbo8 zlib1g \
         fonts-dejavu fonts-liberation fonts-noto-color-emoji fontconfig \
-        python3-libtorrent tor tor-geoipdb \
+        tor tor-geoipdb \
     && rm -rf /var/lib/apt/lists/*
 
 # --- headless Chrome for the screenshot command (optional, on by default) -----
@@ -142,8 +144,11 @@ RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
         rm -rf /var/lib/apt/lists/* ; \
     fi
 
-# --- python venv (system-site-packages exposes the apt python3-libtorrent) ----
-RUN python3 -m venv --system-site-packages /opt/venv && pip install --upgrade pip setuptools wheel
+# --- python venv -------------------------------------------------------------
+# ISOLATED on purpose (no --system-site-packages). That flag existed solely to expose the apt
+# python3-libtorrent; the pip wheel replaces it, and leaking every apt python3 package into the venv
+# is a standing footgun — a distro-packaged module can silently shadow the pip one the app pinned.
+RUN python3 -m venv /opt/venv && pip install --upgrade pip setuptools wheel
 
 WORKDIR /app
 
