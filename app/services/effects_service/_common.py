@@ -218,6 +218,15 @@ _SHRUG_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/shrug.mp3",
 ]
 _SHRUG_DURATION = 2.7
+# `soyjack` — the two pointing soyjaks, set to the "Soyjak Crying" meme sound (~8.0s).
+# image_audio_to_video's -shortest ends the clip with the audio; the duration just caps it a hair
+# above the track so a re-encode can't truncate the tail.
+_SOYJACK_AUDIO_CANDIDATES = [
+    os.environ.get("SOYJACK_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "soyjack.mp3"),
+    "/var/lib/posterchanai/assets/soyjack.mp3",
+]
+_SOYJACK_DURATION = 8.2
 _SETH_AUDIO_CANDIDATES = [
     os.environ.get("SETH_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "seth.mp3"),

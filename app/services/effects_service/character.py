@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, _SHRUG_AUDIO_CANDIDATES, _SHRUG_DURATION, logger, os
+from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, _SHRUG_AUDIO_CANDIDATES, _SHRUG_DURATION, _SOYJACK_AUDIO_CANDIDATES, _SOYJACK_DURATION, logger, os
 
 def _character_path(name: str) -> str:
     """Resolve a character name (or alias) to an existing asset path ("" if unknown/missing)."""
@@ -226,6 +226,28 @@ def _shrug_audio_path() -> str:
         if p and os.path.exists(p):
             return p
     return ""
+
+
+def _soyjack_audio_path() -> str:
+    """First existing soyjack mp3 from the candidate list ("" if none). The `_<name>_audio_path`
+    NAME is load-bearing: meme_builder_service.sound_names() discovers sounds by that regex, so
+    defining it is what puts `soyjack` in the Meme Builder's sound list."""
+    for p in _SOYJACK_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_soyjack_video(data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """The soyjack still, looped under the crying-soyjak sound → MP4. Mirrors add_shrug_video; the
+    branded end-card is appended later by CommandService._brand_effect_videos like every other
+    MOTION_EFFECTS video."""
+    from app.services.media_service import image_audio_to_video
+    still = add_soyjack(data)
+    audio = _soyjack_audio_path()
+    if not audio:
+        raise RuntimeError("Soyjack audio (assets/soyjack.mp3) is missing on the server")
+    return image_audio_to_video(still, "soyjack.jpg", audio, duration=_SOYJACK_DURATION)
 
 
 def add_shrug_video(data: bytes, caption: str = "Whaddya gonna do?",
@@ -545,7 +567,25 @@ def carl_attachments(attachments):
 
 
 def soyjack_attachments(attachments):
-    return _pointing_attachments(attachments, "soyjack", "Soyjak", add_soyjack)
+    """Soyjack now carries audio, so its output is video/mp4 rather than a still — same shape as
+    shrug/diarrhea. Falls back to the silent still if the sound asset is missing, so a server
+    without assets/soyjack.mp3 degrades instead of erroring."""
+    from ._common import _human_size, is_image
+    if not _soyjack_audio_path():
+        return _pointing_attachments(attachments, "soyjack", "Soyjak", add_soyjack)
+    images = [(f, d, ct) for f, d, ct in (attachments or []) if is_image(f, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_soyjack_video(data, source_filename=filename)
+        out: OutputFile = {"filename": f"{stem}_soyjack.mp4", "data": result,
+                           "content_type": "video/mp4"}
+        return [out], f"## 😮 Soyjaks pointing\n\n😮 {filename}: {_human_size(len(result))}"
+    except Exception as e:
+        logger.error(f"soyjack failed for {filename}: {e}", exc_info=True)
+        return [], f"Could not apply soyjack to {filename}: {e}"
 
 
 def anyways_attachments(attachments):
