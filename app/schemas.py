@@ -540,6 +540,9 @@ class SettingsResponse(BaseModel):
     blossom_cache_mb: Optional[int] = None
     blossom_whitelist: Optional[str] = None
     blossom_mirror_servers: Optional[str] = None   # DR: external Blossom servers to mirror blobs to
+    # Hostnames this deployment serves ITSELF that resolve to a private IP from inside the LAN
+    # (split-horizon DNS). Exempted from the SSRF guard when the server fetches media. One per line.
+    media_own_hosts: Optional[str] = None
     tenor_api_key: Optional[str] = None
     giphy_api_key: Optional[str] = None
 

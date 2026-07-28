@@ -1185,6 +1185,38 @@ _MEDIA_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
+def _own_media_hosts(db: Session) -> set:
+    """Hostnames exempt from the SSRF guard when THIS node fetches media for a render/effect.
+
+    Our own public names resolve to a PRIVATE LAN IP from inside the LAN (split-horizon DNS:
+    media.poster.place -> 192.168.0.1), so is_safe_host rejects them as private and every layer
+    served from one is refused. The Blossom bases were exempted for exactly that reason, but they
+    are not the only own host a deployment serves: this box also fronts its own fediverse instance,
+    and a timeline layer pointing at it hit the identical wall ("refused source:
+    https://detroitriotcity.com/media/…"). Hardcoding names doesn't generalise, so the extra ones are
+    an ADMIN setting (Admin → Blossom → "Own media hosts"), one hostname per line.
+
+    Only an admin can add to it, and listing a host says "this deployment serves that name" — the same
+    trust already placed in blossom_public_url. Everything not listed still goes through the guard.
+    """
+    from urllib.parse import urlparse
+    own = set()
+    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
+        h = urlparse(_setting(db, key) or "").hostname
+        if h:
+            own.add(h.lower())
+    for line in (_setting(db, "media_own_hosts") or "").replace(",", "\n").split("\n"):
+        t = line.strip().lower().strip(".")
+        if not t:
+            continue
+        # Accept a bare hostname OR a pasted URL — an admin will paste whichever is at hand. Matching is
+        # by EXACT hostname (no wildcards): each name a deployment fronts is listed on its own line, so a
+        # typo can never widen the exemption to a whole zone.
+        own.add(urlparse(t).hostname or t.split("/", 1)[0].split(":", 1)[0])
+    own.discard("")
+    return own
+
+
 async def _fetch_media_guarded(url: str, own: set, *, timeout: float = 30.0, max_redirects: int = 3):
     """GET a layer/source image, following redirects WITHOUT losing the SSRF guard.
 
@@ -1264,19 +1296,10 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     if _fwd is not None:
         return _fwd
 
-    # Fetch the layer image. OUR OWN media hosts (blossom_public_url) resolve to a PRIVATE LAN IP under
-    # split-horizon DNS (media.poster.place -> 192.168.0.1 inside the LAN), so the SSRF guard rejects them
-    # as private — which would refuse every Blossom blob the user just uploaded. Exempt them exactly like
-    # /meme/render does (these are URLs this node itself mints + serves, not an SSRF primitive); everything
-    # else still goes through the guard.
-    from urllib.parse import urlparse
+    # Fetch the layer image. Our own media hosts are exempt from the SSRF guard — see
+    # _own_media_hosts for why they have to be. Everything else still goes through the guard.
     u = (data.url or "").strip()
-    own = set()
-    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
-        h = urlparse(_setting(db, key) or "").hostname
-        if h:
-            own.add(h.lower())
-    img, ct = await _fetch_media_guarded(u, own)
+    img, ct = await _fetch_media_guarded(u, _own_media_hosts(db))
     if not img:
         raise HTTPException(status_code=400, detail="empty image")
     if len(img) > 80 * 1024 * 1024:
@@ -3866,10 +3889,7 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
 @router.post("/meme/render")
 async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depends(get_db)):
     import tempfile
-    import httpx
-    from urllib.parse import urlparse
     from app.services import meme_builder_service
-    from app.services.rss_service import looks_fetchable, is_safe_host
 
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
@@ -3895,51 +3915,41 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     if len(urls) > meme_builder_service.MAX_LAYERS:
         raise HTTPException(status_code=400, detail="too many distinct sources")
 
-    # OUR OWN media hosts are exempt from the SSRF guard, and have to be: on this deployment
-    # poster.place and media.poster.place resolve to 192.168.0.1 from inside the LAN (split-horizon
-    # DNS), so is_safe_host rejects them as private — which would refuse every Blossom blob the user
-    # just uploaded and make the feature fail 100% of the time. These are URLs this node itself mints
-    # and serves, so fetching them is not an SSRF primitive. Everything else still goes through the guard.
-    own = set()
-    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
-        h = urlparse(_setting(db, key) or "").hostname
-        if h:
-            own.add(h.lower())
+    # Our own media hosts are exempt from the SSRF guard, and have to be — see _own_media_hosts.
+    own = _own_media_hosts(db)
 
     tmpdir = tempfile.mkdtemp(prefix="pcmemesrc-")
     sources: dict = {}
     _meme_rendering.add(pk)   # released in the finally below — paired so a failure can never wedge the user out
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0), follow_redirects=False) as c:
-            for u in urls:
-                host = (urlparse(u).hostname or "").lower()
-                if urlparse(u).scheme not in ("http", "https"):
-                    raise HTTPException(status_code=400, detail=f"refused source: {u[:80]}")
-                if host not in own:
-                    # is_safe_host resolves DNS (blocking) — off the event loop, per its own docstring.
-                    if not looks_fetchable(u) or not await asyncio.to_thread(is_safe_host, u):
-                        raise HTTPException(status_code=400, detail=f"refused source: {u[:80]}")
-                try:
-                    r = await c.get(u)
-                    r.raise_for_status()
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"could not fetch a layer source: {e}")
-                # 80 MB per source: a phone-shot clip fits, a film does not. Renders share the box with
-                # chat and image gen, so this is a real resource bound, not a formality.
-                if len(r.content) > 80 * 1024 * 1024:
-                    raise HTTPException(status_code=400, detail="a layer source is too large (80 MB limit)")
-                # KEEP the source's extension on the temp file. The renderer decides how to decode a layer
-                # partly by extension — a VP9-alpha .webm effect layer MUST be decoded with libvpx-vp9 or its
-                # alpha is dropped and the overlay renders INVISIBLE (the "effect layer is audio-only" bug).
-                # A hash-only filename hid that from the renderer.
-                _base = u.split("?", 1)[0].split("#", 1)[0]
-                _ext = os.path.splitext(_base)[1].lower()
-                if len(_ext) > 6 or not _ext[1:].isalnum():
-                    _ext = ""
-                p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24] + _ext)
-                with open(p, "wb") as fh:
-                    fh.write(r.content)
-                sources[u] = p
+        for u in urls:
+            # Same guarded fetch as /meme/apply-effect, redirect-following included. This loop used to
+            # do its own follow_redirects=False GET, which is the bug that was fixed there: a 302 passes
+            # raise_for_status(), so a Blossom host that redirects to a CDN wrote a ZERO-BYTE layer file
+            # and the render silently came out missing that layer. One code path, one fix.
+            try:
+                content, _ct = await _fetch_media_guarded(u, own)
+            except HTTPException as e:
+                # Keep the URL in the message — with several layers, "refused source" alone doesn't say
+                # WHICH one the user has to remove. 200 chars, not 80: a fedi media URL is ~100 and the
+                # old cut landed mid-hash, so the reported URL 404'd when pasted back for diagnosis.
+                raise HTTPException(status_code=e.status_code, detail=f"{e.detail}: {u[:200]}")
+            # 80 MB per source: a phone-shot clip fits, a film does not. Renders share the box with
+            # chat and image gen, so this is a real resource bound, not a formality.
+            if len(content) > 80 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="a layer source is too large (80 MB limit)")
+            # KEEP the source's extension on the temp file. The renderer decides how to decode a layer
+            # partly by extension — a VP9-alpha .webm effect layer MUST be decoded with libvpx-vp9 or its
+            # alpha is dropped and the overlay renders INVISIBLE (the "effect layer is audio-only" bug).
+            # A hash-only filename hid that from the renderer.
+            _base = u.split("?", 1)[0].split("#", 1)[0]
+            _ext = os.path.splitext(_base)[1].lower()
+            if len(_ext) > 6 or not _ext[1:].isalnum():
+                _ext = ""
+            p = os.path.join(tmpdir, hashlib.sha256(u.encode()).hexdigest()[:24] + _ext)
+            with open(p, "wb") as fh:
+                fh.write(content)
+            sources[u] = p
         try:
             # Blocking ffmpeg → a thread, or it stalls the whole event loop (every other request on this
             # single-worker process) for the length of the render. Take a QUEUE slot first so only

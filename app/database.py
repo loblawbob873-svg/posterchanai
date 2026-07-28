@@ -229,6 +229,9 @@ def init_db():
             # gate uploads behind an account and reject ours, so they're not defaulted in (a server
             # that rejects just logs a skip). Admin can edit/clear in Admin → Blossom.
             "blossom_mirror_servers": "https://blossom.primal.net",
+            # Extra own hostnames for the media-fetch SSRF exemption (see media_own_hosts in
+            # app/routers/client.py). Empty on a fresh node — only a split-horizon deployment needs it.
+            "media_own_hosts": "",
             "blossom_blob_ttl_days": "0",
             "agent_artifact_ttl_days": "14",
             "blossom_max_upload_mb": "100",

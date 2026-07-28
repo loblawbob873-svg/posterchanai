@@ -11,6 +11,11 @@
             <input type="text" id="blossom_public_url" name="blossom_public_url" placeholder="https://yourdomain/blossom">
             <small>Advertised in blob descriptors / list responses. Leave blank to derive from the request (set it if behind a reverse proxy that rewrites the host).</small>
         </div>
+        <div class="form-group">
+            <label for="media_own_hosts">Own media hosts</label>
+            <textarea id="media_own_hosts" name="media_own_hosts" rows="3" placeholder="poster.place&#10;yourfediverse.example&#10;(one hostname per line)"></textarea>
+            <small>Extra domains <strong>this deployment serves itself</strong>. Needed only with <em>split-horizon DNS</em>, where your own public name resolves to a LAN IP from inside the network — the SSRF guard then reads it as private and the server refuses to fetch media from it (<code>refused source: …</code> in the Meme Builder). The Blossom URLs above are already exempt. <strong>Do not list domains you don't control</strong>: a listed host skips the private-address check.</small>
+        </div>
     </fieldset>
 
     <fieldset>
