@@ -387,6 +387,10 @@ class FediBridgeDelivered(Base):
     nostr_event_id = Column(String(64), nullable=False)  # the kind-1 we published (puppet-signed)
     nostr_pubkey = Column(String(64), nullable=True)     # the puppet that authored it
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Set once the fediverse status has actually been deleted. The row must SURVIVE the delete (it is
+    # what stops the mirror re-importing the post as a puppet note), so without this marker the
+    # reconnect replay of the kind-5 finds a live note_id and deletes the same status on every restart.
+    deleted_at = Column(DateTime, nullable=True)
 
 
 class FediBridgeSkipped(Base):

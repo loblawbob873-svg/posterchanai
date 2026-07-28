@@ -27,7 +27,7 @@ from unittest import mock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, FediBridgeAction
+from app.models import Base, FediBridgeAction, FediBridgeDelivered
 from app.services import fedi_nostr_writeback_service as wb
 
 PK = "b" * 64
@@ -167,6 +167,62 @@ class TestUndoTombstones(_Base):
         found, ok = self._undo()
         self.assertFalse(found)
         self.unreact.assert_not_awaited()
+
+
+class TestDeleteHappensOnce(_Base):
+    """A NIP-09 delete must delete the fediverse status once, not once per restart.
+
+    Same replay shape as the reactions, one floor down: the FediBridgeDelivered row deliberately
+    SURVIVES the delete (it is what keeps the mirror from re-importing the post as a puppet note), so
+    before `deleted_at` the replay found a live note_id and re-issued the delete every time. Harmless
+    to other users — a delete notifies nobody — but it ran on every restart forever.
+    """
+    def setUp(self):
+        super().setUp()
+        Base.metadata.create_all(self.engine, tables=[FediBridgeDelivered.__table__])
+        self.delete = mock.AsyncMock()
+        p = mock.patch.object(wb.pleroma_service, "delete_status", self.delete)
+        p.start(); self.addCleanup(p.stop)
+
+    def _delivered(self, note_id="B8nrZR6odSculTSANs", deleted=False):
+        self.db.add(FediBridgeDelivered(
+            platform="pleroma", instance_url=INST, note_id=note_id, note_uri=None, author_acct=None,
+            nostr_event_id=EID, nostr_pubkey=PK,
+            deleted_at=datetime.utcnow() if deleted else None))
+        self.db.commit()
+
+    def _kind5(self):
+        return {"id": "e" * 64, "pubkey": PK, "kind": 5, "content": "", "tags": [["e", EID]]}
+
+    def _run(self):
+        return asyncio.run(wb._delete_federated(self.db, self.user, self._kind5()))
+
+    def test_first_delete_goes_and_marks_the_row(self):
+        self._delivered()
+        self.assertTrue(self._run())
+        self.delete.assert_awaited_once()
+        row = self.db.query(FediBridgeDelivered).filter(
+            FediBridgeDelivered.nostr_event_id == EID).first()
+        self.assertIsNotNone(row, "the row must survive — it keeps the mirror off the post")
+        self.assertIsNotNone(row.deleted_at)
+
+    def test_replays_do_not_delete_again(self):
+        self._delivered()
+        self._run()
+        for _ in range(10):
+            wb._seen_events.clear()      # what a restart does
+            self._run()
+        self.assertEqual(self.delete.await_count, 1, "a replay re-deleted an already-deleted status")
+
+    def test_an_already_deleted_row_is_skipped(self):
+        self._delivered(deleted=True)
+        self._run()
+        self.delete.assert_not_awaited()
+
+    def test_a_tombstone_row_is_still_skipped(self):
+        self._delivered(note_id="")      # deleted before it ever federated
+        self._run()
+        self.delete.assert_not_awaited()
 
 
 if __name__ == "__main__":

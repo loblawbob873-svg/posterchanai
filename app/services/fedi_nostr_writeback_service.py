@@ -735,6 +735,8 @@ async def _delete_federated(db, user, ev: dict) -> bool:
         for row in rows:
             if not row.note_id:
                 continue   # already a tombstone — nothing on the fediverse to delete
+            if row.deleted_at:
+                continue   # already deleted; the row only survives to keep the mirror off it
             # NEVER send this user's bearer token anywhere but the instance that ISSUED it. The row records
             # the instance the status was posted to; if the user has since relinked to a different instance,
             # posting their NEW token to the OLD host would hand a live credential to a third party.
@@ -747,6 +749,11 @@ async def _delete_federated(db, user, ev: dict) -> bool:
                 # KEEP the FediBridgeDelivered row. It is what stops the global fedi mirror re-importing the
                 # user's own post as a puppet note — drop it and a still-live (or re-fetched) status comes
                 # straight back into the Nostr timeline under a puppet key the user can't delete.
+                # Mark it deleted instead, or the next reconnect replays this kind-5 and deletes the same
+                # status again — which it did, on every restart, for as long as the event stayed in the
+                # lookback window.
+                row.deleted_at = datetime.utcnow()
+                db.commit()
                 logger.info("[fedi-writeback] deleted fediverse status %s (nostr %s)", row.note_id, target[:10])
             except Exception as e:
                 ok = False   # transient → leave the event un-seen so the next replay retries it
