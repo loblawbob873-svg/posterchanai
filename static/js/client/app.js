@@ -4026,7 +4026,7 @@
     const ln=((ev.content||'').split('\n').find(l=>l.trim())||'').trim();
     return ln || '(no title)';
   }
-  function _collabRow(ev){
+  function _collabRow(ev, state, canAct){
     const p=profOf(ev.pubkey); needProfile(ev.pubkey);
     const ico=ev.kind===1617?'🩹':'🐛';
     const title=_collabTitle(ev).slice(0,200);
@@ -4041,9 +4041,14 @@
     const nAtt=mp.items.length;
     const preview = clean && clean.slice(0,240)!==title ? clean.slice(0,240) : '';
     return `<div class="collab-row" data-id="${ev.id}" data-pk="${ev.pubkey}">
-      <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}${nAtt?`<span class="collab-att" title="${nAtt} attachment${nAtt>1?'s':''}">📎${nAtt>1?nAtt:''}</span>`:''}</div>
+      <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}${nAtt?`<span class="collab-att" title="${nAtt} attachment${nAtt>1?'s':''}">📎${nAtt>1?nAtt:''}</span>`:''}${state?`<span class="collab-state st-${enc(state)}">${_ST_BADGE[state]||state}</span>`:''}</div>
       ${preview?`<div class="collab-body">${enc(preview)}${clean.length>240?'…':''}</div>`:''}
-      <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
+      <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span>${canAct?`<span class="spacer"></span>${
+        (state==='closed'||state==='resolved')
+          ? `<button class="cf-act" data-id="${ev.id}" data-kind="1630" title="Reopen">↩ Reopen</button>`
+          : `<button class="cf-act" data-id="${ev.id}" data-kind="1631" title="Mark resolved">✅ Resolve</button>`
+            +`<button class="cf-act" data-id="${ev.id}" data-kind="1632" title="Close">🔴 Close</button>`
+      }`:''}</div>
     </div>`;
   }
   // ---------- self-hosted (GRASP) repo state ----------
@@ -4173,19 +4178,91 @@
     })();
     // Issues (1621) + patches (1617) reference the repo via an `a` tag = the repo coordinate.
     const addr=_repoAddr(e);
-    _loadRepoCollab(feed, '#rv-issues', 1621, addr, 'No issues yet.');
-    _loadRepoCollab(feed, '#rv-patches', 1617, addr, 'No patches yet.');
+    _loadRepoCollab(feed, '#rv-issues', 1621, addr, 'No issues yet.', e);
+    _loadRepoCollab(feed, '#rv-patches', 1617, addr, 'No patches yet.', e);
     decorateProfiles();
   }
-  async function _loadRepoCollab(feed, sel, kind, addr, emptyMsg){
+  // ---------- NIP-34 issue/patch STATUS (1630 open / 1631 resolved / 1632 closed / 1633 draft) ----
+  // Spec: a status carries an `e` tag to the issue marked "root", p-tags the repo owner + the root
+  // author, and "the most recent Status event (by created_at) from either the issue/patch author or a
+  // maintainer is considered valid" — so authority is that union, not the owner alone.
+  const _ST_KINDS = [1630, 1631, 1632, 1633];
+  const _ST_BADGE = {open:'🟢 Open', resolved:'✅ Resolved', closed:'🔴 Closed', draft:'⚪ Draft'};
+  const _ST_META = {1630:['open','🟢 Open'], 1631:['resolved','✅ Resolved'],
+                    1632:['closed','🔴 Closed'], 1633:['draft','⚪ Draft']};
+  // Newest authoritative status per issue id. `authority` = issue author ∪ repo maintainers.
+  function _statusMap(statusEvs, issues, people){
+    const owner = new Set(people || []);
+    const byIssue = new Map(issues.map(e => [e.id, e]));
+    const best = new Map();
+    for (const st of statusEvs || []) {
+      if (!_ST_META[st.kind]) continue;
+      const target = (st.tags.find(t => t[0]==='e' && t[3]==='root') || st.tags.find(t => t[0]==='e') || [])[1];
+      const issue = target && byIssue.get(target);
+      if (!issue) continue;
+      if (st.pubkey !== issue.pubkey && !owner.has(st.pubkey)) continue;   // not authorised to set state
+      const cur = best.get(target);
+      if (!cur || st.created_at > cur.created_at) best.set(target, st);
+    }
+    return best;
+  }
+  function _canSetStatus(issue, people){
+    const me = ME && ME.pubkey; if(!me || GUEST) return false;
+    return issue.pubkey === me || (people || []).includes(me);
+  }
+  // Publish a status. `a` is optional per spec but recommended — it lets a client find every status
+  // for a repo without first knowing the issue ids.
+  async function _setIssueStatus(repo, issue, kind, note){
+    const tags = [['e', issue.id, CFG.relay_url || '', 'root'], ['k', String(issue.kind || 1621)]];
+    const addr = _repoAddr(repo); if (addr) tags.push(['a', addr]);
+    const seen = new Set([ME && ME.pubkey]);
+    for (const pk of [issue.pubkey, ..._repoPeople(repo)]) {
+      if (pk && !seen.has(pk)) { seen.add(pk); tags.push(['p', pk]); }
+    }
+    return await publish(kind, note || '', tags);
+  }
+
+  const _collabFilter = { '#rv-issues':'open', '#rv-patches':'open' };   // per-panel Open/Closed/All
+  async function _loadRepoCollab(feed, sel, kind, addr, emptyMsg, repo){
     let evs=[]; try{ evs=await Relay.query([{ kinds:[kind], '#a':[addr], limit:100 }]); }catch(_){}
     evs.forEach(ev=>{ Store.saveEvent(ev); needProfile(ev.pubkey); });
     if(VIEW!=='repo') return;
     const box=$(sel,feed); if(!box) return;
     evs.sort((a,b)=>b.created_at-a.created_at);
-    box.innerHTML = evs.length ? evs.map(_collabRow).join('') : `<div class="rv-empty muted small">${emptyMsg}</div>`;
+    // Statuses in ONE query keyed on the issue ids we just fetched — not per-issue, which would be
+    // 100 round-trips to paint a list.
+    let stEvs=[];
+    if(evs.length){
+      try{ stEvs=await Relay.query([{ kinds:_ST_KINDS, '#e':evs.map(e=>e.id).slice(0,200), limit:500 }]); }catch(_){}
+    }
+    const people=_repoPeople(repo||_rv&&_rv.repo);
+    const st=_statusMap(stEvs, evs, people);
+    const stateOf = e => { const m=st.get(e.id); return m ? _ST_META[m.kind][0] : 'open'; };   // no status = open (spec default)
+    const counts={ open:0, closed:0 };
+    evs.forEach(e=>{ const k=stateOf(e); counts[k==='open'||k==='draft'?'open':'closed']++; });
+    const mode=_collabFilter[sel]||'open';
+    const shown=evs.filter(e=>{ const k=stateOf(e);
+      return mode==='all' ? true : mode==='open' ? (k==='open'||k==='draft') : (k==='closed'||k==='resolved'); });
+    const bar=`<div class="collab-filter">${[['open',`Open ${counts.open}`],['closed',`Closed ${counts.closed}`],['all','All']]
+      .map(([k,l])=>`<button class="cf-tab${k===mode?' on':''}" data-cf="${k}">${enc(l)}</button>`).join('')}</div>`;
+    box.innerHTML = bar + (shown.length
+      ? shown.map(e=>_collabRow(e, stateOf(e), _canSetStatus(e, people))).join('')
+      : `<div class="rv-empty muted small">${mode==='open'?'No open items.':emptyMsg}</div>`);
+    $$('.cf-tab',box).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); _collabFilter[sel]=b.dataset.cf;
+      _loadRepoCollab(feed, sel, kind, addr, emptyMsg, repo); });
+    // Close / Reopen, gated on the spec's authority rule.
+    $$('.cf-act',box).forEach(b=> b.onclick=async ev=>{
+      ev.stopPropagation();
+      const issue=evs.find(x=>x.id===b.dataset.id); if(!issue) return;
+      const k=+b.dataset.kind; b.disabled=true; b.textContent='…';
+      try{ const r=await _setIssueStatus(repo||_rv&&_rv.repo, issue, k, b.dataset.note||'');
+        if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); b.disabled=false; }
+        else { toast(k===1632?'issue closed':k===1631?'marked resolved':'issue reopened');
+               _loadRepoCollab(feed, sel, kind, addr, emptyMsg, repo); }
+      }catch(err){ toast('failed: '+((err&&err.message)||err)); b.disabled=false; }
+    });
     const cid = sel==='#rv-issues'?'#rv-c-issues':sel==='#rv-patches'?'#rv-c-patches':'';
-    if(cid){ const c=$(cid,feed); if(c) c.textContent = evs.length?String(evs.length):''; }
+    if(cid){ const c=$(cid,feed); if(c) c.textContent = counts.open?String(counts.open):''; }
     // openThread, not renderThread: renderThread swaps the view WITHOUT pushing a URL, so an issue
     // opened this way had no history entry and Back could not return to the repo.
     $$('.collab-row',box).forEach(r=> r.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(r.dataset.pk); return; } openThread(r.dataset.id); });

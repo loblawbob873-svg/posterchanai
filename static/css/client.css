@@ -2028,6 +2028,23 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .collab-ico{flex:none}
 /* Attachment count on an issue/patch row. margin-left:auto parks it at the far edge so it can't be
    pushed off by a long subject (the title wraps; a flex sibling would otherwise get squeezed to 0). */
+/* NIP-34 issue state. The badge sits with the title; the actions live in the meta row so a row still
+   opens the thread on click — the buttons stopPropagation so acting on an issue doesn't navigate. */
+.collab-state{flex:none;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);white-space:nowrap}
+.collab-state.st-open{color:#3fd07a;border-color:rgba(63,208,122,.45)}
+.collab-state.st-closed{color:#ff6b81;border-color:rgba(255,107,129,.45)}
+.collab-state.st-resolved{color:var(--cyan);border-color:rgba(0,229,255,.4)}
+.collab-state.st-draft{color:var(--muted)}
+.collab-filter{display:flex;gap:6px;margin:0 0 10px}
+.cf-tab{font:inherit;font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:999px;cursor:pointer;
+  background:none;border:1px solid var(--line);color:var(--muted);transition:.15s}
+.cf-tab:hover{color:var(--text);border-color:var(--neon)}
+.cf-tab.on{color:var(--neon);border-color:var(--neon);box-shadow:var(--glow)}
+.cf-act{font:inherit;font-size:11.5px;font-weight:600;margin-left:6px;padding:3px 9px;border-radius:8px;
+  cursor:pointer;background:none;border:1px solid var(--line);color:var(--muted);transition:.15s}
+.cf-act:hover{color:var(--neon);border-color:var(--neon)}
+.cf-act:disabled{opacity:.5;cursor:default}
 .collab-att{flex:none;margin-left:auto;font-size:12px;font-weight:600;color:var(--muted);opacity:.85}
 .collab-body{color:var(--muted);font-size:13px;line-height:1.45;margin:2px 0 8px;word-break:break-word}
 .collab-meta{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
