@@ -1027,7 +1027,17 @@ _RECON_BATCH = 4        # authors per pass — small on purpose: each costs 1-2 
 _RECON_LOOKBACK = 40    # statuses per author — one page, covers a normal posting day
 _RECON_INTERVAL = 900   # seconds between passes
 _RECON_SEED_SCAN = 300
-_RECON_SEED_PER_PASS = 8   # new authors added to the rotation each pass (bounded: 8 small INSERTs)  # newest delivery rows scanned when seeding (PK index, constant cost)
+_RECON_SEED_PER_PASS = 8   # new authors added to the rotation each pass (bounded: 8 small INSERTs)
+# A neglected author can owe dozens of posts, and each repair costs the INSTANCE more than the audit
+# does — _deliver backfills ancestors and resolves quotes. Measured: one 14-repair pass took requests
+# to the instance from ~7-20/min to 34/min. Cap the burst; the remainder is picked up next pass, and
+# the rotation is a background repair, not a deadline.
+_RECON_MAX_REPAIRS_PER_PASS = 6   # new authors added to the rotation each pass (bounded: 8 small INSERTs)  # newest delivery rows scanned when seeding (PK index, constant cost)
+
+
+class _RateLimited(Exception):
+    """The instance returned 429. Raised to abort the whole pass: continuing to the next author just
+    spends the remaining budget collecting more 429s from a server already asking us to stop."""
 
 
 def _seed_recon_state(db: Session, instance_url: str, instance_host: str, want: int) -> int:
@@ -1090,7 +1100,8 @@ def _recon_candidates(db: Session, instance_url: str, limit: int, instance_host:
 
 async def _reconcile_author(db: Session, port: int, platform: str, instance_url: str,
                             instance_host: str, token: str, acct: str,
-                            blocked_domains: set, include_replies: bool, deadline: float) -> int:
+                            blocked_domains: set, include_replies: bool, deadline: float,
+                            _repair_budget=None) -> int:
     """Audit ONE author: outbox vs delivered/skipped, re-deliver the difference. Returns the count
     repaired. Never raises — one unreachable author must not stop the pass."""
     st = (db.query(FediReconcileState)
@@ -1100,6 +1111,8 @@ async def _reconcile_author(db: Session, port: int, platform: str, instance_url:
         st = FediReconcileState(instance_url=instance_url, acct=acct)
         db.add(st)
     repaired = 0
+    if _repair_budget is None:
+        _repair_budget = [_RECON_MAX_REPAIRS_PER_PASS]
     _tok = _recon_ctx.set(True)
     try:
         if not st.account_id:
@@ -1110,8 +1123,19 @@ async def _reconcile_author(db: Session, port: int, platform: str, instance_url:
                 db.commit()
                 return 0
             st.account_id = str(acc.get("id"))
-        statuses = await pleroma_service.fetch_account_statuses(
-            instance_url, token, st.account_id, limit=_RECON_LOOKBACK)
+        try:
+            statuses = await pleroma_service.fetch_account_statuses(
+                instance_url, token, st.account_id, limit=_RECON_LOOKBACK)
+        except httpx.HTTPStatusError as he:
+            if he.response is not None and he.response.status_code == 429:
+                st.last_error = "rate-limited (429)"
+                st.last_checked_at = datetime.utcnow()
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                raise _RateLimited()
+            raise
         for raw in statuses:
             if time.monotonic() > deadline:
                 break
@@ -1130,12 +1154,17 @@ async def _reconcile_author(db: Session, port: int, platform: str, instance_url:
             # blocked domains, muted authors). Calling _deliver directly would let reconciliation
             # mirror exactly what the drain is configured to refuse — a bridge that disagrees with
             # itself depending on which path saw the post first.
+            if _repair_budget[0] <= 0:
+                break               # burst cap for this pass; the rest waits for the next one
             await _process(db, port, platform, instance_url, instance_host,
                            blocked_domains, include_replies, raw, deadline)
             if _existing_mirror(db, instance_url, uri, post.get("id")):
                 repaired += 1
+                _repair_budget[0] -= 1
                 logger.info("[fedi-bridge] reconcile repaired %s by %s", post.get("id"), acct)
         st.last_error = None
+    except _RateLimited:
+        raise                       # abort the PASS, not just this author — see reconcile_once
     except Exception as e:
         # 429 is the expected failure here — back off by simply stamping the check and moving on.
         # ROLL BACK FIRST: a DB-level error leaves the Postgres txn aborted, and every later use of
@@ -1177,11 +1206,21 @@ async def reconcile_once(db: Session) -> int:
     port = _port()
     deadline = time.monotonic() + _DRAIN_BUDGET
     total = 0
+    budget = [_RECON_MAX_REPAIRS_PER_PASS]      # shared across the batch, not per author
     for acct in _recon_candidates(db, instance_url, _RECON_BATCH, instance_host):
         if time.monotonic() > deadline:
             break
-        total += await _reconcile_author(db, port, platform, instance_url, instance_host,
-                                         token, acct, blocked_domains, include_replies, deadline)
+        if budget[0] <= 0:
+            logger.info("[fedi-bridge] reconcile hit the per-pass repair cap (%d); resuming next pass",
+                        _RECON_MAX_REPAIRS_PER_PASS)
+            break
+        try:
+            total += await _reconcile_author(db, port, platform, instance_url, instance_host,
+                                             token, acct, blocked_domains, include_replies, deadline,
+                                             budget)
+        except _RateLimited:
+            logger.warning("[fedi-bridge] instance rate-limited (429) — ending this reconcile pass")
+            break
     if total:
         logger.info("[fedi-bridge] reconciliation repaired %d post(s)", total)
     return total
