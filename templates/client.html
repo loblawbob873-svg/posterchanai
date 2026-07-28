@@ -132,6 +132,13 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
                 <button id="btn-google" class="btn btn-cyan full hidden">🔑 Continue with Google</button>
                 <input id="pleroma-instance" class="input hidden" type="url" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your.instance">
                 <button id="btn-pleroma" class="btn btn-cyan full hidden">🐘 Continue with Pleroma / Mastodon</button>
+                <!-- These CREATE an identity when the account isn't linked yet, and there is no error to
+                     tell you so — you simply land in a new, empty account and it reads as "my posts are
+                     gone". Anyone who already has a key has to sign in with it FIRST and link from
+                     Settings → Account; Google is matched on its account id, which we cannot know until
+                     that link exists. Said here because it is only fixable BEFORE the click. -->
+                <p class="muted small auth-accounts-note">Creates a new identity. Already have one?
+                    Sign in with your key above, then link this from <b>Settings → Account</b>.</p>
             </div>
             <details id="auth-key" class="auth-more">
                 <summary>🔑 I have a secret key (nsec)</summary>

@@ -542,6 +542,8 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
 .auth-sec{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
 .auth-sec-t{color:var(--muted);font-size:12px;letter-spacing:.6px;text-transform:uppercase}
 .auth-sec .btn{margin:0}
+/* Sits UNDER the account buttons, not above them: it is read as a caption of what they do. */
+.auth-accounts-note{margin:2px 0 0;line-height:1.45;font-size:12px}
 .auth-more{border:1px solid var(--line);border-radius:12px;padding:0 12px;margin-bottom:14px}
 .auth-more>summary{cursor:pointer;padding:11px 0;font-size:14px;color:var(--text);list-style:none}
 .auth-more>summary::-webkit-details-marker{display:none}
