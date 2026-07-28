@@ -8021,7 +8021,10 @@
     // switchView renders the builder; seed AFTER that so our layer isn't wiped by its own first
     // render — the same ordering bug the Effects studio hit with _ai.pendingFx.
     setTimeout(()=>{
-      const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(url, isVid?'video/mp4':'image/jpeg');
+      // Hand the SOURCE POST over with the media, the same way 🎬 Effect remembers _ai.replyTo: the
+      // builder then offers "reply with it" on the finished render, instead of making you copy the link
+      // and hunt the post down again.
+      const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(url, isVid?'video/mp4':'image/jpeg', { id, pk });
       toast(ok ? '🎞️ added to the Meme Builder' : 'could not add that media');
     }, 60);
   }
@@ -17411,6 +17414,10 @@
     // that stores media or calls a /client endpoint (meme.js). uiConfirm specifically: a sub-module must
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.
     uploadBlob, selfProof, uiConfirm,
+    // NIP-10 reply tags + the cached profile, so a sub-module can reply to a post it was launched from
+    // (meme.js: reply with the finished meme) using the SAME tagging as every other reply here — a
+    // module rolling its own e/p tags is how a reply ends up detached from its thread.
+    eTags, profOf,
     // Blossom base + the app's modal, so a sub-module can browse your drive and open a picker without
     // reimplementing either (meme.js: add-media-from-Blossom, save/load project). blossomPicker is THE
     // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it

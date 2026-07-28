@@ -33,11 +33,16 @@
       // Seed a layer from a URL — how a post gets "opened in" the Meme Builder. Mirrors what the
       // Blossom picker does (addLayer takes the url directly), but callable from outside the module.
       // ME/P are loaded first because this can arrive before render() has ever run for this session.
-      addMedia(url, type){
+      // `from` = {id, pk} of the post this media came off, when the builder was opened FROM a post.
+      // Kept on the project (so it survives a reload like everything else) and spent by showResult's
+      // reply button. Last opened post wins on purpose: a sticky target would mean a post from an
+      // abandoned build silently becomes the reply for the next one, which is the worse surprise.
+      addMedia(url, type, from){
         if(!url) return false;
         try{
           ME = PC.ME; if(!P) P = load();
           addLayer(/^video\//.test(type||'') ? 'video' : 'image', url);
+          if(from && from.id) P.replyTo = { id: from.id, pk: from.pk || '' };
           save(); render();
           return true;
         }catch(e){ return false; }
@@ -935,11 +940,27 @@
     }finally{ _rendering=false; const b=document.getElementById('mb-render'); if(b) b.disabled=false; }
   }
 
+  // Who the "reply with it" button will answer, or null. Named so the button can say WHOSE post it
+  // replies to: a project persists across reloads, so "↩️ Reply to the post" on its own would be asking
+  // you to trust a target you can no longer see.
+  function _replyTarget(){
+    const to = P && P.replyTo;
+    if(!to || !to.id) return null;
+    const p = (PC.profOf && to.pk) ? (PC.profOf(to.pk) || {}) : {};
+    const name = p.name || p.display_name || (PC.niceNip05 && PC.niceNip05(p.nip05)) || '';
+    return { id: to.id, pk: to.pk || '', name };
+  }
+
   function showResult(blob, out){
     const url=URL.createObjectURL(blob);
+    // Opened from a post (🎞️ Meme Builder on a note) → offer the reply right here, the way the Effects
+    // studio does. Without it the only route back to the thread is copy-link, find the post, paste.
+    const to=_replyTarget();
+    const replyBtn = to ? `<button class="btn btn-neon small" id="mb-reply">↩️ Reply${to.name?' to '+enc(to.name):' to the post'}</button>` : '';
     out.innerHTML=`<div class="mb-result">
       <video src="${url}" controls playsinline class="mb-resvid"></video>
       <div class="mb-resacts">
+        ${replyBtn}
         <button class="btn btn-neon small" id="mb-post">📤 Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy">🔗 Upload &amp; copy link</button>
         <a class="btn btn-neon small" href="${url}" download="meme.mp4">⬇️ Download</a>
@@ -957,6 +978,22 @@
     const c=document.getElementById('mb-copy');
     if(c) c.onclick=async()=>{ try{ const u=await up(); await navigator.clipboard.writeText(u); toast('link copied'); }
       catch(err){ const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); } };
+    // Upload once, then publish a kind-1 carrying the link with NIP-10 tags to the source post — the
+    // same two steps (and the same eTags) as the Effects studio's sendEffectReply, so a meme reply
+    // threads identically to an effect reply. Disable while it's in flight: publishing twice would put
+    // two copies of the same meme under the post.
+    const rb=document.getElementById('mb-reply');
+    if(rb && to) rb.onclick=async()=>{
+      if(rb.disabled) return;
+      rb.disabled=true; const was=rb.textContent; rb.textContent='posting…';
+      try{
+        const u=await up();
+        const r=await PC.publish(1, u, PC.eTags(to.id, to.pk));    // publish() toasts its own failure
+        if(r && r.ok){ rb.textContent='✓ replied'; rb.classList.add('on'); toast('✓ reply posted'); }
+        else { rb.disabled=false; rb.textContent=was; }
+      }catch(err){ rb.disabled=false; rb.textContent=was;
+        const el=linkEl(); if(el) el.textContent='reply failed: '+((err&&err.message)||err); }
+    };
     const p=document.getElementById('mb-post');
     if(p) p.onclick=async()=>{ try{ const u=await up();
         // compose() takes an OPTIONS OBJECT — passing the bare URL string destructured to nothing and
