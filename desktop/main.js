@@ -187,6 +187,54 @@ function createWindow() {
   win.loadURL(clientUrl());
 }
 
+// ---- downloads ---------------------------------------------------------------------------------
+// Electron's DEFAULT save dialog is built with no `filters`, and a Windows save dialog without a
+// matching filter drops the extension from the suggested name: a blob served as
+// `Content-Disposition: attachment; filename="f335a5036df3.mp4"` landed on disk as `f335a5036df3`,
+// which nothing can open. So set the dialog options ourselves.
+//
+// The name is rebuilt from every source available, in order of trust, because which one survives
+// depends on where the extension was lost:
+//   1. `?filename=` — the client's own name for the file (the drive knows it; the server does not);
+//   2. what Electron parsed out of Content-Disposition;
+//   3. the URL's basename (our Blossom URLs carry the extension now);
+//   4. the MIME type of the response.
+// Whatever wins is then guaranteed an extension, and the filter for that extension is what makes
+// Windows keep it.
+const _DL_MIME_EXT = {
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'image/jpeg': 'jpg',
+  'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/flac': 'flac', 'application/pdf': 'pdf',
+  'application/zip': 'zip',
+};
+const _extOf = (s) => ((String(s || '').match(/\.([A-Za-z0-9]{1,8})$/) || [])[1] || '').toLowerCase();
+
+function downloadName(item) {
+  let url = null;
+  try { url = new URL(item.getURL()); } catch (_) { /* data:/blob: — no query to read */ }
+  const fromQuery = (url && url.searchParams.get('filename')) || '';
+  const fromItem = item.getFilename() || '';
+  const fromPath = url ? decodeURIComponent(url.pathname.split('/').pop() || '') : '';
+  let name = (fromQuery || fromItem || fromPath || 'download').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+  const ext = _extOf(name) || _extOf(fromItem) || _extOf(fromPath) || _DL_MIME_EXT[item.getMimeType()] || '';
+  if (ext && !_extOf(name)) name += '.' + ext;
+  return { name, ext };
+}
+
+function wireDownloads() {
+  session.defaultSession.on('will-download', (_e, item) => {
+    try {
+      const { name, ext } = downloadName(item);
+      item.setSaveDialogOptions({
+        defaultPath: path.join(app.getPath('downloads'), name),
+        filters: ext
+          ? [{ name: `${ext.toUpperCase()} file`, extensions: [ext] }, { name: 'All files', extensions: ['*'] }]
+          : [{ name: 'All files', extensions: ['*'] }],
+      });
+    } catch (e) { console.warn('[download]', (e && e.message) || e); }   // the default dialog still opens
+  });
+}
+
 // The client is a real app: calls need camera/mic, notifications need permission, screen share needs
 // display-capture. Grant those to the instance origin only; deny everything else by default.
 function wirePermissions() {
@@ -340,6 +388,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   wireWaylandCapture();
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.whenReady().then(() => {
+    wireDownloads();
     wirePermissions();
     buildMenu();
     createWindow();
