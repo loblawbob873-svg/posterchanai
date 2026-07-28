@@ -9,6 +9,7 @@ on, and the gate that keeps a half-configured provider off the login screen. The
 themselves need the real providers and are not mocked into a false sense of coverage here.
 """
 import time
+import asyncio
 import unittest
 from unittest import mock
 
@@ -143,6 +144,52 @@ class TestRedirectOrigin(unittest.TestCase):
         # an http redirect_uri is rejected by Google outright, so it is never the safer default.
         self.assertEqual(sl._base_url(self._req({"host": "poster.place"}, scheme="")),
                          "https://poster.place")
+
+
+class TestConfiguredInstanceIsNotVisitorInput(unittest.TestCase):
+    """The SSRF guard must not lock out the node's OWN instance.
+
+    A self-hosted instance usually resolves to a LAN address from inside its own network (split-horizon
+    DNS: detroitriotcity.com is 192.168.0.1 on this box, via the nginx that also serves /static). The
+    guard exists for the URL an anonymous visitor types, but applied to the OPERATOR's configured
+    instance it blocked the one instance the node most needs to work while allowing every stranger's.
+    """
+    def _req(self):
+        return mock.Mock(headers={"x-forwarded-proto": "https", "x-forwarded-host": "poster.place"},
+                         url=mock.Mock(scheme="http", netloc="10.0.0.1:3051"))
+
+    def test_host_normalisation_ignores_scheme_and_trailing_slash(self):
+        for spelling in ("https://Fedi.Example/", "fedi.example", "http://fedi.example",
+                         "https://fedi.example/api/v1"):
+            self.assertEqual(sl._norm_host(spelling), "fedi.example", spelling)
+
+    def test_blank_settings_do_not_become_an_empty_allowlist_entry(self):
+        # "" in the set would exempt an unparseable URL — the same class of bug as matching an
+        # empty handle against every unlabelled row.
+        with mock.patch.object(sl, "_setting", lambda k, d="": ""):
+            self.assertEqual(sl._configured_instances(), set())
+
+    def _start(self, instance, settings):
+        with mock.patch.object(sl, "_setting", lambda k, d="": settings.get(k, d)), \
+             mock.patch("app.services.pleroma_service.register_app",
+                        new=mock.AsyncMock(return_value={"client_id": "cid", "client_secret": "sec"})), \
+             mock.patch("app.services.pleroma_service.build_auth_url", lambda *a, **k: "https://i/oauth"):
+            return asyncio.run(sl.pleroma_start(sl.PleromaLoginStart(instance_url=instance), self._req()))
+
+    def test_the_operators_own_lan_instance_is_allowed(self):
+        sl._STATES.clear()
+        cfg = {"pleroma_login_enabled": "true", "pleroma_login_instance": "https://detroitriotcity.com"}
+        # is_safe_host says NO (it resolves to a private address) and it must still go through.
+        with mock.patch("app.services.rss_service.is_safe_host", lambda *_: False):
+            out = self._start("https://detroitriotcity.com", cfg)
+        self.assertIn("auth_url", out)
+
+    def test_a_stranger_typing_a_lan_address_is_still_refused(self):
+        cfg = {"pleroma_login_enabled": "true", "pleroma_login_instance": "https://detroitriotcity.com"}
+        with mock.patch("app.services.rss_service.is_safe_host", lambda *_: False), \
+             self.assertRaises(Exception) as e:
+            self._start("http://192.168.0.50", cfg)
+        self.assertIn("isn't allowed", str(getattr(e.exception, "detail", e.exception)))
 
 
 if __name__ == "__main__":

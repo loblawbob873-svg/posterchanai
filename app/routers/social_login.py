@@ -81,6 +81,19 @@ def _on(key: str) -> bool:
     return str(_setting(key, "false")).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _norm_host(url: str) -> str:
+    """Bare lowercase host of an instance URL — what two spellings of the same instance share."""
+    u = (url or "").strip().lower().rstrip("/")
+    u = u.split("://", 1)[1] if "://" in u else u
+    return u.split("/", 1)[0].split("@")[-1]
+
+
+def _configured_instances() -> set:
+    """Instance hosts the OPERATOR set, which are therefore not untrusted visitor input."""
+    return {h for h in (_norm_host(_setting("pleroma_login_instance")),
+                        _norm_host(_setting("fedi_bridge_instance_url"))) if h}
+
+
 def _base_url(request: Request) -> str:
     """The origin as the OUTSIDE world sees it — which is NOT what uvicorn sees.
 
@@ -395,14 +408,20 @@ async def pleroma_start(data: PleromaLoginStart, request: Request):
     if not instance:
         raise HTTPException(status_code=400, detail="which instance?")
     # Same SSRF guard the bridge puts on instance URLs — this one is typed in by an anonymous visitor.
-    try:
-        from app.services.rss_service import is_safe_host, looks_fetchable
-        if not looks_fetchable(instance) or not is_safe_host(instance):
-            raise HTTPException(status_code=400, detail="that instance address isn't allowed")
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+    # EXCEPT for the instance(s) the operator configured: those are not visitor input, and the guard
+    # rejects them for a reason that has nothing to do with SSRF. A self-hosted instance commonly
+    # resolves to a LAN address from inside its own network (split-horizon DNS — detroitriotcity.com
+    # is 192.168.0.1 here, via the same nginx that serves /static), so the un-exempted guard blocks
+    # sign-in to the node's OWN instance while happily allowing every stranger's.
+    if _norm_host(instance) not in _configured_instances():
+        try:
+            from app.services.rss_service import is_safe_host, looks_fetchable
+            if not looks_fetchable(instance) or not is_safe_host(instance):
+                raise HTTPException(status_code=400, detail="that instance address isn't allowed")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     from app.services.pleroma_service import register_app, build_auth_url
     redirect_uri = f"{_base_url(request)}/api/auth/pleroma/callback"
     try:
