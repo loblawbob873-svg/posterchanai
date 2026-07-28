@@ -4689,6 +4689,12 @@
       try{ if(el){ if(wasType==='password') el.type='text'; el.focus(); el.select(); } }catch(_){}
       toast('couldn’t reach the clipboard — it’s selected, long-press → Copy');
     };
+    // NATIVE FIRST inside the app. The Android WebView refuses BOTH web paths — navigator.clipboard is
+    // unavailable and execCommand('copy') returns false — so on the APK there is no web fix, only a
+    // native one (verified against APK 1.0.509, which shipped the execCommand rewrite and still failed).
+    // Plain browsers don't have Capacitor and fall straight through to the standard paths below.
+    const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
+    if(cap && cap.write){ cap.write({ string: val }).then(()=>toast('copied')).catch(fb); return; }
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
   }
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
