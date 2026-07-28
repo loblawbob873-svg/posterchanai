@@ -10,6 +10,8 @@ The app has no global CORS middleware, so Blossom's required CORS headers are se
 
 import asyncio
 import logging
+import re
+from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Depends, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -27,7 +29,7 @@ router = APIRouter(prefix="/blossom", tags=["blossom"])
 _CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, HEAD, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Content-Type, X-Content-Length, X-SHA-256, *",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Content-Type, X-Content-Length, X-SHA-256, X-Filename, X-No-Mirror, *",
     "Access-Control-Expose-Headers": "*",
 }
 
@@ -147,6 +149,46 @@ def _strip_ext(token: str) -> str:
     return token.split(".", 1)[0].strip().lower()
 
 
+def _safe_filename(name: str) -> str:
+    """Sanitise a filename that will end up in a Content-Disposition header (see blossom_service)."""
+    return blossom_service.safe_filename(name)
+
+
+def _disposition(disp: str, name: str) -> str:
+    """A Content-Disposition value that survives a non-ASCII filename.
+
+    Header values are encoded latin-1 by the ASGI layer, so putting `写真.png` straight in the header
+    raises UnicodeEncodeError and turns a download into a 500. RFC 6266/5987 is the way out: an
+    ASCII-only `filename=` for old clients plus a percent-encoded `filename*=` that every current
+    browser prefers."""
+    ascii_name = name.encode("ascii", "ignore").decode("ascii").strip() or "download"
+    out = f'{disp}; filename="{ascii_name}"'
+    if ascii_name != name:
+        out += "; filename*=UTF-8''" + quote(name, safe="")
+    return out
+
+
+def _upload_filename(request: Request) -> str:
+    """The uploader's original filename, if they sent one.
+
+    BUD-01 has no filename field (a blob is its hash), so this is best-effort: `X-Filename`
+    (optionally percent-encoded, which is how a non-ASCII name survives a header) or a standard
+    `Content-Disposition: …; filename="…"`. Missing is normal and fine."""
+    raw = (request.headers.get("x-filename", "") or "").strip()
+    if not raw:
+        cd = request.headers.get("content-disposition", "") or ""
+        m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd, re.I)
+        raw = m.group(1).strip() if m else ""
+    if not raw:
+        return ""
+    if "%" in raw:
+        try:
+            raw = unquote(raw)
+        except Exception:
+            pass
+    return _safe_filename(raw)
+
+
 def _base_url(request: Request, db: Session) -> str:
     # An upload over our .onion must come back as an onion URL: this string is what the client puts in
     # the note / hands to other users, so returning the clearnet media host would exit Tor for every
@@ -203,14 +245,19 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     mime = request.headers.get("content-type", "") or "application/octet-stream"
     # X-No-Mirror: client opt-out of DR mirroring (encrypted music — don't push it to public backups).
     no_mirror = request.headers.get("x-no-mirror", "") in ("1", "true", "yes")
+    filename = _upload_filename(request)
     try:
-        await blossom_service.save_blob(db, pubkey, data, mime, mirror=not no_mirror)
+        await blossom_service.save_blob(db, pubkey, data, mime, mirror=not no_mirror,
+                                        filename=filename)
     except Exception as e:
         logger.error("[blossom] upload failed: %s", e, exc_info=True)
         return _err(500, "storage error")
 
     blob = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
-    return JSONResponse(blossom_service.descriptor(blob, _base_url(request, db)), headers=_CORS)
+    return JSONResponse(
+        blossom_service.descriptor(blob, _base_url(request, db),
+                                   name=blossom_service.name_for(db, sha256, pubkey)),
+        headers=_CORS)
 
 
 @router.head("/upload")
@@ -244,7 +291,9 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
         return _err(400, "invalid pubkey")
     base = _base_url(request, db)
     blobs = blossom_service.list_for_pubkey(db, pk_hex)
-    return JSONResponse([blossom_service.descriptor(b, base) for b in blobs], headers=_CORS)
+    names = blossom_service.names_for_pubkey(db, pk_hex)   # one query, not one per blob
+    return JSONResponse([blossom_service.descriptor(b, base, name=names.get(b.sha256, ""))
+                         for b in blobs], headers=_CORS)
 
 
 @router.api_route("/{sha256}", methods=["GET", "HEAD"])
@@ -264,6 +313,22 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
         "Cache-Control": "public, max-age=31536000, immutable",
         "Accept-Ranges": "bytes",   # advertise range support so browsers will seek/play video
     }
+    # Name the download. `inline` keeps images/video previewing in the tab (an `attachment` would
+    # force a download on every view), but a "Save as" — and the old EXTENSIONLESS /<sha> links
+    # already living in notes — now lands as `report.pdf` (or `<sha>.pdf`) instead of a bare hash.
+    # Precedence: an explicit ?filename= (the caller knows best) → the uploader's stored name →
+    # sha + the extension implied by the MIME type. `?download=1` flips it to a forced download.
+    _dl = bool(request.query_params.get("download"))
+    _fname = _safe_filename(request.query_params.get("filename", ""))
+    # The stored-name lookup is a DB round-trip, so it's reserved for an actual download — the hot
+    # path here is thumbnails and inline media, which the metadata RAM cache deliberately serves
+    # without touching Postgres.
+    if not _fname and _dl:
+        _fname = _safe_filename(blossom_service.name_for(db, sha))
+    if not _fname:
+        _ext = blossom_service.ext_for_mime(mime)
+        _fname = sha + (f".{_ext}" if _ext else "")
+    headers["Content-Disposition"] = _disposition("attachment" if _dl else "inline", _fname)
     if request.method == "HEAD":
         return Response(status_code=200, media_type=mime,
                         headers={**headers, "Content-Length": str(blob.size)})
@@ -296,7 +361,10 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
             # negative so the grid's <img> onerror→icon fallback doesn't re-request it on every render
             return Response(status_code=404, headers={**_CORS, "Cache-Control": "public, max-age=86400"})
         return Response(t, media_type="image/jpeg",
-                        headers={**headers, "Content-Length": str(len(t))})
+                        headers={**headers, "Content-Length": str(len(t)),
+                                 # this response is a JPEG preview, not the blob — don't hand the
+                                 # browser the full file's name for it
+                                 "Content-Disposition": _disposition("inline", f"{sha}.jpg")})
 
     # HTTP Range (video/audio seeking + MP4s with a trailing moov atom). Streams ONLY the requested
     # window — from the RAM cache (slice), the storage proxy (Range forwarded → nas 206), or a local

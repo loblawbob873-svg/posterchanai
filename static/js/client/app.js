@@ -9242,6 +9242,12 @@
       || await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
     if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
+    // Tell the server the original filename. A blob is addressed by its hash and has no name of its
+    // own, so without this a download off any other device/client saves as a bare sha256. Percent-
+    // encoded because a header can only carry ASCII (a non-ASCII name would throw here).
+    // ONLY to our own server: a custom header is part of the CORS preflight, so sending it to a
+    // third-party Blossom host that whitelists a fixed header list would fail the whole upload.
+    try{ if(file.name && server===_blossomBuiltin().url) hdr['X-Filename']=encodeURIComponent(file.name); }catch(_){}
     let res;
     try {
       res=await fetch(server+'/upload',{ method:'PUT', headers:hdr, body:buf });
@@ -9253,9 +9259,12 @@
     }
     if(!res.ok){ const t=await res.text().catch(()=>res.status); throw new Error(res.headers.get('x-reason')||t); }
     const d=await res.json();
-    // Our Blossom URLs are extensionless (/<sha256>); append the file extension so clients (incl.
-    // linkify below) can detect the media type and embed/play it. The server ignores the suffix.
-    const ext=extFor(file); const url=(d.url||server+'/'+hash) + (ext?('.'+ext):'');
+    // The URL must carry a file extension so clients (incl. linkify below) can detect the media type
+    // and embed/play it. Our server now returns one (BUD-02), and other servers may not — so append
+    // ours only when the returned URL doesn't already end in an extension, never blindly (that made
+    // "photo.jpg.jpg"). The server ignores the suffix when serving.
+    const ext=extFor(file); let url=d.url||(server+'/'+hash);
+    if(ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0])) url+='.'+ext;
     // Record NIP-92 source metadata so a note carrying this URL gets an `imeta` tag (see imetaTagsFor).
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ _MEDIA_META.set(url, { m:t, x:hash, dim:await _mediaDim(file) }); } }catch(_){}
     return url;
@@ -9331,14 +9340,90 @@
   // Grid thumbnail. Images load a small server-side JPEG (?thumb=1) instead of the full file, and
   // videos show an icon rather than downloading the whole clip — both to save bandwidth in the grid.
   function thumbUrl(u){ return u + (u.indexOf('?')<0?'?':'&') + 'thumb=1'; }
-  function blobThumb(b){
-    const t=b.type||'', ext=(t.split('/')[1]||'file').slice(0,10);
+  // A file's extension (no dot, lowercase): the real one off its name when we have one, else derived
+  // from the URL or the MIME type. Blossom blobs are named by their sha256, so the name — ours from
+  // the Files index, or the server's from the listing — is where the true extension survives.
+  function extOfBlob(b, m){
+    const nm=(m&&m.name)||(b&&b.name)||'';
+    let e=(nm.match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'';
+    if(!e){ try{ e=(String((b&&b.url)||'').split('?')[0].match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||''; }catch(_){} }
+    const t=(((b&&b.type)||(m&&m.mime)||'').split(';')[0]||'').trim().toLowerCase();
+    if(!e) e=_MIME_EXT[t]||'';
+    if(!e){ const sub=(t.split('/')[1]||''); if(sub && !/octet-stream/.test(sub)) e=sub.replace(/^x-/,'').replace(/[^a-z0-9]/g,''); }
+    return e.toLowerCase().slice(0,8);
+  }
+  // Card label that KEEPS the extension visible: a plain name.slice(0,18) cut it off the end of every
+  // longish filename, so the drive showed no file types at all. Truncate the stem, never the suffix.
+  function fileLabel(nm, ext, size){
+    if(!nm) return (ext?ext.toUpperCase()+' · ':'')+(((size||0)/1024|0)+'KB');
+    const dot=nm.lastIndexOf('.'), hasExt = dot>0 && /^[A-Za-z0-9]{1,8}$/.test(nm.slice(dot+1));
+    const stem = hasExt ? nm.slice(0,dot) : nm;
+    const suf  = hasExt ? nm.slice(dot+1) : ext;      // name carries no extension → show the derived one
+    const room = suf ? Math.max(6, 20-suf.length) : 20;
+    return (stem.length>room ? stem.slice(0,room)+'…' : stem) + (suf?'.'+suf:'');
+  }
+  function blobThumb(b, ext){
+    const t=b.type||'';
+    ext=(ext||(t.split('/')[1]||'file')).slice(0,10);
     if(/image/.test(t)) return `<img src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
     if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
     const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
     return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
+  }
+  // What a downloaded blob should be SAVED as. A blob is addressed by its hash, so with no name
+  // anywhere the honest fallback is a short hash plus the real extension — never a bare 64-char hex.
+  function downloadName(b, nm, ext){
+    nm=(nm||'').replace(/[\\/:*?"<>|]/g,'_').trim();
+    ext=ext||extOfBlob(b);
+    if(!nm) return (b.sha256||'file').slice(0,12)+(ext?'.'+ext:'');
+    return /\.[A-Za-z0-9]{1,8}$/.test(nm) ? nm : nm+(ext?'.'+ext:'');
+  }
+  // Download URL: `download=1` makes the server answer with Content-Disposition: attachment, and
+  // `filename=` hands it the name we know (the drive's index — the server only knows what the
+  // uploading client told it). The <a download> attribute alone is ignored cross-origin, which is
+  // exactly the case for a custom media server, so the query params are what actually do the work.
+  function downloadUrl(url, name){
+    if(!url) return url;
+    const sep = url.indexOf('?')<0 ? '?' : '&';
+    return url + sep + 'download=1' + (name?('&filename='+encodeURIComponent(name)):'');
+  }
+  // Save bytes we already hold (a decrypted blob, or one we just fetched) under a real filename.
+  // In the APK a programmatic <a download> is ignored by the WebView, so on-device this goes out
+  // through the OS share sheet (Save to Files / Photos / Send…) — the same route as image saves.
+  async function saveBlobAs(blob, name){
+    name=name||'file';
+    if(_isNativeApp()){
+      try{
+        const P=(window.Capacitor&&Capacitor.Plugins)||{};
+        if(P.Filesystem && P.Share){
+          const b64=await _blobToB64(blob);
+          const w=await P.Filesystem.writeFile({ path:name, data:b64, directory:'CACHE' });
+          try{ await P.Share.share({ files:[w.uri], dialogTitle:'Save or share '+name }); }catch(_){}   // dismissing the sheet is a cancel, not a failure
+          return 'shared';   // the sheet IS the confirmation — don't also claim "saved"
+        }
+      }catch(_){ /* fall through to the web path */ }
+    }
+    const u=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u), 30000);
+    return 'saved';
+  }
+  // Download a Blossom blob to the device under its real filename. Fetching to a blob first is what
+  // makes the NAME stick: <a download> is ignored cross-origin (a custom media server, and the APK
+  // where every URL is cross-origin), and our own server allows the read (CORS `*` on every reply).
+  // If the fetch is refused — a third-party server with no CORS — fall back to letting the browser
+  // navigate, where the server's `?download=1` Content-Disposition is the last line of defence.
+  async function downloadBlobFile(url, name){
+    if(!url) return;
+    try{
+      const r=await fetch(downloadUrl(url,name)); if(!r.ok) throw new Error('HTTP '+r.status);
+      if(await saveBlobAs(await r.blob(), name)==='saved') toast('saved '+name);
+    }catch(_){
+      const a=document.createElement('a'); a.href=downloadUrl(url,name); a.download=name||'';
+      a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+    }
   }
   function copyUrl(u){ try{ u=new URL(u, location.href).href; }catch(_){}
     try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
@@ -9418,7 +9503,11 @@
           const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
           close();
           if(onPick){ try{ onPick({url, type, ext}); }catch(_){} return; }
-          ta.value+=(ta.value?'\n':'')+url+(ext?('.'+ext):'');
+          // ...only when the URL doesn't already carry one — the server's listing now includes the
+          // extension, and appending unconditionally produced "…/<sha>.png.png" (which still served,
+          // but is what every other client shows in the note).
+          const _need = ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0]);
+          ta.value+=(ta.value?'\n':'')+url+(_need?('.'+ext):'');
           ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
 
       };
@@ -9959,22 +10048,34 @@
     if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; }   // reset paging on folder change
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
     grid.innerHTML = inFolder.length ? (_shown.map(b=>{
-      const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||_vodNameMap[b.sha256]||'';
+      // Name: ours (Files index) → the server's stored upload name → a VOD label. The last two are why
+      // a file uploaded from another device/client isn't an anonymous "412KB" tile any more.
+      const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
+      const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
+      const dlName=downloadName(b, nm, ext);
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        const ext=((m.mime||'').split('/')[1]||'enc').slice(0,10);
-        return `<div class="file-card enc" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext)}</span></div></a>
+        return `<div class="file-card enc" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           <button class="del" data-sha="${b.sha256}">✕</button>
-          <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):'encrypted'}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts"><button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
       }
-      return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b)}</a>
+      return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
-        <div class="meta"><span title="${enc(nm)}">${nm?enc(nm.slice(0,18)):(((b.size||0)/1024|0)+'KB')}</span><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></div></div>`;
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
     $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
+    // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
+    // browser first, then save the plaintext under its real name.
+    $$('.dlenc',grid).forEach(b=> b.onclick=async e=>{ e.preventDefault(); e.stopPropagation();
+      try{ toast('decrypting…'); const u=await trackUrl(b.dataset.sha);
+        const blob=await fetch(u).then(r=>r.blob());
+        if(await saveBlobAs(blob, b.dataset.name)==='saved') toast('saved '+b.dataset.name); }
+      catch(err){ toast('download failed: '+((err&&err.message)||'')); } });
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
     $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    // :not(.dlenc) — encrypted files have their own handler below (decrypt first, never fetch the URL)
+    $$('.dlbtn:not(.dlenc)',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); downloadBlobFile(b.dataset.url, b.dataset.name); });
     $$('.movebtn',grid).forEach(b=> b.onclick=(e)=>_moveMenu(e.currentTarget, b.dataset.sha));
     $$('.file-card',grid).forEach(card=> card.ondragstart=e=>{ if(e.dataTransfer) e.dataTransfer.setData('text/sha', card.dataset.sha); });
     $$('.folder-chip[data-folder]').forEach(chip=>{
@@ -10425,10 +10526,12 @@
         // is also what attaches the ?t= ownership token when the instance is cleartext (an .onion).
         const url=_absUrl(f.url);
         const thumb=isImg?`<img src="${enc(thumbUrl(url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
-        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span>${enc(f.name.slice(0,16))}</span></div></div>`;
+        const dlName=downloadName({sha256:f.sha, type:f.mime, url}, f.name, '');
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span class="fname" title="${enc(f.name||'')}">${enc(fileLabel(f.name, extOfBlob({url, type:f.mime}, {name:f.name}), 0))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}">⬇</button></span></div></div>`;
       }).join('')}</div>`;
     $$('.del',pane).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
     $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
+    $$('.dlbtn',pane).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); downloadBlobFile(b.dataset.url, b.dataset.name); });
     _wireOrphanPrune(pane);
   }
   function _wireOrphanPrune(pane){

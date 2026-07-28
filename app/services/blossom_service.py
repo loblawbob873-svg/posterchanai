@@ -617,11 +617,12 @@ def _mirror_worker() -> None:
 
 
 async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True,
-                    private: bool = False, expires_days: int = 0) -> dict:
+                    private: bool = False, expires_days: int = 0, filename: str = "") -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
     (without `url`, which the router fills from the request base). `expires_days` > 0 stamps an
     explicit per-blob TTL (expires_at) so transient blobs — e.g. agent workspace backups — are swept
-    regardless of the global `blossom_blob_ttl_days`, instead of piling up forever."""
+    regardless of the global `blossom_blob_ttl_days`, instead of piling up forever.
+    `filename` is the uploader's original name, kept per-owner for listings and downloads."""
     cfg = _cfg(db)
     sha256 = await asyncio.to_thread(compute_sha256, data)
     size = len(data)
@@ -646,7 +647,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
                 db.rollback()
         # These bytes already exist, but THIS user may not have referenced them before — without this
         # their upload would 200 and the file would never show up in their own drive.
-        add_owner(db, sha256, pubkey)
+        add_owner(db, sha256, pubkey, filename)
         _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 
@@ -685,14 +686,14 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         db.rollback()
         winner = db.query(BlossomBlob).filter(BlossomBlob.sha256 == sha256).first()
         if winner is not None:
-            add_owner(db, sha256, pubkey)   # the race loser still owns a reference
+            add_owner(db, sha256, pubkey, filename)   # the race loser still owns a reference
             _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)   # bytes are identical + in RAM — seed the cache like the normal path
             _meta_put(_meta_from_row(winner))
             return _descriptor_fields(winner)
         raise
     # Seed the read + metadata caches — the bytes are already in RAM and the row is immutable, so a
     # fetch right after upload (the common case) touches neither disk/proxy nor Postgres.
-    add_owner(db, sha256, pubkey)      # first owner of these bytes
+    add_owner(db, sha256, pubkey, filename)      # first owner of these bytes
     _cache_put(sha256, data, cfg["cache_mb"] * 1024 * 1024)
     _meta_put(_meta_from_row(blob))
     # DR: hand the new blob to the background mirror worker (own thread + queue) so mirroring never
@@ -974,6 +975,48 @@ async def delete_blob_bytes(db: Session, blob: BlossomBlob, fresh_client: bool =
 
 # --- descriptors / queries --------------------------------------------------
 
+# Extensions we pin ourselves; everything else falls through to `mimetypes`. Only the cases where
+# the stdlib is absent or picks a suffix nothing else uses (audio/ogg → .oga) need to be here.
+_EXT_BY_MIME = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/svg+xml": "svg",
+    "audio/ogg": "ogg", "audio/opus": "opus", "audio/x-m4a": "m4a", "audio/mp4": "m4a",
+    "video/quicktime": "mov", "video/x-matroska": "mkv",
+    "text/markdown": "md", "application/x-tar": "tar", "application/x-7z-compressed": "7z",
+}
+
+
+def ext_for_mime(mime: str) -> str:
+    """File extension (no dot) for a MIME type, or '' when it isn't known.
+
+    Blossom blobs are named by their sha256, so this suffix is the ONLY thing that tells a browser
+    (or another Nostr client) what a blob is — BUD-02 says the descriptor `url` must carry it when
+    known. Without it every download landed as an extensionless `a1b2c3…` file.
+    """
+    m = (mime or "").split(";")[0].strip().lower()
+    if not m or m == "application/octet-stream":
+        return ""
+    if m in _EXT_BY_MIME:
+        return _EXT_BY_MIME[m]
+    try:
+        import mimetypes
+        guessed = mimetypes.guess_extension(m) or ""
+    except Exception:
+        guessed = ""
+    ext = guessed.lstrip(".").lower()
+    return ext if ext.isalnum() and len(ext) <= 8 else ""
+
+
+def safe_filename(name: str) -> str:
+    """A user-supplied filename reduced to a harmless BASENAME.
+
+    This string ends up in a `Content-Disposition` header and in the browser's save dialog, so it
+    must not carry a path (`../`), a quote or a newline (header injection) — and must stay short."""
+    n = (name or "").replace("\\", "/").split("/")[-1].strip()
+    n = "".join(c for c in n if c.isprintable() and c not in '"\\;')
+    n = n.lstrip(".").strip()          # no dotfiles / no "..", and no leading-dot weirdness
+    return n[:120]
+
+
 def _descriptor_fields(blob: BlossomBlob) -> dict:
     return {
         "sha256": blob.sha256,
@@ -984,15 +1027,57 @@ def _descriptor_fields(blob: BlossomBlob) -> dict:
     }
 
 
-def descriptor(blob: BlossomBlob, base_url: str) -> dict:
+def descriptor(blob: BlossomBlob, base_url: str, name: str = "") -> dict:
+    # `url` carries the extension (BUD-02) — the server ignores the suffix when serving
+    # (`_strip_ext`), but it's what makes a download save as `.pdf`/`.png` instead of a bare hash,
+    # and what lets other clients recognise the media type of a link we hand them. The uploader's
+    # own extension wins when we kept their filename, so `.jpeg` doesn't come back as `.jpg`.
+    name = safe_filename(name)
+    ext = ""
+    if "." in name:
+        cand = name.rsplit(".", 1)[1].lower()
+        if cand.isalnum() and len(cand) <= 8:
+            ext = cand
+    ext = ext or ext_for_mime(blob.mime or "")
     d = {
-        "url": f"{base_url.rstrip('/')}/{blob.sha256}",
+        "url": f"{base_url.rstrip('/')}/{blob.sha256}" + (f".{ext}" if ext else ""),
         "sha256": blob.sha256,
         "size": blob.size,
         "type": blob.mime or "application/octet-stream",
         "uploaded": blob.created_at,
     }
+    if name:
+        d["name"] = name          # non-standard but widely used; lets any client show a real filename
     return d
+
+
+def names_for_pubkey(db: Session, pubkey_hex: str) -> dict:
+    """sha256 → the uploader's original filename, for the blobs this pubkey owns ('' when unknown)."""
+    from app.models import BlossomBlobOwner
+    try:
+        rows = (db.query(BlossomBlobOwner.sha256, BlossomBlobOwner.name)
+                  .filter(BlossomBlobOwner.pubkey == pubkey_hex,
+                          BlossomBlobOwner.name.isnot(None)).all())
+        return {sha: nm for sha, nm in rows if nm}
+    except Exception as e:
+        logger.warning("[blossom] could not read blob names: %s", e)
+        return {}
+
+
+def name_for(db: Session, sha256: str, pubkey_hex: str = "") -> str:
+    """The stored filename for a blob. Prefers `pubkey_hex`'s own name, else any owner's."""
+    from app.models import BlossomBlobOwner
+    try:
+        q = db.query(BlossomBlobOwner.name).filter(BlossomBlobOwner.sha256 == sha256,
+                                                   BlossomBlobOwner.name.isnot(None))
+        if pubkey_hex:
+            row = q.filter(BlossomBlobOwner.pubkey == pubkey_hex).first()
+            if row and row[0]:
+                return row[0]
+        row = q.first()
+        return (row[0] if row else "") or ""
+    except Exception:
+        return ""
 
 
 def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False) -> list[BlossomBlob]:
@@ -1015,17 +1100,25 @@ def list_for_pubkey(db: Session, pubkey_hex: str, include_private: bool = False)
     return q.order_by(BlossomBlob.created_at.desc()).all()
 
 
-def add_owner(db: Session, sha256: str, pubkey_hex: str) -> None:
-    """Record `pubkey_hex` as referencing `sha256`. Idempotent; never raises into the upload path."""
+def add_owner(db: Session, sha256: str, pubkey_hex: str, name: str = "") -> None:
+    """Record `pubkey_hex` as referencing `sha256`. Idempotent; never raises into the upload path.
+
+    `name` is the uploader's original filename (optional). A re-upload only ever FILLS IN a missing
+    name — it never renames a file the user already has."""
     from app.models import BlossomBlobOwner
     if not sha256 or not pubkey_hex:
         return
+    name = safe_filename(name)
     try:
         exists = db.query(BlossomBlobOwner).filter(
             BlossomBlobOwner.sha256 == sha256, BlossomBlobOwner.pubkey == pubkey_hex).first()
         if exists:
+            if name and not (exists.name or ""):
+                exists.name = name
+                db.commit()
             return
-        db.add(BlossomBlobOwner(sha256=sha256, pubkey=pubkey_hex, created_at=int(time.time())))
+        db.add(BlossomBlobOwner(sha256=sha256, pubkey=pubkey_hex, created_at=int(time.time()),
+                                name=name or None))
         db.commit()
     except Exception as e:
         db.rollback()

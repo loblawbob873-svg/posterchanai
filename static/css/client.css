@@ -1480,7 +1480,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 @media(max-width:600px){ .files-orphans{margin:12px 10px 0} .files-orphans .btn{margin-left:0;width:100%} }
 .file-card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2);position:relative}
 .file-card img,.file-card video{width:100%;height:140px;object-fit:cover;display:block;background:#120c24}
-.file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+.file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
+/* filename: one line, ellipsised — the label now carries the extension, so it must never wrap the card */
+.file-card .meta .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-card .meta .fc-acts{flex:none;display:flex;align-items:center;gap:2px}
+.file-card .meta .dlbtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
+.file-card .meta .dlbtn:hover{color:var(--cyan,#5ff)}
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:140px;gap:6px;font-size:42px;background:#120c24}
 .file-icon span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
 .file-card .del{position:absolute;top:6px;right:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--danger);cursor:pointer;padding:2px 7px}

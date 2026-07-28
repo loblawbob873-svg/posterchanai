@@ -285,6 +285,11 @@ class BlossomBlobOwner(Base):
     sha256 = Column(String(64), ForeignKey("blossom_blobs.sha256", ondelete="CASCADE"), primary_key=True)
     pubkey = Column(String(64), primary_key=True)       # hex x-only pubkey of a referencing user
     created_at = Column(Integer, nullable=False)        # unix seconds — when THIS user added it
+    # Original filename as uploaded (best-effort, from the X-Filename header). It lives HERE and not
+    # on the blob because dedup means one set of bytes can be two different files to two people —
+    # and because the blob's own identity is its hash, never a name. Only used for presentation:
+    # the BUD-02 listing and the download filename.
+    name = Column(String(255), nullable=True)
 
 
 class StreamVOD(Base):

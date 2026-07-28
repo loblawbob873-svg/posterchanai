@@ -112,8 +112,9 @@ class TestOnionAwareUrls(unittest.TestCase):
         blob = mock.Mock(sha256="a" * 64, size=1, mime="image/png", created_at=0)
         with mock.patch.object(tor_service, "get_onion_address", return_value="abc.onion"):
             base = self.blossom_router._base_url(_Req("abc.onion"), None)
+        # The extension is part of the URL (BUD-02) — what matters here is the HOST.
         self.assertEqual(blossom_service.descriptor(blob, base)["url"],
-                         "http://abc.onion/blossom/" + "a" * 64)
+                         "http://abc.onion/blossom/" + "a" * 64 + ".png")
 
 
 class TestFileTokenFallback(unittest.TestCase):
