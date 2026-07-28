@@ -2332,12 +2332,21 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .em-ac-row:hover,.em-ac-row.on{background:rgba(var(--accent-rgb),.18)}
 @media(max-width:820px){ .em-ac-row{font-size:15px;padding:9px 10px} .em-ac-row img{width:26px;height:26px} }
 
-/* per-post "☰ more" menu popover (bookmark / copy id / delete / block) */
-.menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:178px;max-width:92vw;padding:6px;max-height:min(70vh,440px);overflow-y:auto;
+/* per-post "☰ more" menu popover (bookmark / copy id / delete / block)
+   --pop-scale: these menus are children of <html>, not <body> (fixed-position math — see
+   openMenuPopover), so the desktop `body{zoom:.67-.77}` tiers never reached them: a 15.5px menu hung
+   off a UI scaled to 0.72, measured 1.22x-1.40x everything around it. _placePop passes the body's
+   zoom down as --pop-scale for the ANCHORED desktop menus only (never the .sheet below, and never
+   mobile, where zoom is 1 anyway). It SIZES rather than transforms: `transform` belongs to the `pop`
+   keyframe, `zoom`'s effect on a fixed element's left/top is browser-specific, and both would throw
+   off _placePop's real-pixel clamping — intrinsic size doesn't. Every scaled value reads the var
+   DIRECTLY (no em chain off the container): with the property set on the popover, Chrome resolves
+   the container but leaves an em-inheriting child at the unscaled size. */
+.menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:calc(178px * var(--pop-scale,1));max-width:92vw;padding:calc(6px * var(--pop-scale,1));max-height:min(70vh,440px);overflow-y:auto;
   background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--neon);border-radius:14px;
   box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3),0 0 26px rgba(var(--accent-rgb),.3);animation:pop .14s ease-out}
 .menu-pop button{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--text);
-  cursor:pointer;font-size:15.5px;padding:11px 13px;border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
+  cursor:pointer;font-size:calc(15.5px * var(--pop-scale,1));padding:calc(11px * var(--pop-scale,1)) calc(13px * var(--pop-scale,1));border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
 .menu-pop button:hover{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
 .menu-pop button.danger{color:var(--danger)}
 .menu-pop button.danger:hover{background:rgba(255,77,109,.16);color:var(--danger)}

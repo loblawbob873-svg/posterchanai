@@ -7398,6 +7398,19 @@
   // (always attached + readable — a wide menu can't sensibly hang off a tiny right-edge button on a
   // narrow screen). On desktop it's an anchored dropdown: below the button if it fits, else flipped
   // above; left-aligned, or right-aligned when the button sits near the right edge.
+  // Match a popover to the app's desktop scale. These menus hang off <html>, not <body> — _placePop's
+  // fixed-position math needs a parent the zoom doesn't touch — which also means the desktop
+  // body{zoom:.67-.77} tiers never reached them: the ☰ menu measured 1.22x-1.40x the post it drops out
+  // of on every laptop-width desktop. The CSS sizes itself off --pop-scale (see .menu-pop).
+  // MUST be called BEFORE the popover is inserted: set afterwards, Chrome restyles the popover itself
+  // but leaves its buttons at the unscaled size (measured, in the app and in isolation). Skipped
+  // below 1180px, where the menu is a full-width bottom sheet and the app isn't zoomed anyway.
+  function _scalePop(pop){
+    if(window.matchMedia('(max-width:1179px)').matches) return pop;
+    const z=parseFloat(getComputedStyle(document.body).zoom);
+    if(z && z!==1) pop.style.setProperty('--pop-scale', String(z));
+    return pop;
+  }
   function _placePop(pop, anchorBtn){
     // ONE consistent rule for every menu (timeline ☰, profile ☰, compose Attach/React/Translate,
     // emoji): without the desktop right column (<1180px) a right-edge button's menu would spill
@@ -7699,6 +7712,7 @@
     document.querySelectorAll('.menu-pop,.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack popovers
     const pop=document.createElement('div'); pop.className='menu-pop';
     pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
+    _scalePop(pop);                              // desktop scale, BEFORE insertion (see _scalePop)
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
     let _detachKeys=()=>{};
