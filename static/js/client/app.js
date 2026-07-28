@@ -8575,7 +8575,16 @@
       const lw=ctx.measureText(lines[lines.length-1]).width;
       ctx.fillRect(x+(LONG?lw:lw/2)+fs*0.28, y0+(lines.length-1)*lh-fs*0.42, fs*0.5, fs*0.84);
     }
-    return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
+    // JPEG, not PNG. The card is ALWAYS opaque (_bgFill paints the whole canvas), so PNG's reason to
+    // exist here — preserving alpha — never applies, while a gradient-and-noise field is the worst case
+    // for lossless: measured 1504 KB as PNG vs 170 KB at jpeg 0.9 for the console swatch, and 1224 vs 85
+    // for a plain gradient. Worse, compressImage treats PNG as "lossless, no quality knob" and only
+    // enforces its 800 KB cap for JPEG, so a card was the one upload in the app that skipped the cap
+    // entirely. (The 0.92 here was already a no-op — toBlob ignores quality for image/png.)
+    // Not WebP, which is smaller still: toBlob('image/webp') silently falls back to PNG on older
+    // Safari/WebViews, which would reintroduce this bug invisibly on exactly the devices that can least
+    // afford it. JPEG is what compressImage already emits for every other upload.
+    return await new Promise(r=>cv.toBlob(r,'image/jpeg',0.9));
   }
   // ---- Turning a draft into a background/framed post ----
   // A card is a PICTURE of your words, so a URL drawn onto it is dead pixels. Everything that is not a
@@ -8641,7 +8650,7 @@
     const words=_BG_WORDS(text);
     const card=_cardHook(words);
     const blob=await renderBgPost(card||' ', bg, framed);
-    const url=await uploadBlob(new File([blob],'post.png',{type:'image/png'}));
+    const url=await uploadBlob(new File([blob],'post.jpg',{type:'image/jpeg'}));
     // `trimmed` = the card could not hold every word. Callers surface it, so a long draft losing its tail
     // is never silent — for a link summary that is fine (the article link is right there), but it must
     // still be said out loud rather than discovered after posting.
