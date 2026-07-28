@@ -1026,13 +1026,13 @@ _RECON_BATCH = 4        # authors per pass — small on purpose: each costs 1-2 
                         # instance rate-limits (a 40-post/12-page audit tripped 429 by hand).
 _RECON_LOOKBACK = 40    # statuses per author — one page, covers a normal posting day
 _RECON_INTERVAL = 900   # seconds between passes
-_RECON_SEED_SCAN = 300
+_RECON_SEED_SCAN = 300     # newest delivery rows scanned when seeding (PK index, constant cost)
 _RECON_SEED_PER_PASS = 8   # new authors added to the rotation each pass (bounded: 8 small INSERTs)
 # A neglected author can owe dozens of posts, and each repair costs the INSTANCE more than the audit
 # does — _deliver backfills ancestors and resolves quotes. Measured: one 14-repair pass took requests
 # to the instance from ~7-20/min to 34/min. Cap the burst; the remainder is picked up next pass, and
 # the rotation is a background repair, not a deadline.
-_RECON_MAX_REPAIRS_PER_PASS = 6   # new authors added to the rotation each pass (bounded: 8 small INSERTs)  # newest delivery rows scanned when seeding (PK index, constant cost)
+_RECON_MAX_REPAIRS_PER_PASS = 6
 
 
 class _RateLimited(Exception):
