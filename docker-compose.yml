@@ -75,10 +75,12 @@ x-common: &common
     # Records to POSTERCHANAI_STREAM_RECORD_DIR (default /tmp/posterchanai-streams) then uploads to Blossom;
     # mount that path as tmpfs if you want it RAM-backed. Per-user opt-in still applies. See docs/STREAMING.md.
     - POSTERCHANAI_STREAM_RECORD=${POSTERCHANAI_STREAM_RECORD:-0}
-    # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
-    # music pointed at the acestep container — no manual Admin config needed.
+    # Turnkey music: POSTERCHANAI_MUSIC=1 auto-enables music. NO sidecar needed — generation is
+    # in-process (diffusers AceStepPipeline) on the app's own torch stack, and the model downloads to
+    # the HF cache on first use. The `acestep` container + POSTERCHANAI_ACESTEP_URL remain available
+    # for anyone who wants to keep a separate server; leaving the URL EMPTY selects native.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
-    - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+    - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
     # Turnkey video: set POSTERCHANAI_VIDEO=1 and the app auto-enables native text-to-video
     # (Wan2.1-1.3B by default; override with POSTERCHANAI_VIDEO_MODEL). Model auto-downloads to
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
@@ -233,7 +235,7 @@ services:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
       - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
-      - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+      - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
       - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
       - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
       - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
@@ -244,12 +246,15 @@ services:
       - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
       - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
-  # Optional ACE-Step music server (the `musicgeni` command). Runs as its OWN service because
-  # ACE-Step needs Python 3.11–3.12 and a conflicting dependency stack; the app talks to it over
-  # HTTP. TURNKEY — one command auto-enables music + points the app at this container:
-  #   POSTERCHANAI_MUSIC=1 docker compose --profile cuda --profile music up -d --build
-  # (POSTERCHANAI_MUSIC=1 makes the app seed music_enabled + music_api_base=http://acestep:8001 on
-  # startup; without it you can still enable music manually in Admin → Music.)
+  # OPTIONAL ACE-Step music server — NOT needed any more. `musicgeni` generates IN-PROCESS via
+  # diffusers' AceStepPipeline on the app's own torch stack, so the turnkey command is just:
+  #   POSTERCHANAI_MUSIC=1 docker compose --profile cuda up -d --build
+  # This sidecar survives for anyone who prefers a separate server (it predates the diffusers
+  # pipeline, when ACE-Step needed its own Python 3.11-3.12 and a conflicting dependency stack).
+  # To use it, start it AND point the app at it explicitly — an empty POSTERCHANAI_ACESTEP_URL
+  # selects native:
+  #   POSTERCHANAI_MUSIC=1 POSTERCHANAI_ACESTEP_URL=http://acestep:8001 \
+  #     docker compose --profile cuda --profile music up -d --build
   # NVIDIA only (needs nvidia-container-toolkit on the host); the turbo model fits a 12 GB GPU and
   # auto-downloads on first request into the pc-acestep volume (first song is slower). Pin a repo
   # ref with ACESTEP_REF if upstream changes.

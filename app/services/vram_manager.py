@@ -32,8 +32,8 @@ def _native_music_active() -> bool:
     """True when music generates in-process (diffusers has the pipeline AND no external server is
     explicitly configured) — the same test music_factory routes on."""
     try:
-        from app.services import music_local, settings_store
-        if (settings_store.get("music_api_base", "") or "").strip():
+        from app.services import music_local, settings_store, music_service
+        if music_service._explicit_server(settings_store.get("music_api_base", "")):
             return False
         return music_local.is_available()
     except Exception:

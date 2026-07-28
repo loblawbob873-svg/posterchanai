@@ -37,6 +37,20 @@ class MusicError(Exception):
     """User-facing music-generation error (disabled, bad config, server error, timeout)."""
 
 
+def _explicit_server(raw) -> str:
+    """The configured EXTERNAL music server, or "" when there isn't one. Localhost is treated as
+    absent — see get_settings."""
+    u = (raw or "").strip()
+    if not u:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(u).hostname or "").lower()
+    except Exception:
+        return u
+    return "" if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") else u
+
+
 def get_settings(db: Session) -> dict:
     rows = settings_store.all_settings()
     return {
@@ -44,9 +58,12 @@ def get_settings(db: Session) -> dict:
         # Local ACE-Step server: no admin UI field — auto-seeded from POSTERCHANAI_ACESTEP_URL in
         # Docker (acestep:8001), else the localhost:8001 convention default.
         "base_url": (rows.get("music_api_base", "") or "").strip() or DEFAULT_BASE_URL,
-        # The RAW setting: blank means "no external server configured", which is what lets
-        # music_factory pick the native in-process pipeline instead of the localhost:8001 default.
-        "base_url_explicit": (rows.get("music_api_base", "") or "").strip(),
+        # Which server (if any) was DELIBERATELY configured. A localhost/127.0.0.1 value does not
+        # count: every pre-native deployment has `http://localhost:8001` sitting here because that is
+        # what the old docs and installer told people to set, and honouring it would route music at a
+        # daemon that no longer exists AND make prepare_for_music restart it. Only a REMOTE url means
+        # "I really do have an ACE-Step server over there".
+        "base_url_explicit": _explicit_server(rows.get("music_api_base", "")),
         # Cross-node LB uses the single unified list (Site → Load Balancing).
         "server_urls": rows.get("chat_server_urls", "") or "",
         "device": (rows.get("music_gpu_device", "auto") or "auto").strip().lower(),
