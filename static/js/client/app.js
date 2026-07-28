@@ -9385,7 +9385,7 @@
   // uploading client told it). The <a download> attribute alone is ignored cross-origin, which is
   // exactly the case for a custom media server, so the query params are what actually do the work.
   function downloadUrl(url, name){
-    if(!url) return url;
+    if(!url || /[?&]download=1(&|$)/.test(url)) return url;   // idempotent: callers may chain through saveMedia
     const sep = url.indexOf('?')<0 ? '?' : '&';
     return url + sep + 'download=1' + (name?('&filename='+encodeURIComponent(name)):'');
   }
@@ -9410,20 +9410,119 @@
     setTimeout(()=>URL.revokeObjectURL(u), 30000);
     return 'saved';
   }
-  // Download a Blossom blob to the device under its real filename. Fetching to a blob first is what
-  // makes the NAME stick: <a download> is ignored cross-origin (a custom media server, and the APK
-  // where every URL is cross-origin), and our own server allows the read (CORS `*` on every reply).
-  // If the fetch is refused — a third-party server with no CORS — fall back to letting the browser
-  // navigate, where the server's `?download=1` Content-Disposition is the last line of defence.
-  async function downloadBlobFile(url, name){
-    if(!url) return;
+  // Fetch bytes for saving. Credentials go ONLY to our own origin: a cross-origin request made WITH
+  // credentials is rejected outright when the server answers `Access-Control-Allow-Origin: *` — which
+  // ours does, and most media hosts do. That is what made "save failed" on anything not served by this
+  // instance. A host that sends no CORS headers at all can't be read by the page either way, so those
+  // go through our own SSRF-guarded proxy, which fetches them server-side.
+  async function fetchMediaBlob(src){
+    const org=_serverOrigin(), mine=!!org && String(src).indexOf(org+'/')===0;
     try{
-      const r=await fetch(downloadUrl(url,name)); if(!r.ok) throw new Error('HTTP '+r.status);
-      if(await saveBlobAs(await r.blob(), name)==='saved') toast('saved '+name);
-    }catch(_){
-      const a=document.createElement('a'); a.href=downloadUrl(url,name); a.download=name||'';
-      a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+      const r=await fetch(src, mine ? { headers:(_aiToken?{'Authorization':'Bearer '+_aiToken}:{}), credentials:'include' }
+                                    : { credentials:'omit' });
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return { blob:await r.blob(), disp:r.headers.get('content-disposition')||'' };
+    }catch(e){
+      if(mine || !org) throw e;
+      const r=await fetch(org+'/client/proxy-image?url='+encodeURIComponent(src));
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return { blob:await r.blob(), disp:'' };
     }
+  }
+  // Extension from the BYTES. The last resort, and the one that actually matters: a blob whose stored
+  // MIME is application/octet-stream (anything uploaded by a client that didn't set Content-Type, and
+  // every pre-2026 artifact) has no type on the server, no extension in its URL and no name — so the
+  // only honest source left is its magic number. Reads 16 bytes, never the whole file.
+  const _MAGIC = [
+    [[0x89,0x50,0x4e,0x47], 0, 'png'], [[0xff,0xd8,0xff], 0, 'jpg'], [[0x47,0x49,0x46,0x38], 0, 'gif'],
+    [[0x66,0x74,0x79,0x70], 4, 'mp4'],                       // ISO-BMFF: mp4 / m4v / mov all start here
+    [[0x1a,0x45,0xdf,0xa3], 0, 'webm'],                      // matroska container (webm is the web one)
+    [[0x4f,0x67,0x67,0x53], 0, 'ogg'], [[0x66,0x4c,0x61,0x43], 0, 'flac'], [[0x49,0x44,0x33], 0, 'mp3'],
+    [[0x25,0x50,0x44,0x46], 0, 'pdf'], [[0x50,0x4b,0x03,0x04], 0, 'zip'],
+    [[0x1f,0x8b], 0, 'gz'], [[0x37,0x7a,0xbc,0xaf], 0, '7z'], [[0x52,0x61,0x72,0x21], 0, 'rar'],
+  ];
+  async function sniffExt(blob){
+    try{
+      if(!blob || !blob.slice) return '';
+      const b=new Uint8Array(await blob.slice(0,16).arrayBuffer());
+      if(b.length>=12 && b[0]===0x52&&b[1]===0x49&&b[2]===0x46&&b[3]===0x46){   // RIFF: the tag at 8 says which
+        const t=String.fromCharCode(b[8],b[9],b[10],b[11]);
+        return t==='WEBP'?'webp' : t==='WAVE'?'wav' : t==='AVI '?'avi' : '';
+      }
+      for(const [sig,off,ext] of _MAGIC){
+        if(b.length>=off+sig.length && sig.every((v,i)=>b[off+i]===v)) return ext;
+      }
+      if(b.length>=2 && b[0]===0xff && (b[1]&0xe0)===0xe0) return 'mp3';        // MPEG audio frame sync
+    }catch(_){}
+    return '';
+  }
+  // The name to save under, in order of trust: what the caller knows (the drive's index) → the
+  // server's Content-Disposition → the URL's own basename. Whatever wins then gets the extension
+  // implied by the BYTES if it has none — that is what stops an extensionless /blossom/<sha> link
+  // (every note published before this change) from saving as a file the OS can't open. A bare
+  // 64-hex hash isn't a filename either, so it's shortened.
+  function fileNameFor(src, blob, preferred, disp, sniffed){
+    let nm=String(preferred||'').trim();
+    if(!nm && disp){
+      const m=/filename\*=UTF-8''([^;]+)/i.exec(disp) || /filename="?([^";]+)"?/i.exec(disp);
+      if(m){ try{ nm=decodeURIComponent(m[1]).trim(); }catch(_){ nm=m[1].trim(); } }
+    }
+    // Only when there IS a URL — resolving '' against location gives the PAGE's basename ("client"),
+    // which would name every decrypted file after the app.
+    if(!nm && src){ try{ nm=decodeURIComponent(new URL(src, location.href).pathname.split('/').pop()||''); }
+                    catch(_){ nm=String(src).split('?')[0].split('/').pop()||''; } }
+    nm=nm.split('?')[0].replace(/[\\/:*?"<>|]/g,'_').trim();
+    // Shorten a bare content hash BEFORE the length clamp — clamping first leaves a 60-char stump
+    // that no longer looks like a hash, and the user gets `6b81…b27.mp4` instead of `6b81597fab75.mp4`.
+    const bare=nm.replace(/\.[A-Za-z0-9]{1,8}$/,'');
+    if(/^[0-9a-f]{64}$/i.test(bare)) nm=bare.slice(0,12)+nm.slice(bare.length);
+    nm=nm.slice(0,60) || 'file';
+    if(!/\.[A-Za-z0-9]{1,8}$/.test(nm)){
+      const e=sniffed||extOfBlob({type:(blob&&blob.type)||''});   // real bytes beat a claimed MIME
+      if(e) nm+='.'+e;
+    }
+    return nm;
+  }
+  // THE save path — every download in the app goes through here (Files, Music, the lightbox, AI files).
+  // No success toast: the browser's own save dialog / download shelf, or the OS share sheet, IS the
+  // confirmation — claiming "saved" before the user has even picked a folder is a lie.
+  //
+  // Two routes, and picking the right one matters:
+  //   * OUR OWN origin in a browser → hand the URL to the browser with `download`. It streams
+  //     straight to disk, so saving a 4 GB recording costs no memory; `?download=1` makes the server
+  //     answer `Content-Disposition: attachment` with a real filename (it even sniffs the bytes for a
+  //     blob whose MIME is generic), and same-origin is exactly where the `download` attribute works.
+  //   * anything else (cross-origin, the APK where every URL is cross-origin, decrypted bytes) →
+  //     read it into a blob, because that's the only way the name survives, and save that.
+  async function saveMedia(src, preferred){
+    if(!src) return false;
+    const org=_serverOrigin(), mine=!!org && String(src).indexOf(org+'/')===0;
+    // …except an AI-chat artifact under /api/, which is Bearer-gated: a plain navigation carries
+    // cookies but not the token, so that one has to be fetched with the header (401 otherwise).
+    const bearer = !!_aiToken && /\/api\//.test(String(src));
+    if(mine && !bearer && !_isNativeApp()){
+      const a=document.createElement('a');
+      a.href=downloadUrl(src, preferred); a.download=preferred||'';   // empty → the server's filename wins
+      document.body.appendChild(a); a.click(); a.remove();
+      return true;
+    }
+    try{
+      const { blob, disp } = await fetchMediaBlob(src);
+      await saveBlobAs(blob, fileNameFor(src, blob, preferred, disp, await sniffExt(blob)));
+      return true;
+    }catch(e){ toast('save failed: '+((e&&e.message)||e)); return false; }
+  }
+  // A Blossom blob by URL: ask the server for the download disposition too, so even a blob we know
+  // nothing about comes back named.
+  function downloadBlobFile(url, name){ return saveMedia(downloadUrl(url,name), name); }
+  // An ENCRYPTED file: decrypt in the browser first — the URL only ever holds ciphertext.
+  async function saveEncrypted(sha, name){
+    try{
+      toast('decrypting…');
+      const blob=await fetch(await trackUrl(sha)).then(r=>r.blob());
+      await saveBlobAs(blob, fileNameFor('', blob, name, '', await sniffExt(blob)));
+      return true;
+    }catch(e){ toast('save failed: '+((e&&e.message)||e)); return false; }
   }
   function copyUrl(u){ try{ u=new URL(u, location.href).href; }catch(_){}
     try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
@@ -10010,6 +10109,10 @@
           if((FilesIdx.meta(sha)||{}).name) continue;                      // a user-named file keeps its own name
           const card=grid.querySelector('.file-card[data-sha="'+sha+'"]'); if(!card) continue;
           const span=card.querySelector('.meta > span'); if(span){ span.textContent=_vodNameMap[sha].slice(0,18); span.title=_vodNameMap[sha]; }
+          // ...and the download button, or a recording would still save under its hash after the
+          // label said "Stream <date>".
+          const dl=card.querySelector('.dlbtn');
+          if(dl && dl.dataset.name) dl.dataset.name=downloadName({sha256:sha, url:dl.dataset.url}, _vodNameMap[sha], '');
         }
       });
     }
@@ -10067,11 +10170,7 @@
     $$('.vthumb',grid).forEach(im=> im.onerror=()=>{ const d=document.createElement('div'); d.className='file-icon'; d.innerHTML='🎬<span>'+enc(im.dataset.ext||'video')+'</span>'; im.replaceWith(d); });
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.
-    $$('.dlenc',grid).forEach(b=> b.onclick=async e=>{ e.preventDefault(); e.stopPropagation();
-      try{ toast('decrypting…'); const u=await trackUrl(b.dataset.sha);
-        const blob=await fetch(u).then(r=>r.blob());
-        if(await saveBlobAs(blob, b.dataset.name)==='saved') toast('saved '+b.dataset.name); }
-      catch(err){ toast('download failed: '+((err&&err.message)||'')); } });
+    $$('.dlenc',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); saveEncrypted(b.dataset.sha, b.dataset.name); });
     $$('.del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
     $$('.copy',grid).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
     // :not(.dlenc) — encrypted files have their own handler below (decrypt first, never fetch the URL)
@@ -10328,9 +10427,13 @@
         <button class="track-play" data-sha="${t.sha}">▶</button>
         <span class="track-name">${enc(t.m.name||'track')}</span>
         <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
+        <button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)">⬇</button>
         <button class="track-del" data-sha="${t.sha}" title="Delete">✕</button>
       </div>`).join('') : '<div class="empty">No music yet — drop audio files here. They\'re Opus-compressed + encrypted automatically.</div>';
     $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
+    // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
+    // file grid's lock cards use. Without this the only way out of the Music folder was the player.
+    $$('.track-dl',grid).forEach(b=> b.onclick=()=>saveEncrypted(b.dataset.sha, b.dataset.name));
     $$('.track-del',grid).forEach(b=> b.onclick=()=>delBlob(b.dataset.sha));
     _updateMusicListBtns();
   }
@@ -16227,18 +16330,12 @@
       toast('image copied');
     }catch(e){ toast('copy failed — long-press the image to copy'); }
   }
-  // Save/download media (works in the PWA and the APK WebView, where a plain <a download> on a
-  // cross-origin URL is ignored — fetch to a blob first, then download the object URL).
-  async function _lbSaveMedia(src){
-    if(_isNativeApp()){ try{ if(await _nativeShareMedia(src)) return; }catch(e){ toast('couldn’t save image'); return; } }
-    try{
-      const r=await fetch(src, {headers: (_aiToken ? {'Authorization':'Bearer '+_aiToken} : {}), credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status);
-      const b=await r.blob(); const u=URL.createObjectURL(b);
-      const a=document.createElement('a'); a.href=u; a.download=((src.split('/').pop()||'image').split('?')[0]) || 'image';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u), 5000);
-      toast('saved');
-    }catch(e){ toast('save failed'); }
-  }
+  // Save the media in the lightbox. One line, because this now shares the app's single save pipeline
+  // (saveMedia → fetchMediaBlob → fileNameFor → saveBlobAs): same credential rules, same proxy
+  // fallback for third-party hosts, same naming. It used to take the URL's last path segment
+  // verbatim, which for a Blossom link is a bare sha256 — that's why saving a video off the timeline
+  // produced an extensionless file nothing could open.
+  function _lbSaveMedia(src){ return saveMedia(src); }
   function _blobToPng(blob){ return new Promise((res,rej)=>{ const img=new Image(); const u=URL.createObjectURL(blob);
     img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight; c.getContext('2d').drawImage(img,0,0); c.toBlob(b=>{ URL.revokeObjectURL(u); b?res(b):rej(new Error('toBlob')); }, 'image/png'); }catch(e){ URL.revokeObjectURL(u); rej(e); } };
     img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('img load')); }; img.src=u; }); }

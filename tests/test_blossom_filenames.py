@@ -110,6 +110,35 @@ class TestUploadFilenameHeader(unittest.TestCase):
                          "shadow")
 
 
+class TestSniffExt(unittest.TestCase):
+    """The last resort for a blob whose stored MIME is application/octet-stream — which is what a
+    client that didn't set Content-Type uploads. Such a blob has no type, no URL extension and no
+    name, so its magic number is the only thing that can name the download."""
+
+    def test_containers_and_documents(self):
+        cases = [
+            (b"\x00\x00\x00\x20ftypisom" + b"\x00" * 4, "mp4"),
+            (b"\x1a\x45\xdf\xa3" + b"\x00" * 12, "webm"),
+            (b"OggS" + b"\x00" * 12, "ogg"),
+            (b"%PDF-1.7" + b"\x00" * 8, "pdf"),
+            (b"\x89PNG\r\n\x1a\n" + b"\x00" * 8, "png"),
+            (b"\xff\xd8\xff\xe0" + b"\x00" * 12, "jpg"),
+            (b"PK\x03\x04" + b"\x00" * 12, "zip"),
+        ]
+        for head, ext in cases:
+            self.assertEqual(blossom_service.sniff_ext(head), ext, ext)
+
+    def test_riff_needs_the_tag_at_byte_8(self):
+        self.assertEqual(blossom_service.sniff_ext(b"RIFF\x00\x00\x00\x00WEBPxxxx"), "webp")
+        self.assertEqual(blossom_service.sniff_ext(b"RIFF\x00\x00\x00\x00WAVEfmt "), "wav")
+        self.assertEqual(blossom_service.sniff_ext(b"RIFF\x00\x00\x00\x00NOPExxxx"), "")
+
+    def test_unknown_bytes_and_short_reads_are_empty_not_a_guess(self):
+        self.assertEqual(blossom_service.sniff_ext(b"just some text here"), "")
+        self.assertEqual(blossom_service.sniff_ext(b""), "")
+        self.assertEqual(blossom_service.sniff_ext(b"\x00"), "")
+
+
 class TestContentDisposition(unittest.TestCase):
     """The header the browser's save dialog reads. It is encoded latin-1 by the ASGI layer, so a
     non-ASCII name put straight into it raises UnicodeEncodeError — i.e. a 500 instead of a file."""

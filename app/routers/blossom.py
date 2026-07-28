@@ -328,6 +328,30 @@ async def get_blob(sha256: str, request: Request, db: Session = Depends(get_db))
     if not _fname:
         _ext = blossom_service.ext_for_mime(mime)
         _fname = sha + (f".{_ext}" if _ext else "")
+    if _dl and not re.search(r"\.[A-Za-z0-9]{1,8}$", _fname):
+        # Still nameless: the MIME is generic (octet-stream) and nobody told us a filename. The bytes
+        # themselves are the last honest source — 16 of them, and only on an explicit download, so the
+        # thumbnail/inline hot path never pays for it.
+        head = await blossom_service.read_range(db, blob, 0, 15)
+        if head is not None:
+            buf = b""
+            try:
+                async for chunk in head:
+                    buf += chunk
+                    if len(buf) >= 16:
+                        break
+            finally:
+                # On the proxy backend this iterator owns an open upstream response; abandoning it
+                # mid-stream would hold the connection until GC.
+                aclose = getattr(head, "aclose", None)
+                if aclose:
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
+            _ext = blossom_service.sniff_ext(buf)
+            if _ext:
+                _fname += f".{_ext}"
     headers["Content-Disposition"] = _disposition("attachment" if _dl else "inline", _fname)
     if request.method == "HEAD":
         return Response(status_code=200, media_type=mime,

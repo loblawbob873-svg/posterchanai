@@ -1006,6 +1006,35 @@ def ext_for_mime(mime: str) -> str:
     return ext if ext.isalnum() and len(ext) <= 8 else ""
 
 
+# Magic numbers → extension, for blobs whose stored MIME says nothing (application/octet-stream is
+# what a client that didn't set Content-Type uploads, and what every artifact stored through
+# upload_store/artifact_store carries). Without this such a blob has no type, no extension and no
+# name anywhere, and downloads as a file the OS refuses to open — the "video with no extension" case.
+_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", 0, "png"), (b"\xff\xd8\xff", 0, "jpg"), (b"GIF8", 0, "gif"),
+    (b"ftyp", 4, "mp4"),                       # ISO-BMFF: mp4 / m4v / mov
+    (b"\x1a\x45\xdf\xa3", 0, "webm"),          # matroska
+    (b"OggS", 0, "ogg"), (b"fLaC", 0, "flac"), (b"ID3", 0, "mp3"),
+    (b"%PDF", 0, "pdf"), (b"PK\x03\x04", 0, "zip"),
+    (b"\x1f\x8b", 0, "gz"), (b"7z\xbc\xaf", 0, "7z"), (b"Rar!", 0, "rar"),
+)
+
+
+def sniff_ext(head: bytes) -> str:
+    """Extension implied by a blob's first bytes, or '' — needs only the first 16."""
+    if not head:
+        return ""
+    if len(head) >= 12 and head[:4] == b"RIFF":
+        tag = head[8:12]
+        return {b"WEBP": "webp", b"WAVE": "wav", b"AVI ": "avi"}.get(tag, "")
+    for sig, off, ext in _MAGIC:
+        if head[off:off + len(sig)] == sig:
+            return ext
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return "mp3"                            # MPEG audio frame sync
+    return ""
+
+
 def safe_filename(name: str) -> str:
     """A user-supplied filename reduced to a harmless BASENAME.
 
