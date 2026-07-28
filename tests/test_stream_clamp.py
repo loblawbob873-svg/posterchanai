@@ -153,7 +153,7 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         encoder must reproduce. Measured on real phone video: 304 kbit/s in came out at 1447 with a fixed
         1500k ceiling, and at 239 (a REDUCTION) once the ceiling followed the source."""
         _, script = _render(self.tmp)
-        self.assertIn("VMAX=$(( SRC_KBPS * 3 / 2 - AUD ))", script)              # 1.5x headroom, see below
+        self.assertIn("VMAX=$(( SRC_KBPS * 5 / 4 - AUD ))", script)              # 1.25x headroom; settle handles ramp
         self.assertIn('[ "$VMAX" -gt "$VMAX_CFG" ] && VMAX=$VMAX_CFG', script)   # never above configured
         self.assertIn('[ "$VMAX" -lt "$VMIN" ] && VMAX=$VMIN', script)           # never absurdly low
 
@@ -162,7 +162,7 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         not representative. Sampling them would pin a phone that later sends 2.5 Mbit/s to a fraction of
         that for the whole session — a stable stream never restarts, so it never re-measures."""
         _, script = _render(self.tmp)
-        self.assertIn("SETTLE=3", script)
+        self.assertIn("SETTLE=15", script)
         self.assertLess(script.index('sleep "$SETTLE"'), script.index("SRC_KBPS=$(measure_src_kbps)"))
 
     def test_audio_bitrate_scales_with_the_source(self):

@@ -323,13 +323,18 @@ VMAX_CFG={ceiling_kbps}      # configured ceiling, kbit/s
 AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sources (see below)
 VMIN=150                     # never target something absurd if the probe reads very low
 AUD_MIN=48                   # below this speech stops being intelligible
-SETTLE=3                     # seconds to let the publisher's bitrate settle before measuring
+SETTLE=15                    # seconds to let the publisher's bitrate settle before measuring
 
-# WebRTC bandwidth estimation ramps UP over several seconds, so the first moments of a WHIP publish are
-# NOT representative — measured in an end-to-end run, a source whose steady state was ~2900 kbit/s read
-# 1359 kbit/s across its first 4 seconds. Pinning the ceiling to that would leave a phone that later sends
-# 2.5 Mbit/s soft for the WHOLE session, because a stable stream never restarts and so never re-measures.
-# Two guards: wait $SETTLE before sampling, and allow 1.5x headroom over what we do measure.
+# WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
+# representative. Measured against a real phone: steady state 1489 kbit/s, but sampling at t=3-7s read
+# 807 — a 1.8x underestimate that pinned the ceiling BELOW what the phone was offering and softened the
+# picture for the whole session (a stable stream never restarts, so it never re-measures).
+#
+# Hence a long settle rather than a big headroom. Waiting is close to free: a stream has almost no
+# viewers in its first seconds, and those it does have are served the source meanwhile (see
+# _upstream_path). It also costs nothing where it would matter most — OBS publishes at full rate from
+# the first frame, so the wait only ever delays tightening a stream that was never going to be tightened.
+# Headroom can then stay small, which is what keeps a genuinely weak source from being inflated.
 
 measure_src_kbps() {{
   # Copy a few seconds off the source (no decode) and divide bytes by duration. ffprobe's own bit_rate is
@@ -362,8 +367,10 @@ if [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
     [ "$AUD" -lt "$AUD_MIN" ] && AUD=$AUD_MIN
     [ "$AUD" -gt "$AUD_CFG" ] && AUD=$AUD_CFG
   fi
-  # 1.5x headroom so a still-ramping publisher isn't strangled, minus the audio we're about to spend.
-  VMAX=$(( SRC_KBPS * 3 / 2 - AUD ))
+  # 1.25x headroom, minus the audio we're about to spend. Small on purpose: the settle above is what
+  # handles ramp-up, so this only has to absorb ordinary variation. A large headroom would instead
+  # re-inflate weak sources, which is the thing this whole measurement exists to prevent.
+  VMAX=$(( SRC_KBPS * 5 / 4 - AUD ))
   [ "$VMAX" -lt "$VMIN" ] && VMAX=$VMIN
   [ "$VMAX" -gt "$VMAX_CFG" ] && VMAX=$VMAX_CFG
   echo "clamp: $SRC_KBPS kbit/s in -> video $VMAX + audio $AUD kbit/s (configured $VMAX_CFG/$AUD_CFG)" >&2
