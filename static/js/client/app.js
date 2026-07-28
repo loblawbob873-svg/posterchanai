@@ -985,6 +985,9 @@
     }
     Relay.onStatus = renderConn;
     bindAuth();
+    // Coming back from Google / a fediverse instance? Collect the key BEFORE resuming a saved
+    // session, so signing in with an account beats whatever guest or stale login is cached.
+    if(await _oauthReturn()) return;
     const s = Session.load();
     if (s) {
       try { await resume(s); return; }
@@ -1098,6 +1101,7 @@
     $('#btn-amber-back').onclick = ()=>{ Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); $('#auth-amber').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-amber-connect').onclick = loginAmberBunker;
     $('#btn-amber-nc').onclick = loginAmberNostrConnect;
+    try{ _bindAccountLogins(); }catch(_){}   // Google / fediverse buttons, if this node offers them
     $('#btn-show-signup').onclick = ()=>{ $('#auth-login').classList.add('hidden'); $('#auth-signup').classList.remove('hidden'); };
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
@@ -1191,6 +1195,86 @@
     }catch(e){ amberErr(e.message||'could not connect'); Nip46.reset(); $('#amber-nc-box').classList.add('hidden'); }
     finally{ btn.disabled=false; btn.textContent='📲 Open in Amber / scan QR'; }
   }
+  // ---------- sign in with an account (Google / fediverse) ----------
+  // The node mints and holds the key for these accounts (see routers/social_login.py) — the one
+  // custodial path in the client, offered only when the operator turns it on. The redirect lands on
+  // /client?login=<code>; the code buys the nsec over a POST, ONCE. It is never in the URL, because a
+  // query string is kept in history, sent as a referrer, and logged by everything in between.
+  let _providers = null;
+  async function _loginProviders(){
+    if(_providers) return _providers;
+    try{ _providers = await fetch('/api/auth/providers').then(r=>r.ok?r.json():null); }catch(_){ }
+    return (_providers = _providers || { google:false, pleroma:false, pleroma_instance:'' });
+  }
+  function _stripQuery(){
+    try{ history.replaceState(null, '', location.pathname + location.hash); }catch(_){ }
+  }
+  async function _oauthReturn(){
+    const q = new URLSearchParams(location.search);
+    if(q.get('linked') === 'google'){ _stripQuery(); setTimeout(()=>toast('✅ Google linked to this account'), 600); return false; }
+    const code = q.get('login');
+    if(!code) return false;
+    _stripQuery();   // first thing: the code is single-use, but it has no business sitting in history
+    let j = null;
+    try{
+      const r = await fetch('/api/auth/handoff', { method:'POST', headers:{'Content-Type':'application/json'},
+                                                   body: JSON.stringify({ code }) });
+      j = r.ok ? await r.json() : null;
+      if(!j) throw new Error((await r.json().catch(()=>({}))).detail || 'that sign-in link expired');
+    }catch(e){
+      showAuth(); authErr((e && e.message) || 'sign-in failed'); return true;
+    }
+    try{
+      const k = await Relay.worker.call('decodeNsec', { nsec: j.nsec });
+      await Relay.worker.call('setKey', { sk: k.sk });
+      signer = makeSigner('local', k.pubkey); ME = { mode:'local', pubkey: k.pubkey, npub: k.npub };
+      Session.save({ mode:'local', sk: k.sk });
+      startApp();
+      // A brand-new account gets told, once, where its key lives and how to take it with them —
+      // the whole difference between this and the create-identity flow, which shows the nsec up front.
+      if(j.created) setTimeout(()=>_custodialNotice(j), 900);
+      else setTimeout(()=>toast('signed in as ' + (j.account || j.provider)), 600);
+      return true;
+    }catch(e){
+      showAuth(); authErr('could not load that account'); return true;
+    }
+  }
+  function _custodialNotice(j){
+    modal(`<h3>✅ Signed in with ${enc(j.provider === 'google' ? 'Google' : 'your fediverse account')}</h3>
+      <div class="muted" style="line-height:1.6">
+        <p>Your new Nostr identity was created <b>on this server</b>, so you can sign in again from any
+        device with ${enc(j.provider === 'google' ? 'Google' : 'that account')}.</p>
+        <p>That also means this server holds its key. Your secret key is in
+        <b>Settings → Account</b> — save it somewhere safe, and you can take this identity to any other
+        Nostr app, or move to a signer whenever you like.</p>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn btn-neon small" id="cust-ok">Got it</button></div>`,
+      root=>{ const b=root.querySelector('#cust-ok'); if(b) b.onclick=closeModal; });
+  }
+  async function _bindAccountLogins(){
+    const p = await _loginProviders();
+    const sec = $('#auth-accounts'); if(!sec) return;
+    if(!p.google && !p.pleroma) return;              // node offers neither — the section stays hidden
+    sec.classList.remove('hidden');
+    const g = $('#btn-google');
+    if(p.google && g){ g.classList.remove('hidden'); g.onclick = ()=>{ location.href = '/api/auth/google/start'; }; }
+    const pl = $('#btn-pleroma'), inp = $('#pleroma-instance');
+    if(p.pleroma && pl){
+      pl.classList.remove('hidden');
+      if(inp){ inp.classList.remove('hidden'); if(p.pleroma_instance) inp.value = p.pleroma_instance; }
+      pl.onclick = async ()=>{
+        authErr(''); pl.disabled = true;
+        try{
+          const r = await fetch('/api/auth/pleroma/start', { method:'POST', headers:{'Content-Type':'application/json'},
+                     body: JSON.stringify({ instance_url: (inp && inp.value || '').trim() }) });
+          const j = await r.json().catch(()=>({}));
+          if(!r.ok || !j.auth_url) throw new Error(j.detail || 'could not reach that instance');
+          location.href = j.auth_url;
+        }catch(e){ authErr((e && e.message) || 'could not start that sign-in'); pl.disabled = false; }
+      };
+    }
+  }
+
   async function loginNsec(){
     authErr('');
     const v = $('#nsec-input').value.trim(); if (!v) return;
@@ -14223,6 +14307,7 @@
             <button class="btn btn-ghost small" id="set-copy-npub">🔑 Copy npub</button>
             ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin" style="color:var(--neon,#0ff)">🛠️ Admin panel</button>`:''}
             ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
+            <button class="btn btn-ghost small hidden" id="set-google-link">🔑 Sign in with Google on other devices</button>
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
             <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
             <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)">🗑️ Delete all my notes</button>
@@ -14280,6 +14365,26 @@
             $('#nsec-close',root).onclick=closeModal;
           });
       }; }
+    // Attach Google to the key you ALREADY have, so it can sign you in elsewhere. Only offered when
+    // the node runs Google sign-in — and only for a local key, because this uploads the secret key and
+    // a signer login (NIP-07/46/55) has no key here to upload. The warning is not boilerplate: it is
+    // the difference between "the server can identify me" and "the server can post as me".
+    { const gl=$('#set-google-link'); if(gl && ME.mode==='local'){
+        _loginProviders().then(p=>{ if(p && p.google) gl.classList.remove('hidden'); });
+        gl.onclick=async()=>{
+          if(!await uiConfirm('Link Google to this account?\n\nYour SECRET KEY is uploaded to this server so that signing in with Google can restore this identity on another device. The operator can then read it. Only do this if you trust this server.')) return;
+          let nsec=''; try{ const r=await Relay.worker.call('exportNsec',{}); nsec=(r&&r.nsec)||''; }catch(_){}
+          if(!nsec){ toast('secret key not available on this login'); return; }
+          try{
+            const auth=await sign(27235,'google-link',[['p',ME.pubkey]]);
+            const r=await fetch('/api/auth/google/link/start',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),nsec})});
+            const j=await r.json().catch(()=>({}));
+            if(!r.ok || !j.auth_url) throw new Error(j.detail||'could not start');
+            location.href=j.auth_url;
+          }catch(e){ toast((e&&e.message)||'could not link Google'); }
+        };
+      } }
     { const lo=$('#set-logout'); if(lo) lo.onclick=async()=>{ if(await uiConfirm('Log out of this device?')) logout(); }; }
     { const sp=$('#set-sync-posts'); if(sp) sp.onclick=async()=>{
         const st=$('#set-sync-status'); if(st) st.textContent='syncing… pulling your posts from other relays.';

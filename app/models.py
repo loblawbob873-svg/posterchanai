@@ -57,6 +57,10 @@ class User(Base):
     pleroma_enabled = Column(Boolean, default=False)
     pleroma_instance_url = Column(String(500), nullable=True)
     pleroma_access_token = Column(String(500), nullable=True)
+    # Which account that token belongs to (`user@host`), recorded so "sign in with Pleroma" can find
+    # an EXISTING linked user instead of minting a second identity for the same person. Backfilled
+    # from the instance on first login for accounts linked before this column existed.
+    pleroma_acct = Column(String(255), nullable=True, index=True)
 
     # Nostr integration settings. Identity is a secret key (nsec/hex); posts publish to the
     # user's relays; media uploads to an external Blossom/NIP-96 host (not an "instance").
@@ -67,6 +71,12 @@ class User(Base):
     nostr_relays = Column(Text, nullable=True)                 # comma/newline list; blank = defaults
     nostr_media_service = Column(String(20), nullable=True)    # "blossom" | "nip96"
     nostr_media_endpoint = Column(String(500), nullable=True)  # blank = service default
+    # Google sign-in (social_login.py). `google_sub` is Google's stable per-account id and is what a
+    # login matches on — never the email, which is re-assignable and would let a recycled address take
+    # over an identity. The email is kept for display only. Set either by signing in with Google (the
+    # node mints the key) or by linking Google to a key you already have, from User Settings.
+    google_sub = Column(String(64), nullable=True, index=True)
+    google_email = Column(String(320), nullable=True)
     # Opt-in: save this user's ended live streams to their Blossom drive (stream_vod_service).
     # Mirrored to Nostr via users_store.CONFIG_FIELDS; gated by the global stream_record_enabled.
     stream_record = Column(Boolean, default=False)

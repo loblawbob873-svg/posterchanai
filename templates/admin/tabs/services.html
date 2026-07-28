@@ -480,6 +480,51 @@
     </fieldset>
 
     <fieldset>
+        <legend>Sign in with an account (login page)</legend>
+        <small style="display:block;margin-bottom:12px;">
+            Extra buttons on the web client's login screen, for people who don't want to manage a Nostr key.
+            Both are <strong>off by default</strong>: they are the only routes where an identity is created by
+            <em>this server</em> rather than in the visitor's browser. Everything else on that screen (extension,
+            remote signer, pasted nsec) keeps the key on the device and is unaffected.
+        </small>
+        <div class="form-group">
+            <label for="pleroma_login_enabled">
+                <input type="checkbox" id="pleroma_login_enabled" name="pleroma_login_enabled"> Enable Pleroma / Mastodon login
+            </label>
+            <small>Sign in with a fediverse account. The OAuth app is registered on the instance automatically (public <code>/api/v1/apps</code>) — nothing to configure on their side. A visitor whose account is already linked here (Fediverse bridge / User Settings → Social) is signed in as that same account, not a new one.</small>
+        </div>
+        <div class="form-group">
+            <label for="pleroma_login_instance">Default instance offered</label>
+            <input type="url" id="pleroma_login_instance" name="pleroma_login_instance" placeholder="https://pleroma.example">
+            <small>Pre-filled on the login form; the visitor can type a different one. Blank = the bridge's Read Account instance above.</small>
+        </div>
+        <div class="form-group" style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border-color,#333);">
+            <label for="google_login_enabled">
+                <input type="checkbox" id="google_login_enabled" name="google_login_enabled"> Enable Google login
+            </label>
+            <small>
+                Needs an OAuth 2.0 <strong>Web application</strong> client from the
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud console</a>:
+                <br>1. APIs &amp; Services → OAuth consent screen → <em>External</em>, add the <code>openid</code>, <code>email</code>
+                and <code>profile</code> scopes, then publish it (or add testers).
+                <br>2. Credentials → Create credentials → OAuth client ID → <em>Web application</em>.
+                <br>3. Authorised JavaScript origin: this node's public origin (e.g. <code>https://poster.place</code>).
+                <br>4. Authorised redirect URI, exactly: <code>&lt;public base&gt;/api/auth/google/callback</code>.
+                <br>5. Paste the client ID and secret below and Save.
+            </small>
+        </div>
+        <div class="form-group">
+            <label for="google_client_id">Google Client ID</label>
+            <input type="text" id="google_client_id" name="google_client_id" placeholder="1234567890-abc123.apps.googleusercontent.com">
+        </div>
+        <div class="form-group">
+            <label for="google_client_secret">Google Client Secret</label>
+            <input type="password" id="google_client_secret" name="google_client_secret" placeholder="GOCSPX-…">
+            <small>Stored like every other setting: in this node's operator-signed relay document, NIP-44 encrypted — never in the repo or a config file.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>SearXNG (Search)</legend>
         <div class="form-group">
             <label for="searxng_url">URL</label>

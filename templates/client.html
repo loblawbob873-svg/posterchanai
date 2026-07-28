@@ -123,6 +123,16 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
                 <button id="btn-nip55" class="btn btn-cyan full hidden">📲 Amber on this device</button>
                 <button id="btn-amber" class="btn btn-cyan full">📡 Amber / remote signer</button>
             </div>
+            <!-- Account sign-in. Hidden unless this node has turned a provider on (Admin → Services →
+                 "Sign in with an account"); _bindAccountLogins unhides only what's configured. These
+                 are the CUSTODIAL routes — the server mints and holds the key — which is why they sit
+                 below the signers rather than at the top of the card. -->
+            <div class="auth-sec hidden" id="auth-accounts">
+                <span class="auth-sec-t">or sign in with an account</span>
+                <button id="btn-google" class="btn btn-cyan full hidden">🔑 Continue with Google</button>
+                <input id="pleroma-instance" class="input hidden" type="url" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your.instance">
+                <button id="btn-pleroma" class="btn btn-cyan full hidden">🐘 Continue with Pleroma / Mastodon</button>
+            </div>
             <details id="auth-key" class="auth-more">
                 <summary>🔑 I have a secret key (nsec)</summary>
                 <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">

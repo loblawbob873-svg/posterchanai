@@ -340,6 +340,22 @@ class SettingsResponse(BaseModel):
     # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
     # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
     fedi_bridge_blocked_domains: str = ""
+    # ---- "Sign in with an account" on the client login page ----
+    # Both are OFF by default: they are the only paths where an identity is created by the SERVER
+    # rather than in the browser, so a node opts in deliberately.
+    # Pleroma/Mastodon: the OAuth app is registered per instance at runtime (POST /api/v1/apps, the
+    # same public endpoint the existing account-linking flow uses), so there is no client id/secret to
+    # configure here — only which instance the login form offers by default. Blank = the bridge's read
+    # instance (fedi_bridge_instance_url); the user can type another one.
+    pleroma_login_enabled: str = "false"
+    pleroma_login_instance: str = ""
+    # Google: one OAuth 2.0 **Web application** client from the Google Cloud console. Its authorised
+    # redirect URI must be exactly <public base>/api/auth/google/callback, and the consent screen needs
+    # the openid/email/profile scopes. The secret is stored like every other setting — in the
+    # operator-signed relay doc, NIP-44 encrypted — never in the repo or a config file.
+    google_login_enabled: str = "false"
+    google_client_id: str = ""
+    google_client_secret: str = ""
     # Node management (Nostr-only transport: remote nodes are npub workers; `local` runs on this host)
     node_exec_enabled: str = "false"
     node_exec_users: str = ""  # comma/newline-separated npubs allowed (first user/admin always allowed)
