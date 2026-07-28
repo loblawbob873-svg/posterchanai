@@ -5,6 +5,30 @@ from ._common import ChatService, CommandService, Conversation, Message, User, _
 from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _character_prompt_keyboard, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _media_action_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
 from .senders import User, _has_misskey, _has_pleroma, _media_action_cache, _misskey_post_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _pleroma_post_cache, _send_4chan_catalog, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
 
+# Telegram matches command words LITERALLY (it never calls parse_command), so it needs its own list —
+# but only of the NON-effect commands. The effects come from CommandService, because a second copy of
+# them drifts: the hand-written one had already lost `goon`/`hag`, and renaming `anyways` →
+# `lookingaway` left the new name falling through to the LLM. Order matters (first match wins), so the
+# literals keep theirs and the derived effects — all single words, none of them a prefix of a literal —
+# are appended.
+_TG_BASE_COMMANDS = [
+    "help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews",
+    "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share",
+    "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert",
+    "extractaudio", "circlecrop", "ocr", "flashcards",
+    "node", "bill", "budget", "bills", "pay", "addbill", "finance", "screenshot", "shot", "ss",
+]
+_TG_EFFECTS = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
+# The effects' OLD names have to be matchable too — aliases are resolved AFTER this match, so a word
+# that isn't here never gets as far as COMMAND_ALIASES (that's what keeps `anyways` working).
+_TG_EFFECT_WORDS = _TG_EFFECTS | {k for k, v in CommandService.COMMAND_ALIASES.items() if v in _TG_EFFECTS}
+_TG_COMMANDS = _TG_BASE_COMMANDS + sorted(_TG_EFFECT_WORDS - set(_TG_BASE_COMMANDS))
+# Commands that consume the upload's raw BYTES: OCR'ing the image for them is wasted work (they never
+# read the text), and an oversized one has to be reported rather than fed to the chat model.
+_TG_RAW_MEDIA_COMMANDS = _TG_EFFECTS | {
+    "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "flashcards",
+}
+
 
 async def _handle_message(update, db):
     from .webhook import _make_tg_node_notify
@@ -350,7 +374,7 @@ async def _handle_message(update, db):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "node", "bill", "budget", "bills", "pay", "addbill", "finance", "screenshot", "shot", "ss"]
+            commands = _TG_COMMANDS
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -582,7 +606,7 @@ async def _handle_message(update, db):
             # Check if the message starts with a known command
             command = None
             arg = text
-            commands = ["help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews", "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share", "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert", "extractaudio", "circlecrop", "collage", "ocr", "flashcards", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "node", "bill", "budget", "bills", "pay", "addbill", "finance", "screenshot", "shot", "ss"]
+            commands = _TG_COMMANDS
             for cmd in commands:
                 if text_lower.startswith(cmd + " ") or text_lower == cmd:
                     command = cmd
@@ -812,9 +836,10 @@ async def _handle_message(update, db):
                     await telegram_service.send_message(chat_id, f"❌ PDF merge failed: {_merge_err}")
                     return {"ok": True}
 
-            # If we have images, always run OCR for later use
-            # (skip for compress/convert — they operate on the raw file, not its text)
-            if has_images and attachments and command not in ("compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "flashcards", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider"):
+            # OCR every image up front so a later step can use the text — but NOT for the commands
+            # that work on the RAW FILE (compress/convert/every effect): they never read it, so the
+            # OCR is pure latency on the upload path.
+            if has_images and attachments and command not in _TG_RAW_MEDIA_COMMANDS:
                 for filename, file_data, content_type in attachments:
                     if content_type.startswith("image/"):
                         import base64
@@ -861,7 +886,7 @@ async def _handle_message(update, db):
             # Attachment too large for Telegram to hand to the bot (20 MB cap).
             # Handle here so it works whether or not a command caption was given,
             # instead of falling through to the chat model.
-            if oversized_attachment and command in ("compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "flashcards", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", None):
+            if oversized_attachment and (command is None or command in _TG_RAW_MEDIA_COMMANDS):
                 _ov_name, _ov_size = oversized_attachment
                 _cap_mb = TELEGRAM_MAX_DOWNLOAD_BYTES / (1024 * 1024)
                 if telegram_service.is_local_api:

@@ -1281,7 +1281,11 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     if not _fwded and not blossom_service.is_enabled(db):
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
+    # Alias BEFORE the allowlist, the same as /meme/effect and /effects/run: a client holding a
+    # cached catalogue still sends an effect's old name, and the renderer handles it fine — rejecting
+    # it here would 400 a pick that works everywhere else.
     effect = (data.effect or "").strip().lower()
+    effect = CommandService.COMMAND_ALIASES.get(effect, effect)
     allowed = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
     if effect not in allowed:
         raise HTTPException(status_code=400, detail="unknown effect")

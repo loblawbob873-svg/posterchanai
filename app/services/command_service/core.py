@@ -202,6 +202,13 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
     ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman"}
+    # NON-effect commands that work on the uploaded FILE BYTES rather than on text extracted from
+    # them. Every EFFECT does too, but they are deliberately NOT repeated here — see
+    # wants_attachments.
+    MEDIA_TOOL_COMMANDS = {
+        "bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio",
+        "circlecrop", "ocr", "post", "translate", "flashcards",
+    }
     OVERLAY_MOTIONS = {"glow"}
     # --- effect modifier combination rules (ONE source of truth: the command path, the
     # media API and the web studio all resolve combos through check_motion_combo) ---
@@ -224,6 +231,20 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         self.is_bot = is_bot
         self.search_service = SearchService(db)
         self.chat_service = ChatService(db, user=user)
+
+    @classmethod
+    def wants_attachments(cls, command: Optional[str]) -> bool:
+        """True when `command` must be handed the uploaded file BYTES (not its extracted text).
+
+        Every interface asks THIS rather than carrying its own list. The web UI's list was a
+        hand-copied literal, so renaming `anyways` → `lookingaway` silently stopped attaching the
+        image to it: the effect ran with nothing to work on and answered "attach an image". Derived
+        from the effect sets, a rename can't do that again — and the ALIAS is resolved here, the way
+        execute_command does, so the old name still gets its attachment too.
+        """
+        c = (command or "").strip().lower()
+        c = cls.COMMAND_ALIASES.get(c, c)
+        return c in cls.MEDIA_TOOL_COMMANDS or c in cls.MOTION_EFFECTS or c in cls.ANIMATED_EFFECTS
 
     def parse_command(self, message: str) -> Tuple[Optional[str], str]:
         """Parse message for commands, return (command, argument)"""
@@ -338,6 +359,11 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     ) -> dict:
         """Execute a command, then shrink any oversized video outputs via the shared
         `compress` feature before returning (so effects don't hand back 10 MB clips)."""
+        # Resolve the alias HERE, not only in _execute_command_inner: the post-processing below is
+        # gated on `command in MOTION_EFFECTS`, so an effect reached by its old name (`anyways` →
+        # `lookingaway`) rendered fine and then silently skipped BOTH the auto-compress and the outro
+        # end-card — measured as a 5.5s unbranded clip against the canonical name's 8.1s branded one.
+        command = self.COMMAND_ALIASES.get(command, command)
         if command in self.RETIRED_COMMANDS:
             return {"type": "text", "content": self.RETIRED_COMMANDS[command]}
         result = await self._execute_command_inner(

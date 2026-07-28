@@ -141,7 +141,9 @@ async def budget_scan(
     # carrying the reason it couldn't. Pass both through so the client can show the real message.
     return res
 
-MEDIA_ATTACHMENT_COMMANDS = ("bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "ocr", "post", "share", "translate", "flashcards", "collage", "meme", "theraped", "would", "shrug", "carl", "soyjack", "anyways", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "hag", "goon", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider")
+# Which commands get the upload's raw BYTES: CommandService.wants_attachments (the effect sets +
+# the media tools, with aliases resolved). This used to be a hand-copied literal of all 99 names,
+# which is why renaming one effect dropped the image from it.
 
 
 async def _save_artifact_blossom(user_id: int, conv_id: int, data: bytes, ext: str,
@@ -809,7 +811,7 @@ async def chat_send(
 
     if command:
         media_attachments = None
-        if command in MEDIA_ATTACHMENT_COMMANDS:
+        if CommandService.wants_attachments(command):
             media_attachments = build_media_attachments(
                 images, image_data, req.pdfs, req.pdf_data, documents, document_data, req.videos)
         try:
@@ -1631,7 +1633,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             # compress/clip/convert/translate operate on raw file bytes
                             # (translate OCRs an uploaded image/PDF and translates the text)
                             media_attachments = None
-                            if command in MEDIA_ATTACHMENT_COMMANDS:
+                            if CommandService.wants_attachments(command):
                                 media_attachments = build_media_attachments(
                                     images, image_data, pdfs, pdf_data,
                                     documents, document_data, videos
