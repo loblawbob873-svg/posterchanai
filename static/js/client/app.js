@@ -10994,7 +10994,9 @@
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
     // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
     // they were fetched, toasted live, and then dropped from the list that actually renders.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
+    // 42 (NIP-28 chat) and 1111 (community comment) were subscribed to and had rows + a tab filter, but
+    // were missing HERE, so they could never render either — the same gap 1621/1617 had.
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,42,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && e.tags.some(t=>t[0]==='p'&&t[1]===ME.pubkey)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
@@ -14195,10 +14197,16 @@
       const rt=$('#us-retry'); if(rt) rt.onclick=renderUserSettings; return;
     }
     _usMail = Array.isArray(s.mail_accounts)? s.mail_accounts.slice() : [];
-    // The select must reflect the theme CURRENTLY applied on this device (local choice wins over the
-    // server value), and we must NOT re-apply on open (that would revert an unsaved live preview).
-    let _curTheme; try{ _curTheme=localStorage.getItem('pc_theme'); }catch(_){}
-    _curTheme=_curTheme||s.theme||siteDefaultTheme();
+    // The ACCOUNT value seeds the select, not the localStorage cache. Preferring the cache made every
+    // Save write the CACHE back to the account: a device that had painted the old site default
+    // ("professional", still the fallback in client.py:_default_theme) cached it via applyTheme, the
+    // dropdown then showed Professional no matter what the account said, and Save clobbered the account
+    // with it — the "hit Save and my theme reverts to professional" bug, and why 80 accounts hold that
+    // slug against a 'cyberpunk' column default. loadThemeFromServer already calls the account value
+    // authoritative; this now agrees with it instead of contradicting it. Still no applyTheme() on open,
+    // so an unsaved live preview is not reverted just by re-rendering.
+    let _cachedTheme; try{ _cachedTheme=localStorage.getItem('pc_theme'); }catch(_){}
+    let _curTheme=s.theme||_cachedTheme||siteDefaultTheme();
     if(!THEME_SLUGS.has(_curTheme)) _curTheme=siteDefaultTheme();   // stale/removed slug → don't desync the dropdown
     const tabs=[['profile','Profile'],['relays','Relays'],['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']];
     const relaysOn=!!ClientSettings.get('relaysEnabled'), blossomOn=!!ClientSettings.get('blossomEnabled');
