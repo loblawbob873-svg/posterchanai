@@ -799,6 +799,13 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 14px 12px;
   background:transparent;border:0;position:sticky;top:0;z-index:5}
 .topbar h2{margin:0;font-size:23px;letter-spacing:.4px;font-weight:800;line-height:1.2}
+/* Back sits immediately left of the title, so it reads as "out of THIS view" rather than a toolbar
+   action. flex:none — the searchbox next to it is flex:1 and would otherwise squash it to nothing. */
+.view-back{flex:none;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+  margin-right:-4px;font-size:20px;line-height:1;color:var(--text);background:none;border:1px solid var(--line);
+  border-radius:50%;cursor:pointer;transition:.15s}
+.view-back:hover{border-color:var(--neon);color:var(--neon);box-shadow:var(--glow)}
+.view-back.hidden{display:none}
 .searchbox{flex:1;min-width:0;max-width:720px;margin:0 16px}   /* min-width:0 → shrinks so the topbar buttons (Calls/Drafts/New post) always fit, never clipped */
 /* Exactly ONE search box at any width: the sidebar owns it on desktop, the topbar on mobile (where the
    sidebar is display:none). Two visible inputs would be duplicate UI; two hidden ones would be no search. */

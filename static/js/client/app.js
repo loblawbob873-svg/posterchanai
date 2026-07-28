@@ -718,7 +718,7 @@
     // URL stays in-scope; _entityFromPath already strips the /client prefix when decoding.
     const inClient = location.pathname === '/client' || location.pathname.startsWith('/client/');
     const target = inClient ? ('/client' + (path === '/' ? '' : path)) : path;
-    try{ if(location.pathname !== target) history.pushState({}, '', target); }catch(_){}
+    try{ if(location.pathname !== target){ history.pushState({}, '', target); _navPushed++; } }catch(_){}
   }
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
   function _webLink(entity){ return _serverOrigin() + '/' + entity; }
@@ -1580,7 +1580,9 @@
       setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
       setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
     }
-    window.addEventListener('popstate', ()=>{ if(ME) routeFromPath(); });   // back/forward
+    window.addEventListener('popstate', ()=>{ _navPushed=Math.max(0,_navPushed-1); if(ME) routeFromPath(); });   // back/forward
+    { const bb=document.getElementById('view-back');
+      if(bb) bb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView('home'); }; }
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
@@ -2196,7 +2198,12 @@
   // Clearing the sidebar highlight is the one line EVERY view entry point shares, so it's also where
   // the rail's per-view visibility is kept in sync — VIEW is assigned in a dozen places and routing
   // them all through here is what stops the two drifting apart (e.g. Messages → open a thread).
-  function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _syncRightbar(); }
+  // How many history entries WE pushed. A deep link (someone opens a shared issue URL cold) routes with
+  // _routing set, so nothing is pushed and this stays 0 — Back then goes Home instead of walking out of
+  // the app entirely, which is what history.back() would do on a single-entry history.
+  let _navPushed=0;
+  function _showBack(on){ const b=document.getElementById('view-back'); if(b) b.classList.toggle('hidden', !on); }
+  function _clearNav(){ $$('.nav-item[data-view]').forEach(b=>b.classList.remove('active')); _showBack(true); _syncRightbar(); }
   function switchView(v){
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Leaving Messages clears the open conversation so RE-entering Messages shows the list (not the last
@@ -2207,6 +2214,7 @@
     // rail, opening a view is exactly the moment to hand it back to the content.
     try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
+    _showBack(false);   // a nav view IS the root of the stack; only detail views (via _clearNav) offer Back
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
       // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
