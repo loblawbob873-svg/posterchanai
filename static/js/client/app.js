@@ -2755,7 +2755,9 @@
         // the thumbnail holds what will actually be posted.
         const _tlCardPrev=makeCardPreview($('#tl-cmp-cardprev',box));
         _tlBgPreview=()=>_tlCardPrev(ta.value, _tlBg, _tlBgFramed);
-        const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el)); _tlBgPreview(); };
+        const pick=(el,bg)=>{ _tlBg=bg; marks.forEach(m=>m.classList.toggle('on', m===el));
+          if(!bg) _tlBgFramed=false;   // same as the modal: ✕ drops the frame too
+          _tlBgPreview(); };
         none.onclick=()=>pick(none,null);
         _tlBgClear=()=>pick(none,null);   // reset() disarms the background after a post
         // The only thing a card cannot be made from is NO WORDS (a bare link). Length and links are no
@@ -8946,6 +8948,10 @@
       { const bgBtn=$('#cmp-bg-btn',root), strip=$('#cmp-bg-strip',root);
         if(bgBtn && strip){
           const select=(bg,el)=>{ _bgChoice=bg; $$('.cmp-swatch',strip).forEach(s=>s.classList.toggle('on', s===el));
+            // Clearing the background must clear the FRAME with it. _bgFramed survived a ✕, so the
+            // AI menu still read "🖼️ Framed card ✓" with no card armed, and the next background you
+            // picked came out framed without asking — which is what made ✕ look like it half-worked.
+            if(!bg) _bgFramed=false;
             _bgFramePreview();   // dropping the background must drop its preview with it
           };
           // ✕, matching the strip at the top of Social. This said "Aa", so the same control was labelled
