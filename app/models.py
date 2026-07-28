@@ -451,7 +451,10 @@ class FediBridgeAction(Base):
     POSTED, and the relay hard-deletes the kind-7/6 the moment the kind-5 lands (store._insert_one), so
     the deleted event's target and emoji can't be read back. `emoji` is stored in the exact form the
     instance accepted, since removing a reaction means replaying it to the same URL with DELETE.
-    Rows are dropped once undone; they're per-interaction and prunable."""
+
+    A row is ALSO the durable "we already did this" marker the write-back checks before acting, which is
+    why an undone row is TOMBSTONED (undone_at) rather than deleted. Deleting it would let the reconnect
+    replay of the still-live kind-7 re-perform a reaction the user had explicitly removed."""
     __tablename__ = "fedi_bridge_action"
     __table_args__ = (Index('ix_fedi_action_event', 'nostr_event_id'),)
 
@@ -464,6 +467,7 @@ class FediBridgeAction(Base):
     action = Column(String(12), nullable=False)          # "favourite" | "react" | "reblog"
     emoji = Column(String(120), nullable=True)           # "react" only, as sent
     created_at = Column(DateTime, default=datetime.utcnow)
+    undone_at = Column(DateTime, nullable=True)          # set when un-done; the row STAYS as the marker
 
 
 class FediBridgeMap(Base):

@@ -20,6 +20,7 @@ import logging
 import os
 import re as _re
 import time
+from datetime import datetime
 from urllib.parse import urlparse
 
 from app.models import FediBridgeAction, FediBridgeDelivered, FediBridgeMap, FediPuppet
@@ -657,7 +658,8 @@ async def _undo_actions(db, user, ev: dict, target: str) -> tuple:
     host = (inst or "").rstrip("/").lower()
     rows = db.query(FediBridgeAction).filter(
         FediBridgeAction.nostr_event_id == target,
-        FediBridgeAction.nostr_pubkey == ev.get("pubkey", "")).all()   # only ever this actor's own
+        FediBridgeAction.nostr_pubkey == ev.get("pubkey", ""),
+        FediBridgeAction.undone_at.is_(None)).all()   # only ever this actor's own, and not already undone
     ok = True
     for row in rows:
         # Same rule as _delete_federated: this user's bearer token goes ONLY to the instance that
@@ -673,7 +675,10 @@ async def _undo_actions(db, user, ev: dict, target: str) -> tuple:
                 await pleroma_service.unreblog_status(inst, token, row.target_id)
             else:
                 await pleroma_service.unfavourite_status(inst, token, row.target_id)
-            db.delete(row)
+            # TOMBSTONE, don't delete: this row is also the "already performed" marker _handle checks.
+            # Removing it would let the reconnect replay of the still-live kind-7 put the reaction the
+            # user just deleted straight back.
+            row.undone_at = datetime.utcnow()
             db.commit()
             logger.info("[fedi-writeback] undid %s%s on %s (nostr %s)", row.action,
                         f" {row.emoji}" if row.emoji else "", row.target_id, target[:10])
@@ -787,6 +792,20 @@ async def _handle(db, ev: dict) -> None:
         if not target_id:
             logger.debug("[fedi-writeback] could not resolve target for ev %s", eid)
             return
+        # Durable idempotency for INTERACTIONS, the same guard kind-1 has below. _seen_events is
+        # in-process, so every restart replayed the last _LOOKBACK_SEC and re-performed every reaction
+        # and repeat in it. "Server-idempotent" was true of the instance's own STATE and false of
+        # FEDERATION: each call re-emits the Like/EmojiReact/Announce to the target's instance, so the
+        # author sees a fresh notification every time. A day of ordinary deploys turned one reaction
+        # into ~100 and got us reported by several instances.
+        # Checked against the row _record_action writes, INCLUDING tombstoned (undone) ones — a
+        # reaction the user removed must not come back on the next replay.
+        if kind in (6, 7):
+            if db.query(FediBridgeAction).filter(
+                    FediBridgeAction.nostr_event_id == eid,
+                    FediBridgeAction.nostr_pubkey == pk).first():
+                _seen_events.add(eid)      # done in an earlier life of this process; stop re-querying
+                return
         if kind == 7:
             action, emoji = await _react(inst, token, target_id, ev)   # emoji reaction if it IS one, else favourite
             _record_action(db, ev, inst, target_id, action, emoji)     # so a later kind-5 can undo it
