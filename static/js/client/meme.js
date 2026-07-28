@@ -30,6 +30,18 @@
       // missed save becomes 'my project came back different', so make it unconditional.
       unmount(){ try{ stopPlay(false); }catch(_){ if(_playT){ clearInterval(_playT); _playT=null; } } try{ if(P) save(); }catch(_){ } },
       reset(){ P = blank(); sel=null; save(); render(); },
+      // Seed a layer from a URL — how a post gets "opened in" the Meme Builder. Mirrors what the
+      // Blossom picker does (addLayer takes the url directly), but callable from outside the module.
+      // ME/P are loaded first because this can arrive before render() has ever run for this session.
+      addMedia(url, type){
+        if(!url) return false;
+        try{
+          ME = PC.ME; if(!P) P = load();
+          addLayer(/^video\//.test(type||'') ? 'video' : 'image', url);
+          save(); render();
+          return true;
+        }catch(e){ return false; }
+      },
     };
   }
 

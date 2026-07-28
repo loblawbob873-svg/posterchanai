@@ -7765,6 +7765,7 @@
     if(!window.PC_NOSTR_ONLY) items.push(['summary','📝 Summary']);       // AI summary of the post/thread
     if(!window.PC_NOSTR_ONLY) items.push(['narrate','🔊 Read Aloud']);    // TTS the post (author + content)
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
+    items.push(['memebuild','🎞️ Meme Builder']);   // drop the post's media in as a layer to edit/compose
     if(!window.PC_NOSTR_ONLY) items.push(['screenshot','📸 Screenshot']); // render the post as a clean card → Blossom link
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
@@ -7785,6 +7786,7 @@
       if(a==='summary') return summarizePost(id);
       if(a==='narrate') return narratePost(id, pk);
       if(a==='effect') return effectPost(id, pk);
+      if(a==='memebuild') return memeBuildPost(id, pk);
       if(a==='screenshot') return screenshotPost(id);
       if(a==='pin') return togglePin(id);
       if(a==='nsfw') return repostWithWarning(id);
@@ -7999,6 +8001,26 @@
     // so its box re-render wiped the freshly-attached image + guide (the "had to do it twice" bug).
     _ai.pendingFx={ url };
     switchView('ai');
+  }
+  // 🎞️ Meme Builder: drop the post's media straight in as a layer. Unlike 🎬 Effect this needs NO AI
+  // backend — the builder is pure client-side compositing — so it is offered on nostr-only nodes too,
+  // and it takes VIDEO as well as images. The media stays a URL (the builder loads it like any
+  // Blossom layer) rather than being downloaded and re-uploaded.
+  async function memeBuildPost(id, pk){
+    let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const mp=mediaParts(ev.content||'');
+    const url=postImageUrl(ev) || ((ev.content||'').match(/https?:\/\/\S+/g)||[])
+      .map(u=>u.replace(/[)\].,!?]+$/,'')).find(u=>_isMediaUrl(u));
+    if(!url){ toast('this post has no image or video to build with'); return; }
+    const isVid=/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
+    switchView('meme');
+    // switchView renders the builder; seed AFTER that so our layer isn't wiped by its own first
+    // render — the same ordering bug the Effects studio hit with _ai.pendingFx.
+    setTimeout(()=>{
+      const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(url, isVid?'video/mp4':'image/jpeg');
+      toast(ok ? '🎞️ added to the Meme Builder' : 'could not add that media');
+    }, 60);
   }
   // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
   // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
