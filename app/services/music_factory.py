@@ -63,15 +63,27 @@ async def _rotated(candidates: List[str]) -> List[str]:
 
 async def _generate_local(db: Session, cfg: dict, prompt: str, lyrics: str, duration, steps,
                           timeout: float, fmt: str) -> Tuple[bytes, str]:
-    """Generate on THIS node's acestep server under the shared GPU lock + VRAM swap (frees our
-    LLM/image first), so chat/image/music all queue on one GPU."""
+    """Generate on THIS node under the shared GPU lock + VRAM swap (frees our LLM/image first), so
+    chat/image/music/video all QUEUE on one GPU — the lock is the queue, and it is taken here rather
+    than inside music_local so the wait is visible to the caller.
+
+    NATIVE by default (diffusers AceStepPipeline, in-process, same torch stack as image/video). The
+    old external acestep REST server is only used when `music_api_base` is explicitly set, or on a
+    diffusers too old to have the pipeline — so an existing deployment keeps working while nothing
+    new depends on it."""
     from app.services.locks import GPUResourceLock
     from app.services.vram_manager import prepare_for_music
+    from app.services import music_local
     cpu_mode = cfg["device"] == "cpu"
-    body = music_service.build_request_body(cfg, prompt, lyrics, duration, steps)
+    explicit_server = bool((cfg.get("base_url_explicit") or "").strip())
+    use_native = music_local.is_available() and not explicit_server
     async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
         prepare_for_music(db)
-        logger.info(f"[music] generating on local acestep {cfg['base_url']}")
+        if use_native:
+            logger.info("[music] generating natively (in-process ACE-Step)")
+            return await music_local.generate_async(db, prompt, lyrics, duration, steps, fmt=fmt)
+        logger.info(f"[music] generating on external acestep {cfg['base_url']}")
+        body = music_service.build_request_body(cfg, prompt, lyrics, duration, steps)
         return await music_service.generate_once(cfg["base_url"], body, timeout, fmt)
 
 

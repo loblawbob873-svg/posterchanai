@@ -44,6 +44,9 @@ def get_settings(db: Session) -> dict:
         # Local ACE-Step server: no admin UI field — auto-seeded from POSTERCHANAI_ACESTEP_URL in
         # Docker (acestep:8001), else the localhost:8001 convention default.
         "base_url": (rows.get("music_api_base", "") or "").strip() or DEFAULT_BASE_URL,
+        # The RAW setting: blank means "no external server configured", which is what lets
+        # music_factory pick the native in-process pipeline instead of the localhost:8001 default.
+        "base_url_explicit": (rows.get("music_api_base", "") or "").strip(),
         # Cross-node LB uses the single unified list (Site → Load Balancing).
         "server_urls": rows.get("chat_server_urls", "") or "",
         "device": (rows.get("music_gpu_device", "auto") or "auto").strip().lower(),

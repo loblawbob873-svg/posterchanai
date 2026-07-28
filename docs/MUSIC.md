@@ -1,8 +1,9 @@
 # Music Generation (`musicgeni`)
 
-Text-to-song generation via a self-hosted [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)
-server. Available in the **web UI** and **Telegram** (intentionally *not* the Misskey/Pleroma
-bots — abuse surface).
+Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), running
+**natively in-process** on the same torch stack as image and video gen — no separate server.
+Available in the **web UI** and **Telegram** (intentionally *not* the Misskey/Pleroma bots — abuse
+surface).
 
 ```
 musicgeni <description>                 # auto-writes lyrics → a song WITH vocals
@@ -31,17 +32,23 @@ style caption) from your description, so plain `musicgeni <description>` produce
 singing. Add `instrumental` / `no vocals` to the description (or end with a bare `|`) to skip
 lyrics.
 
-## Why a separate ACE-Step server?
+## No separate server (was: the ACE-Step service)
 
-ACE-Step needs **Python 3.11–3.12** and a `torch`/`transformers` stack that conflicts with both the
-main app venv and the image-gen venv. It also ships its own REST server (`acestep-api`). So it runs
-as a **separate process**, and the app talks to it over HTTP — like the external image servers and
-the external image servers. The main app needs no extra Python deps (just `httpx`). See
-`app/services/music_service.py` (per-server REST client) and `app/services/music_factory.py`
-(orchestration). ACE-Step is **not on PyPI** — it's installed from its git repo with `uv`.
+Music generation is **in-process**: `diffusers` ships `AceStepPipeline`, so ACE-Step loads exactly
+like the Wan/LTX video pipelines (`app/services/music_local.py`) — same venv, same torch, same GPU
+lock.
 
-ACE-Step's turbo DiT model fits a **12 GB** GPU (e.g. an RTX 3060 renders a ~15 s clip in ~10 s,
-generating two takes per request).
+It used to be a separate process, because ACE-Step needed Python 3.11–3.12 and a conflicting
+torch/transformers stack, wasn't on PyPI, and shipped its own REST server. That meant a git clone
+into `~/ACE-Step-1.5`, a `uv`-provisioned interpreter, an `acestep.service` systemd unit, an HTTP
+hop, and hand-swapped torch on Intel XPU / AMD ROCm with torchcodec dropped. All of that is gone.
+
+The turbo DiT is an 8-step model and fits a **12 GB** GPU. Weights land in `~/.cache/huggingface` on
+first use (`./install.sh --music` can prefetch them).
+
+**Falling back to an external server:** set `music_api_base` and the old REST path is used instead.
+That exists for a diffusers too old to carry the pipeline, or a node still running the service —
+nothing new depends on it.
 
 ## Load balancing, locking & VRAM swap (same as image gen)
 
@@ -66,36 +73,15 @@ node so concurrent requests queue instead of OOMing one GPU. A node may safely l
 
 ## Setup
 
-### Bare metal
+Nothing to install — `diffusers` is already in `requirements.txt`.
 
 ```bash
-./install.sh --music
+./install.sh --music     # optional: prefetch the weights + retire a legacy acestep.service
 ```
 
-This installs `uv`, clones ACE-Step, runs `uv sync`, and installs a **persistent `acestep.service`
-systemd unit** (auto-start, auto-restart). It's GPU-aware:
+Then **Admin → Music**: enable music. Leave Local Server URL **blank** to use the built-in engine.
+Set Remote Servers only if you want to fan out to other nodes.
 
-- **NVIDIA/CUDA** — works out of the box (torchcodec works).
-- **Intel XPU / AMD ROCm** — it reinstalls a matched `torch`+`torchvision`+`torchaudio` from the
-  XPU/ROCm index, **drops torchcodec** (CUDA-only) and patches ACE-Step's audio save to use
-  `soundfile` (torchcodec-free). Override the index with `MUSIC_TORCH_INDEX`.
-
-The DiT model auto-downloads on the first song. Manage with
-`systemctl status/restart acestep.service` and `journalctl -u acestep.service -f`. Then in
-**Admin → Music**: enable music, set Local Server URL to `http://localhost:8001`, and set Remote
-Music Servers to your other nodes (e.g. `http://nas.lan:3051`) to load-balance.
-
-### Docker
-
-The `acestep` service is opt-in via the `music` profile (NVIDIA only; needs nvidia-container-toolkit):
-
-```bash
-docker compose --profile cuda --profile music up -d --build
-```
-
-Then in **Admin → Music**: enable music and set the Local Server URL to `http://acestep:8001`. The
-model auto-downloads into the `pc-acestep` volume on first request. Pin a repo ref with
-`ACESTEP_REF` if upstream changes.
 
 ## Admin → Music settings
 
