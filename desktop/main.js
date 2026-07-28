@@ -36,6 +36,34 @@ function clientUrl() { return instance() + '/client'; }
 function originOf(u) { try { return new URL(u).origin; } catch (_) { return ''; } }
 function isOurs(url) { const o = originOf(url); return !!o && o === originOf(instance()); }
 
+// ---- the sign-in round trip is not an off-site link -------------------------------------------
+// "Sign in with Google / a fediverse account" leaves our origin BY DESIGN and comes back carrying a
+// one-time code that /client swaps for the account's key. Handing that trip to the system browser —
+// which the off-site rule below otherwise does — spends the single-use code THERE: the person ends up
+// signed in in Firefox while the app they clicked in stays logged out. That is what shipped.
+//
+// Recognised without a hardcoded provider list: an off-site URL whose `redirect_uri` points back at
+// this instance IS the round trip, which is equally true of Google and of any fediverse instance
+// someone types. While one is open, navigation WITHIN that provider stays in the app; it closes as
+// soon as we are back on our own origin, or after OAUTH_MAX_MS, so this can never become a general
+// off-site allowance.
+let oauth = null;   // { origin, until } while a sign-in is in flight
+const OAUTH_MAX_MS = 5 * 60 * 1000;
+
+function comesBackToUs(url) {
+  try {
+    const back = new URL(url).searchParams.get('redirect_uri') || '';
+    return !!back && originOf(back) === originOf(instance());
+  } catch (_) { return false; }
+}
+function isSignInNav(url) {
+  const o = originOf(url);
+  if (!o) return false;
+  if (o === originOf(instance())) { oauth = null; return false; }   // home again: the trip is over
+  if (comesBackToUs(url)) { oauth = { origin: o, until: Date.now() + OAUTH_MAX_MS }; return true; }
+  return !!(oauth && oauth.origin === o && Date.now() < oauth.until);
+}
+
 // ---- media prerequisites (must run BEFORE app ready — Chromium reads these once, at startup) ----
 // A self-hosted instance reached over plain http is not a SECURE CONTEXT, and Chromium then removes
 // navigator.mediaDevices entirely: mic, camera and screen share all report "not supported" even though
@@ -48,6 +76,18 @@ function wireInsecureInstance() {
   // Electron already uses keeps the profile exactly where it was.
   app.commandLine.appendSwitch('user-data-dir', app.getPath('userData'));
   insecureInstance = true;
+}
+
+// Google refuses OAuth from a user agent it can identify as an embedded browser (disallowed_useragent),
+// and Electron's default UA advertises exactly that: `posterchan/1.0.3 ... Electron/x.y.z`. Underneath it
+// is plain Chromium of the stated Chrome/NNN version, so drop the two tokens and present that. Nothing
+// else keys off the UA — the client picks its layout from viewport/pointer, never this string.
+function wirePlainUserAgent() {
+  try {
+    app.userAgentFallback = app.userAgentFallback
+      .replace(/\s?(?:Electron|posterchan)\/[\d.]+/gi, '')
+      .replace(/\s{2,}/g, ' ').trim();
+  } catch (_) {}
 }
 
 // Wayland has no X11-style screen grab: capture goes through the xdg-desktop-portal/PipeWire path,
@@ -173,9 +213,15 @@ function createWindow() {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // A 302 out to the provider fires will-redirect, not will-navigate, so watch it too — but only to
+  // NOTICE the trip starting. Rerouting a redirect is deliberately not done here: redirects already
+  // stayed in the window before this change and that is not what broke.
+  win.webContents.on('will-redirect', (e, url) => { isSignInNav(url); });
   win.webContents.on('will-navigate', (e, url) => {
     const o = originOf(url);
-    if (o && o !== originOf(instance()) && !url.startsWith('file://')) { e.preventDefault(); shell.openExternal(url); }
+    if (!o || url.startsWith('file://') || o === originOf(instance())) { if (isOurs(url)) oauth = null; return; }
+    if (isSignInNav(url)) return;                     // the sign-in round trip comes back to us
+    e.preventDefault(); shell.openExternal(url);      // everything else belongs in the real browser
   });
 
   // Can't reach the instance (offline, wrong domain, server down) → our own page, not Chromium's.
@@ -386,6 +432,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   loadCfg();
   wireInsecureInstance();
   wireWaylandCapture();
+  wirePlainUserAgent();
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   app.whenReady().then(() => {
     wireDownloads();
