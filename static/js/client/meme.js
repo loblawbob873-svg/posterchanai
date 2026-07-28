@@ -254,7 +254,12 @@
         <button class="btn btn-danger small" id="mb-clear" title="Remove every layer and start a fresh build">🧹 Clear all</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
+          ${PRESETS.some(([n,w,h])=>P.w===w&&P.h===h) ? '' :
+            `<option value="${P.w}x${P.h}" selected>${P.w}×${P.h}</option>`}
         </select>
+        <label class="mb-bgpick" title="Canvas background — this is what shows AROUND a photo that doesn't fill the frame (the bars). It was always black with no way to change it.">
+          <input type="color" id="mb-bg" value="${enc(P.bg)}" aria-label="Canvas background colour">
+        </label>
         <span class="mb-spacer"></span>
         <span class="muted small" id="mb-status"></span>
         <button class="btn btn-neon small" id="mb-render">🎬 Render</button>
@@ -394,7 +399,8 @@
           <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
         </div>
-        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Size the whole photo to the canvas — nothing is cut off">⛶ Fill the canvas</button><button class="btn btn-cyan small" id="mb-fill" title="Crop the edges so there are no bars">✂ Crop to fill</button></div>
+        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
+        <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped">⇲ Canvas to this photo</button>
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
@@ -951,6 +957,39 @@
     return { id: to.id, pk: to.pk || '', name };
   }
 
+  // Change the canvas shape and carry the layers with it. Without the rescale, every layer keeps its
+  // old pixel box on a differently-shaped canvas — captions land off-frame and photos stop covering
+  // what they covered — which reads as "changing the size wrecked my build".
+  function _resizeCanvas(w, h){
+    w = Math.max(16, Math.round(w)/2*2|0) || P.w; h = Math.max(16, Math.round(h)/2*2|0) || P.h;
+    const rx = w/P.w, ry = h/P.h;
+    P.layers.forEach(l=>{
+      if(l.type==='audio') return;                 // no geometry
+      l.x = Math.round((+l.x||0)*rx); l.y = Math.round((+l.y||0)*ry);
+      if(l.type==='text'){ l.size = Math.max(8, Math.round((+l.size||48)*Math.min(rx,ry))); }
+      else { l.w = Math.max(2, Math.round((+l.w||0)*rx)); l.h = Math.max(2, Math.round((+l.h||0)*ry)); }
+    });
+    P.w = w; P.h = h; save(); render();
+  }
+
+  // The canvas is BLACK by default and `contain` letterboxes anything whose shape differs from it, so
+  // the bars people see are the canvas showing through a transparent pad — not a border drawn on the
+  // photo, and not something the fit buttons can remove without cropping. Reshaping the canvas to the
+  // photo is the third answer: whole photo, no bars, nothing cropped.
+  function matchCanvasToLayer(l){
+    const el = document.querySelector('.mb-item[data-id="'+l.id+'"] img, .mb-item[data-id="'+l.id+'"] video');
+    const iw = el ? (el.naturalWidth || el.videoWidth || 0) : 0;
+    const ih = el ? (el.naturalHeight || el.videoHeight || 0) : 0;
+    if(!iw || !ih){ toast('still loading that media — try again in a second'); return; }
+    // Cap the long edge like the presets do (1280): the canvas is the RENDER size, and a 2048-tall
+    // project is a much slower ffmpeg for no visible gain on a phone.
+    const cap = 1280, r = Math.min(1, cap/Math.max(iw, ih));
+    _resizeCanvas(iw*r, ih*r);
+    l.x = 0; l.y = 0; l.w = P.w; l.h = P.h; l.fit = 'contain';
+    sel = l.id; save(); render();
+    toast('canvas matched — whole photo, no bars');
+  }
+
   function showResult(blob, out){
     const url=URL.createObjectURL(blob);
     // Opened from a post (🎞️ Meme Builder on a note) → offer the reply right here, the way the Effects
@@ -1015,6 +1054,7 @@
       save(); render(); toast('fills the frame — edges cropped'); });
     // The whole photo, scaled to fit inside the canvas. Can't do both: filling a different aspect ratio
     // always crops, and showing everything always leaves bars — so make it an explicit choice.
+    on('mb-canvas-match','click',()=>matchCanvasToLayer(l));
     on('mb-fit','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='contain';
       save(); render(); toast('whole photo — bars where the aspect differs'); });
     // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
@@ -1164,7 +1204,11 @@
     on('mb-render','click',doRender);
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
-    on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); P.w=w; P.h=h; save(); render(); });
+    on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); _resizeCanvas(w,h); });
+    // Repaint the stage directly rather than re-rendering the view: a full render() would replace the
+    // colour input mid-drag and drop the picker.
+    on('mb-bg','input',(e)=>{ P.bg=e.target.value||'#000000';
+      const st=document.getElementById('mb-stage'); if(st) st.style.background=P.bg; save(); });
     root.querySelectorAll('.mb-track').forEach(t=>t.addEventListener('click',(e)=>{
       if(!e.target.closest('.mb-clip')) selectLayer(t.dataset.id); }));
     seek(0);

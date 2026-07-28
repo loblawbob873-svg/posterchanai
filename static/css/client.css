@@ -3799,6 +3799,11 @@ body.modal-open .mobilenav{display:none}
 .mb-bar .btn{margin:0}
 .mb-spacer{flex:1 1 auto}
 .mb-size{width:auto;min-width:88px;margin:0;padding:7px 10px}
+/* Canvas background swatch. Sized like the neighbouring controls rather than left at the browser's
+   default colour-input box, which is a ~20px target no thumb can hit. */
+.mb-bgpick{display:inline-flex;align-items:center;justify-content:center;width:42px;height:36px;
+  padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);cursor:pointer}
+.mb-bgpick input[type=color]{width:100%;height:100%;padding:0;border:0;background:none;cursor:pointer}
 .mb-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
 .mb-stagewrap{min-width:0}
 /* container-type so a text layer's font-size can be expressed in cqh — the caption then scales with
