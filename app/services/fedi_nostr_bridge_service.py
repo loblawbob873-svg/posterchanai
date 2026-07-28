@@ -1026,37 +1026,29 @@ _RECON_BATCH = 4        # authors per pass — small on purpose: each costs 1-2 
                         # instance rate-limits (a 40-post/12-page audit tripped 429 by hand).
 _RECON_LOOKBACK = 40    # statuses per author — one page, covers a normal posting day
 _RECON_INTERVAL = 900   # seconds between passes
-_RECON_SEED_SCAN = 300  # newest delivery rows scanned when seeding (PK index, constant cost)
+_RECON_SEED_SCAN = 300
+_RECON_SEED_PER_PASS = 8   # new authors added to the rotation each pass (bounded: 8 small INSERTs)  # newest delivery rows scanned when seeding (PK index, constant cost)
 
 
-def _recon_candidates(db: Session, instance_url: str, limit: int, instance_host: str = "") -> list:
-    """Authors to audit this pass, least-recently-checked first.
+def _seed_recon_state(db: Session, instance_url: str, instance_host: str, want: int) -> int:
+    """Add up to `want` not-yet-tracked authors to the rotation. Returns how many were added.
 
-    PERFORMANCE: the obvious query — SELECT DISTINCT author_acct FROM fedi_bridge_delivered — is a
-    SEQ SCAN of the whole delivery table (121k rows and growing with the firehose) every pass. So the
-    rotation is driven by fedi_reconcile_state instead: one small row per author, ordered so NULLs
-    (never audited) come first.
+    Runs EVERY pass, independently of whether this pass could fill its batch. Gating it on "we came
+    up short" is what wedged the rotation: once _RECON_BATCH rows existed the seeding branch was
+    unreachable, so the table stayed frozen at the first four authors ever seen — all remote — and a
+    local account could never enter it no matter how long it ran.
 
-    LOCAL accounts are seeded FIRST and from their own source. They are the population the documented
-    gap actually hit — see poll_once, "an active local account got ~7% of a week mirrored" — but they
-    are a rounding error in the recent-deliveries window (3118 authors, only 82 local), so seeding
-    from that window alone reaches them ~8 days in. Sourced from fedi_puppets.instance_host (8.7k
-    small rows, bounded by LIMIT) rather than a LIKE over the 121k-row delivery table, and only while
-    we still need candidates — once the state table is populated this branch stops running entirely.
-    NOTE: a local acct is stored WITH its host (`admin@detroitriotcity.com`), so testing for the
-    absence of "@" to find locals silently matches nothing."""
-    rows = (db.query(FediReconcileState)
-              .filter(FediReconcileState.instance_url == instance_url)
-              .order_by(FediReconcileState.last_checked_at.asc().nullsfirst())
-              .limit(limit).all())
-    picked = [r.acct for r in rows]
-    if len(picked) >= limit:
-        return picked
+    LOCAL accounts first: they are the population the documented gap hits (poll_once: "an active
+    local account got ~7% of a week mirrored") while being a rounding error in the firehose window
+    (82 of 3118). Sourced from fedi_puppets.instance_host — 8.7k small rows bounded by LIMIT, not a
+    LIKE over the 121k-row delivery table."""
+    if want <= 0:
+        return 0
     known = {r[0] for r in db.query(FediReconcileState.acct)
                              .filter(FediReconcileState.instance_url == instance_url).all()}
     fresh, seen = [], set()
     def _take(acct):
-        if acct and acct not in known and acct not in seen:
+        if acct and acct not in known and acct not in seen and len(fresh) < want:
             seen.add(acct)
             fresh.append(acct)
     if instance_host:
@@ -1064,8 +1056,6 @@ def _recon_candidates(db: Session, instance_url: str, limit: int, instance_host:
                        .filter(FediPuppet.instance_host == instance_host)
                        .limit(_RECON_SEED_SCAN).all()):
             _take(a)
-    # Then top up from the newest delivery rows (PK index scan, constant cost) so remote authors the
-    # firehose actually carries still enter the rotation.
     for (a,) in (db.query(FediBridgeDelivered.author_acct)
                    .filter(FediBridgeDelivered.instance_url == instance_url,
                            FediBridgeDelivered.author_acct.isnot(None),
@@ -1073,15 +1063,29 @@ def _recon_candidates(db: Session, instance_url: str, limit: int, instance_host:
                    .order_by(FediBridgeDelivered.id.desc())
                    .limit(_RECON_SEED_SCAN).all()):
         _take(a)
-    for a in fresh[:limit - len(picked)]:
+    for a in fresh:
         db.add(FediReconcileState(instance_url=instance_url, acct=a))
-        picked.append(a)
     if fresh:
         try:
             db.commit()
         except Exception:
             db.rollback()
-    return picked
+            return 0
+    return len(fresh)
+
+
+def _recon_candidates(db: Session, instance_url: str, limit: int, instance_host: str = "") -> list:
+    """Authors to audit this pass, least-recently-checked first (NULL = never audited sorts first).
+
+    PERFORMANCE: driven by fedi_reconcile_state — one small row per author — rather than a
+    SELECT DISTINCT over the 121k-row delivery table, which is a seq scan that grows with the
+    firehose."""
+    _seed_recon_state(db, instance_url, instance_host, _RECON_SEED_PER_PASS)
+    rows = (db.query(FediReconcileState)
+              .filter(FediReconcileState.instance_url == instance_url)
+              .order_by(FediReconcileState.last_checked_at.asc().nullsfirst())
+              .limit(limit).all())
+    return [r.acct for r in rows]
 
 
 async def _reconcile_author(db: Session, port: int, platform: str, instance_url: str,
