@@ -23,7 +23,7 @@ from typing import List, Optional, Tuple
 import httpx
 from sqlalchemy.orm import Session
 
-from app.services import music_service
+from app.services import music_service, settings_store
 from app.services.music_service import MusicError
 
 logger = logging.getLogger("music_factory")
@@ -76,7 +76,13 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, lyrics: str, dura
     from app.services import music_local
     cpu_mode = cfg["device"] == "cpu"
     explicit_server = bool((cfg.get("base_url_explicit") or "").strip())
-    use_native = music_local.is_available() and not explicit_server
+    # OPT-IN, default OFF. diffusers ships AceStepPipeline, but NO published ACE-Step repo is in
+    # diffusers format — none of them carry model_index.json, so from_pretrained 404s before it can
+    # load anything (verified against ACE-Step/Ace-Step1.5, acestep-v15-xl-{base,turbo},
+    # ACE-Step-v1-3.5B and the Comfy-Org mirror). Until a diffusers-format checkpoint exists, the
+    # external server is the only path that actually generates, so it stays the default.
+    use_native = (music_local.is_available() and not explicit_server
+                  and str(settings_store.get("music_native", "false")).lower() in ("1", "true", "yes", "on"))
     async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):
         prepare_for_music(db)
         if use_native:

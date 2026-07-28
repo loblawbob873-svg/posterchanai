@@ -33,6 +33,8 @@ def _native_music_active() -> bool:
     explicitly configured) — the same test music_factory routes on."""
     try:
         from app.services import music_local, settings_store, music_service
+        if str(settings_store.get("music_native", "false")).lower() not in ("1", "true", "yes", "on"):
+            return False        # native is opt-in — see music_factory._generate_local
         if music_service._explicit_server(settings_store.get("music_api_base", "")):
             return False
         return music_local.is_available()

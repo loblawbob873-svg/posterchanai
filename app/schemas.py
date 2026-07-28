@@ -121,6 +121,10 @@ class SettingsResponse(BaseModel):
     music_enabled: str = "true"
     music_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
     music_model: str = ""  # DiT model name/path, e.g. acestep-v15-turbo (blank = server default)
+    # Generate music IN-PROCESS via diffusers' AceStepPipeline instead of the external ACE-Step
+    # server. OFF by default: the pipeline exists but no published ACE-Step repo ships a
+    # diffusers-format checkpoint (no model_index.json), so from_pretrained cannot load one yet.
+    music_native: str = "false"
     music_default_duration: str = "180"  # seconds (ACE-Step range 10-600)
     music_default_steps: str = "8"  # diffusion steps (turbo ~8, base up to ~200)
     music_format: str = "mp3"  # mp3 | wav | flac | opus | aac
