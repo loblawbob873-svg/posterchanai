@@ -166,7 +166,7 @@ window.ICO=function(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" aria-hidd
         <!-- Search lives under the logo (the topbar copy is mobile-only, where this sidebar is hidden) -->
         <div class="nav-search"><input id="nav-search-input" class="input" type="search" placeholder="🔍 Search" autocomplete="off"></div>
         <nav class="nav">
-            {% if not nostr_only %}<button class="nav-item nav-ai" data-view="ai"><svg class="ic"><use href="#i-ai"></use></svg><span>AI</span><i id="ai-badge" class="badge hidden"></i></button>{% endif %}
+            {% if not nostr_only %}<button class="nav-item nav-ai" data-view="ai"><svg class="ic"><use href="#i-ai"></use></svg><span>AI<i id="ai-badge" class="badge hidden"></i></span></button>{% endif %}
             <!-- No Home item: Home is a tab on the timeline itself (see .tl-tabs), ditto.pub-style -->
             <!-- "Social" not "Nostrverse": the timeline tab already says Nostrverse, so two would be redundant -->
             <button class="nav-item active" data-view="global"><svg class="ic"><use href="#i-globe"></use></svg><span>Social</span></button>
