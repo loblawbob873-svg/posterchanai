@@ -3327,6 +3327,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 /* Go Live divider */
 .gl-or{text-align:center;margin:12px 0;color:var(--muted,#8a8db3);font-size:13px}
+/* Go Live source picker. These are CHOICES, not launch buttons — nothing is captured until the user
+   confirms, so the wrong camera can never be broadcast before they can change it. */
+.gl-src{margin:10px 0 4px}
+.gl-opt{display:flex;align-items:center;gap:10px;padding:9px 11px;margin:5px 0;border-radius:9px;
+  border:1px solid var(--border,#2a2c48);cursor:pointer;font-size:14px}
+.gl-opt:hover{border-color:var(--neon,#6ee7ff)}
+.gl-opt input{margin:0;flex:none;width:16px;height:16px}   /* flex:none — the radio must never squash */
+.gl-sub{margin:2px 0 6px 22px;padding-left:10px;border-left:2px solid var(--border,#2a2c48)}
+.gl-actions .btn[disabled]{opacity:.45;cursor:not-allowed}
 
 /* Live stream chat (NIP-53 kind-1311) — beside the player on desktop, below on mobile */
 /* Chat sits BELOW the player, not beside it: the 330px side rail squeezed the video into the leftover

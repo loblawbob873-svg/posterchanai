@@ -286,9 +286,13 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                     sc = content.strip(":")
                     content = f":{sc}:"
                     tags.append(["emoji", sc, emoji_url])
+            if _notif_done(db, user.pleroma_instance_url, n):
+                return True                 # already published — a retry must not mint a second reaction
             ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
-            ok, msg = await ident.publish(port, ident.build_event(puppet, 7, content, tags=tags,
-                                                                  broadcast=broadcast, created_at=ts))
+            ev = ident.build_event(puppet, 7, content, tags=tags, broadcast=broadcast, created_at=ts)
+            ok, msg = await ident.publish(port, ev)
+            if ok:
+                _notif_mark(db, user.pleroma_instance_url, n, puppet, ev)
             return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype == "reblog" and status:
             target = await _ensure_status_event(db, port, user, instance_host, status, broadcast)
@@ -298,9 +302,13 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
                             acct, status.get("id"))
                 return True
             tags = [["p", recipient], ["e", target]]
+            if _notif_done(db, user.pleroma_instance_url, n):
+                return True                 # already published — a retry must not mint a second boost
             ts = _notif_ts(n, status)   # stable id across retries → relay dedups a re-publish (idempotent)
-            ok, msg = await ident.publish(port, ident.build_event(puppet, 6, "", tags=tags,
-                                                                  broadcast=broadcast, created_at=ts))
+            ev = ident.build_event(puppet, 6, "", tags=tags, broadcast=broadcast, created_at=ts)
+            ok, msg = await ident.publish(port, ev)
+            if ok:
+                _notif_mark(db, user.pleroma_instance_url, n, puppet, ev)
             return ok or _is_permanent_reject(msg)   # delivered / permanently rejected → advance; transient → retry
         if ntype in ("follow", "follow_request"):
             # A fediverse user followed this bridge user → reflect it on Nostr by adding the bridge
@@ -353,6 +361,56 @@ def _notif_ts(n: dict, status: dict | None) -> int | None:
         except Exception:
             continue
     return None
+
+
+def _notif_key(n: dict) -> str:
+    """Durable dedup key for ONE notification (reaction/reblog), stored as a synthetic delivered row."""
+    return f"notif:{n.get('id')}"
+
+
+def _notif_done(db: Session, instance_url: str, n: dict) -> bool:
+    """Has this reaction/reblog notification already been published for this instance?
+
+    The event id alone was relied on for this — build the same event twice and the relay rejects the
+    duplicate. That silently fails whenever the id ISN'T reproducible: `_notif_ts` falls back to wall
+    clock when neither the notification's nor the status's timestamp parses, so a retry mints a NEW id
+    and the relay stores a second copy. Confirmed in production — duplicate kind-7s with byte-identical
+    pubkey/content/tags differing only in created_at, and across many different puppets the second copy
+    all landed in the same second (one retry pass, republished at wall clock).
+
+    A durable marker keyed on the notification id doesn't care whether the id is reproducible, so it
+    holds across restarts and replays too. Mirrors the status plane's _seen()/FediBridgeDelivered.
+    """
+    from app.models import FediBridgeDelivered
+    if not n.get("id"):
+        return False               # nothing to key on — fall back to the id-dedup, don't drop the item
+    return bool(db.query(FediBridgeDelivered).filter(
+        FediBridgeDelivered.instance_url == instance_url,
+        FediBridgeDelivered.note_id == _notif_key(n)).first())
+
+
+def _notif_mark(db: Session, instance_url: str, n: dict, puppet: dict, ev: dict) -> None:
+    """Record that this notification was published. Written only AFTER a confirmed publish, so a
+    transient relay failure is retried rather than silently swallowed.
+
+    `nostr_event_id` is NOT NULL on this table, so the row carries the event we actually published —
+    which also makes the marker useful rather than opaque (it says which reaction came from which
+    notification)."""
+    from app.models import FediBridgeDelivered
+    if not n.get("id") or not (ev or {}).get("id"):
+        return
+    try:
+        db.add(FediBridgeDelivered(platform="pleroma", instance_url=instance_url,
+                                   note_id=_notif_key(n), note_uri=None,
+                                   author_acct=(puppet or {}).get("acct"),
+                                   nostr_event_id=ev["id"],
+                                   nostr_pubkey=(puppet or {}).get("pubkey_hex")))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # Non-fatal: losing the marker only risks a duplicate later, whereas raising here would re-run
+        # (or wedge) a notification whose event is already published.
+        logger.warning("[fedi-personal] could not mark notification %s: %s", n.get("id"), e)
 
 
 def _is_permanent_reject(msg: str) -> bool:

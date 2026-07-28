@@ -4757,9 +4757,16 @@
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
       ${canPhone || canScreen
-        ? `${canPhone ? `<button class="btn btn-neon full" id="gl-phone">${isDesktop()?'📹 Go live with this webcam':'📱 Go live from this phone (camera)'}</button>` : ''}
-           ${canScreen ? `<button class="btn btn-neon full" id="gl-screen">🖥 Go live sharing this screen</button>` : ''}
-           <div class="gl-or">— or stream from a computer with OBS —</div>`
+        ? `<div class="gl-src">
+             <div class="muted small" style="margin-bottom:4px">What do you want to broadcast?</div>
+             ${canPhone ? `<label class="gl-opt"><input type="radio" name="gl-src" value="cam"> ${isDesktop()?'📹 This webcam':'📱 This phone’s camera'}</label>
+             <div class="gl-sub hidden" id="gl-facing">
+               <label class="gl-opt"><input type="radio" name="gl-facing" value="user"> 🤳 Front camera</label>
+               <label class="gl-opt"><input type="radio" name="gl-facing" value="environment"> 📷 Back camera</label>
+             </div>` : ''}
+             ${canScreen ? `<label class="gl-opt"><input type="radio" name="gl-src" value="screen"> 🖥 This screen</label>` : ''}
+             <label class="gl-opt"><input type="radio" name="gl-src" value="obs"> 🎛 OBS / another encoder</label>
+           </div>`
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
@@ -4769,7 +4776,7 @@
         <button class="btn btn-ghost small hidden" id="gl-img-clear">✕ Clear</button></div>
       <input type="hidden" id="gl-img">
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
-      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go">📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled>📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       const cover=()=>($('#gl-img',root).value||'').trim();
@@ -4795,15 +4802,31 @@
             .then(()=>toast(rc.checked?'recording on':'recording off')).catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
             .finally(()=>{ rc.disabled=false; }); }; }
       $('#gl-cancel',root).onclick=closeModal;
-      { const pb=$('#gl-phone',root); if(pb) pb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _phoneGoLive(info, t, a, c); }; }
-      { const sb=$('#gl-screen',root); if(sb) sb.onclick=()=>{ const t=title(), a=announce(), c=cover(); closeModal(); _screenGoLive(info, t, a, c); }; }
+      // Source is CHOSEN, never launched on click. Picking a source used to open the camera and start
+      // publishing immediately, so the wrong lens was already broadcasting before you could switch it —
+      // the reason "flip camera" existed at all. Nothing is captured until "Announce and Stream".
+      const src=()=>{ const r=$('input[name="gl-src"]:checked',root); return r?r.value:''; };
+      const facing=()=>{ const r=$('input[name="gl-facing"]:checked',root); return r?r.value:''; };
+      const hasSrc=()=>!!$('input[name="gl-src"]',root);
+      const sync=()=>{
+        const s=src(), fw=$('#gl-facing',root);
+        if(fw) fw.classList.toggle('hidden', s!=='cam');
+        // No radios at all = a browser that can't capture (no WHIP/getUserMedia), so OBS is the ONLY
+        // route and the button must stay live — gating on an unrendered choice locked those users out
+        // of announcing entirely.
+        $('#gl-go',root).disabled = hasSrc() ? (!s || (s==='cam' && !facing())) : false;
+      };
+      $$('input[name="gl-src"], input[name="gl-facing"]',root).forEach(r=> r.addEventListener('change', sync));
+      sync();
       // Enter in the title is "go" — otherwise typing a title meant Tabbing past the checkboxes, the OBS
       // server/key boxes and their Copy buttons to reach the one button you actually wanted.
       $('#gl-title',root).addEventListener('keydown',e=>{
         if(e.key==='Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey){ e.preventDefault(); $('#gl-go',root).click(); }
       });
       $('#gl-go',root).onclick=async()=>{
-        const t=title(), a=announce(), c=cover();
+        const t=title(), a=announce(), c=cover(), s=src()||'obs';
+        if(s==='cam'){ const f=facing(); closeModal(); return _phoneGoLive(info, t, a, c, { facing:f }); }
+        if(s==='screen'){ closeModal(); return _screenGoLive(info, t, a, c); }
         try{ await _publishLive(info, t, c); _startLiveHb();   // OBS path: HLS heartbeat detects OBS stopping
           if(a) await _announceStreamPost(info, t);
           closeModal(); toast('🔴 you’re live — announced on Nostr'); switchView('streams');
@@ -4976,7 +4999,9 @@
     if(_liveStream || _phoneStream || _goingLive){ toast('you’re already live'); return; }
     _goingLive=true;   // set BEFORE the awaits so a second tap can't open a 2nd camera/PeerConnection
     const wantScreen = !!(opts && opts.screen);   // desktop "go live sharing this screen" — same WHIP publish
-    let local=null, pc=null; let facing='user';
+    // Which camera the user PICKED in Go Live, before anything was captured. Defaulting to 'user' and
+    // letting them flip afterwards meant the wrong camera was already broadcasting by the time they could.
+    let local=null, pc=null; let facing=(opts && opts.facing) || 'user';
     try{
       if(wantScreen){
         const disp=await navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false});

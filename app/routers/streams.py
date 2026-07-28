@@ -165,6 +165,26 @@ def _obs_key(db, user: User) -> str:
     return key
 
 
+def _cache_control(path: str) -> str:
+    """Cache policy for one HLS asset. This is the difference between O(N) and O(1) bandwidth.
+
+    Segments are IMMUTABLE and uniquely named — MediaMTX never reuses a segment name within a stream — so
+    they can be cached forever and every viewer after the first is served by the edge (Cloudflare here)
+    instead of this server's uplink. Sending `no-cache` on them, as this used to, forbids every cache in
+    the chain and makes N viewers cost N x bitrate off a home connection.
+
+    The PLAYLIST is the opposite: it is rewritten every segment duration and IS the liveness signal, so it
+    gets ~1s. That split is the whole trick — playlists are a few hundred bytes and segments are hundreds of
+    KB, so caching only the big immutable half captures essentially all of the saving while keeping latency.
+    `no-transform` stops a proxy re-encoding the media (Cloudflare Polish et al. mangling fMP4).
+    """
+    if path.endswith(".m3u8"):
+        # max-age=1 rather than no-cache: it still collapses the thundering herd of viewers polling the
+        # same playlist within the same second, which is exactly what a popular stream produces.
+        return "public, max-age=1, no-transform"
+    return "public, max-age=31536000, immutable, no-transform"
+
+
 # Which MediaMTX path a viewer is served: the clamped transcode when it's up, else the raw source. Probed
 # against MediaMTX's control API and memoised briefly — a live viewer re-fetches every couple of seconds, so
 # without the memo every viewer would add a control-API round-trip to every segment.
@@ -628,7 +648,8 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
     # cross-origin fetch works and we can serve the maximally-compatible `Access-Control-Allow-Origin: *`
     # to every third-party player (zap.stream, Amethyst, …). No Set-Cookie is relayed to the browser.
     return StreamingResponse(_body(), media_type=media_type,
-                             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
+                             headers={"Cache-Control": _cache_control(path),
+                                      "Access-Control-Allow-Origin": "*"})
 
 
 # ---------------------------------------------------------------- Past streams (VODs)
