@@ -2018,6 +2018,9 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 .collab-row:active{transform:translateY(1px)}
 .collab-title{font-weight:700;margin-bottom:4px;word-break:break-word;display:flex;gap:7px;align-items:baseline}
 .collab-ico{flex:none}
+/* Attachment count on an issue/patch row. margin-left:auto parks it at the far edge so it can't be
+   pushed off by a long subject (the title wraps; a flex sibling would otherwise get squeezed to 0). */
+.collab-att{flex:none;margin-left:auto;font-size:12px;font-weight:600;color:var(--muted);opacity:.85}
 .collab-body{color:var(--muted);font-size:13px;line-height:1.45;margin:2px 0 8px;word-break:break-word}
 .collab-meta{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
 .collab-av{width:20px;height:20px;border-radius:50%;object-fit:cover}

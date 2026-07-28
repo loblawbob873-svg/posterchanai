@@ -3996,10 +3996,18 @@
     const ico=ev.kind===1617?'🩹':'🐛';
     const title=_collabTitle(ev).slice(0,200);
     const body=(ev.content||'').trim();
-    const preview = body && body.slice(0,240)!==title ? body.slice(0,240) : '';
+    // The row preview is PLAIN TEXT, so an attached blob URL would otherwise eat all 240 chars of it
+    // with an unreadable sha256. mediaParts is the shared "lift the media out of the text" primitive
+    // the other previews use (narratePost, _cardText), so the strip and the 📎 count come from ONE
+    // definition of what media is. Counting its items rather than our own `imeta` tags also counts an
+    // issue filed from any OTHER nostr client (no imeta) — and a non-image blob, which never gets one.
+    const mp=mediaParts(body);
+    const clean=(mp.text||'').replace(/\s{2,}/g,' ').trim();
+    const nAtt=mp.items.length;
+    const preview = clean && clean.slice(0,240)!==title ? clean.slice(0,240) : '';
     return `<div class="collab-row" data-id="${ev.id}" data-pk="${ev.pubkey}">
-      <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}</div>
-      ${preview?`<div class="collab-body">${enc(preview)}${body.length>240?'…':''}</div>`:''}
+      <div class="collab-title"><span class="collab-ico">${ico}</span>${enc(title)}${nAtt?`<span class="collab-att" title="${nAtt} attachment${nAtt>1?'s':''}">📎${nAtt>1?nAtt:''}</span>`:''}</div>
+      ${preview?`<div class="collab-body">${enc(preview)}${clean.length>240?'…':''}</div>`:''}
       <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span></div>
     </div>`;
   }
@@ -4143,6 +4151,33 @@
     $$('[data-prof]',box).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     decorateProfiles();
   }
+  // Attach files to an issue body. Same three moves as the post composer — uploadBlob → the BARE url in
+  // the body → imetaTagsFor at publish — so an issue rides the app's real Blossom path (image
+  // compression, batch-signed auth, NIP-96 fallback) instead of a bespoke one that would drift from it.
+  // Deliberately NOT the article editor's `![](url)` markdown: a 1621 renders through noteCard →
+  // mediaParts (plain text + lifted media), not a markdown renderer, so the syntax would show up
+  // literally as `![]()` beside the picture. A bare URL embeds here and still reads fine in the clients
+  // that DO render the body as markdown.
+  async function _issueAttach(files, ta, st){
+    files=[...(files||[])].filter(Boolean); if(!files.length) return;
+    for(let i=0;i<files.length;i++){
+      st.textContent=`uploading ${i+1}/${files.length}…`;
+      try{
+        const f=files[i], url=await uploadBlob(f);
+        // Media renders itself; anything else degrades to a plain link (__blobFallback), and a bare
+        // /<sha256> tells the reader nothing about what they'd be opening — so it keeps its filename.
+        const label=/^(image|video)\//.test(f.type||'') ? '' : ((f.name||'').replace(/\s+/g,' ').trim()+' ');
+        ta.value += (ta.value && !ta.value.endsWith('\n') ? '\n' : '') + label + url;
+      }catch(err){
+        // A brand-new user has no Blossom permission yet. The composer turns that 403 into a
+        // request-access flow rather than a dead error; an issue must not be the one place it dead-ends.
+        if(_blossomDenied(err)){ requestBlossomAccess(); st.textContent='🔒 No upload access — requested it from the admin.'; }
+        else st.textContent='upload failed: '+((err&&err.message)||err);
+        return;
+      }
+    }
+    st.textContent=''; ta.focus();
+  }
   // Publish a NIP-34 issue (kind 1621) against a repo: `a` tag → repo coordinate + a `subject` tag.
   function newRepoIssue(repo){
     if(GUEST){ _guestPrompt(); return; }
@@ -4151,16 +4186,33 @@
       <p class="muted small">Publishes a NIP-34 issue (kind 1621) signed by your key, against <b>${enc(_repoTag(repo,'name')||_repoTag(repo,'d')||'this repo')}</b>.</p>
       <label class="fld">Subject<input class="input" id="ri-subj" placeholder="Short summary"></label>
       <label class="fld">Description<textarea class="input" id="ri-body" rows="5" placeholder="Describe the issue… (markdown)"></textarea></label>
+      <div class="row cmp-tools"><button type="button" class="btn btn-ghost small" id="ri-attach">📎 Attach</button><input type="file" id="ri-file" multiple hidden><span class="spacer"></span><span class="muted small">or paste / drop a screenshot</span></div>
       <div class="set-actions"><button class="btn btn-neon small" id="ri-pub">Publish</button><button class="btn btn-ghost small" id="ri-cancel">Cancel</button></div>
       <div class="muted small" id="ri-status"></div>`,
       root=>{
+        const ta=$('#ri-body',root), st=$('#ri-status',root);
         $('#ri-cancel',root).onclick=closeModal;
+        $('#ri-attach',root).onclick=()=>$('#ri-file',root).click();
+        $('#ri-file',root).onchange=async e=>{ await _issueAttach(e.target.files, ta, st); e.target.value=''; };
+        // Paste is the path that actually matters for a bug report: a screenshot is on the clipboard,
+        // not on disk, and making the user save it to a file first is most of the friction.
+        ta.addEventListener('paste', e=>{
+          const f=[...((e.clipboardData&&e.clipboardData.files)||[])];
+          if(f.length){ e.preventDefault(); _issueAttach(f, ta, st); }
+        });
+        root.addEventListener('dragover',e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); root.classList.add('cmp-drop'); } });
+        root.addEventListener('dragleave',e=>{ if(e.target===root) root.classList.remove('cmp-drop'); });
+        root.addEventListener('drop',async e=>{
+          if(!(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files'))) return;
+          e.preventDefault(); root.classList.remove('cmp-drop');
+          await _issueAttach(e.dataTransfer.files, ta, st);
+        });
         $('#ri-pub',root).onclick=async()=>{
           const subj=($('#ri-subj',root).value||'').trim();
-          const body=($('#ri-body',root).value||'').trim();
-          const st=$('#ri-status',root);
+          const body=ta.value.trim();
           if(!subj){ st.textContent='A subject is required.'; return; }
           const tags=[['a', addr], ['subject', subj]];
+          imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
           st.textContent='publishing…';
           try{ const r=await publish(1621, body, tags);
             if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }
@@ -8337,6 +8389,9 @@
     {id:'night',  colors:['#0f2027','#203a43','#2c5364']},
     {id:'gold',   colors:['#f7971e','#ffd200'], fg:'#3a2a00'},
     {id:'ink',    colors:['#141e30','#243b55']},
+    // Cyberpunk console. The only swatch with an `fx` renderer: a gradient alone can't be a terminal,
+    // it needs code behind the words, scanlines over them and type that glows in its own colour.
+    {id:'console', colors:['#03130c','#0a2c1c','#04160f'], fg:'#5cff9d', fx:'console', mono:true, glow:true},
     // Holiday themes — festive gradient + decorative emoji framed around the text.
     {id:'christmas',    colors:['#b71c1c','#1b5e20'],          deco:['🎄','❄️','🎁']},
     {id:'halloween',    colors:['#ff7518','#0d0d0d','#6a0dad'], deco:['🎃','👻','🦇']},
@@ -8393,6 +8448,35 @@
     _rrect(ctx, gi, gi, W-gi*2, H-gi*2, S*0.016); ctx.stroke();
     ctx.restore();
   }
+  const _MONO="ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace";
+  // Deterministic PRNG. The card preview re-renders on EVERY keystroke, so a Math.random() code rain
+  // would reshuffle itself while you type — the field has to be stable to read as a background.
+  function _seedRand(seed){ let s=(seed>>>0)||1; return ()=>{ s^=s<<13; s^=s>>>17; s^=s<<5; s>>>=0; return s/4294967296; }; }
+  const _CONSOLE_TOKENS=['const','let','fn','=>','0x1f','!=','&&','||','return','void','#!/bin/sh','sudo',
+    'git push','SELECT *','while(1)','::','[ok]','[warn]','0b1011','</>','~$','404','200 OK','null','async',
+    'await','0xdeadbeef','if(','}else{','#define','printf(','/dev/null','chmod +x','ssh','curl -s','| grep','exit 0'];
+  // Cyberpunk console: dim monospace source raining behind the words, CRT scanlines across it, and a
+  // vignette that keeps the middle dark so the type stays the brightest thing on the card. Drawn right
+  // after the fill, i.e. UNDER the text and under any frame.
+  function _bgConsole(ctx,W,H,bg){
+    const rnd=_seedRand(0x5eed), S=Math.min(W,H), fs=Math.round(S*0.022), lh=fs*1.5;
+    ctx.save();
+    ctx.font=`${fs}px ${_MONO}`; ctx.textAlign='left'; ctx.textBaseline='alphabetic'; ctx.fillStyle=bg.fg||'#5cff9d';
+    for(let y=lh; y<H; y+=lh){
+      let x=S*0.03+rnd()*S*0.06;
+      ctx.globalAlpha=0.05+rnd()*0.07;      // each line a different dimness — a flat field looks printed, not lit
+      while(x<W-S*0.05){
+        const tok=_CONSOLE_TOKENS[(rnd()*_CONSOLE_TOKENS.length)|0];
+        ctx.fillText(tok,x,y); x+=ctx.measureText(tok).width+fs*(0.8+rnd()*1.6);
+      }
+    }
+    ctx.globalAlpha=0.14; ctx.fillStyle='#000';
+    for(let y=0;y<H;y+=3) ctx.fillRect(0,y,W,1);   // scanlines
+    const g=ctx.createRadialGradient(W/2,H/2,S*0.18,W/2,H/2,S*0.72);
+    g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,.55)');
+    ctx.globalAlpha=1; ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
   async function renderBgPost(text, bg, framed){
     const t=String(text||'');
     // Grow the canvas SIDEWAYS, never downwards. The feed caps an image at 300px TALL (.media-row img), so
@@ -8409,20 +8493,33 @@
           maxH=(H-pad*2)*(bg.deco?(framed?0.78:0.82):1);   // leave room for deco rows
     const cv=document.createElement('canvas'); cv.width=W; cv.height=H; const ctx=cv.getContext('2d');
     _bgFill(ctx,W,H,bg);
+    if(bg.fx==='console') _bgConsole(ctx,W,H,bg);
     if(bg.deco) _bgDeco(ctx,W,H,bg.deco,framed);
     // Before the text, so a descender can never be crossed by the rule.
     if(framed) _bgFrame(ctx,W,H,bg);
     // Centred type is right for a headline and wrong for paragraphs — a long summary set centred reads as
     // a poem. Long cards go left-aligned, which is what makes them look like a designed article card.
     ctx.fillStyle=bg.fg||'#fff'; ctx.textAlign=LONG?'left':'center'; ctx.textBaseline='middle';
-    const font=s=>`800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
+    // Monospace is not a font swap, it's the whole point of the console swatch — proportional type on a
+    // terminal reads as a poster of a terminal. 700 rather than 800: mono faces go muddy at 800.
+    const font=s=>bg.mono ? `700 ${s}px ${_MONO}` : `800 ${s}px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif`;
     const floor=LONG?26:30;
     let fs=LONG?64:112, lines=[];
     for(; fs>=floor; fs-=2){ ctx.font=font(fs); lines=_bgWrap(ctx,t,maxW); const lh=fs*(LONG?1.34:1.22);
       if(lines.length*lh<=maxH && lines.every(l=>ctx.measureText(l).width<=maxW)) break; }
     const lh=fs*(LONG?1.34:1.22), y0=H/2 - (lines.length*lh)/2 + lh/2, x=LONG?pad:W/2;
-    ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=fs*0.12; ctx.shadowOffsetY=Math.max(1,fs*0.03);
+    // Every other swatch drops the type onto a light background, so it needs a shadow to separate. A
+    // console is the inverse — light type on near-black — where a drop shadow does nothing and a bloom
+    // in the text's OWN colour is what makes it look emitted rather than printed.
+    if(bg.glow){ ctx.shadowColor=bg.fg||'#fff'; ctx.shadowBlur=fs*0.38; ctx.shadowOffsetY=0; }
+    else { ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=fs*0.12; ctx.shadowOffsetY=Math.max(1,fs*0.03); }
     lines.forEach((l,i)=>ctx.fillText(l, x, y0+i*lh));
+    // A block cursor parked after the last word — the one detail that reads as a LIVE console instead of
+    // green text on black. Placed off the measured last line so it lands right whether centred or left.
+    if(bg.fx==='console' && lines.length){
+      const lw=ctx.measureText(lines[lines.length-1]).width;
+      ctx.fillRect(x+(LONG?lw:lw/2)+fs*0.28, y0+(lines.length-1)*lh-fs*0.42, fs*0.5, fs*0.84);
+    }
     return await new Promise(r=>cv.toBlob(r,'image/png',0.92));
   }
   // ---- Turning a draft into a background/framed post ----
