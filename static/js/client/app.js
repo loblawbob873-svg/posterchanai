@@ -8622,9 +8622,9 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(reply||quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach">📎 Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
-      ${(reply||quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
+      ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
       <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px">💾 Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
@@ -8867,8 +8867,10 @@
           }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
         // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the
-        // styled text IS the post). Only for plain top-level posts (the 🎨 button is hidden otherwise).
-        if(_bgChoice && !reply && !quote){
+        // styled text IS the post). Top-level posts and REPLIES; quotes/community/article-comments still
+        // hide the 🎨 button — a quote has to carry its nevent in the content and an article comment is a
+        // different kind (1111), so neither is a plain kind-1 image note.
+        if(_bgChoice && !quote){
           // Last parity gap with the Social strip: it refuses at SEND when there are no words left to put
           // on the card, rather than rendering a blank one. Reaching here is now unlikely (picking is
           // guarded and typing the words away disarms it), but the two should fail the same way.
@@ -8886,7 +8888,11 @@
             $('#cmp-status',root).textContent='uploading…';
             if(built.trimmed) toast('card shows the opening — the rest did not fit on it');
             const url=built.content;   // the image, plus anything that did not fit on the card
-            const btags=[]; imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
+            // A background REPLY is still a reply: without these it publishes as a top-level note and the
+            // thread it was written into never sees it. Same replyTags() the plain path uses, and FIRST so
+            // the e/p markers lead the tag list exactly as they do there.
+            const btags=reply ? replyTags(Store.get(reply), reply, replyPk) : [];
+            imetaTagsFor(url).forEach(t=>btags.push(t)); _applyCw(btags);
             mentionTags(url).forEach(t=>{ if(!btags.some(x=>x[0]==='p'&&x[1]===t[1])) btags.push(t); });
             // Save a draft before publishing so the text survives a failure (the styled image is re-rendered
             // from it on retry), and only report success / drop the draft when the relay actually stored it.
