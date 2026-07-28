@@ -172,14 +172,15 @@ def _clamp_params(cfg: dict) -> dict:
     }
 
 
-def _double_rate(rate: str) -> str:
-    """"1500k" -> "3000k". The VBV buffer is sized at 2x the ceiling: at 1x the encoder is effectively CBR
-    and pads the bitrate back up to the target, which is the behaviour this whole rate-control setup exists
-    to avoid. Falls back to the input unchanged if it isn't a shape we recognise (already validated by
-    _clamp_params, so this is belt-and-braces)."""
+def _rate_kbps(rate: str, default: int = 1500) -> int:
+    """"1500k" -> 1500, "3M" -> 3000, "800" -> 800 (bare digits are already kbit/s here, matching how the
+    admin field reads). The clamp does arithmetic on the ceiling at runtime, so it needs a number."""
     import re
     m = re.fullmatch(r"(\d+)([kKmM]?)", (rate or "").strip())
-    return f"{int(m.group(1)) * 2}{m.group(2)}" if m else rate
+    if not m:
+        return default
+    n = int(m.group(1))
+    return n * 1000 if m.group(2) in ("m", "M") else n
 
 
 def _clamp_encoder(cfg: dict) -> str:
@@ -230,7 +231,12 @@ def _clamp_video_args(encoder: str, p: dict) -> tuple:
     # Each encoder spells capped-quality differently; they are NOT interchangeable, and the wrong spelling
     # silently reverts to padding rather than erroring. bufsize is 2x the ceiling — a 1x buffer is
     # effectively CBR and reintroduces the padding.
-    v, buf = p["vbitrate"], _double_rate(p["vbitrate"])
+    # $VMAX/$VBUF are computed by the generated script at stream start (see _write_clamp_script): the
+    # effective ceiling is min(what the source actually sends, the configured ceiling). Rate control alone
+    # cannot prevent a weak source being inflated — re-encoding low-bitrate video is expensive no matter
+    # the mode, because the compression artefacts are themselves detail the encoder must reproduce. The
+    # only thing that works is refusing to spend more than the source did.
+    v, buf = "${VMAX}k", "${VBUF}k"
     # Every chain ends in an explicit 4:2:0 `format` filter. Without it the encoder inherits the SOURCE
     # pixel format, and a 4:4:4 input (some capture cards, some screen-share paths) makes libx264 reject
     # `-profile:v main` outright — the clamp would fail on exactly the streams the CPU fallback exists for.
@@ -267,9 +273,15 @@ def _write_clamp_script(cfg: dict) -> None:
         vaapi_dev = _render_node() if encoder == "h264_vaapi" else ""
     except Exception:
         ffmpeg, vaapi_dev = "ffmpeg", ""
+    # ffprobe lives beside ffmpeg in every build we resolve (system package or a bundled tree), so derive
+    # it from the resolved path rather than trusting PATH — the service PATH is polluted enough that
+    # resolve_ffmpeg exists precisely because of it.
+    import os.path as _osp
+    ffprobe = _osp.join(_osp.dirname(ffmpeg), "ffprobe") if _osp.dirname(ffmpeg) else "ffprobe"
+    ceiling_kbps = _rate_kbps(p["vbitrate"])
+    audio_kbps = _rate_kbps(p["abitrate"], default=128)
     hw_pre, hw_post = _clamp_video_args(encoder, p)
     sw_pre, sw_post = _clamp_video_args("libx264", p)
-    audio = f"-c:a aac -b:a {p['abitrate']} -ar 48000"
     # `-map 0:a:0?` — the trailing ? makes audio OPTIONAL. A screen share published with no microphone has
     # no audio track at all, and a non-optional map aborts ffmpeg outright ("Stream map ... does not exist"),
     # which would leave that stream permanently unwatchable instead of merely silent.
@@ -294,12 +306,76 @@ case "$SRC" in
 esac
 
 FFMPEG="{ffmpeg}"
+FFPROBE="{ffprobe}"
 VAAPI_DEVICE="{vaapi_dev}"
 IN="rtsp://127.0.0.1:{rtsp}/$SRC"
 # ?clamp=… is how /api/streams/auth recognises this publish as ours; see stream_service.clamp_secret.
 OUT="rtsp://127.0.0.1:{rtsp}/${{SRC}}{CLAMP_SUFFIX}?clamp={secret}"
 COMMON="-nostdin -hide_banner -loglevel warning -fflags nobuffer -rtsp_transport tcp"
-OUTOPTS="{maps} {audio} -f rtsp -rtsp_transport tcp"
+
+# ---- effective bitrate ceiling -------------------------------------------------------------------
+# NEVER spend more than the source does. Re-encoding is not free: a 304 kbit/s phone stream measured
+# 1447 kbit/s out at a 1500k ceiling — a 4.8x INFLATION — and every rate-control mode does this, because
+# the artefacts in a low-bitrate picture are detail the encoder has to spend bits reproducing. So the
+# ceiling is min(measured source, configured), which leaves a fat OBS stream fully clamped while making a
+# weak phone stream roughly bandwidth-neutral instead of far worse.
+VMAX_CFG={ceiling_kbps}      # configured ceiling, kbit/s
+AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sources (see below)
+VMIN=150                     # never target something absurd if the probe reads very low
+AUD_MIN=48                   # below this speech stops being intelligible
+SETTLE=3                     # seconds to let the publisher's bitrate settle before measuring
+
+# WebRTC bandwidth estimation ramps UP over several seconds, so the first moments of a WHIP publish are
+# NOT representative — measured in an end-to-end run, a source whose steady state was ~2900 kbit/s read
+# 1359 kbit/s across its first 4 seconds. Pinning the ceiling to that would leave a phone that later sends
+# 2.5 Mbit/s soft for the WHOLE session, because a stable stream never restarts and so never re-measures.
+# Two guards: wait $SETTLE before sampling, and allow 1.5x headroom over what we do measure.
+
+measure_src_kbps() {{
+  # Copy a few seconds off the source (no decode) and divide bytes by duration. ffprobe's own bit_rate is
+  # unreliable on a live RTSP feed, so measure the bytes that actually arrive.
+  #
+  # matroska, NOT mp4: a WHIP publisher can negotiate VP8, which mp4 cannot carry at all ("Could not find
+  # tag for codec vp8") — the remux writes 0 bytes, the measurement reads 0, and we'd silently fall back to
+  # the configured ceiling on exactly the low-bitrate phone streams this measurement exists to protect.
+  # Matroska carries anything the ingest can hand us (H264/VP8/AV1 + Opus/AAC).
+  _t=$(mktemp "${{TMPDIR:-/tmp}}/pcai-clamp-XXXXXX") || return 1
+  trap 'rm -f "$_t"' EXIT INT TERM      # MediaMTX kills this process when the source stops; don't leak
+  "$FFMPEG" -nostdin -hide_banner -loglevel error -rtsp_transport tcp -i "$IN" \\
+      -t 4 -c copy -f matroska -y "$_t" >/dev/null 2>&1
+  _b=$(wc -c < "$_t" 2>/dev/null || echo 0)
+  _d=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$_t" 2>/dev/null)
+  rm -f "$_t"
+  trap - EXIT INT TERM
+  awk -v b="$_b" -v d="$_d" 'BEGIN{{ if (d+0 > 0.5) printf "%d", b*8/d/1000; else print 0 }}'
+}}
+
+sleep "$SETTLE"
+SRC_KBPS=$(measure_src_kbps)
+if [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
+  # Audio scales down with the source. At the configured 128k a 200 kbit/s stream would spend nearly
+  # two-thirds of its budget on audio and leave the picture unwatchable; cap it at a quarter of the
+  # budget instead. Never below AUD_MIN, never above what the admin configured.
+  AUD=$AUD_CFG
+  if [ "$SRC_KBPS" -lt $((AUD_CFG * 4)) ]; then
+    AUD=$((SRC_KBPS / 4))
+    [ "$AUD" -lt "$AUD_MIN" ] && AUD=$AUD_MIN
+    [ "$AUD" -gt "$AUD_CFG" ] && AUD=$AUD_CFG
+  fi
+  # 1.5x headroom so a still-ramping publisher isn't strangled, minus the audio we're about to spend.
+  VMAX=$(( SRC_KBPS * 3 / 2 - AUD ))
+  [ "$VMAX" -lt "$VMIN" ] && VMAX=$VMIN
+  [ "$VMAX" -gt "$VMAX_CFG" ] && VMAX=$VMAX_CFG
+  echo "clamp: $SRC_KBPS kbit/s in -> video $VMAX + audio $AUD kbit/s (configured $VMAX_CFG/$AUD_CFG)" >&2
+else
+  # Could not measure (source still warming up, ffprobe missing) — fall back to the configured values
+  # rather than guessing low, which would visibly wreck a stream that is actually fine.
+  VMAX=$VMAX_CFG
+  AUD=$AUD_CFG
+  echo "clamp: could not measure $SRC — using the configured ceiling $VMAX kbit/s" >&2
+fi
+VBUF=$((VMAX * 2))           # 2x: a 1x buffer is effectively CBR and pads the bitrate back up
+OUTOPTS="{maps} -c:a aac -b:a ${{AUD}}k -ar 48000 -f rtsp -rtsp_transport tcp"
 
 # The encoder args are written out LITERALLY in each function (not passed as "$1") so that the shell parses
 # their quoting. A fragment expanded from a variable keeps its quote characters as data, and ffmpeg would

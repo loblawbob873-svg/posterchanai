@@ -137,8 +137,61 @@ class TestGeneratedScript(_TmpMixin, unittest.TestCase):
         then the real encode would fail forever on every restart."""
         _, script = _render(self.tmp, stream_clamp_encoder="h264_vaapi")
         probe = script[script.index("hw_ok()"):script.index("START=")]
-        for flag in ("-c:v h264_vaapi", "-rc_mode VBR", "-maxrate 1500k", "hwupload", "-f null -"):
+        for flag in ("-c:v h264_vaapi", "-rc_mode VBR", "-maxrate ${VMAX}k", "hwupload", "-f null -"):
             self.assertIn(flag, probe, flag)
+
+    def test_effective_ceiling_is_computed_before_it_is_used(self):
+        """$VMAX/$VBUF are referenced by run_hw/run_sw AND by the probe. If the measurement block were
+        emitted after the first use the encoder would silently get an empty `-b:v k`."""
+        _, script = _render(self.tmp)
+        self.assertLess(script.index("VBUF=$((VMAX * 2))"), script.index("hw_ok; then"))
+        self.assertLess(script.index("SRC_KBPS=$(measure_src_kbps)"), script.index("VBUF=$((VMAX * 2))"))
+
+    def test_never_spends_more_than_the_source(self):
+        """The ceiling is min(measured - audio, configured). Rate control alone cannot prevent inflating a
+        weak source — re-encoding low-bitrate video is expensive because its artefacts are detail the
+        encoder must reproduce. Measured on real phone video: 304 kbit/s in came out at 1447 with a fixed
+        1500k ceiling, and at 239 (a REDUCTION) once the ceiling followed the source."""
+        _, script = _render(self.tmp)
+        self.assertIn("VMAX=$(( SRC_KBPS * 3 / 2 - AUD ))", script)              # 1.5x headroom, see below
+        self.assertIn('[ "$VMAX" -gt "$VMAX_CFG" ] && VMAX=$VMAX_CFG', script)   # never above configured
+        self.assertIn('[ "$VMAX" -lt "$VMIN" ] && VMAX=$VMIN', script)           # never absurdly low
+
+    def test_settles_before_measuring(self):
+        """WebRTC bandwidth estimation ramps up over seconds, so the opening moments of a WHIP publish are
+        not representative. Sampling them would pin a phone that later sends 2.5 Mbit/s to a fraction of
+        that for the whole session — a stable stream never restarts, so it never re-measures."""
+        _, script = _render(self.tmp)
+        self.assertIn("SETTLE=3", script)
+        self.assertLess(script.index('sleep "$SETTLE"'), script.index("SRC_KBPS=$(measure_src_kbps)"))
+
+    def test_audio_bitrate_scales_with_the_source(self):
+        """At a fixed 128k a 200 kbit/s stream spends two-thirds of its budget on audio and the picture is
+        unwatchable. Cap audio at a quarter of the budget, floored at something still intelligible."""
+        _, script = _render(self.tmp)
+        self.assertIn("AUD=$((SRC_KBPS / 4))", script)
+        self.assertIn('[ "$AUD" -lt "$AUD_MIN" ] && AUD=$AUD_MIN', script)
+        self.assertIn('[ "$AUD" -gt "$AUD_CFG" ] && AUD=$AUD_CFG', script)
+        self.assertIn("-b:a ${AUD}k", script)          # and the encode actually uses it
+
+    def test_outopts_defined_after_the_audio_bitrate_exists(self):
+        """OUTOPTS interpolates $AUD at assignment time and the script runs under `set -u`, so defining it
+        before the measurement block would abort every clamp with an unbound variable."""
+        _, script = _render(self.tmp)
+        self.assertLess(script.index("AUD=$AUD_CFG"), script.index("OUTOPTS="))
+
+    def test_measurement_remuxes_to_matroska_not_mp4(self):
+        """A WHIP publisher can negotiate VP8, which mp4 cannot carry — the remux writes 0 bytes, the
+        measurement reads 0, and the ceiling silently falls back to the configured value on exactly the
+        streams this protects. Verified: `-f mp4` on VP8 gives 0 bytes, `-f matroska` gives a real file."""
+        _, script = _render(self.tmp)
+        self.assertIn("-c copy -f matroska", script)
+        self.assertNotIn("-c copy -f mp4", script)
+
+    def test_unmeasurable_source_falls_back_to_the_configured_ceiling(self):
+        """Guessing low would visibly wreck a stream that is actually fine."""
+        _, script = _render(self.tmp)
+        self.assertIn("VMAX=$VMAX_CFG", script)
 
     def test_cpu_encoder_skips_the_probe(self):
         _, script = _render(self.tmp, stream_clamp_encoder="libx264")
@@ -207,13 +260,14 @@ class TestClampParams(unittest.TestCase):
     def test_vbv_buffer_is_twice_the_ceiling(self):
         """A 1x buffer is effectively CBR and reintroduces the padding this is meant to remove."""
         for enc in ("h264_vaapi", "h264_nvenc", "libx264"):
-            self.assertIn("-bufsize 3000k", S._clamp_video_args(enc, S._clamp_params(BASE))[1], enc)
+            self.assertIn("-bufsize ${VBUF}k", S._clamp_video_args(enc, S._clamp_params(BASE))[1], enc)
 
-    def test_double_rate_units(self):
-        self.assertEqual(S._double_rate("1500k"), "3000k")
-        self.assertEqual(S._double_rate("3M"), "6M")
-        self.assertEqual(S._double_rate("800"), "1600")
-        self.assertEqual(S._double_rate("junk"), "junk")     # unrecognised passes through, never crashes
+    def test_rate_kbps_units(self):
+        self.assertEqual(S._rate_kbps("1500k"), 1500)
+        self.assertEqual(S._rate_kbps("3M"), 3000)
+        self.assertEqual(S._rate_kbps("800"), 800)          # bare digits already read as kbit/s
+        self.assertEqual(S._rate_kbps("junk"), 1500)        # unrecognised -> default, never crashes
+        self.assertEqual(S._rate_kbps("", default=128), 128)
 
     def test_gop_tracks_fps_for_clean_segment_cuts(self):
         _, post = S._clamp_video_args("libx264", S._clamp_params({"stream_clamp_fps": "60"}))
