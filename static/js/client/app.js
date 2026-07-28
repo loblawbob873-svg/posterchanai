@@ -4663,7 +4663,23 @@
   let _liveHb=null;       // heartbeat: auto-end the announcement when the HLS feed disappears (OBS stopped)
   function _copyFrom(el){  // copy WITHOUT unmasking a password field (temp textarea) — never expose the key
     const val=(el&&el.value)||'';
-    const fb=()=>{ try{ const ta=document.createElement('textarea'); ta.value=val; ta.style.cssText='position:fixed;opacity:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); toast('copied'); }catch(_){ toast('copy failed — long-press to select'); } };
+    // execCommand('copy') REPORTS FAILURE BY RETURNING FALSE — it does not throw. Toasting inside the
+    // try therefore claimed success on every failure, which is exactly what "it says copied but the
+    // clipboard is empty" was: navigator.clipboard rejects (no permission / not a trusted gesture), we
+    // fall back here, the fallback silently fails, and the user is told it worked.
+    const fb=()=>{
+      let ok=false;
+      try{
+        const ta=document.createElement('textarea');
+        ta.value=val; ta.readOnly=true;             // readOnly: stops iOS popping the keyboard
+        ta.style.cssText='position:fixed;top:0;left:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.select(); ta.setSelectionRange(0, val.length);   // iOS ignores select() on its own
+        ok=document.execCommand('copy');
+        document.body.removeChild(ta);
+      }catch(_){ ok=false; }
+      toast(ok ? 'copied' : 'copy failed — long-press the box to select it');
+    };
     if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
   }
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
