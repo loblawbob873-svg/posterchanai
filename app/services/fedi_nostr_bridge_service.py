@@ -17,6 +17,7 @@ pollers — correct on the single port-3051 instance.
 import asyncio
 import logging
 import re
+import contextvars
 import time
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -25,7 +26,7 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, InterfaceError   # CONNECTION-level (transient) DB errors — retry, don't skip
 
-from app.models import FediBridgeDelivered, FediPuppet
+from app.models import FediBridgeDelivered, FediBridgeSkipped, FediPuppet, FediReconcileState
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import bech32
@@ -514,16 +515,82 @@ async def _resolve_quote(db: Session, port: int, platform: str, instance_url: st
     return eid, (row.nostr_pubkey if row else None)
 
 
+# --- skip ledger -------------------------------------------------------------
+# Every early return used to drop a post with no row, no log and no counter, which made a genuine
+# coverage gap indistinguishable from "the instance never showed it to us".
+#
+# PERFORMANCE: this sits on the firehose hot path, so it is deliberately split. POLICY skips
+# (replies excluded, domain blocked, author muted) fire on a large share of every poll and are not
+# gaps at all — they are configuration working — so they only bump an in-memory counter. A DB row is
+# written ONLY for the rare cases where a post we WANTED was lost, which is what the reconciler and
+# a human actually need. A bounded seen-set stops the same URI being re-inserted.
+_SKIP_COUNTS: dict = {}
+_SKIP_SEEN: set = set()
+_SKIP_SEEN_MAX = 20000
+# Reasons worth a DB row AT ALL. "not-public" is deliberately NOT here: it is an audience decision
+# like domain-blocked/author-muted, not a lost post, and with fedi_bridge_type="home" a followers-only
+# post from a followed account would hit it on every poll.
+_SKIP_PERSIST = ("oversized", "relay-rejected", "no-puppet")
+_SKIP_RETENTION_DAYS = 7   # diagnostic only — pruned by cleanup_state alongside the delivered map
+# ...and even those are only WRITTEN while reconciling. The drain is the firehose hot path (hundreds
+# of posts per poll): one misbehaving account — say a puppet the relay has blocked — would otherwise
+# take an INSERT+COMMIT on every post it ever makes, forever, since each post has a distinct uri and
+# nothing suppresses repeats per author. Counters still tally every skip there. The reconciler is
+# bounded (_RECON_BATCH authors x _RECON_LOOKBACK posts per pass) and is the only place that NEEDS
+# the row, because it is what stops it re-attempting the same doomed post every 15 minutes.
+# A ContextVar, not a flag: the poll and reconcile jobs are separate tasks that interleave at awaits.
+_recon_ctx: contextvars.ContextVar = contextvars.ContextVar("fedi_bridge_reconciling", default=False)
+
+
+def skip_counts() -> dict:
+    """Snapshot of the in-memory policy-skip tallies (admin/coverage reporting)."""
+    return dict(_SKIP_COUNTS)
+# Every early return below used to drop a post with no row, no log and no counter, which made a
+# genuine coverage gap indistinguishable from "the instance never showed it to us". Recording the
+# REASON is what lets the reconciler (and a human) tell "we chose not to" from "we never saw it".
+def _record_skip(db: Session, reason: str, *, platform: str = "", instance_url: str = "",
+                 post: dict | None = None, uri: str = "", detail: str = "") -> None:
+    """Best-effort: a diagnostic row must never be able to fail a delivery or poison the txn."""
+    _SKIP_COUNTS[reason] = _SKIP_COUNTS.get(reason, 0) + 1
+    if reason not in _SKIP_PERSIST or not _recon_ctx.get():
+        return                      # counted only — see _SKIP_PERSIST on why the drain never writes
+    key = uri or f"{instance_url}|{(post or {}).get('id')}"
+    if key in _SKIP_SEEN:
+        return                      # already recorded this post; don't churn the table
+    if len(_SKIP_SEEN) >= _SKIP_SEEN_MAX:
+        _SKIP_SEEN.clear()
+    _SKIP_SEEN.add(key)
+    try:
+        post = post or {}
+        db.add(FediBridgeSkipped(
+            platform=platform or None, instance_url=instance_url or None,
+            note_id=str(post.get("id") or "") or None,
+            note_uri=(uri or post.get("uri") or "")[:512] or None,
+            author_acct=((post.get("author") or {}).get("acct") or "")[:255] or None,
+            reason=reason[:40], detail=(detail or "")[:500] or None))
+        db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.debug("[fedi-bridge] could not record skip (%s): %s", reason, e)
+
+
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None, _depth: int = 0,
                    _max_anc: int = _MAX_ANCESTORS, _deadline: float = 0.0) -> str | None:
     # Only a PUBLIC-audience status may become a public Nostr note (see _is_public_audience).
     if not _is_public_audience(raw):
+        _record_skip(db, "not-public", platform=platform, instance_url=instance_url, post=post,
+                     detail=str(raw.get("visibility") or ""))
         return None
     account = raw.get("account") or {}
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
+        _record_skip(db, "no-puppet", platform=platform, instance_url=instance_url, post=post,
+                     detail="account has no usable actor URI")
         return None
     uri = _canonical_uri(platform, instance_url, post)
     # Idempotency: already mirrored in a prior cycle → return its event id (never double-publish).
@@ -613,6 +680,8 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
         if len(content or "") > 300_000:
             logger.info("[fedi-bridge] skipping oversized post %s (%d chars) — over relay frame cap",
                         post.get("id"), len(content or ""))
+            _record_skip(db, "oversized", platform=platform, instance_url=instance_url, post=post,
+                         uri=uri, detail=f"{len(content or '')} chars")
             return None
         ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
         ok, msg = await ident.publish(port, ev)
@@ -630,6 +699,10 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
             # ⚠ If the relay gains a NEW permanent rejection with a different prefix, add it here or the drain
             #   will wedge on it (default-transient errs toward retry so a relay RESTART never drops posts).
             if (msg or "").lower().startswith(("blocked", "invalid", "duplicate")):
+                # A permanent rejection advances the cursor, so this post is gone for good unless
+                # something records it. This row is what the reconciler and the admin count read.
+                _record_skip(db, "relay-rejected", platform=platform, instance_url=instance_url,
+                             post=post, uri=uri, detail=msg or "")
                 return None
             raise _PublishFailed(msg or "publish failed")
         row_kw = dict(platform=platform, instance_url=instance_url, note_id=post["id"],
@@ -667,10 +740,15 @@ async def _process(db: Session, port: int, platform: str, instance_url: str, ins
     if not post.get("id"):
         return
     if not include_replies and post.get("in_reply_to_id"):
+        _record_skip(db, "replies-excluded", platform=platform, instance_url=instance_url, post=post)
         return
     acct = post.get("author", {}).get("acct") or ""
     host = _host_of(acct, instance_host)
-    if _domain_blocked(host, blocked_domains) or _author_muted(acct, host, instance_host):
+    if _domain_blocked(host, blocked_domains):
+        _record_skip(db, "domain-blocked", platform=platform, instance_url=instance_url, post=post, detail=host)
+        return
+    if _author_muted(acct, host, instance_host):
+        _record_skip(db, "author-muted", platform=platform, instance_url=instance_url, post=post, detail=acct)
         return
     uri = _canonical_uri(platform, instance_url, post)
     if _seen(db, instance_url, post["id"], uri):
@@ -936,6 +1014,166 @@ async def poll_once(db: Session) -> None:
     # status checks can't eat this poll's time budget (the "poll exceeded 90s" cause).
 
 
+# --- reconciliation ---------------------------------------------------------
+# The drain reads TIMELINES. A timeline is a filtered, ephemeral view the instance may legitimately
+# omit posts from, and the forward-only min_id cursor then advances straight past them — permanently
+# and silently. (Already known here in weaker form: see the local-drain-first note in poll_once, "an
+# active local account got ~7% of a week mirrored".) Reconciliation re-reads an author's OWN outbox
+# and re-delivers whatever never landed. It is deliberately CAUSE-AGNOSTIC: it repairs timeline
+# omissions, permanent relay rejections that later stop applying, restart gaps and cursor drift
+# alike, without anyone having to diagnose each one first.
+_RECON_BATCH = 4        # authors per pass — small on purpose: each costs 1-2 API calls and the
+                        # instance rate-limits (a 40-post/12-page audit tripped 429 by hand).
+_RECON_LOOKBACK = 40    # statuses per author — one page, covers a normal posting day
+_RECON_INTERVAL = 900   # seconds between passes
+_RECON_SEED_SCAN = 300  # newest delivery rows scanned when seeding (PK index, constant cost)
+
+
+def _recon_candidates(db: Session, instance_url: str, limit: int) -> list:
+    """Authors to audit this pass, least-recently-checked first.
+
+    PERFORMANCE: the obvious query — SELECT DISTINCT author_acct FROM fedi_bridge_delivered — is a
+    SEQ SCAN of the whole delivery table (121k rows here and growing with the firehose) every pass.
+    So the rotation is driven by fedi_reconcile_state instead, which is one small row per author and
+    is sorted on a table of one small row per author (~3k), measured at cost=116 once per pass.
+    Seeding reads only the newest _RECON_SEED_SCAN delivery rows by primary key — a constant-cost
+    index scan, not a table scan — so this stays flat as the table grows.
+
+    LOCAL accounts are seeded first: they are the population the documented gap actually hit (see
+    poll_once, "an active local account got ~7% of a week mirrored"), because the federated firehose
+    dilutes them."""
+    rows = (db.query(FediReconcileState)
+              .filter(FediReconcileState.instance_url == instance_url)
+              .order_by(FediReconcileState.last_checked_at.asc().nullsfirst())
+              .limit(limit).all())
+    picked = [r.acct for r in rows]
+    if len(picked) >= limit:
+        return picked
+    # Top up by seeding authors we have mirrored but never audited. Bounded scan of the NEWEST rows.
+    known = {r[0] for r in db.query(FediReconcileState.acct)
+                             .filter(FediReconcileState.instance_url == instance_url).all()}
+    recent = (db.query(FediBridgeDelivered.author_acct)
+                .filter(FediBridgeDelivered.instance_url == instance_url,
+                        FediBridgeDelivered.author_acct.isnot(None),
+                        FediBridgeDelivered.author_acct != "")
+                .order_by(FediBridgeDelivered.id.desc())
+                .limit(_RECON_SEED_SCAN).all())
+    fresh, seen = [], set()
+    for (a,) in recent:
+        if a and a not in known and a not in seen:
+            seen.add(a)
+            fresh.append(a)
+    fresh.sort(key=lambda a: ("@" in a, a))      # local accounts (no @host) first
+    for a in fresh[:limit - len(picked)]:
+        db.add(FediReconcileState(instance_url=instance_url, acct=a))
+        picked.append(a)
+    if fresh:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+    return picked
+
+
+async def _reconcile_author(db: Session, port: int, platform: str, instance_url: str,
+                            instance_host: str, token: str, acct: str,
+                            blocked_domains: set, include_replies: bool, deadline: float) -> int:
+    """Audit ONE author: outbox vs delivered/skipped, re-deliver the difference. Returns the count
+    repaired. Never raises — one unreachable author must not stop the pass."""
+    st = (db.query(FediReconcileState)
+            .filter(FediReconcileState.instance_url == instance_url,
+                    FediReconcileState.acct == acct).first())
+    if not st:
+        st = FediReconcileState(instance_url=instance_url, acct=acct)
+        db.add(st)
+    repaired = 0
+    _tok = _recon_ctx.set(True)
+    try:
+        if not st.account_id:
+            acc = await pleroma_service.lookup_account(instance_url, token, acct)
+            if not acc:
+                st.last_error = "account lookup failed"
+                st.last_checked_at = datetime.utcnow()
+                db.commit()
+                return 0
+            st.account_id = str(acc.get("id"))
+        statuses = await pleroma_service.fetch_account_statuses(
+            instance_url, token, st.account_id, limit=_RECON_LOOKBACK)
+        for raw in statuses:
+            if time.monotonic() > deadline:
+                break
+            post = _norm(platform, raw)
+            if not post.get("id"):
+                continue
+            uri = _canonical_uri(platform, instance_url, post)
+            # Already mirrored, or already CONSIDERED and deliberately skipped → leave it alone.
+            # Checking the skip ledger is what stops the pass from re-attempting a not-public or
+            # oversized post on every single run forever.
+            if _seen(db, instance_url, post["id"], uri):
+                continue
+            if uri and db.query(FediBridgeSkipped.id).filter(FediBridgeSkipped.note_uri == uri).first():
+                continue                      # already considered and deliberately skipped
+            # Route through _process, NOT _deliver: it owns the policy (boosts, include_replies,
+            # blocked domains, muted authors). Calling _deliver directly would let reconciliation
+            # mirror exactly what the drain is configured to refuse — a bridge that disagrees with
+            # itself depending on which path saw the post first.
+            await _process(db, port, platform, instance_url, instance_host,
+                           blocked_domains, include_replies, raw, deadline)
+            if _existing_mirror(db, instance_url, uri, post.get("id")):
+                repaired += 1
+                logger.info("[fedi-bridge] reconcile repaired %s by %s", post.get("id"), acct)
+        st.last_error = None
+    except Exception as e:
+        # 429 is the expected failure here — back off by simply stamping the check and moving on.
+        # ROLL BACK FIRST: a DB-level error leaves the Postgres txn aborted, and every later use of
+        # this session (including the commit below, and the FIRST query of the NEXT author, which is
+        # outside this try) then raises. Without it one bad author wedges the whole rotation: its
+        # last_checked_at never gets stamped, so NULLS FIRST keeps it at the head of every pass.
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        if st not in db:            # rollback EXPUNGES a still-pending new row — re-add or it's lost
+            db.add(st)
+        st.last_error = f"{type(e).__name__}: {e}"[:300]
+        logger.warning("[fedi-bridge] reconcile of %s failed: %s", acct, e)
+    finally:
+        _recon_ctx.reset(_tok)
+    st.last_checked_at = datetime.utcnow()
+    st.last_repaired = repaired
+    st.total_repaired = (st.total_repaired or 0) + repaired
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    return repaired
+
+
+async def reconcile_once(db: Session) -> int:
+    """One reconciliation pass over a bounded batch of authors. Returns posts repaired."""
+    if str(_get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+        return 0
+    instance_url = _get("fedi_bridge_instance_url")
+    token = _get("fedi_bridge_access_token")
+    if not (instance_url and token):
+        return 0
+    platform = "pleroma"
+    instance_host = urlparse(instance_url).netloc.split(":")[0].lower()
+    include_replies = _get("fedi_bridge_include_replies", "true").lower() == "true"
+    blocked_domains = _blocked_domains()
+    port = _port()
+    deadline = time.monotonic() + _DRAIN_BUDGET
+    total = 0
+    for acct in _recon_candidates(db, instance_url, _RECON_BATCH):
+        if time.monotonic() > deadline:
+            break
+        total += await _reconcile_author(db, port, platform, instance_url, instance_host,
+                                         token, acct, blocked_domains, include_replies, deadline)
+    if total:
+        logger.info("[fedi-bridge] reconciliation repaired %d post(s)", total)
+    return total
+
+
 # --- maintenance ------------------------------------------------------------
 
 def cleanup_state() -> None:
@@ -957,6 +1195,13 @@ def cleanup_state() -> None:
         # the global timeline under two identities.
         (db.query(FediBridgeDelivered)
            .filter(FediBridgeDelivered.created_at < cutoff, FediBridgeDelivered.note_id != "")
+           .delete(synchronize_session=False))
+        # The skip ledger is PURELY diagnostic, so it gets a short retention of its own rather than the
+        # relay's — nothing reads a month-old skip, and leaving it unpruned is how a diagnostic table
+        # quietly becomes the biggest one in the database. (fedi_reconcile_state is self-limiting: one
+        # small row per author, reused forever, so it needs no pruning.)
+        (db.query(FediBridgeSkipped)
+           .filter(FediBridgeSkipped.created_at < datetime.utcnow() - timedelta(days=_SKIP_RETENTION_DAYS))
            .delete(synchronize_session=False))
         db.commit()
     except Exception as e:
@@ -1021,8 +1266,28 @@ def start_fedi_bridge_scheduler() -> None:
         finally:
             db.close()
 
+    async def _reconjob():
+        # Reconciliation on its OWN cadence, like deletions: it makes outbound API calls per author
+        # and must never eat the mirror poll's time budget.
+        if str(_get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+            return
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            await asyncio.wait_for(reconcile_once(db), timeout=120)
+        except asyncio.TimeoutError:
+            logger.warning("[fedi-bridge] reconciliation exceeded 120s; resuming next cycle")
+            db.rollback()
+        except Exception as e:
+            logger.warning("[fedi-bridge] reconciliation job error: %s: %s", type(e).__name__, e)
+            db.rollback()
+        finally:
+            db.close()
+
     _scheduler = AsyncIOScheduler()
     _scheduler.add_job(_job, "interval", seconds=secs, id="fedi_bridge_poll", max_instances=1, coalesce=True)
+    _scheduler.add_job(_reconjob, "interval", seconds=_RECON_INTERVAL, id="fedi_bridge_reconcile",
+                       max_instances=1, coalesce=True)
     _scheduler.add_job(_deljob, "interval", seconds=_DELETION_INTERVAL, id="fedi_bridge_deletions", max_instances=1, coalesce=True)
     _scheduler.add_job(_cleanup, "interval", hours=24, id="fedi_bridge_cleanup", max_instances=1, coalesce=True)
     _scheduler.start()

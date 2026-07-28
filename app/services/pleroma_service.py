@@ -350,6 +350,43 @@ async def fetch_timeline(instance_url: str, access_token: str, timeline_type: st
         return data if isinstance(data, list) else []
 
 
+async def lookup_account(instance_url: str, access_token: str, acct: str) -> dict | None:
+    """Resolve an `acct` ("name" for a local user, "name@host" for a remote one) to its account
+    object on this instance. Used by the bridge's reconciliation pass to turn an author it has
+    already mirrored into the id that /accounts/:id/statuses needs. Returns None on 404/error."""
+    url = instance_url.rstrip("/") + "/api/v1/accounts/lookup"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.get(url, headers=headers, params={"acct": acct})
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        return data if isinstance(data, dict) and data.get("id") else None
+
+
+async def fetch_account_statuses(instance_url: str, access_token: str, account_id: str,
+                                 limit: int = 40, min_id: str | None = None,
+                                 max_id: str | None = None) -> list[dict]:
+    """An account's OWN posts, straight from its outbox.
+
+    This is the authoritative record for an author, unlike a timeline — which is a filtered view the
+    instance can legitimately omit posts from (and which the bridge's forward-only cursor then skips
+    past forever). `exclude_reblogs` because a boost carries no content of its own and _process drops
+    it anyway. Raises for status so the caller can distinguish a rate-limit from an empty account."""
+    url = instance_url.rstrip("/") + f"/api/v1/accounts/{account_id}/statuses"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params: dict = {"limit": limit, "exclude_reblogs": "true"}
+    if min_id:
+        params["min_id"] = min_id
+    if max_id:
+        params["max_id"] = max_id
+    async with httpx.AsyncClient(transport=afallback_transport(), timeout=15) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+
 async def fetch_direct(instance_url: str, access_token: str, since_id: str | None = None,
                        limit: int = 20, min_id: str | None = None) -> list[dict]:
     """Direct-message timeline (visibility=direct statuses). `since_id` returns the newest after the

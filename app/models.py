@@ -379,6 +379,60 @@ class FediBridgeDelivered(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class FediBridgeSkipped(Base):
+    """Why a fediverse post was NOT mirrored. The counterpart to FediBridgeDelivered.
+
+    Until this existed a skip was indistinguishable from "never saw it": every early return in
+    _process/_deliver dropped the post with no row, no log and no counter, so a coverage gap could
+    only be found by hand-diffing the instance against the relay (which is how 5 of one account's
+    40 recent posts turned out to be missing — all of them hashtag-heavy). Recording the REASON is
+    what makes the next gap announce itself instead of needing a forensic session.
+
+    Not a dedup key — _seen/_delivered_by_uri still own that. Purely diagnostic, and prunable."""
+    __tablename__ = "fedi_bridge_skipped"
+    __table_args__ = (
+        Index('ix_fedi_skip_uri', 'note_uri'),
+        Index('ix_fedi_skip_reason', 'reason', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(20), nullable=True)
+    instance_url = Column(String(255), nullable=True)
+    note_id = Column(String(255), nullable=True)
+    note_uri = Column(String(512), nullable=True)
+    author_acct = Column(String(255), nullable=True)
+    reason = Column(String(40), nullable=False)          # short code, e.g. "blocked", "oversized"
+    detail = Column(String(500), nullable=True)          # free text (relay message, exception, …)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FediReconcileState(Base):
+    """Per-author cursor for the reconciliation pass.
+
+    The drain reads TIMELINES, which are a filtered, ephemeral view: anything the instance keeps out
+    of one is skipped by the forward-only cursor and lost permanently. Reconciliation re-reads each
+    author's OWN outbox (/api/v1/accounts/:id/statuses) and re-delivers whatever never landed, which
+    is cause-agnostic — it repairs timeline omissions, transient publish failures and restart gaps
+    alike without us having to diagnose each one first.
+
+    One row per (instance_url, acct). `account_id` caches the instance's id for that acct so the
+    hourly pass costs one request per author instead of two."""
+    __tablename__ = "fedi_reconcile_state"
+    __table_args__ = (
+        Index('ix_fedi_recon_acct', 'instance_url', 'acct', unique=True),
+        Index('ix_fedi_recon_checked', 'last_checked_at'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instance_url = Column(String(255), nullable=False)
+    acct = Column(String(255), nullable=False)
+    account_id = Column(String(64), nullable=True)       # id on the instance (cached lookup)
+    last_checked_at = Column(DateTime, nullable=True)    # drives least-recently-checked rotation
+    last_repaired = Column(Integer, default=0)           # posts re-delivered on the last pass
+    total_repaired = Column(Integer, default=0)
+    last_error = Column(String(300), nullable=True)
+
+
 class FediBridgeAction(Base):
     """A write-back INTERACTION (favourite / emoji reaction / reblog) performed on the fediverse for one
     Nostr event — so a later NIP-09 delete of that event can UNDO it.
