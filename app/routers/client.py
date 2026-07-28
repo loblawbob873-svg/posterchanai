@@ -1035,17 +1035,12 @@ async def client_effects():
     effects = [n for n in motion if n not in enhance]
     if "removebackground" in cmds:
         effects.append("removebackground")
-    # stickers = the `char <name>` overlay characters (assets/characters/*), so the studio's
-    # optional sticker step stays in sync with what the effect engine actually has.
-    chars = []
-    try:
-        cdir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "characters")
-        for fn in sorted(os.listdir(cdir)):
-            n = os.path.splitext(fn)[0].strip()
-            if n and n not in chars:
-                chars.append(n)
-    except Exception:
-        chars = ["animegirl", "boobs", "cow", "panties", "pepe", "trump"]
+    # No sticker step. It listed assets/characters/* raw, so the studio offered a chip literally
+    # labelled "char anyways" — a name with no explanation, next to the `anyways` EFFECT chip that
+    # does the same thing properly. The sticker set it was built for (animegirl/pepe/trump/cow/
+    # boobs/panties) is gone, and every character left is already a first-class effect, so there is
+    # nothing here worth a second, more confusing way to reach it. `char <name>` still works if typed.
+    chars: list = []
     return JSONResponse({
         "enhance": [{"name": n, "desc": desc(n)} for n in enhance],
         "effects": [{"name": n, "desc": desc(n)} for n in effects],

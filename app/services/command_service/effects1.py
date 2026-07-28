@@ -668,6 +668,36 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _reaction_command(self, attachments: Optional[list], name: str, fn) -> dict:
+        """Shared body for the caption-less reaction overlays (`carl`/`soyjack`/`anyways`): the cutout
+        stands bottom-centre over the attached image. One implementation so they can't drift."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn_, ct) for fn_, _, ct in attachments):
+            return {"type": "text", "content": f"Attach an image, then send `{name}`."}
+
+        import asyncio
+
+        outputs, summary = await asyncio.to_thread(fn, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
+    async def _carl_command(self, attachments: Optional[list]) -> dict:
+        """Carl points at an attached image: `carl`."""
+        from app.services.effects_service import carl_attachments
+        return await self._reaction_command(attachments, "carl", carl_attachments)
+
+    async def _soyjack_command(self, attachments: Optional[list]) -> dict:
+        """Two soyjaks point and yell at an attached image: `soyjack`."""
+        from app.services.effects_service import soyjack_attachments
+        return await self._reaction_command(attachments, "soyjack", soyjack_attachments)
+
+    async def _anyways_command(self, attachments: Optional[list]) -> dict:
+        """The puppet side-eyes an attached image: `anyways`."""
+        from app.services.effects_service import anyways_attachments
+        return await self._reaction_command(attachments, "anyways", anyways_attachments)
+
     async def _shrug_command(self, attachments: Optional[list]) -> dict:
         """Rabbi shrugs "Whaddya gonna do?" on an attached image: `shrug`."""
         from app.services.media_service import is_image

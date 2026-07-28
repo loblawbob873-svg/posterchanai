@@ -175,9 +175,8 @@ def sound_names() -> list:
 _ALPHA_CHARACTERS = [
     # (name, label) — the character-overlay effects worth having as a transparent layer. `shrug` is
     # intentionally NOT here: it is exposed separately below because it carries audio and its own pose.
-    ("pepe", "Pepe"), ("trump", "Trump"), ("cow", "Cow"), ("boobs", "Boobs"),
-    ("panties", "Panties"), ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
-    ("animegirl", "Anime girl"),
+    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("anyways", "🙄 Anyways (puppet)"),
+    ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
 ]
 
 

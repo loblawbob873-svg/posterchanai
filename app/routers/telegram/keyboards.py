@@ -480,12 +480,10 @@ def _recover_post_text(callback_query: dict) -> str:
 def _character_prompt_keyboard() -> dict:
     """Buttons to pick a bottom-right character (or skip). Drives the media:chr:<name> callback."""
     return {"inline_keyboard": [
-        [{"text": "🧍 Schoolgirl", "callback_data": "media:chr:animegirl"},
-         {"text": "🐸 Pepe", "callback_data": "media:chr:pepe"}],
-        [{"text": "🇺🇸 Trump", "callback_data": "media:chr:trump"},
-         {"text": "🐄 Cow", "callback_data": "media:chr:cow"}],
-        [{"text": "🍈 Boobs", "callback_data": "media:chr:boobs"},
-         {"text": "🩲 Panties", "callback_data": "media:chr:panties"}],
+        [{"text": "🫵 Carl", "callback_data": "media:chr:carl"},
+         {"text": "😮 Soyjak", "callback_data": "media:chr:soyjack"}],
+        [{"text": "🙄 Anyways", "callback_data": "media:chr:anyways"},
+         {"text": "🤷 Shrug", "callback_data": "media:chr:shrug"}],
         [{"text": "▶️ No character", "callback_data": "media:chr:none"}],
     ]}
 

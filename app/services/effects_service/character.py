@@ -75,7 +75,7 @@ def apply_character(outputs: List[OutputFile], name: str) -> List[OutputFile]:
 
 
 def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.52,
-                                  max_width_frac: float = 0.48):
+                                  max_width_frac: float = 0.48, want_mouth: bool = True):
     """Place the character bottom-CENTRE (the pointing-up meme anchor) rather than bottom-right like
     apply_character. Returns (image, top_y, left_x, right_x, mouth_y) so a caption can be placed in
     whichever gutter beside her is wider, clear of the art, and level with her mouth."""
@@ -114,7 +114,10 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.5
     y = max(0, H - ch)
     x = max(0, (W - cw) // 2)
     base.alpha_composite(char, (x, y))
-    mf = _char_mouth_frac(char_path)
+    # want_mouth=False for the caption-less reaction overlays: locating the mouth runs a face
+    # detector (loads insightface, up to ~1.2s on a cold process) purely to place a speech bubble
+    # that those effects never draw.
+    mf = _char_mouth_frac(char_path) if want_mouth else None
     return base, y, x, min(W, x + cw), (y + int(ch * mf) if mf is not None else None)
 
 
@@ -198,36 +201,9 @@ def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
         draw.rectangle([x1 - outline, ty - tl // 2 + outline, x1 - outline // 2, ty + tl // 2 - outline], fill=(255, 255, 255))
 
 
-def _draw_point_arrow(draw, W, char_top, caption_bottom, H):
-    """A white, black-outlined arrow in the gap between the caption and the character's head, aimed UP
-    at the image being pointed at. Drawn with polygons rather than an emoji glyph so it renders
-    identically everywhere — an emoji font is not guaranteed on a headless box."""
-    gap_top, gap_bottom = caption_bottom + int(H * 0.01), char_top - int(H * 0.01)
-    span = gap_bottom - gap_top
-    if span < max(12, int(H * 0.04)):
-        return                                  # no room between caption and character; skip rather than overlap
-    span = min(span, int(H * 0.13))
-    cx = W // 2
-    bottom = gap_bottom
-    top = bottom - span
-    head = int(span * 0.45)
-    hw = max(3, int(span * 0.30))               # half-width of the arrowhead
-    sw = max(2, int(span * 0.10))               # half-width of the shaft
-    outline = max(2, span // 14)
-    head_pts = [(cx, top), (cx - hw, top + head), (cx + hw, top + head)]
-    shaft = [cx - sw, top + head, cx + sw, bottom]
-    for w, col in ((outline, (0, 0, 0)), (0, (255, 255, 255))):
-        if w:
-            draw.polygon([(x, y) for x, y in head_pts], fill=col, outline=col, width=w)
-            draw.rectangle(shaft, fill=col, outline=col, width=w)
-        else:
-            draw.polygon([(cx, top + outline), (cx - hw + outline, top + head), (cx + hw - outline, top + head)], fill=col)
-            draw.rectangle([shaft[0] + outline, shaft[1], shaft[2] - outline, shaft[3] - outline], fill=col)
-
-
 def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
     """`theraped` — the imageboard pointing-up format (see _add_pointing_meme)."""
-    return _add_pointing_meme(data, "theraped", caption, fallback="animegirl")
+    return _add_pointing_meme(data, "theraped", caption)
 
 
 def add_would(data: bytes, caption: str = "WOULD") -> bytes:
@@ -238,7 +214,7 @@ def add_would(data: bytes, caption: str = "WOULD") -> bytes:
 
 def add_shrug(data: bytes, caption: str = "Whaddya gonna do?") -> bytes:
     """`shrug` — resigned rabbi, palms up, saying "Whaddya gonna do?". Same character+dialogue renderer;
-    the shrug.png pose means no pointing arrow is drawn (has_pose). Returns the STILL JPEG frame; the
+    the shrug.png pose gestures on its own. Returns the STILL JPEG frame; the
     video (with the shrug audio clip) is built in shrug_attachments — mirrors add_diarrhea's split."""
     return _add_pointing_meme(data, "shrug", caption, fallback="would")
 
@@ -303,10 +279,10 @@ def render_shrug_alpha(dur: float = None) -> bytes:
 
 
 def render_character_alpha(name: str, dur: float = 6.0) -> bytes:
-    """A named character (pepe/trump/would/…) on a transparent canvas → alpha .mov, no audio, no outro.
+    """A named character (carl/soyjack/would/…) on a transparent canvas → alpha .mov, no audio, no outro.
     The Meme Builder LAYER variant of `char <name>`: the character art alone, composited over whatever
-    is beneath it on the timeline. Animated .mov characters (animegirl) contribute their FIRST frame
-    only (same as _composite_char_on_image), which is acceptable for a static overlay.
+    is beneath it on the timeline. A .mov character would contribute its FIRST frame only (same as
+    _composite_char_on_image); every character shipped today is a still PNG.
     """
     from app.services.media_service import still_to_alpha_video
     cp = _character_path(name)
@@ -459,7 +435,7 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     return beside, (margin if beside else y + th)
 
 
-def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "animegirl") -> bytes:
+def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "") -> bytes:
     """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
     with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
     stays the focal point and the text reads as dialogue rather than a meme banner.
@@ -468,32 +444,74 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
     the art from the _CHARACTERS registry — drop a pointing pose at assets/characters/<key>.png and it
     is used automatically.
     """
-    from PIL import Image as _Img, ImageDraw as _Draw, ImageOps as _Ops
+    from PIL import Image as _Img, ImageOps as _Ops
     from io import BytesIO as _BIO
 
-    cp = _character_path(char_key) or _character_path(fallback)
+    cp = _character_path(char_key) or (_character_path(fallback) if fallback else "")
     if not cp:
-        raise ValueError(f"{char_key}: no character asset found ({char_key}.png or {fallback})")
-    has_pose = bool(_character_path(char_key))   # dedicated art already points; don't draw a 2nd arrow
+        raise ValueError(f"{char_key}: character art (assets/characters/{char_key}.png) is missing on the server")
 
     with _Img.open(_BIO(data)) as im:
         im = _Ops.exif_transpose(im)
         base = im.convert("RGBA")
 
     base, char_top, char_left, char_right, mouth_y = _composite_char_bottom_center(base, cp)
-    _beside, caption_bottom = draw_dialogue_caption(base, caption or char_key,
-                                                    char_top, char_left, char_right,
-                                                    mouth_y=mouth_y)
-
-    # The format IS the point: she indicates the image above. The stock animegirl still has no arm-up
-    # pose, so draw an explicit arrow above her. Skipped once real pointing art is installed.
-    if not has_pose:
-        W, H = base.size
-        _draw_point_arrow(_Draw.Draw(base), W, char_top, caption_bottom, H)
+    draw_dialogue_caption(base, caption or char_key, char_top, char_left, char_right, mouth_y=mouth_y)
 
     buf = _BIO()
     base.convert("RGB").save(buf, "JPEG", quality=90)
     return buf.getvalue()
+
+
+# Reaction overlays — the same bottom-CENTRE anchor as the pointing memes, but with NO caption, no
+# speech bubble and no drawn arrow: these poses already say it. Each entry is how big the figure
+# should be, because "40% of the height" means something different for a wide pair of soyjaks than
+# for one tall puppet: (height_frac, max_width_frac).
+_REACTION_SIZES = {
+    "carl":    (0.46, 0.62),   # landscape, points off to his left — needs room sideways
+    "soyjack": (0.44, 0.98),   # a WIDE pair that must span the frame, or they point at nothing
+    "anyways": (0.52, 0.42),   # tall and narrow; the side-eye reads at half the frame height
+}
+
+
+def _add_reaction_overlay(data: bytes, char_key: str) -> bytes:
+    """Composite a background-less character over the image, bottom-centre.
+
+    The difference from _add_pointing_meme is everything it DOESN'T do — no caption, no bubble, no
+    arrow — so the result is just the picture with someone reacting to it at the bottom of the frame.
+    """
+    from PIL import Image as _Img, ImageOps as _Ops
+    from io import BytesIO as _BIO
+
+    cp = _character_path(char_key)
+    if not cp:
+        raise ValueError(f"{char_key}: character art (assets/characters/{char_key}.png) is missing on the server")
+    hf, wf = _REACTION_SIZES.get(char_key, (0.46, 0.6))
+
+    with _Img.open(_BIO(data)) as im:
+        im = _Ops.exif_transpose(im)
+        base = im.convert("RGBA")
+
+    base, _top, _l, _r, _mouth = _composite_char_bottom_center(base, cp, height_frac=hf,
+                                                               max_width_frac=wf, want_mouth=False)
+    buf = _BIO()
+    base.convert("RGB").save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
+def add_carl(data: bytes) -> bytes:
+    """`carl` — Carl Brutananadilewski points at whatever you attached."""
+    return _add_reaction_overlay(data, "carl")
+
+
+def add_soyjack(data: bytes) -> bytes:
+    """`soyjack` — the two soyjaks, pointing and yelling at your image."""
+    return _add_reaction_overlay(data, "soyjack")
+
+
+def add_anyways(data: bytes) -> bytes:
+    """`anyways` — the puppet side-eyes your image and moves on."""
+    return _add_reaction_overlay(data, "anyways")
 
 
 def _pointing_attachments(attachments, key: str, title: str, fn):
@@ -520,6 +538,18 @@ def theraped_attachments(attachments):
 
 def would_attachments(attachments):
     return _pointing_attachments(attachments, "would", "Would", add_would)
+
+
+def carl_attachments(attachments):
+    return _pointing_attachments(attachments, "carl", "Carl", add_carl)
+
+
+def soyjack_attachments(attachments):
+    return _pointing_attachments(attachments, "soyjack", "Soyjak", add_soyjack)
+
+
+def anyways_attachments(attachments):
+    return _pointing_attachments(attachments, "anyways", "Anyways", add_anyways)
 
 
 def shrug_attachments(attachments):

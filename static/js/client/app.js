@@ -4804,6 +4804,18 @@
     // it on desktop too, where the only route left was to go live with the webcam and then swap mid-stream.
     const canScreen = !!_screenPlugin()
       || !!(canPhone && navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+    // Two URLs OBS's server+key split doesn't give you, both worth having on the clipboard:
+    //   * the whole ingest url in one string, for encoders with a single URL box (ffmpeg, phone apps
+    //     like Larix). Masked like the key, because it CONTAINS the key.
+    //   * the watch link — the same https link the announcement post carries, available BEFORE you go
+    //     live so you can paste it wherever you're telling people. The token is stable, so this is the
+    //     same address every time you stream (see _announceStreamPost).
+    const fullIngest = String(info.rtmp_url||'').replace(/\/+$/,'') + '/' + String(info.stream_key||'');
+    let watchUrl='';
+    try{
+      const _r=[CFG && CFG.relay_url].filter(Boolean);
+      watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays:_r}));
+    }catch(_){ }
     modal(`<h3>🔴 Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
@@ -4822,6 +4834,8 @@
         : `<p class="muted small">Stream from OBS (or any RTMP encoder) — Service: <b>Custom</b>:</p>`}
       <label class="fld">Server<span class="copyrow"><input class="input" id="gl-srv" readonly value="${enc(info.rtmp_url)}"><button class="btn btn-ghost small" data-copy="gl-srv">Copy</button></span></label>
       <label class="fld">Stream key<span class="copyrow"><input class="input" id="gl-key" type="password" readonly value="${enc(info.stream_key)}"><button class="btn btn-ghost small" data-copy="gl-key">Copy</button></span></label>
+      <label class="fld">Stream URL <span class="muted small">— server + key in one, for encoders with a single URL box</span><span class="copyrow"><input class="input" id="gl-full" type="password" readonly value="${enc(fullIngest)}"><button class="btn btn-ghost small" data-copy="gl-full">Copy</button></span></label>
+      ${watchUrl?`<label class="fld">Watch link <span class="muted small">— share this; it opens the player</span><span class="copyrow"><input class="input" id="gl-watch" readonly value="${enc(watchUrl)}"><button class="btn btn-ghost small" data-copy="gl-watch">Copy</button></span></label>`:''}
       <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span></label>
       <img id="gl-img-prev" class="gl-img-prev hidden" alt="">
       <div class="gl-cover-acts"><button class="btn btn-ghost small" id="gl-img-pick">🌸 Choose from your drive</button>
@@ -7917,7 +7931,7 @@
     modal(`<div class="fxs">
       <div class="fxs-hd">
         <div class="fxs-title">${thumb}<div><h3>🎬 Effects studio</h3>
-          <div class="muted small">Pick one base effect · motion, sticker and caption stack on top.</div></div>
+          <div class="muted small">Pick one base effect · motion and caption stack on top.</div></div>
           <button type="button" class="fxs-x" id="fxs-close" aria-label="Close">✕</button></div>
         <input class="input fxs-search" id="fxs-q" placeholder="Search ${effects.length} effects…" autocomplete="off">
       </div>
@@ -8089,7 +8103,6 @@
     if(MOVE.includes(mod)){ p.mods=p.mods.filter(m=>!MOVE.includes(m) && m!==mod); p.mods.push(mod); }   // ONE movement
     else { p.mods.includes(mod) ? (p.mods=p.mods.filter(m=>m!==mod)) : p.mods.push(mod); }               // glow/trippy compose (toggle)
     ta.value=_fxJoin(p); }
-  function _fxApplyChar(ta, name){ const p=_fxParse(ta.value); p.char=(p.char===name)?'':name; ta.value=_fxJoin(p); }   // sticker overlay — single, toggle
   async function doRepost(id,pk,btn){
     if(countsFor(id).iRt){ toast('already reposted'); return; }
     const o=Store.get(id);
@@ -12701,7 +12714,6 @@
         if(fxc.dataset.cmd==='__fxguide'){ showEffectGuide(); return; }   // 🎬 Effects → open the studio picker
         const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxSetEffect(ta, fxc.dataset.cmd); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // effect chip → set base effect (keeps motion/caption)
       const fxm=e.target.closest('.fx-mot[data-add]'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
-      const fxh=e.target.closest('.fx-char'); if(fxh){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyChar(ta, fxh.dataset.char); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // sticker (char overlay) → single, toggle
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL

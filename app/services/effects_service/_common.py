@@ -518,21 +518,22 @@ _ANIME_CASCADE_CANDIDATES = [
 ]
 _MOTION_IMAGE_DURATION = 4.0
 _CHARACTERS = {
-    "animegirl": "animegirl.mov", "girl": "animegirl.mov", "anime": "animegirl.mov",
-    "waifu": "animegirl.mov", "schoolgirl": "animegirl.mov",
-    "pepe": "pepe.png", "frog": "pepe.png",
-    "trump": "trump.png", "donald": "trump.png",
-    "cow": "cow.png", "moo": "cow.png",
-    "boobs": "boobs.png", "boob": "boobs.png", "tits": "boobs.png",
-    "panties": "panties.png", "panty": "panties.png",
-    # Drop-in slot for the `theraped` pointing-up pose. Kept SEPARATE from animegirl so
-    # replacing it can never change what `char animegirl` overlays.
+    # The original sticker set (animegirl/pepe/trump/cow/boobs/panties) is GONE — the art was poor and
+    # nothing here should outlive being told so. Their assets are deleted too; adding a name back means
+    # adding art back.
     "theraped": "theraped.png", "pointup": "theraped.png", "pointing": "theraped.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
     "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
     "shrug": "shrug.png", "rabbi": "shrug.png", "whaddya": "shrug.png",
+    # Reaction overlays (see _add_reaction_overlay): cutouts with no background and no caption —
+    # the pose IS the joke, so they stand bottom-centre over the image and say nothing.
+    "carl": "carl.png", "brutananadilewski": "carl.png",
+    # NOT "pointing" — that alias belongs to theraped above, and a duplicate key here would silently
+    # steal it (last one wins in a dict literal).
+    "soyjack": "soyjack.png", "soyjak": "soyjack.png", "soy": "soyjack.png", "soyjaks": "soyjack.png",
+    "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["animegirl", "pepe", "trump", "cow", "boobs", "panties", "theraped", "would", "shrug"]
+CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "anyways"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
