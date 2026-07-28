@@ -3804,6 +3804,15 @@ body.modal-open .mobilenav{display:none}
    untappable. Layout is driven by the stage's own aspect-ratio, so a 9:16 project and a 16:9
    project both fit without JS measuring anything. */
 .mb-wrap{display:flex;flex-direction:column;gap:12px;padding:12px 16px 90px}
+/* Drag an image in from the desktop or another tab (bindDrop). The whole builder is the target — the
+   dropped file becomes its own layer wherever you let go — so the cue is a frame around it rather than
+   a box to aim at, and the ::after banner says which drop it accepts. Pointer-events off so the
+   highlight can never eat the drop it is advertising. Touch devices never fire these events. */
+.mb-wrap.mb-dropping{outline:2px dashed var(--neon);outline-offset:-6px;border-radius:16px;position:relative}
+.mb-wrap.mb-dropping::after{content:'⤵ Drop to add a layer';position:absolute;left:50%;top:14px;transform:translateX(-50%);
+  padding:8px 16px;border-radius:999px;background:var(--panel2);border:1px solid var(--neon);color:var(--neon);
+  font-size:14px;font-weight:600;letter-spacing:.4px;pointer-events:none;z-index:5;
+  box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
 .mb-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .mb-bar .btn{margin:0}
 .mb-spacer{flex:1 1 auto}

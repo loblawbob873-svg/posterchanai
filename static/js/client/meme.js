@@ -758,26 +758,93 @@
     togglePlay(end);
   }
 
-  async function pickMedia(){
+  // Upload local files and drop each one on the timeline as its own layer. Shared by the 🖼️ Add media
+  // picker and by drag-and-drop, so a dropped file and a picked one land identically.
+  async function addMediaFiles(files){
     const st=document.getElementById('mb-status');
+    let added=0;
+    for(const f of Array.from(files||[])){
+      if(!/^(image|video)\//.test(f.type||'')) continue;   // audio has its own button (it spans the meme)
+      try{
+        if(st) st.textContent='uploading '+f.name+'…';
+        const url=await uploadBlob(f);
+        addLayer(f.type.startsWith('video')?'video':'image', url, { name:(f.name||'').slice(0,24) });
+        added++;
+        render();
+      }catch(err){
+        if(st) st.textContent='upload failed: '+((err&&err.message)||err);
+        return added;
+      }
+    }
+    if(st) st.textContent='';
+    return added;
+  }
+
+  async function pickMedia(){
     // Blossom picker OR a local file. Local files upload first so the render service can fetch them.
     const inp=document.createElement('input'); inp.type='file';
     inp.accept='image/*,video/*'; inp.multiple=true;
-    inp.onchange=async()=>{
-      for(const f of Array.from(inp.files||[])){
-        try{
-          if(st) st.textContent='uploading '+f.name+'…';
-          const url=await uploadBlob(f);
-          addLayer(f.type.startsWith('video')?'video':'image', url, { name:f.name.slice(0,24) });
-          render();
-        }catch(err){
-          if(st) st.textContent='upload failed: '+((err&&err.message)||err);
-          return;
-        }
-      }
-      if(st) st.textContent='';
-    };
+    inp.onchange=()=>addMediaFiles(inp.files);
     inp.click();
+  }
+
+  // ---------- drag and drop ----------
+  // Two different payloads arrive here and only one of them is a file:
+  //   * from the DESKTOP (or a file manager) the drop carries dataTransfer.files — same as the picker.
+  //   * from ANOTHER BROWSER TAB an image drag carries no file at all, only its URL (text/uri-list, or
+  //     an <img src> inside text/html). That URL is on someone else's origin, so it can't just become a
+  //     layer: the stage composites in a canvas, and a cross-origin image taints it (the render would
+  //     fail at export), quite apart from the picture disappearing whenever that site takes it down.
+  // So a dropped URL is FETCHED — through the node's image proxy, which is also what gets us past CORS —
+  // and then uploaded like any other local file. Everything on the timeline ends up a Blossom URL.
+  const _URL_RE=/^https?:\/\/\S+$/i;
+  function _dropUrl(dt){
+    const uri=(dt.getData('text/uri-list')||'').split('\n').map(s=>s.trim()).filter(s=>s && !s.startsWith('#'))[0];
+    if(uri && _URL_RE.test(uri)) return uri;
+    const html=dt.getData('text/html')||'';
+    const m=/<img[^>]+src\s*=\s*["']([^"']+)["']/i.exec(html);
+    if(m && _URL_RE.test(m[1])) return m[1];
+    const txt=(dt.getData('text/plain')||'').trim();
+    return _URL_RE.test(txt) ? txt : '';
+  }
+  async function addMediaUrl(u){
+    const st=document.getElementById('mb-status');
+    if(st) st.textContent='fetching the image…';
+    let blob=null;
+    try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(u)).then(r=>r.ok?r.blob():null); }catch(_){}
+    // Direct fetch as the fallback, exactly like the Effects studio: the proxy is the reliable path
+    // (CORS + private-address guard), but a CORS-friendly host still works without it.
+    if(!blob){ try{ blob=await fetch(u).then(r=>r.ok?r.blob():null); }catch(_){} }
+    if(!blob || !/^(image|video)\//.test(blob.type||'')){
+      if(st) st.textContent='';
+      toast(blob ? 'that link isn’t an image or video' : 'could not fetch that image');
+      return 0;
+    }
+    const base=(u.split(/[?#]/)[0].split('/').pop()||'dropped').slice(0,24);
+    const ext=(blob.type.split('/')[1]||'jpg').split('+')[0];
+    const name=/\.\w{2,4}$/.test(base) ? base : base+'.'+ext;
+    return await addMediaFiles([new File([blob], name, { type:blob.type })]);
+  }
+  function bindDrop(root){
+    const wrap=root.querySelector('.mb-wrap'); if(!wrap) return;
+    // Only light up for a drag that actually carries media — dragging a text selection over the builder
+    // shouldn't make it look like a drop target.
+    const carries=dt=>!!dt && (Array.from(dt.types||[]).some(t=>t==='Files'||t==='text/uri-list'||t==='text/html'||t==='text/plain'));
+    let depth=0;
+    wrap.addEventListener('dragenter', e=>{ if(!carries(e.dataTransfer)) return; e.preventDefault(); depth++; wrap.classList.add('mb-dropping'); });
+    wrap.addEventListener('dragover', e=>{ if(!carries(e.dataTransfer)) return; e.preventDefault(); try{ e.dataTransfer.dropEffect='copy'; }catch(_){} });
+    // dragleave fires for every child the pointer crosses, so it's counted against dragenter rather
+    // than clearing the highlight the first time the cursor passes over a layer box.
+    wrap.addEventListener('dragleave', ()=>{ if(--depth<=0){ depth=0; wrap.classList.remove('mb-dropping'); } });
+    wrap.addEventListener('drop', async e=>{
+      const dt=e.dataTransfer; if(!carries(dt)) return;
+      e.preventDefault(); depth=0; wrap.classList.remove('mb-dropping');
+      const files=Array.from(dt.files||[]).filter(f=>/^(image|video)\//.test(f.type||''));
+      let n=0;
+      if(files.length) n=await addMediaFiles(files);
+      else { const u=_dropUrl(dt); if(u) n=await addMediaUrl(u); else toast('drop an image, a video, or a link to one'); }
+      if(n) toast(n===1 ? 'added as a new layer' : n+' layers added');
+    });
   }
 
   // Music: a local mp3/m4a/ogg/wav (uploaded to Blossom first, like every other layer source) or a track
@@ -1180,7 +1247,7 @@
     _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio'));
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
-    bindStage(root); bindTimeline(root); bindInspector(root);
+    bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root);
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
