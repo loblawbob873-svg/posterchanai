@@ -1102,7 +1102,19 @@
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
     $('#btn-signup-go').onclick = signupGo;
-    document.addEventListener('click', e=>{ const c = e.target.closest('[data-copy]'); if(c){ navigator.clipboard.writeText($('#'+c.dataset.copy).textContent); toast('copied'); } });
+    // Global [data-copy] handler for TEXT NODES (code blocks etc.). It must skip form fields: their
+    // textContent is the empty string, so this wrote "" to the clipboard — and because it runs in
+    // ADDITION to the element's own handler, it both emitted a second bogus "copied" toast AND clobbered
+    // the value _copyFrom had just written. That is the whole "two toasts and nothing copies" bug on the
+    // Go Live server/key boxes; those are inputs and belong to _copyFrom, which reads .value.
+    document.addEventListener('click', e=>{
+      const c = e.target.closest('[data-copy]'); if(!c) return;
+      const el = $('#'+c.dataset.copy); if(!el) return;
+      if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return;   // handled by _copyFrom
+      const txt = el.textContent || ''; if(!txt) return;                 // never "copy" emptiness
+      try{ navigator.clipboard.writeText(txt).then(()=>toast('copied')).catch(()=>toast('copy failed')); }
+      catch(_){ toast('copy failed'); }
+    });
   }
   function authErr(m){ $('#auth-error').textContent = m||''; }
 
@@ -4695,11 +4707,16 @@
     // Plain browsers don't have Capacitor and fall straight through to the standard paths below.
     // Desktop shell (Electron): same story as the APK — no web clipboard at all — so it exposes a
     // write-only native bridge. Absent in every browser, so this costs nothing elsewhere.
+    // Each path names itself in the toast. Three environments failed differently here and inference kept
+    // being wrong; "copied (native)" vs "copied (web)" vs a failure message identifies the path taken in
+    // one click, with no console needed. Keep the suffixes — they are the only diagnosis this has.
     if(window.pcClip && window.pcClip.write){
-      window.pcClip.write(val).then(okNative=>{ okNative ? toast('copied') : fb(); }).catch(fb); return; }
+      window.pcClip.write(val).then(okNative=>{ okNative ? toast('copied (native)') : fb(); }).catch(fb); return; }
     const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Clipboard;
-    if(cap && cap.write){ cap.write({ string: val }).then(()=>toast('copied')).catch(fb); return; }
-    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).then(()=>toast('copied')).catch(fb); } else fb();
+    if(cap && cap.write){ cap.write({ string: val }).then(()=>toast('copied (app)')).catch(fb); return; }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(val).then(()=>toast('copied (web)')).catch(fb); return; }
+    fb();
   }
   function _stopLiveHb(){ if(_liveHb){ clearInterval(_liveHb); _liveHb=null; } }
   function _startLiveHb(){   // if the HLS 404s repeatedly, OBS stopped → mark the stream ended so it doesn't orphan as LIVE
