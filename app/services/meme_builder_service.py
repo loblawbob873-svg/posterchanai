@@ -33,6 +33,11 @@ MAX_DIM = 2160
 # nothing is" symptom. A real render of a short meme is seconds; anything past this is stuck, so fail fast,
 # free the slot, and tell the user what to change.
 _RENDER_TIMEOUT_S = 150
+# VAAPI quality. NOT the same scale as x264's -crf: measured on a real 20s render, qp 20 produced 3.14 MB
+# against libx264 -crf 20's 1.31 MB — 2.4x, and a meme is uploaded once then downloaded by everyone who
+# sees it. qp 26 lands at 1.35 MB, within 2.5% of the CPU encoder's size, so the GPU path costs no extra
+# bandwidth. Tuned by measuring (20/24/26/28) rather than assuming the scales match.
+_VAAPI_QP = 26
 DEFAULT_W, DEFAULT_H, DEFAULT_FPS = 720, 1280, 30
 
 # Per-layer effects expressed directly in the filtergraph. Each entry is a callable taking the layer's
@@ -521,7 +526,11 @@ def render(edit: dict, sources: dict) -> bytes:
             chains.append(f"{cur}{filt}{tag}")
             cur = tag
 
-        chains.append(f"{cur}format=yuv420p[vout]")
+        # Keep the video tail addressable: the GPU encoder needs a DIFFERENT one (see the loop below),
+        # and this exact string — label included — is what gets swapped, so there is nothing else in the
+        # graph it could match.
+        _vtail_sw = f"{cur}format=yuv420p[vout]"
+        chains.append(_vtail_sw)
         filtergraph = ";".join(chains)
 
         out = os.path.join(tmp, "out.mp4")
@@ -556,8 +565,19 @@ def render(edit: dict, sources: dict) -> bytes:
         encoders = media_service._video_encoder_candidates(ffmpeg)
         last_err = ""
         for enc in encoders:
-            full = cmd + ["-filter_complex", filtergraph] + maps + \
-                   ["-c:v", enc, "-t", f"{duration:.3f}", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+            # VAAPI does not encode software frames. Naming the encoder is not enough: it needs its
+            # DEVICE and the frames uploaded to a GPU surface (format=nv12,hwupload), exactly like
+            # media_service._video_encode_cmd does for the compress path. Without both, ffmpeg aborted
+            # with "Terminating thread with return code -22 (Invalid argument)" on EVERY render, so the
+            # ladder silently fell through to libx264 and every meme was encoded on the CPU — the GPU
+            # branch had never once succeeded. Probed on this box: with these args it encodes fine.
+            fg, pre, tail = filtergraph, [], ["-pix_fmt", "yuv420p"]
+            if enc == "h264_vaapi":
+                fg = filtergraph.replace(_vtail_sw, f"{cur}format=nv12,hwupload[vout]", 1)
+                pre = ["-vaapi_device", media_service._render_node()]
+                tail = ["-qp", str(_VAAPI_QP)]   # surface format is the GPU's; -pix_fmt would fight it
+            full = cmd[:1] + pre + cmd[1:] + ["-filter_complex", fg] + maps + \
+                   ["-c:v", enc, "-t", f"{duration:.3f}"] + tail + ["-movflags", "+faststart"]
             if enc == "libx264":
                 full += ["-crf", "20", "-preset", "veryfast"]
             full.append(out)
