@@ -294,8 +294,13 @@ def _strip_nostr_refs(text: str) -> str:
 
 
 _handle_cache: dict = {}        # pubkey_hex -> "@user@host" (positive; handles are stable → cached forever)
-_handle_neg: dict = {}          # pubkey_hex -> monotonic time of last "no identity" miss (TTL-rechecked)
+_handle_neg: dict = {}          # pubkey_hex -> (monotonic time of the miss, seconds to honour it)
 _HANDLE_NEG_TTL = 300           # re-resolve a "no fedi identity" pubkey after this (user may link later)
+# A lookup that ERRORED is NOT the same answer as "this person has no fediverse account", and must not
+# be cached like one. Conflating them cost a real mention: an unresolved handle means the `nostr:npub…`
+# is deleted from the post by _strip_nostr_refs, so ONE failed call to a flaky instance silently
+# vaporised every mention of that person for the next five minutes.
+_HANDLE_FAIL_TTL = 30           # ...so retry soon, but not once per event against a dead instance
 _HANDLE_RE = _re.compile(r"nostr:((?:npub1|nprofile1)[0-9a-z]{20,})", _re.I)
 
 
@@ -331,7 +336,8 @@ async def _fedi_handle_for_pubkey(db, pk_hex: str) -> str | None:
     fedi account later still gets their mentions translated without a restart."""
     if pk_hex in _handle_cache:
         return _handle_cache[pk_hex]
-    if pk_hex in _handle_neg and (time.monotonic() - _handle_neg[pk_hex]) < _HANDLE_NEG_TTL:
+    neg = _handle_neg.get(pk_hex)
+    if neg and (time.monotonic() - neg[0]) < neg[1]:
         return None
     pup = db.query(FediPuppet).filter(FediPuppet.pubkey_hex == pk_hex).first()
     if pup and pup.acct:
@@ -339,21 +345,37 @@ async def _fedi_handle_for_pubkey(db, pk_hex: str) -> str | None:
         _handle_neg.pop(pk_hex, None)
         return _handle_cache[pk_hex]
     user = _any_user_for_pubkey(db, pk_hex)
-    handle = None
+    handle, failed = None, False
     if user:
-        try:
-            me = await pleroma_service.verify_credentials(user.pleroma_instance_url, user.pleroma_access_token)
-            acct = (me or {}).get("acct") or (me or {}).get("username")
-        except Exception:
-            acct = None
+        host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
+        acct = (user.pleroma_acct or "").strip().lstrip("@")
+        if not acct:
+            # The handle is only fetched over the network when it ISN'T already on the row, and the
+            # answer is written back — so this costs one call per user EVER, not one per process
+            # start. It used to re-ask on every restart, which is what put the whole translation at
+            # the mercy of a single request to someone else's instance.
+            try:
+                me = await pleroma_service.verify_credentials(user.pleroma_instance_url,
+                                                              user.pleroma_access_token)
+                acct = ((me or {}).get("acct") or (me or {}).get("username") or "").strip().lstrip("@")
+            except Exception as e:
+                failed = True       # logged, not swallowed: this was invisible in the journal before
+                logger.warning("[fedi-writeback] fedi handle lookup failed for %s at %s: %s",
+                               pk_hex[:8], user.pleroma_instance_url, e)
+            if acct:
+                try:
+                    user.pleroma_acct = acct if "@" in acct else f"{acct}@{host}"
+                    db.commit()
+                except Exception as e:
+                    db.rollback()   # the handle still stands for THIS note; we just re-ask next time
+                    logger.debug("[fedi-writeback] pleroma_acct backfill failed for %s: %s", pk_hex[:8], e)
         if acct:
-            host = urlparse(user.pleroma_instance_url).netloc.split(":")[0].lower()
             handle = "@" + (acct if "@" in acct else f"{acct}@{host}")
     if handle:
         _handle_cache[pk_hex] = handle
         _handle_neg.pop(pk_hex, None)
     else:
-        _handle_neg[pk_hex] = time.monotonic()
+        _handle_neg[pk_hex] = (time.monotonic(), _HANDLE_FAIL_TTL if failed else _HANDLE_NEG_TTL)
     return handle
 
 

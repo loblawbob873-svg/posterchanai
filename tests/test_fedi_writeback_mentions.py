@@ -46,6 +46,83 @@ def translate(content, pubkeys):
         W._fedi_handle_for_pubkey, W._nostr_names_for = real_h, real_n
 
 
+class FakeQuery:
+    def filter(self, *a, **k):
+        return self
+
+    def first(self):
+        return None            # no puppet — the mentioned user is a native Nostr account
+
+
+class FakeDb:
+    """Enough session for _fedi_handle_for_pubkey: the puppet lookup misses, commits are no-ops."""
+    def query(self, *a, **k):
+        return FakeQuery()
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+class FakeUser:
+    def __init__(self, acct=None):
+        self.pleroma_acct = acct
+        self.pleroma_instance_url = "https://parcero.casa"
+        self.pleroma_access_token = "tok"
+
+
+class TestHandleResolution(unittest.TestCase):
+    """A lookup that ERRORED must not be remembered as "this person has no fediverse account".
+
+    An unresolved handle doesn't degrade the mention, it DELETES it (_strip_nostr_refs removes the
+    `nostr:npub…` outright), so one failed request to someone else's instance used to vaporise every
+    mention of that person for the full 300s negative TTL — silently, since the exception was
+    swallowed without a log line. Seen in production against parcero.casa.
+    """
+
+    def setUp(self):
+        W._handle_cache.clear()
+        W._handle_neg.clear()
+        self._real = W._any_user_for_pubkey
+        self.addCleanup(lambda: setattr(W, "_any_user_for_pubkey", self._real))
+
+    def _resolve(self, user, verify):
+        W._any_user_for_pubkey = lambda db, pk: user
+        real = W.pleroma_service.verify_credentials
+        W.pleroma_service.verify_credentials = verify
+        try:
+            return asyncio.run(W._fedi_handle_for_pubkey(FakeDb(), CHOOM))
+        finally:
+            W.pleroma_service.verify_credentials = real
+
+    async def _boom(self, *a, **k):
+        raise RuntimeError("connection reset")
+
+    async def _ok(self, *a, **k):
+        return {"acct": "dj"}
+
+    def test_stored_acct_needs_no_network(self):
+        """Once pleroma_acct is on the row the handle resolves offline — so a flaky instance can no
+        longer take mentions down at all."""
+        self.assertEqual(self._resolve(FakeUser("dj@parcero.casa"), self._boom), "@dj@parcero.casa")
+
+    def test_network_answer_is_backfilled(self):
+        user = FakeUser(None)
+        self.assertEqual(self._resolve(user, self._ok), "@dj@parcero.casa")
+        self.assertEqual(user.pleroma_acct, "dj@parcero.casa")   # one call per user EVER, not per boot
+
+    def test_failure_gets_the_short_ttl(self):
+        self.assertIsNone(self._resolve(FakeUser(None), self._boom))
+        self.assertEqual(W._handle_neg[CHOOM][1], W._HANDLE_FAIL_TTL)
+
+    def test_genuine_absence_gets_the_long_ttl(self):
+        """No linked fedi account at all is a real answer — worth remembering for the full TTL."""
+        self.assertIsNone(self._resolve(None, self._boom))
+        self.assertEqual(W._handle_neg[CHOOM][1], W._HANDLE_NEG_TTL)
+
+
 class TestBareMention(unittest.TestCase):
     def test_reported_note(self):
         """The note that surfaced this: bare @choom + a p-tag, cross-posted to Pleroma."""
