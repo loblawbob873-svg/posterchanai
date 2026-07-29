@@ -1,0 +1,218 @@
+"""Auto-clean (the relay's age/retention prune) — what it deletes, and what it must not.
+
+Two things are pinned here.
+
+FIRST, `prune_preview()` restates `_prune_sync()`'s WHERE clauses in a second place so the Admin
+"Preview auto-clean" button can show a count before an admin deletes a few hundred thousand notes.
+Two hand-written copies of one predicate is exactly the drift this repo has been bitten by before
+(the four copied effect-command literals), and the failure mode here is nastier than a mis-wired
+command: a preview that under-reports makes a destructive button look safe. So each test runs the
+preview, then the real prune, and demands they agree.
+
+SECOND, the prune is CHUNKED — it deletes in bounded passes so a big first run can't hold the store's
+single writer thread for minutes while relay ingestion queues behind it. Chunked and unbounded must
+remove exactly the same events; a chunk boundary may not spare or eat one.
+
+Needs Postgres (the store is Postgres-only). The `posterchan` role can't CREATE DATABASE, so each
+test isolates itself in a scratch SCHEMA whose name is the ONLY entry in search_path — an unqualified
+table can then only resolve inside it, so a mistake errors out instead of touching the live relay.
+Skipped when the server isn't reachable.
+"""
+import asyncio
+import time
+import uuid
+
+import pytest
+
+psycopg2 = pytest.importorskip("psycopg2")
+
+from app.services.nostr_relay.store import RelayStore, _PRUNE_CHUNK  # noqa: E402
+
+DSN = "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan"
+DAY = 86400
+
+
+def _admin():
+    try:
+        conn = psycopg2.connect(DSN, connect_timeout=5)
+    except Exception as e:                                    # no server / no role — not a failure
+        pytest.skip(f"Postgres not reachable for the relay store: {e}")
+    conn.autocommit = True
+    return conn
+
+
+@pytest.fixture
+def store_factory():
+    """Builds opened RelayStores inside a scratch schema, each with a clean slate; drops it after.
+
+    The per-store truncate matters: a test that builds two stores (chunked vs unbounded) would
+    otherwise run the second against the first's survivors, and duplicate event ids would be
+    rejected as already-stored — which silently turns an assertion into a tautology.
+    """
+    schema = "pcai_prune_test_" + uuid.uuid4().hex[:10]
+    conn = _admin()
+    conn.cursor().execute(f'CREATE SCHEMA "{schema}"')
+    conn.close()
+    dsn = DSN + f" options=-csearch_path={schema}"
+    made = []
+
+    def _truncate():
+        c = _admin()
+        c.cursor().execute(f"""DO $$ DECLARE r record; BEGIN
+            FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='{schema}' LOOP
+                EXECUTE 'TRUNCATE TABLE "{schema}".'||quote_ident(r.tablename)||' CASCADE';
+            END LOOP; END $$;""")
+        c.close()
+
+    def _make(loop, **kw):
+        st = RelayStore(dsn, **kw)
+        st.open(loop)
+        _truncate()
+        made.append(st)
+        return st
+
+    try:
+        yield _make
+    finally:
+        for st in made:
+            st.close()
+        try:
+            c = _admin()
+            c.cursor().execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            c.close()
+        except Exception:
+            pass
+
+
+def _run(coro_fn):
+    """Drive one async test body on its own loop (the store binds to the loop passed to open())."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro_fn(loop))
+    finally:
+        loop.close()
+
+
+def _ev(i, *, kind=1, age_days=0, pubkey=None, expiration=None):
+    """A minimally-valid stored event. The prune reads kind/created_at/pubkey/origin/expiration only,
+    so ids just have to be distinct 64-hex."""
+    ev = {"id": f"{i:064x}", "pubkey": pubkey or ("a" * 64), "kind": kind,
+          "created_at": int(time.time()) - age_days * DAY, "content": f"note {i}",
+          "tags": [["t", "pcai"]], "sig": "0" * 128}
+    if expiration is not None:
+        ev["tags"].append(["expiration", str(expiration)])
+    return ev
+
+
+def test_preview_matches_what_prune_actually_deletes(store_factory):
+    """The number on the button is the number that goes. Preview counts, prune deletes, compare."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=60)
+        # kind 0 is REPLACEABLE — ten profiles under one pubkey collapse to one, so give each its own
+        # author or the "profiles are never pruned" half of this assertion tests a single row.
+        await store.add_events_bulk(
+            [_ev(i, age_days=90) for i in range(1, 121)]                       # past the window
+            + [_ev(i, age_days=5) for i in range(200, 260)]                    # inside it
+            + [_ev(i, kind=0, age_days=90, pubkey=f"{i:064x}") for i in range(400, 410)])
+
+        before = await store.count()
+        preview = await store.prune_preview()
+        removed = await store.prune()
+        after = await store.count()
+
+        assert preview["aged"] == 120, f"preview undercounted the aged notes: {preview}"
+        assert preview["total"] == removed == 120
+        assert before - after == removed
+        assert after == 70, "60 in-window notes + 10 profiles must survive"
+
+    _run(go)
+
+
+def test_chunked_and_unbounded_prunes_remove_the_same_events(store_factory):
+    """A chunk boundary must not spare or eat an event. Same corpus, both paths, same survivors."""
+    n = 250
+
+    async def go(loop):
+        async def run(chunk):
+            store = store_factory(loop, retention_days=30)
+            await store.add_events_bulk([_ev(i, age_days=90) for i in range(1, n + 1)]
+                                        + [_ev(i, age_days=1) for i in range(1000, 1000 + n)])
+            removed = await store.prune(chunk=chunk)
+            return removed, {e["id"] for e in await store.query([{"limit": 5000}])}
+
+        whole_removed, whole_survivors = await run(0)      # single transaction (old behaviour)
+        chunked_removed, chunked_survivors = await run(7)  # many small passes
+
+        assert whole_removed == chunked_removed == n
+        assert whole_survivors == chunked_survivors
+        assert len(chunked_survivors) == n
+
+    _run(go)
+
+
+def test_chunking_needs_several_passes_and_still_terminates(store_factory):
+    """Guards the loop in prune(): `capped` must clear once the backlog is gone, or it spins."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        await store.add_events_bulk([_ev(i, age_days=90) for i in range(1, 51)])
+
+        removed = await asyncio.wait_for(store.prune(chunk=5), timeout=30)   # 10+ passes
+        assert removed == 50
+        assert await store.count() == 0
+        assert await asyncio.wait_for(store.prune(chunk=5), timeout=10) == 0  # no-op, no spin
+
+    _run(go)
+
+
+def test_preserved_authors_and_direct_writes_survive_a_chunked_prune(store_factory):
+    """The preserve set is what stops auto-clean eating a local user's history. Chunking must not
+    route around it — the bounding subselect has to keep each rule's predicate intact."""
+    mine = "b" * 64
+
+    async def go(loop):
+        store = store_factory(loop, retention_days=30)
+        await store.add_events_bulk([_ev(i, age_days=365, pubkey=mine) for i in range(1, 41)])
+        await store.add_events_bulk([_ev(i, age_days=365) for i in range(500, 540)], origin="direct")
+        await store.add_events_bulk([_ev(i, age_days=365) for i in range(900, 940)])
+        store.set_preserve_pubkeys([mine])
+
+        preview = await store.prune_preview()
+        removed = await store.prune(chunk=3)
+
+        assert preview["aged"] == removed == 40, "only the unprotected author's notes may go"
+        assert await store.count() == 80, "preserved author + direct-published writes must survive"
+
+    _run(go)
+
+
+def test_git_events_survive_a_stray_expiration_tag(store_factory):
+    """_GIT_KINDS are a repo's source of truth: an `expiration` tag must not delete one, and the
+    expiry sweep runs even with retention off — so this is the rule chunking could most easily break.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=0)
+        # An ALREADY-expired event is never STORED (see _insert_one), so seed just-future and let it
+        # lapse — seeding it in the past would assert against an empty table.
+        soon = int(time.time()) + 1
+        await store.add_events_bulk(
+            [_ev(i, kind=30617, expiration=soon, pubkey=f"{i:064x}") for i in range(1, 6)]
+            + [_ev(i, kind=1617, expiration=soon) for i in range(10, 15)]
+            + [_ev(i, kind=1, expiration=soon) for i in range(100, 120)])
+        assert await store.count() == 30, "all 30 must be stored while still unexpired"
+
+        await asyncio.sleep(1.6)
+        preview = await store.prune_preview()
+        removed = await store.prune(chunk=4)
+
+        assert preview["expired"] == removed == 20, "only the non-git expired notes may go"
+        assert preview["aged"] == 0, "retention off → the age rule contributes nothing"
+        assert await store.count() == 10, "all 10 git events survive their expiration tag"
+
+    _run(go)
+
+
+def test_default_chunk_is_bounded():
+    """A 0/None default would silently restore the single-transaction prune this file exists to
+    prevent — the ingestion stall was the whole reason for chunking."""
+    assert _PRUNE_CHUNK and _PRUNE_CHUNK > 0
+    assert _PRUNE_CHUNK <= 50000, "a pass this large is long enough to stall ingestion"

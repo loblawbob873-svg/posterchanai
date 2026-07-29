@@ -785,6 +785,7 @@ async def _main(cfg: dict) -> None:
             await _build_wot(gate, store, cfg)
 
     _purge_state = {"count": None, "ts": 0}   # last block-purge result, surfaced in relay status
+    _prune_state = {"count": None, "ts": 0}   # last auto-clean (age prune) result, same surfacing
 
     async def _purge_blocks_now() -> int:
         """Apply the configured block filters to ALREADY-STORED events (one-shot, heavy). Returns the
@@ -890,14 +891,44 @@ async def _main(cfg: dict) -> None:
         # was backfilled since startup/reload is protected — otherwise the prune runs with a STALE
         # preserve set and deletes their synced notes (the recurring "synced notes disappear" bug).
         await _refresh_preserve(store)
-        return await store.prune()
+        removed = await store.prune()
+        # ALWAYS log the count, even zero. This used to return silently into _periodic, so there was
+        # no way to tell from the logs whether auto-clean had ever run — the answer to "I set a
+        # retention window, did anything happen?" was unanswerable without querying Postgres.
+        logger.info("[nostr-relay] auto-clean removed %d event(s) (retention_days=%s, max_events=%s)",
+                    removed, store.retention_days, store.max_events)
+        _prune_state["count"] = int(removed or 0)
+        _prune_state["ts"] = int(time.time())
+        _write_status()
+        await store.kv_set("prune_last", str(int(time.time())))
+        return removed
+
+    async def _maybe_prune() -> None:
+        # Scheduled auto-clean. A PERSISTED stamp — not the timer — decides, exactly like the nightly
+        # block-purge: the bare timer meant a restart pushed the next run a full interval out (a node
+        # deploying more than once a day never pruned), while the `first=300` kick alone would re-run
+        # a heavy full-corpus delete on every restart. The stamp gives one run per interval no matter
+        # how the process is cycled. The Admin button calls _prune_fresh directly and ignores this.
+        now = time.time()
+        try:
+            last = float(await store.kv_get("prune_last") or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        if (now - last) < max(300, cfg["prune_interval_sec"] - 3600):
+            return
+        await _prune_fresh()
 
     # prune is the only LOCAL maintenance task — always runs. Everything else below is cross-node /
     # trust-graph work, gated on wot_enabled: with WoT OFF (a processing node) the relay is a pure
     # local store — no WoT rebuild, metadata backfill, sync sweep, or firehose. (NIP-05 serving is
     # also forced off when WoT is off — see the nip05 cfg.)
     tasks = [
-        asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], _prune_fresh, "prune")),
+        # `first=300`: check ~5 min after start, then on the normal (daily) interval. Without it the
+        # first check is a full interval away and every restart resets the clock, so on a node that
+        # deploys more than once a day the age prune never ran at all. _maybe_prune's persisted stamp
+        # is what stops that same kick from re-running a heavy delete on every restart.
+        asyncio.create_task(_periodic(_relay.stop_event, cfg["prune_interval_sec"], _maybe_prune,
+                                      "prune", first=300)),
         # Nightly block-purge: checked hourly, fires once in the small hours (see _maybe_purge_blocks).
         asyncio.create_task(_periodic(_relay.stop_event, 3600, _maybe_purge_blocks, "block-purge")),
     ]
@@ -951,7 +982,8 @@ async def _main(cfg: dict) -> None:
                            "online": online,                                  # deduped by client IP = people now
                            "calls": calls,                                    # people in a call right now (kind-25050)
                            "pid": os.getpid(), "ts": int(time.time()),
-                           "block_purge": dict(_purge_state)}, f)
+                           "block_purge": dict(_purge_state),
+                           "prune": dict(_prune_state)}, f)
             os.replace(tmp, _paths["status"])
         except Exception:
             pass
@@ -1034,6 +1066,28 @@ async def _main(cfg: dict) -> None:
                             logger.info("[nostr-relay] control: purge-blocks removed %d stored event(s)", removed)
                         except Exception as e:
                             logger.warning("[nostr-relay] purge-blocks failed: %s", e)
+                    elif cmd.get("cmd") == "prune":
+                        # Admin "Run auto-clean now": the age/retention prune had NO trigger at all —
+                        # its only caller was the once-a-day _periodic task, which sleeps a full
+                        # interval before its first run, so every restart pushed it another 24h out
+                        # and a busy node could go indefinitely without ever pruning. `dry_run` counts
+                        # without deleting (the delete can span hundreds of thousands of rows).
+                        try:
+                            if cmd.get("dry_run"):
+                                await _refresh_preserve(store)   # same preserve set the real run uses
+                                pv = await store.prune_preview()
+                                _prune_state["preview"] = pv
+                                _prune_state["preview_ts"] = int(time.time())
+                                _write_status()
+                                logger.info("[nostr-relay] auto-clean DRY RUN: would remove ~%d event(s) "
+                                            "(aged=%d expired=%d bridge-dm=%d count-cap=%d)", pv["total"],
+                                            pv["aged"], pv["expired"], pv["bridge_dm"], pv["capped"])
+                            else:
+                                removed = await _prune_fresh()   # logs the count + writes status
+                                logger.info("[nostr-relay] control: auto-clean removed %d stored event(s)",
+                                            removed)
+                        except Exception as e:
+                            logger.warning("[nostr-relay] prune failed: %s", e)
                     elif cmd.get("cmd") == "reload-nip05":
                         # Admin edited the NIP-05 identities — re-read and swap in place (the
                         # server reads cfg["nip05"] live, so no restart needed).
@@ -1247,12 +1301,18 @@ async def _initial_wot_build(gate, store, cfg, stop: asyncio.Event) -> None:
         delay = min(int(delay * 1.5), 300)
 
 
-async def _periodic(stop: asyncio.Event, interval: int, action, name: str) -> None:
+async def _periodic(stop: asyncio.Event, interval: int, action, name: str, first: int = None) -> None:
+    """Run `action` every `interval` seconds. `first` overrides ONLY the initial delay: the loop
+    sleeps before acting, so a daily task on a box that restarts more than once a day never fires at
+    all (that is what kept the relay's auto-clean from ever running). A short `first` gives it one
+    run per process start; None keeps the old sleep-a-full-interval behaviour."""
+    delay = interval if first is None else first
     while not stop.is_set():
         try:
-            await asyncio.wait_for(stop.wait(), timeout=max(5, interval))
+            await asyncio.wait_for(stop.wait(), timeout=max(5, delay))
         except asyncio.TimeoutError:
             pass
+        delay = interval
         if stop.is_set():
             break
         try:
@@ -1414,6 +1474,7 @@ def relay_status() -> dict:
     online = 0
     calls = 0
     block_purge = None
+    prune = None
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
             st = json.load(f)
@@ -1422,12 +1483,13 @@ def relay_status() -> dict:
         online = int(st.get("online", conns))   # deduped people count; falls back to raw conns
         calls = int(st.get("calls", 0))         # people in a call right now
         block_purge = st.get("block_purge")
+        prune = st.get("prune")
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:
         pass
     return {"running": bool(alive), "members": members, "conns": conns, "online": online,
-            "calls": calls, "block_purge": block_purge}
+            "calls": calls, "block_purge": block_purge, "prune": prune}
 
 
 def _drop_control(cmd: dict) -> dict:
@@ -1531,6 +1593,13 @@ def trigger_block_purge() -> dict:
     blocked pubkeys / words / languages / bridges. Heavy (full-corpus scan); normally runs nightly,
     this forces it immediately (e.g. illegal content just arrived)."""
     return _drop_control({"cmd": "purge-blocks"})
+
+
+def trigger_prune(dry_run: bool = False) -> dict:
+    """Admin "Run auto-clean now": run the age/retention prune immediately instead of waiting for the
+    once-a-day loop. `dry_run=True` only COUNTS what would go (no deletes) — use it first, the delete
+    can be very large on a relay that has never completed a prune cycle."""
+    return _drop_control({"cmd": "prune", "dry_run": bool(dry_run)})
 
 
 def trigger_nip05_reload() -> dict:

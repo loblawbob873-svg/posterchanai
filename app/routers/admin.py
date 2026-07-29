@@ -437,6 +437,17 @@ def nostr_relay_purge_blocks(admin: User = Depends(get_admin_user)):
     return trigger_block_purge()
 
 
+@router.post("/nostr-relay/prune")
+def nostr_relay_prune(dry_run: bool = False, admin: User = Depends(get_admin_user)):
+    """Run the relay's auto-clean (age/retention prune) now instead of waiting for the daily loop.
+    `?dry_run=1` counts what would be deleted without deleting it — worth doing first, this can be
+    hundreds of thousands of rows on a relay that has never completed a prune cycle."""
+    from app.services.nostr_relay.thread import trigger_prune
+    logger.info("[Admin] relay auto-clean %s requested by %s",
+                "DRY RUN" if dry_run else "run", getattr(admin, "username", "?"))
+    return trigger_prune(dry_run=dry_run)
+
+
 @router.get("/nostr-relay/status")
 def nostr_relay_status(admin: User = Depends(get_admin_user)):
     from app.services.nostr_relay.thread import relay_status

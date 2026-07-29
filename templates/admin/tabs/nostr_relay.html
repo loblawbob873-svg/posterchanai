@@ -211,6 +211,52 @@
                     .finally(function(){ pbtn.disabled=false; });
                 });
             }
+            // Auto-clean (age/retention prune). Same control-file → poll-the-status-file shape as the
+            // block purge above, but polls for up to 15 min: an age prune on a store that has never
+            // completed a cycle can delete hundreds of thousands of rows and take minutes.
+            var abtn=document.getElementById('relayPruneBtn'), dbtn=document.getElementById('relayPruneDryBtn'),
+                astat=document.getElementById('relayPruneStatus');
+            if(abtn&&dbtn){
+                var af=(window.csrfFetch||fetch);
+                function pruneStatus(){ return af('/api/admin/nostr-relay/status').then(function(r){return r.json();}).catch(function(){return null;}); }
+                function runPrune(dry){
+                    abtn.disabled=dbtn.disabled=true; astat.textContent=dry?'counting…':'cleaning…';
+                    var stamp=dry?'preview_ts':'ts';
+                    return pruneStatus().then(function(s0){
+                        var baseTs=(s0&&s0.prune&&s0.prune[stamp])||0;
+                        return af('/api/admin/nostr-relay/prune?dry_run='+(dry?'1':'0'),{method:'POST'})
+                            .then(function(r){return r.json();}).then(function(j){
+                                if(!(j&&j.ok)) throw new Error((j&&j.error)||'failed');
+                                var tries=0;
+                                return new Promise(function(resolve){
+                                    (function poll(){
+                                        tries++;
+                                        pruneStatus().then(function(s){
+                                            var p=s&&s.prune;
+                                            if(p&&(p[stamp]||0)>baseTs){
+                                                if(dry){
+                                                    var v=p.preview||{};
+                                                    resolve('≈'+(v.total||0)+' note(s) would go — aged '+(v.aged||0)+
+                                                            ', expired '+(v.expired||0)+', bridge DMs '+(v.bridge_dm||0)+
+                                                            ', over cap '+(v.capped||0));
+                                                } else resolve('✓ removed '+(p.count==null?0:p.count)+' note(s)');
+                                            }
+                                            else if(tries>=450) resolve('⏳ still running — count lands in the relay log');
+                                            else setTimeout(poll, 2000);
+                                        });
+                                    })();
+                                });
+                            });
+                    }).then(function(msg){ astat.textContent=msg; })
+                    .catch(function(e){ astat.textContent='✗ '+((e&&e.message)||e); })
+                    .finally(function(){ abtn.disabled=dbtn.disabled=false; });
+                }
+                dbtn.addEventListener('click', function(){ runPrune(true); });
+                abtn.addEventListener('click', function(){
+                    if(!confirm('Delete every feed note past the retention window above? Preview first if you have not. This cannot be undone.')) return;
+                    runPrune(false);
+                });
+            }
         }
         if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', init); }
         else { init(); }
@@ -338,6 +384,14 @@
             <label for="nostr_relay_max_events">Max feed events (hard count cap)</label>
             <input type="number" id="nostr_relay_max_events" name="nostr_relay_max_events" placeholder="0">
             <small>Trims the <strong>oldest</strong> feed events once the total exceeds this count (preserved events don't count). <code>0</code> = unlimited (the age cleaner above is then the only cleanup).</small>
+        </div>
+        <div class="form-group">
+            <button type="button" id="relayPruneDryBtn" class="btn-secondary">🔎 Preview auto-clean</button>
+            <button type="button" id="relayPruneBtn" class="btn-secondary">🧽 Run auto-clean now</button>
+            <span id="relayPruneStatus" style="margin-left:.5rem;"></span>
+            <small>Auto-clean runs on a schedule (shortly after each relay start, then daily). Use <strong>Preview</strong>
+            to count what the settings above would delete — do that first, it can be hundreds of thousands of notes —
+            then <strong>Run</strong> to apply it now. Save your changes before either; both read the <em>saved</em> settings.</small>
         </div>
     </fieldset>
 

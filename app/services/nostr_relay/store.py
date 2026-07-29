@@ -161,6 +161,11 @@ _BRIDGE_DM_TTL_DAYS = 4
 # needed to render rooms).
 _PRUNABLE_KINDS = (1, 6, 7, 42, 1111, 30023, 30311)
 
+# Events deleted per prune PASS. The writer thread is single, so this is the unit of ingestion stall:
+# one pass' delete + its event_tags cleanup runs to completion before any queued write gets in.
+# 20k keeps a pass to roughly a second while still clearing a large backlog in a handful of passes.
+_PRUNE_CHUNK = 20000
+
 # NIP-34 git-over-nostr events — a repo's source of truth (announcement 30617, repo state 30618,
 # patches 1617, issues 1621, replies/PRs 1622, issue-status 1623, and status 1630-1633). These are
 # the collaboration record; losing one loses code/history that isn't reconstructable from the WoT
@@ -862,23 +867,90 @@ class RelayStore:
                 cond += f" AND pubkey NOT IN ({vals})"
         return cond
 
-    def _prune_sync(self) -> int:
+    def _prune_preview_sync(self) -> dict:
+        """DRY RUN: how many events _prune_sync would delete right now, broken down by rule. Same
+        WHERE clauses as the real prune (kept adjacent so they can't drift) but COUNT, no DELETE —
+        so an admin can see the damage before running an age prune that may span hundreds of
+        thousands of rows on a live relay. The rules can overlap (an expired note may also be past
+        the age window), so `total` is an UPPER BOUND, not an exact delete count."""
+        conn = self._conn()
+        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
+        preserve = self._preserve_clause()
+        _gitk = ",".join(str(k) for k in _GIT_KINDS)
+        now = int(time.time())
+
+        def _n(sql, params=()):
+            try:
+                return int(conn.execute(sql, params).fetchone()["c"])
+            except Exception:
+                return 0
+
+        expired = _n(f"SELECT COUNT(*) AS c FROM events WHERE expiration IS NOT NULL AND "
+                     f"expiration <= ? AND kind NOT IN ({_gitk})", (now,))
+        aged = 0
+        if self.retention_days:
+            aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
+                      f"kind IN ({prunable}) AND {preserve}", (now - self.retention_days * 86400,))
+        bridge_dm = _n("SELECT COUNT(*) AS c FROM events WHERE origin = 'bridge' AND "
+                       "kind IN (13, 1059) AND created_at < ?", (now - _BRIDGE_DM_TTL_DAYS * 86400,))
+        capped = 0
+        if self.max_events:
+            capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE kind IN ({prunable}) AND {preserve} "
+                        "AND id IN (SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
+                        (self.max_events,))
+        return {"expired": expired, "aged": aged, "bridge_dm": bridge_dm, "capped": capped,
+                "total": expired + aged + bridge_dm + capped,
+                "retention_days": self.retention_days, "max_events": self.max_events}
+
+    async def prune_preview(self) -> dict:
+        return await self._r(self._prune_preview_sync)
+
+    def _prune_sync(self, limit: int = 0) -> tuple:
+        """One prune PASS. `limit` (0 = unbounded, the old behaviour) caps how many events this pass
+        may delete across all four rules; `prune()` calls it in a loop.
+
+        Why bounded: every write goes through the store's single writer thread, and everything the
+        relay ingests queues behind whatever is running on it. The unbounded form deleted the whole
+        backlog plus its event_tags in ONE transaction — fine for a nightly pass that clears a day of
+        feed, minutes of stalled ingestion for a first run with a few hundred thousand events behind
+        it. Returns (removed, more) where `more` means a rule hit the cap and there is work left.
+        """
         conn = self._conn()
         removed = 0
         gone: list = []   # ids deleted this pass → their event_tags must be removed too (no FK CASCADE)
         prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
+        budget = int(limit or 0)
+        capped = False    # a rule was cut short by the budget → caller should run another pass
+
+        def _delete(where: str, params: tuple) -> list:
+            """DELETE ... WHERE <where>, clamped to the remaining budget. Bounding it as a subselect
+            (rather than DELETE ... LIMIT, which Postgres has no such thing as) keeps each rule's
+            predicate exactly as written below — the preserve/kind clauses are what stop this from
+            eating data, so they must not be restated or paraphrased here."""
+            nonlocal budget, capped
+            if not limit:
+                rows = conn.execute(f"DELETE FROM events WHERE {where} RETURNING id", params).fetchall()
+                return [r["id"] for r in rows]
+            if budget <= 0:
+                capped = True
+                return []
+            rows = conn.execute(
+                f"DELETE FROM events WHERE id IN (SELECT id FROM events WHERE {where} LIMIT ?) "
+                f"RETURNING id", tuple(params) + (budget,)).fetchall()
+            if len(rows) >= budget:
+                capped = True
+            budget -= len(rows)
+            return [r["id"] for r in rows]
         # NIP-40 expiration sweep FIRST — unconditional: an expired event is gone per the AUTHOR's
         # explicit intent, so unlike the age-based prune below this ignores kind allowlist AND the
         # preserve clause (even a local user's / profile / DM event with an `expiration` tag goes).
         # EXCEPTION: git-over-nostr events (_GIT_KINDS) are a repo's source of truth, so a stray
         # `expiration` tag must NOT be able to delete a repo/patch/issue — they are kept regardless.
         _gitk = ",".join(str(k) for k in _GIT_KINDS)
-        rows = conn.execute(
-            f"DELETE FROM events WHERE expiration IS NOT NULL AND expiration <= ? "
-            f"AND kind NOT IN ({_gitk}) RETURNING id",
-            (int(time.time()),)).fetchall()
-        gone += [r["id"] for r in rows]; removed += len(rows)
+        ids = _delete(f"expiration IS NOT NULL AND expiration <= ? AND kind NOT IN ({_gitk})",
+                      (int(time.time()),))
+        gone += ids; removed += len(ids)
         # Age-based auto-cleaner — THE cleaner. Deletes only old feed content (kinds in
         # _PRUNABLE_KINDS: notes/reposts/reactions/comments + public chat/articles/streams), and only
         # what the preserve clause allows. Everything else (profiles, contacts, relay/identity lists,
@@ -894,27 +966,23 @@ class RelayStore:
         # PUPPET key, never their npub, which is why preserving the npub alone never protected them).
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
-            rows = conn.execute(
-                f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
-                f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
-            gone += [r["id"] for r in rows]; removed += len(rows)
+            ids = _delete(f"created_at < ? AND kind IN ({prunable}) AND {preserve}", (cutoff,))
+            gone += ids; removed += len(ids)
         # NOT retention, and deliberately not folded into the setting above: puppet-addressed DM
         # gift-wraps/seals (origin='bridge', kinds 13/1059) are undeliverable junk anyone can generate,
         # since puppet npubs are derivable. Auto-clean never touches DMs by design (1059 isn't a
         # prunable kind), so with no separate bound this is an unbounded write amplifier for a
         # stranger. Fixed short TTL, no knob.
         dmcut = int(time.time()) - _BRIDGE_DM_TTL_DAYS * 86400
-        rows = conn.execute(
-            "DELETE FROM events WHERE origin = 'bridge' AND kind IN (13, 1059) AND created_at < ? "
-            "RETURNING id", (dmcut,)).fetchall()
-        gone += [r["id"] for r in rows]; removed += len(rows)
+        ids = _delete("origin = 'bridge' AND kind IN (13, 1059) AND created_at < ?", (dmcut,))
+        gone += ids; removed += len(ids)
         # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:
-            rows = conn.execute(
-                f"DELETE FROM events WHERE kind IN ({prunable}) AND {preserve} AND id IN "
-                "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?) RETURNING id",
-                (self.max_events,)).fetchall()
-            gone += [r["id"] for r in rows]; removed += len(rows)
+            ids = _delete(
+                f"kind IN ({prunable}) AND {preserve} AND id IN "
+                "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
+                (self.max_events,))
+            gone += ids; removed += len(ids)
         # There is NO FK CASCADE — purge the deleted events' tags ourselves (batched), else event_tags
         # grows unbounded and slows every #e/#p/#t filter. (The old global NOT-IN anti-join pinned a
         # core for minutes; deleting only THIS pass's ids via the event_id index is cheap.)
@@ -935,10 +1003,23 @@ class RelayStore:
                 conn.commit()
         except Exception as e:
             logger.warning("[nostr-relay] one-time event_tags orphan cleanup skipped: %s", e)
-        return removed
+        return removed, capped
 
-    async def prune(self) -> int:
-        return await self._w(self._prune_sync)
+    async def prune(self, chunk: int = _PRUNE_CHUNK) -> int:
+        """Run the prune to completion in bounded passes, yielding the writer thread between them so
+        queued ingest/publish writes interleave instead of waiting out the whole backlog. `chunk=0`
+        restores the single-transaction behaviour. Each pass commits, so an interrupted prune (relay
+        restart mid-run) keeps the work it already did and resumes on the next call."""
+        total = 0
+        while True:
+            removed, more = await self._w(self._prune_sync, chunk)
+            total += removed
+            # `not removed` is the belt-and-braces exit: a rule that reports "capped" but deletes
+            # nothing (e.g. rows vanishing under a concurrent NIP-09 delete) must not spin forever.
+            if not more or not removed:
+                break
+            await asyncio.sleep(0.05)   # hand the writer thread back between passes
+        return total
 
     def _count_sync(self) -> int:
         return self._conn().execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
