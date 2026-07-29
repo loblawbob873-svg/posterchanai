@@ -996,7 +996,26 @@ def overlay_corner_character(video_data: bytes, source_filename: str, char_path:
 
 # --- TikTok-style branding outro (appended to effect videos) -----------------
 _REPO_ROOT_MS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_OUTRO_LOGO = os.path.join(_REPO_ROOT_MS, "static", "icon-512.png")
+
+
+def _pick_outro_logo() -> str:
+    """The mascot for the end-card and the music-video background. Both composite it onto a GRADIENT
+    with `img.paste(lg, pos, lg)` — the image is its own mask — so the asset must actually be
+    transparent.
+
+    `icon-512.png` is the PWA icon: fully opaque, with its own (26, 26, 46) navy baked in. Pasted on
+    the (20, 22, 38) card that mask does nothing, so it landed as a flat 512x512 rectangle of a
+    slightly different purple — visible as a box around the mascot, standing out exactly where the
+    branding is supposed to blend. `favicon.png` is the same mascot, larger (512x896, full body) and
+    genuinely transparent. Falls back to the opaque icon only if that file is missing."""
+    for name in ("favicon.png", "icon-512.png"):
+        p = os.path.join(_REPO_ROOT_MS, "static", name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(_REPO_ROOT_MS, "static", "icon-512.png")
+
+
+_OUTRO_LOGO = _pick_outro_logo()
 _OUTRO_FONT_CANDIDATES = [
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",

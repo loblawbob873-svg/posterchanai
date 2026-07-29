@@ -135,6 +135,25 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         )
                         return {"ok": True}
 
+                # END THE TRANSACTION before the long part. Everything below — intent detection, a
+                # command, or a plain LLM reply — can run for MINUTES (a 3-5 minute song waits for the
+                # GPU lock, generates, then renders an MP4), and the reads above have already opened a
+                # transaction. Connections carry `idle_in_transaction_session_timeout=60000`
+                # (app/database.py), so Postgres kills any session that sits in an open transaction for
+                # 60s: the history save below then failed with "Failed to save Telegram history" and the
+                # user's message AND the bot's reply were silently dropped, and the session close at the
+                # end of _process_telegram_update raised OperationalError as an unhandled ASGI error.
+                # Committing here leaves the connection merely IDLE, which that timeout does not touch;
+                # the save below opens a fresh transaction when it needs one.
+                try:
+                    db.commit()
+                except Exception as _txn_err:
+                    logger.warning(f"pre-generation commit failed: {_txn_err}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+
                 # Skip intent detection for bare URLs — they are never commands and the
                 # LLM always fails or returns garbage for URL-only input.
                 is_bare_url = (
@@ -415,6 +434,26 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                     # Save user message + bot response to the Telegram conversation so
                     # follow-up messages ("turn that into a post", "translate it", etc.)
                     # have the context they need.
+                    # Defined OUT here because the retry in the except clause needs it too — inside
+                    # the try it is unbound if the failure lands before this line.
+                    APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
+                    # Plain int, read while the session is still usable. rollback() EXPIRES every ORM
+                    # instance, so touching `user_obj.id` in the except would re-SELECT it on the very
+                    # connection that just died — the recovery would die with it.
+                    _uid = user_obj.id
+                    # What actually reached the transcript. `chat_history.append` self-heals on a
+                    # fresh session and returns False rather than raising, so the recovery below must
+                    # re-send only what is genuinely missing — re-sending blindly would DUPLICATE a
+                    # turn whenever the failure landed on the commit instead of the lookup.
+                    _did_user = _did_bot = False
+                    # Decided BEFORE the try for the same reason: if the connection died during the
+                    # generation, the very first statement below is what raises, and the recovery still
+                    # has to know whether this reply was worth keeping.
+                    bot_reply = result.get("content", "")
+                    # Don't save errors, apologies, or truncated responses (they corrupt future context)
+                    _reply_looks_complete = bot_reply and not (len(bot_reply) < 80 and bot_reply.rstrip().endswith(":"))
+                    _bot_worth_saving = bool(_reply_looks_complete and bot_reply != APOLOGY
+                                             and not bot_reply.startswith(("Error:", "Sorry,")))
                     try:
                         tg_conv = db.query(Conversation).filter(
                             Conversation.user_id == user_obj.id,
@@ -428,19 +467,49 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                         # Save the full bot reply so follow-ups ("turn that into a post") have
                         # complete context — truncating to 500 chars cut off summaries mid-sentence.
                         from app.services import chat_history as _ch
-                        await _ch.append(db, user_obj, tg_conv.id, "user", text)
-                        bot_reply = result.get("content", "")
-                        APOLOGY = "I apologize, I wasn't able to generate a proper response. Please try again."
-                        # Don't save errors, apologies, or truncated responses (they corrupt future context)
-                        _reply_looks_complete = bot_reply and not (len(bot_reply) < 80 and bot_reply.rstrip().endswith(":"))
-                        if _reply_looks_complete and bot_reply != APOLOGY and not bot_reply.startswith("Error:") and not bot_reply.startswith("Sorry,"):
-                            await _ch.append(db, user_obj, tg_conv.id, "assistant", bot_reply)
+                        _did_user = await _ch.append(db, user_obj, tg_conv.id, "user", text)
+                        if _bot_worth_saving:
+                            _did_bot = await _ch.append(db, user_obj, tg_conv.id, "assistant", bot_reply)
                         tg_conv.updated_at = datetime.utcnow()
                         db.commit()
                     except Exception as _save_err:
-                        logger.warning(f"Failed to save Telegram history: {_save_err}")
+                        # A dead connection is the expected failure here (a generation long enough to
+                        # outlive the session), and swallowing it is how history silently disappeared.
+                        # Retry the whole save in a FRESH session so the turn survives it.
+                        logger.warning(f"Failed to save Telegram history: {_save_err}; retrying in a fresh session")
                         try:
                             db.rollback()
                         except Exception:
                             pass
+                        try:
+                            from app.database import SessionLocal
+                            from app.services import chat_history as _ch2
+                            _s = SessionLocal()
+                            try:
+                                _u = _s.query(User).filter(User.id == _uid).first()
+                                if _u is None:
+                                    raise RuntimeError(f"user {_uid} is gone")
+                                _c = _s.query(Conversation).filter(
+                                    Conversation.user_id == _u.id,
+                                    Conversation.title == "📱 Telegram"
+                                ).order_by(Conversation.updated_at.desc()).first()
+                                if not _c:
+                                    _c = Conversation(user_id=_u.id, title="📱 Telegram")
+                                    _s.add(_c)
+                                    _s.flush()
+                                if not _did_user:
+                                    await _ch2.append(_s, _u, _c.id, "user", text)
+                                if _bot_worth_saving and not _did_bot:
+                                    await _ch2.append(_s, _u, _c.id, "assistant", bot_reply)
+                                _c.updated_at = datetime.utcnow()
+                                _s.commit()
+                                logger.info("Telegram history saved on the retry "
+                                            f"(user={not _did_user}, assistant={_bot_worth_saving and not _did_bot})")
+                            finally:
+                                try:
+                                    _s.close()
+                                except Exception:
+                                    pass
+                        except Exception as _retry_err:
+                            logger.error(f"Telegram history retry ALSO failed: {_retry_err}")
                 return result

@@ -128,7 +128,14 @@ async def _process_telegram_update(update: dict):
     except Exception as e:
         logger.error(f"Background Telegram processing error: {e}", exc_info=True)
     finally:
-        db.close()
+        # close() ROLLS BACK first, so on a connection Postgres already terminated (a generation that
+        # outlived idle_in_transaction_session_timeout) it raises OperationalError — out of a finally,
+        # with the work already done, surfacing as "Exception in ASGI application". Nothing here can
+        # act on it: the session is being discarded either way.
+        try:
+            db.close()
+        except Exception as _close_err:
+            logger.warning(f"Telegram session close failed (connection already gone): {_close_err}")
 
 
 async def _handle_telegram_update(update: dict, db: Session):
