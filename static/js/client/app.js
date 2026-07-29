@@ -10502,7 +10502,7 @@
       : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
            <button class="btn btn-cyan" id="bl-request">🌸 Request upload access</button></div>`;
-    pane.innerHTML = head + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
+    pane.innerHTML = head + '<div class="files-selbar" id="bl-selbar"></div><div class="files-grid" id="bl-grid"><div class="spinner"></div></div>';
     $$('.folder-chip[data-folder]',pane).forEach(b=> b.onclick=()=>{ _filesFolder=b.dataset.folder; renderBlossom(); });
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',pane); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
@@ -10576,6 +10576,87 @@
     _vodNamesInflight=false;
     return changed;            // failure keeps the stamp → next retry after the 60s TTL (bounded), labels just wait
   }
+  // ---------- Files: multi-select for mass operations ----------
+  // Selection is a Set of sha256 held OUTSIDE the grid, because the grid re-renders constantly
+  // (paging, folder switch, VOD labels landing). Cleared on folder change so a hidden selection in
+  // another folder can't be deleted by a later "Delete selected".
+  let _filesSel = new Set();
+  function _filesSelClear(){ _filesSel.clear(); }
+  // The visible, selectable shas for the CURRENT folder+page — "Select all" must mean what's on
+  // screen, never the whole drive (3000+ blobs, where a mis-tap would be catastrophic).
+  function _filesVisibleShas(grid){
+    return [...grid.querySelectorAll('.file-card[data-sha]')].map(c=>c.dataset.sha);
+  }
+  function _filesSelBar(grid, list){
+    const bar=grid.parentNode && grid.parentNode.querySelector('#bl-selbar'); if(!bar) return;
+    const vis=_filesVisibleShas(grid), n=_filesSel.size;
+    const allSel = vis.length && vis.every(sha=>_filesSel.has(sha));
+    bar.innerHTML = `<button class="btn btn-ghost small" id="bl-selall">${allSel?'☑':'☐'} Select all${vis.length?' ('+vis.length+')':''}</button>`
+      + `<button class="btn btn-ghost small" id="bl-selnone"${n?'':' disabled'}>✖ Select none</button>`
+      + `<span class="muted small" style="margin:0 4px">${n?(n+' selected'):'none selected'}</span>`
+      + `<button class="btn btn-cyan small" id="bl-seldl"${n?'':' disabled'}>⬇ Download</button>`
+      + `<button class="btn btn-cyan small" id="bl-selmove"${n?'':' disabled'}>📁 Move</button>`
+      + `<button class="btn btn-neon small" id="bl-seldel"${n?'':' disabled'} style="color:var(--danger)">🗑 Delete</button>`;
+    bar.querySelector('#bl-selall').onclick=()=>{ if(allSel) vis.forEach(sha=>_filesSel.delete(sha)); else vis.forEach(sha=>_filesSel.add(sha)); _renderFilesGrid(grid, list); };
+    bar.querySelector('#bl-selnone').onclick=()=>{ _filesSelClear(); _renderFilesGrid(grid, list); };
+    bar.querySelector('#bl-seldl').onclick=e=>_filesMassDownload(e.currentTarget, grid, list);
+    bar.querySelector('#bl-selmove').onclick=e=>_filesMassMove(e.currentTarget, grid, list);
+    bar.querySelector('#bl-seldel').onclick=e=>_filesMassDelete(e.currentTarget, grid, list);
+  }
+  // Delete every selected blob. ONE confirm for the whole batch (not one per file), and it names the
+  // count — a per-file prompt for 40 files is worse than no prompt, people click through it.
+  // Sequential, not Promise.all: a Blossom server answering 40 parallel signed DELETEs is a great way
+  // to get rate-limited half-way and leave the index disagreeing with the server.
+  async function _filesMassDelete(btn, grid, list){
+    const shas=[..._filesSel]; if(!shas.length) return;
+    if(!await uiConfirm('Delete '+shas.length+' file'+(shas.length>1?'s':'')+'? This removes the bytes from the server and cannot be undone.')) return;
+    const server=mediaServer(); let ok=0, fail=0;
+    btn.disabled=true;
+    for(let i=0;i<shas.length;i++){
+      const sha=shas[i]; btn.textContent='deleting '+(i+1)+'/'+shas.length+'…';
+      try{
+        const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
+        const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
+        // 404 = already gone server-side, but still drop it from the index (same rule as delBlob).
+        if(res.ok || res.status===404){ FilesIdx.forget(sha); delete _trackUrls[sha]; ok++; }
+        else fail++;
+      }catch(_){ fail++; }
+    }
+    _filesSelClear();
+    toast(fail? ('deleted '+ok+', '+fail+' failed') : ('deleted '+ok+' file'+(ok>1?'s':'')));
+    renderBlossom();
+  }
+  // Move every selected file into one folder. Index-only (no bytes move), so this is fast and safe.
+  function _filesMassMove(btn, grid, list){
+    const shas=[..._filesSel]; if(!shas.length) return;
+    const opts=[['__all','🗂 All']].concat(FilesIdx.folders().map(f=>[f,(f==='Music'?'🎵 ':'📁 ')+f]));
+    openMenuPopover(btn, opts, v=>{
+      shas.forEach(sha=>FilesIdx.move(sha, v==='__all'?'':v));
+      _filesSelClear(); toast('moved '+shas.length+' file'+(shas.length>1?'s':'')); renderBlossom();
+    });
+  }
+  // Download every selected file, one at a time. Browsers throttle/block a burst of simultaneous
+  // downloads, so this paces them and skips ENCRYPTED files (those need the decrypt path, which
+  // prompts per file — offering them here would silently save unreadable ciphertext).
+  async function _filesMassDownload(btn, grid, list){
+    const shas=[..._filesSel]; if(!shas.length) return;
+    const byId={}; (list||[]).forEach(b=>byId[b.sha256]=b);
+    let n=0, skipped=0;
+    btn.disabled=true;
+    for(const sha of shas){
+      const b=byId[sha]; if(!b){ skipped++; continue; }
+      const m=FilesIdx.meta(sha)||{};
+      if(m.enc){ skipped++; continue; }                       // ciphertext — use the per-file ⬇ (decrypts)
+      const nm=m.name||b.name||_vodNameMap[sha]||'';
+      const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
+      n++; btn.textContent='downloading '+n+'/'+shas.length+'…';
+      try{ await downloadBlobFile(b.url, downloadName(b, nm, ext)); }catch(_){}
+      await new Promise(r=>setTimeout(r, 400));               // pace — a burst gets blocked as a popup storm
+    }
+    btn.disabled=false; btn.textContent='⬇ Download';
+    toast(skipped? ('downloaded '+n+' · skipped '+skipped+' (encrypted — use the per-file ⬇)') : ('downloaded '+n));
+  }
+
   function _renderFilesGrid(grid, list){
     if(!grid) return;
     // hide encrypted MUSIC ciphertext from the normal grid (it lives in the Music folder's track list);
@@ -10588,7 +10669,7 @@
       return _filesFolder==='' ? true : FilesIdx.folderOf(b.sha256)===_filesFolder;
     }).sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));   // NEWEST first — else a fresh upload/VOD is buried at the
                                                        // END of a big (3000+) oldest-first Blossom /list, past the 60-per-page window (the "my recording isn't in the drive" bug)
-    if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; }   // reset paging on folder change
+    if(_filesShownFolder!==_filesFolder){ _filesShownFolder=_filesFolder; _filesShown=_FILES_PAGE; _filesSelClear(); }   // reset paging AND selection on folder change (never act on off-screen files)
     const _shown = inFolder.slice(0, _filesShown), _more = inFolder.length - _shown.length;
     grid.innerHTML = inFolder.length ? (_shown.map(b=>{
       // Name: ours (Files index) → the server's stored upload name → a VOD label. The last two are why
@@ -10597,11 +10678,13 @@
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+        return `<div class="file-card enc${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+          <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
           <button class="del" data-sha="${b.sha256}">✕</button>
           <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts"><button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
       }
-      return `<div class="file-card" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
+      return `<div class="file-card${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
+        <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
         <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
@@ -10617,6 +10700,12 @@
     $$('.dlbtn:not(.dlenc)',grid).forEach(b=> b.onclick=e=>{ e.preventDefault(); e.stopPropagation(); downloadBlobFile(b.dataset.url, b.dataset.name); });
     $$('.movebtn',grid).forEach(b=> b.onclick=(e)=>_moveMenu(e.currentTarget, b.dataset.sha));
     $$('.file-card',grid).forEach(card=> card.ondragstart=e=>{ if(e.dataTransfer) e.dataTransfer.setData('text/sha', card.dataset.sha); });
+    // Checkbox toggles selection without opening the file (the card's <a> would otherwise swallow it).
+    $$('.selbox',grid).forEach(cb=> cb.onclick=e=>{ e.stopPropagation();
+      const sha=cb.dataset.sha; if(cb.checked) _filesSel.add(sha); else _filesSel.delete(sha);
+      const card=cb.closest('.file-card'); if(card) card.classList.toggle('selected', cb.checked);
+      _filesSelBar(grid, list); });
+    _filesSelBar(grid, list);
     $$('.folder-chip[data-folder]').forEach(chip=>{
       chip.ondragover=e=>{ e.preventDefault(); chip.classList.add('drop'); };
       chip.ondragleave=()=>chip.classList.remove('drop');
