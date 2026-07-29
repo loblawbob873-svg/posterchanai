@@ -127,6 +127,36 @@ class SubscriptionManager:
                     send(conn, ["EVENT", sub_id, ev])
 
 
+_IP_CHARS = re.compile(r"^[0-9a-fA-F:.%\[\]]{3,45}$")
+
+
+def _client_ip(hdrs, connection) -> str:
+    """The real client IP behind the proxy chain (client → Cloudflare → cloudflared → nginx → here).
+
+    Order matters, because only some of these are trustworthy:
+
+    * ``X-Real-IP`` — set by OUR nginx from ``$remote_addr``, which nginx has already resolved to the
+      true client via ``set_real_ip_from`` + ``real_ip_header CF-Connecting-IP``. nginx OVERWRITES
+      whatever the client sent, so this is authoritative.
+    * ``CF-Connecting-IP`` — Cloudflare's own, for a path that reaches us without nginx's X-Real-IP.
+    * ``X-Forwarded-For`` first hop — the legacy fallback, and the reason this function exists: with
+      ``$proxy_add_x_forwarded_for`` nginx APPENDS the real IP to whatever the client supplied, so
+      the FIRST element is client-controlled. Preferring it (as this used to) meant a client could
+      choose the IP we logged and the one the "online people" count dedups on.
+    * the socket peer — direct/turnkey access with no proxy at all.
+
+    Anything that isn't IP-shaped is discarded rather than logged: header values can't contain CRLF,
+    but they can contain enough printable text to make a log line lie about itself."""
+    for value in (hdrs.get("X-Real-IP", ""), hdrs.get("CF-Connecting-IP", ""),
+                  (hdrs.get("X-Forwarded-For", "") or "").split(",")[0]):
+        ip = (value or "").strip()
+        if ip and _IP_CHARS.match(ip):
+            return ip
+    ra = getattr(connection, "remote_address", None)
+    ip = (ra[0] if ra else "") or ""
+    return ip if _IP_CHARS.match(ip) else ""
+
+
 class _OutQ:
     """One connection's outbound frame queue: a bounded deque + a wakeup event.
 
@@ -352,15 +382,8 @@ class RelayServer:
         try:
             hdrs = request.headers
             if hdrs.get("Upgrade", "").lower() == "websocket":
-                # Capture the real client IP for the deduped "online" count. We sit behind nginx, so
-                # remote_address is the proxy — prefer the forwarded client IP (first XFF hop).
                 try:
-                    xff = hdrs.get("X-Forwarded-For", "") or hdrs.get("X-Real-IP", "")
-                    ip = xff.split(",")[0].strip() if xff else ""
-                    if not ip:
-                        ra = getattr(connection, "remote_address", None)
-                        ip = ra[0] if ra else ""
-                    setattr(connection, "_pcai_ip", ip)
+                    setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
                 except Exception:
                     pass
                 return None  # let the WebSocket handshake proceed

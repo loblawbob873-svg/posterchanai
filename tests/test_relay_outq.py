@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from app.services.nostr_relay.server import _OutQ, RelayServer
+from app.services.nostr_relay.server import _OutQ, RelayServer, _client_ip
 
 
 def ev(i):
@@ -132,3 +132,45 @@ def test_falling_behind_warns_exactly_once(caplog):
     assert len(warnings) == 1
     assert "41.0.0.1" in warnings[0].getMessage()
     assert q.dropped == 184
+
+
+# --- client IP resolution ---------------------------------------------------------------------
+# The logged IP is the whole point of the session log (it's how a reported "it keeps disconnecting"
+# gets matched to a connection), and the same value dedups the "online people" count — so it has to
+# be the client's REAL address and not one the client chose for us.
+
+
+class _Hdrs(dict):
+    def get(self, key, default=""):
+        return dict.get(self, key, default)
+
+
+class _Conn:
+    def __init__(self, peer):
+        self.remote_address = (peer, 1234)
+
+
+def test_x_real_ip_beats_a_client_supplied_forwarded_for():
+    """nginx resolves the true client via set_real_ip_from + real_ip_header CF-Connecting-IP and
+    passes it as X-Real-IP, overwriting anything the client sent. XFF's first element is the
+    client's own claim (nginx APPENDS with $proxy_add_x_forwarded_for), so it must not win."""
+    hdrs = _Hdrs({"X-Real-IP": "41.90.1.2",
+                  "X-Forwarded-For": "1.2.3.4, 41.90.1.2, 192.168.0.1"})
+    assert _client_ip(hdrs, _Conn("192.168.0.1")) == "41.90.1.2"
+
+
+def test_falls_back_through_cf_then_xff_then_the_socket():
+    assert _client_ip(_Hdrs({"CF-Connecting-IP": "41.90.1.2", "X-Forwarded-For": "9.9.9.9"}),
+                      _Conn("192.168.0.1")) == "41.90.1.2"
+    assert _client_ip(_Hdrs({"X-Forwarded-For": "41.90.1.2, 192.168.0.1"}),
+                      _Conn("192.168.0.1")) == "41.90.1.2"
+    assert _client_ip(_Hdrs({}), _Conn("192.168.0.55")) == "192.168.0.55"   # direct / turnkey
+    assert _client_ip(_Hdrs({"X-Real-IP": "2a00:11b1:10a2:672e:a2b2:807:41ef:9200"}),
+                      _Conn("::1")).startswith("2a00:")
+
+
+def test_non_ip_header_values_are_discarded():
+    """A header can't carry CRLF, but it can carry enough printable text to make a log line lie."""
+    assert _client_ip(_Hdrs({"X-Real-IP": "1.1.1.1 dur=999s dropped=0",
+                             "X-Forwarded-For": "41.90.1.2"}), _Conn("192.168.0.1")) == "41.90.1.2"
+    assert _client_ip(_Hdrs({"X-Real-IP": "x" * 200}), _Conn("192.168.0.9")) == "192.168.0.9"
