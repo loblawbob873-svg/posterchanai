@@ -1619,6 +1619,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         # a short parallax loop and stream-loop it as input 0; the alpha overlay (clay /
         # chimp) rides on top. Falls back to the still `-loop 1` image if depth is missing.
         bg_input = ["-loop", "1", "-framerate", "12", "-i", in_path]
+        bg_path = in_path
         try:
             from app.services import parallax_service
             if parallax_service._session() is not None:
@@ -1626,6 +1627,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
                 with open(_ploop, "wb") as f:
                     f.write(parallax_service.add_parallax(image_data, amplitude=0.008, zoom=1.02))
                 bg_input = ["-stream_loop", "-1", "-i", _ploop]
+                bg_path = _ploop
         except Exception as e:
             logger.warning(f"parallax overlay background failed ({e}); using still")
 
@@ -1638,15 +1640,32 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
         # 720x360 on a landscape photo (2.2x too wide) and 360x720 on a portrait one. Measuring
         # the photo here and scaling by an absolute height (`-2` = even width, aspect kept) is
         # both correct and independent of scale2ref's argument semantics.
-        _bg_h = 0
-        try:
-            from PIL import Image as _PILImage
-            with _PILImage.open(io.BytesIO(image_data)) as _probe:
-                _bg_h = int(_probe.size[1])
-        except Exception as e:
-            logger.warning(f"overlay: could not read image height ({e}); falling back to scale2ref")
+        # Measure the height of what ACTUALLY reaches the filter graph, not of the source photo.
+        # parallax_service caps its working long edge at _MAXDIM (1280), so for any photo bigger than
+        # that the background arrives downscaled while `height_frac` was still being applied to the
+        # ORIGINAL height: a 2900x4096 phone shot became a 906x1280 background carrying an overlay
+        # sized 0.45*4096 = 1843px — 144% of the canvas height, so the overlay blew past the frame
+        # instead of sitting in it ("the effect didn't adapt to the image size"). Every overlay effect
+        # (chimp/clay/reze/vibe/rebecca/makima) had this on any photo with a long edge over 1280.
+        _bg_h = _probe_height(bg_path)
+        if _bg_h <= 0:
+            try:
+                from PIL import Image as _PILImage
+                with _PILImage.open(io.BytesIO(image_data)) as _probe:
+                    _bg_h = int(_probe.size[1])
+            except Exception as e:
+                logger.warning(f"overlay: could not read image height ({e}); falling back to scale2ref")
         if _bg_h > 0:
-            ov_h = max(2, int(_bg_h * height_frac) // 2 * 2)
+            ov_h = int(_bg_h * height_frac)
+            # `height_frac` bounds the HEIGHT only, so an overlay wider than it is tall runs off the
+            # sides of a narrow frame — a 382x323 pair at 0.45 needs 1277px of width on a 1080px-wide
+            # phone shot and lost its outer edges. Bound the width too, so the overlay fits INSIDE the
+            # frame whatever its aspect. This can only ever shrink an overlay that was already being
+            # cropped, so nothing that fits today changes size.
+            _bg_w, _ov_w, _ov_h = _probe_width(bg_path), _probe_width(gif_path), _probe_height(gif_path)
+            if _bg_w > 0 and _ov_w > 0 and _ov_h > 0:
+                ov_h = min(ov_h, int(_bg_w * _ov_h / _ov_w))
+            ov_h = max(2, ov_h // 2 * 2)
             base = (
                 # `overlay` emits one frame per BACKGROUND frame, so the background's clock is the
                 # output's clock. The parallax loop runs at its own rate and is itself
