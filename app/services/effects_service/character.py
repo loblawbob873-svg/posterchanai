@@ -77,8 +77,9 @@ def apply_character(outputs: List[OutputFile], name: str) -> List[OutputFile]:
 def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.52,
                                   max_width_frac: float = 0.48, want_mouth: bool = True):
     """Place the character bottom-CENTRE (the pointing-up meme anchor) rather than bottom-right like
-    apply_character. Returns (image, top_y, left_x, right_x, mouth_y) so a caption can be placed in
-    whichever gutter beside her is wider, clear of the art, and level with her mouth."""
+    apply_character. Returns (image, top_y, left_x, right_x, mouth_y, row_edges) so a caption can be
+    placed in whichever gutter beside her is wider, clear of the art, and level with her mouth —
+    `row_edges` (see _row_edges) is what lets it hug her actual outline there rather than the box."""
     from PIL import Image as _Img
     W, H = base.size
     char = _character_still(char_path)
@@ -118,7 +119,39 @@ def _composite_char_bottom_center(base, char_path: str, height_frac: float = 0.5
     # detector (loads insightface, up to ~1.2s on a cold process) purely to place a speech bubble
     # that those effects never draw.
     mf = _char_mouth_frac(char_path) if want_mouth else None
-    return base, y, x, min(W, x + cw), (y + int(ch * mf) if mf is not None else None)
+    return (base, y, x, min(W, x + cw), (y + int(ch * mf) if mf is not None else None),
+            _row_edges(char, x, y, W, H))
+
+
+def _row_edges(char, x: int, y: int, W: int, H: int):
+    """Per-row (left, right) of the composited figure's SILHOUETTE, in base coordinates; (-1, -1) for
+    rows it does not occupy. None if it cannot be measured.
+
+    Exists because `char_right` is a bounding BOX edge, i.e. the figure's widest point — which is
+    almost always the bottom (shoulders, a flared coat, a pair of soyjaks). The speech bubble is
+    placed level with the MOUTH, where a figure is far narrower, so hugging the box edge left an
+    obvious empty channel between the character and their own speech: the bubble read as pinned to
+    the frame rather than as theirs. Measured per row, the bubble can close that gap without any risk
+    of overlapping the art, because the caller only ever consults the rows the bubble itself covers.
+    """
+    try:
+        import numpy as _np
+        a = _np.asarray(char)
+        if a.ndim != 3 or a.shape[2] < 4:
+            return None
+        solid = a[..., 3] > 8
+        out = _np.full((H, 2), -1, dtype=_np.int32)
+        for r in range(solid.shape[0]):
+            by = y + r
+            if by < 0 or by >= H:
+                continue
+            xs = _np.where(solid[r])[0]
+            if len(xs):
+                out[by] = (max(0, x + int(xs.min())), min(W, x + int(xs.max()) + 1))
+        return out
+    except Exception as e:
+        logger.debug("row-edge measurement failed: %s", e)
+        return None
 
 
 _MOUTH_CACHE = {}
@@ -379,7 +412,7 @@ def render_lookingaway_alpha(dur: float = None) -> bytes:
 
 
 def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int,
-                          band_cap: int = 0, mouth_y: int = None):
+                          band_cap: int = 0, mouth_y: int = None, row_edges=None):
     """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
     bubble in the wider gutter beside them with the tail on them, or — when no gutter can hold
     readable text — a plain white meme banner above their head.
@@ -489,15 +522,31 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
         # Centring put it out at the far edge of a wide image — the tail stretched across empty space
         # and it stopped reading as her speech. The gap scales with the image so it holds at any size.
         gap = max(int(W * 0.015), 6)
-        cx = (char_left - gap - tw // 2) if side == "left" else (char_right + gap + tw // 2)
-        cx = max(margin + tw // 2, min(cx, W - margin - tw // 2))
         # Level with the MOUTH — that is what makes it read as speech. `mouth_y` is detected from the
         # art (see mouth_frac); the 38% fallback is for art with no findable face and is only ever
         # approximately the head: char_top is the top of the RAISED ARM on a pointing pose, so a
         # fraction of the figure lands wherever the pose happens to put the chest.
+        # Solved BEFORE x, because how close the bubble can sit depends on how wide the figure is at
+        # these particular rows.
         char_h = H - char_top
         anchor = mouth_y if mouth_y is not None else (char_top + int(char_h * 0.38))
         y = max(margin, min(anchor - th // 2, H - th - margin))
+        # Hug the SILHOUETTE over the bubble's own rows, not the bounding box. char_left/char_right are
+        # the figure's widest point, which is nearly always its bottom (shoulders, a flared coat), while
+        # the bubble sits up at the mouth — so the box edge left a visible empty channel between a
+        # character and their own speech. Taking the extent of exactly the rows the bubble covers cannot
+        # overlap the art, and falls back to the box when the silhouette could not be measured.
+        l_edge, r_edge = char_left, char_right
+        if row_edges is not None:
+            try:
+                band = row_edges[max(0, y):min(H, y + th)]
+                band = band[band[:, 1] >= 0]
+                if len(band):
+                    l_edge, r_edge = int(band[:, 0].min()), int(band[:, 1].max())
+            except Exception:
+                pass
+        cx = (l_edge - gap - tw // 2) if side == "left" else (r_edge + gap + tw // 2)
+        cx = max(margin + tw // 2, min(cx, W - margin - tw // 2))
     else:
         cx, y = W // 2, max(margin, min(char_top - th - margin, H - th - margin))
     if beside:
@@ -541,8 +590,9 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
         im = _Ops.exif_transpose(im)
         base = im.convert("RGBA")
 
-    base, char_top, char_left, char_right, mouth_y = _composite_char_bottom_center(base, cp)
-    draw_dialogue_caption(base, caption or char_key, char_top, char_left, char_right, mouth_y=mouth_y)
+    base, char_top, char_left, char_right, mouth_y, edges = _composite_char_bottom_center(base, cp)
+    draw_dialogue_caption(base, caption or char_key, char_top, char_left, char_right,
+                          mouth_y=mouth_y, row_edges=edges)
 
     buf = _BIO()
     base.convert("RGB").save(buf, "JPEG", quality=90)
@@ -581,7 +631,7 @@ def _add_reaction_overlay(data: bytes, char_key: str) -> bytes:
         im = _Ops.exif_transpose(im)
         base = im.convert("RGBA")
 
-    base, _top, _l, _r, _mouth = _composite_char_bottom_center(base, cp, height_frac=hf,
+    base, _top, _l, _r, _mouth, _edges = _composite_char_bottom_center(base, cp, height_frac=hf,
                                                                max_width_frac=wf, want_mouth=False)
     buf = _BIO()
     base.convert("RGB").save(buf, "JPEG", quality=90)
