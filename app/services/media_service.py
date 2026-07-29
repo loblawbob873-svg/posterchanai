@@ -93,6 +93,40 @@ def is_pdf(filename: str, content_type: Optional[str] = None) -> bool:
     return _ext(filename) == ".pdf"
 
 
+# AVIF/HEIC stills are ISOBMFF, so ffmpeg demuxes them with mov,mp4,m4a,3gp,3g2,mj2 — a demuxer
+# with NO `loop` option. `-loop 1 -i photo.avif` therefore does not degrade to a still: ffmpeg
+# aborts the whole command with "Option loop not found" (the same failure the GIF demuxer caused in
+# meme_builder_service, where `-ignore_loop 0` is the per-format spelling). mov has no such
+# spelling, and unlooped a single-frame input only covers its own frame duration, so the layer/clip
+# would flash and vanish. Transcode the still to PNG once, up front, and loop THAT.
+_ISOBMFF_STILL_EXTS = (".avif", ".avifs", ".heic", ".heif", ".hif")
+
+
+def loopable_still(path: str) -> str:
+    """Path to a still image that `-loop 1` can actually read — `path` itself for the ordinary
+    formats, or a PNG written beside it for the ISOBMFF ones (AVIF/HEIC, i.e. what a phone or a
+    modern browser hands you). Decoding is Pillow's, not ffmpeg's: Pillow ≥ 11.3 reads AVIF and
+    pillow_heif covers HEIC even where this ffmpeg build cannot. Falls back to the original path if
+    the conversion fails — an unreadable source is the caller's error to report, not ours to mask.
+    An ANIMATED avif collapses to its first frame; a still render beats a failed one."""
+    if not str(path).lower().endswith(_ISOBMFF_STILL_EXTS):
+        return path
+    try:
+        from PIL import Image, ImageOps
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except Exception:
+            pass
+        out = f"{path}.png"
+        with Image.open(path) as im:
+            ImageOps.exif_transpose(im).convert("RGBA").save(out, "PNG")
+        return out
+    except Exception as e:
+        logger.warning(f"loopable_still: {path} could not be converted to PNG ({e}); using as-is")
+        return path
+
+
 def is_animated_gif(filename: str, data: bytes, content_type: Optional[str] = None) -> bool:
     """True for a multi-frame GIF. Such 'movie' GIFs must be compressed as video —
     treating them as still images flattens them to a single frame."""
@@ -692,6 +726,7 @@ def image_audio_to_video(image_data: bytes, source_filename: str, audio_path: st
     try:
         with open(in_path, "wb") as f:
             f.write(image_data)
+        in_path = loopable_still(in_path)     # AVIF/HEIC can't be `-loop 1`'d — see loopable_still
 
         # Even dimensions are required by yuv420p/H.264 (odd → encoder error).
         scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
@@ -1687,6 +1722,7 @@ def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: s
     try:
         with open(in_path, "wb") as f:
             f.write(image_data)
+        in_path = loopable_still(in_path)     # AVIF/HEIC can't be `-loop 1`'d — see loopable_still
 
         # Make the background photo MOVE (3D parallax) instead of a freeze-frame: build
         # a short parallax loop and stream-loop it as input 0; the alpha overlay (clay /
@@ -2010,6 +2046,9 @@ def _render_motion_video(image_data: bytes, source_filename: str, vf_builder,
     try:
         with open(in_path, "wb") as f:
             f.write(image_data)
+        # AVIF/HEIC can't be `-loop 1`'d (see loopable_still) — and converting also gets the size
+        # probe below off a format plain Pillow may not open, instead of the 1280x720 fallback.
+        in_path = loopable_still(in_path)
         # Target = input dims rounded to even (yuv420p/H.264 require even).
         try:
             with _PILImage.open(in_path) as im:

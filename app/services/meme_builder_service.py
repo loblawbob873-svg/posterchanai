@@ -521,6 +521,11 @@ def render(edit: dict, sources: dict) -> bytes:
             effect = (layer.get("effect") or "none").lower()
 
             if kind == "image":
+                # An AVIF/HEIC layer is ISOBMFF, whose demuxer has no `loop` either — same abort as
+                # the GIF case below, one screenshot-from-a-browser away. Converted to a PNG up front
+                # (written beside the source, so the caller's tmpdir sweep removes it), so `-loop 1`
+                # below is always legal.
+                path = media_service.loopable_still(path)
                 if str(path).lower().endswith(".gif"):
                     # A GIF is demuxed by the GIF demuxer, which has NO `loop` option — `-loop`
                     # belongs to image2. Passing it did not degrade to a still: ffmpeg aborted with
