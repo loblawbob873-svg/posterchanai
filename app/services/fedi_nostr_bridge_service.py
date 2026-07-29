@@ -566,6 +566,31 @@ def _record_skip(db: Session, reason: str, *, platform: str = "", instance_url: 
         logger.debug("[fedi-bridge] could not record skip (%s): %s", reason, e)
 
 
+def _source_ts(post: dict) -> int | None:
+    """Unix seconds for when a fediverse post was published, or None if it can't be read.
+
+    Mastodon/Pleroma send ISO-8601 ("2026-07-29T18:52:01.000Z"). Returns None rather than guessing,
+    so the caller falls back to build_event's default instead of pinning a wrong time.
+    """
+    v = (post or {}).get("created_at")
+    if not v:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    try:
+        from datetime import datetime, timezone
+        t = str(v).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(t)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        ts = int(dt.timestamp())
+        # Sanity: a clock-skewed or garbage date must not park a note in 1970 or the far future.
+        now = int(__import__("time").time())
+        return ts if 0 < ts <= now + 3600 else None
+    except Exception:
+        return None
+
+
 async def _deliver(db: Session, port: int, platform: str, instance_url: str, instance_host: str,
                    raw: dict, post: dict, backfill: bool = True, token: str = "",
                    extra_ptags: list | None = None, _depth: int = 0,
@@ -672,7 +697,17 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
             _record_skip(db, "oversized", platform=platform, instance_url=instance_url, post=post,
                          uri=uri, detail=f"{len(content or '')} chars")
             return None
-        ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on())
+        # PIN created_at to when the post was actually published on the fediverse, instead of letting
+        # build_event stamp "now". Two reasons, both real:
+        #   1. Timeline order. A drain after downtime (or the reconciler repairing old posts) mirrored
+        #      a backlog all stamped NOW, so days-old fediverse posts arrived at the TOP of the Nostr
+        #      timeline as if brand new. With the source time they slot in chronologically.
+        #   2. Idempotency. build_event's own docstring says pinning the timestamp is what makes a
+        #      re-published event produce an IDENTICAL id, so the relay dedups it instead of storing a
+        #      second copy — which is what made a lost dedup row turn into a duplicate note.
+        # Unparseable/absent → fall back to now (build_event's default), never drop the post.
+        ev = ident.build_event(p, 1, content, tags=tags, object_uri=uri, broadcast=_broadcast_on(),
+                               created_at=_source_ts(post))
         ok, msg = await ident.publish(port, ev)
         if not ok:
             logger.debug("[fedi-bridge] publish failed for %s: %s", post.get("id"), msg)
