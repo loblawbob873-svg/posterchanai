@@ -130,6 +130,27 @@ class SubscriptionManager:
 _IP_CHARS = re.compile(r"^[0-9a-fA-F:.%\[\]]{3,45}$")
 
 
+def _one_header(hdrs, name: str) -> str:
+    """Exactly one value for `name`, else "" — and never an exception.
+
+    A repeated header is either a broken proxy or a client muddying the water, and websockets'
+    ``Headers.get`` RAISES ``MultipleValuesError`` for it — which is NOT a KeyError, so the usual
+    ``.get(name, "")`` guard doesn't catch it. That turned "send X-Real-IP twice" into "the relay
+    records my connection as ip=?", i.e. a client could opt out of the very log we added to find it.
+    Duplicated means untrustworthy, so skip the source and fall through to one that isn't (ending at
+    the socket peer, which nobody can forge)."""
+    try:
+        values = hdrs.get_all(name)
+    except AttributeError:                        # plain mapping (tests / non-websockets callers)
+        try:
+            return (hdrs.get(name, "") or "").strip()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+    return (values[0] or "").strip() if len(values) == 1 else ""
+
+
 def _client_ip(hdrs, connection) -> str:
     """The real client IP behind the proxy chain (client → Cloudflare → cloudflared → nginx → here).
 
@@ -147,8 +168,8 @@ def _client_ip(hdrs, connection) -> str:
 
     Anything that isn't IP-shaped is discarded rather than logged: header values can't contain CRLF,
     but they can contain enough printable text to make a log line lie about itself."""
-    for value in (hdrs.get("X-Real-IP", ""), hdrs.get("CF-Connecting-IP", ""),
-                  (hdrs.get("X-Forwarded-For", "") or "").split(",")[0]):
+    for value in (_one_header(hdrs, "X-Real-IP"), _one_header(hdrs, "CF-Connecting-IP"),
+                  _one_header(hdrs, "X-Forwarded-For").split(",")[0]):
         ip = (value or "").strip()
         if ip and _IP_CHARS.match(ip):
             return ip
@@ -465,6 +486,25 @@ class RelayServer:
     # or no code at all (1005) — the ordinary end of a session, not a fault.
     _CLEAN_CLOSE = (1000, 1001, 1005)
 
+    @staticmethod
+    def _is_internal(ip: str) -> bool:
+        """Is this one of our own machines rather than a person out on the internet?
+
+        Measured on the live relay: ~13 connections close every 90s (≈520/hour), and EVERY one of
+        them has the proxy as its TCP peer — the app, the bridge on router.lan, the bots and the
+        node agents all open short-lived query sockets from the LAN. Excluding only loopback (the
+        first cut of this) would have left the journal full of our own machinery at INFO, burying
+        the user reports this log exists to surface. Anything unparseable counts as remote: better a
+        stray line than a silently ignored user."""
+        if not ip or ip in ("127.0.0.1", "::1", "localhost"):
+            return True
+        try:
+            import ipaddress
+            addr = ipaddress.ip_address(ip.strip("[]").split("%")[0])
+            return addr.is_private or addr.is_loopback or addr.is_link_local
+        except ValueError:
+            return False
+
     def _log_session(self, conn, ip: str, opened: float, q) -> None:
         """One line per finished connection, so a user reporting "it keeps disconnecting" stops being
         invisible. Sessions that ended badly — frames dropped, an abnormal close code, or a life so
@@ -472,15 +512,14 @@ class RelayServer:
         would bury the journal. Dropped frames are the number to watch: they mean this client could
         not drain what we sent (see _OutQ).
 
-        The short-session rule applies to REMOTE clients only: our own services (settings_store,
-        users_store, the bots) each open a loopback socket, run one query and close, so counting
-        those as suspicious would drown the very reports this exists to surface."""
+        The short-session rule applies to REMOTE clients only — see _is_internal for why LAN, and
+        not just loopback, is the line."""
         try:
             dur = time.time() - opened
             code = getattr(conn, "close_code", None)
             reason = (getattr(conn, "close_reason", "") or "")[:60]
             dropped = getattr(q, "dropped", 0)
-            remote = ip not in ("127.0.0.1", "::1", "localhost")
+            remote = not self._is_internal(ip)
             bad = dropped or (remote and dur < 60) or (code is not None and code not in self._CLEAN_CLOSE)
             logger.log(
                 logging.INFO if bad else logging.DEBUG,

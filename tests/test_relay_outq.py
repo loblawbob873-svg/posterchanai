@@ -174,3 +174,38 @@ def test_non_ip_header_values_are_discarded():
     assert _client_ip(_Hdrs({"X-Real-IP": "1.1.1.1 dur=999s dropped=0",
                              "X-Forwarded-For": "41.90.1.2"}), _Conn("192.168.0.1")) == "41.90.1.2"
     assert _client_ip(_Hdrs({"X-Real-IP": "x" * 200}), _Conn("192.168.0.9")) == "192.168.0.9"
+
+
+def test_a_duplicated_header_cannot_blank_the_logged_ip():
+    """websockets' Headers.get RAISES MultipleValuesError on a repeated header — and that is not a
+    KeyError, so the usual .get(name, "") guard doesn't catch it. Sending X-Real-IP twice therefore
+    used to record the connection as ip=?, letting a client opt out of the log added to find it.
+    Uses the real Headers type on purpose: this is a contract of that class, not of our own code."""
+    from websockets.datastructures import Headers
+
+    hdrs = Headers()
+    hdrs["X-Real-IP"] = "1.1.1.1"
+    hdrs["X-Real-IP"] = "2.2.2.2"                     # tampered → skip this source
+    hdrs["X-Forwarded-For"] = "41.90.1.2, 192.168.0.1"
+    assert _client_ip(hdrs, _Conn("192.168.0.1")) == "41.90.1.2"
+
+    only_dupes = Headers()
+    only_dupes["X-Real-IP"] = "1.1.1.1"
+    only_dupes["X-Real-IP"] = "2.2.2.2"
+    assert _client_ip(only_dupes, _Conn("192.168.0.7")) == "192.168.0.7"   # socket peer: unforgeable
+
+    assert _client_ip(Headers(), _Conn("192.168.0.8")) == "192.168.0.8"
+
+
+def test_only_public_clients_count_as_remote():
+    """Which sessions are worth an INFO line. Measured on the live relay: ~13 connections close
+    every 90s and every one has the proxy as its TCP peer — the app, the router.lan bridge, the
+    bots and the node agents all open short-lived LAN sockets. Excluding only loopback would bury
+    real user reports under our own machinery, so the line is LAN, not localhost."""
+    internal = RelayServer._is_internal
+    assert internal("127.0.0.1") and internal("::1") and internal("localhost")
+    assert internal("192.168.0.1") and internal("10.0.0.5") and internal("172.16.3.9")
+    assert internal("169.254.1.1") and internal("fe80::1") and internal("[fe80::1%eth0]")
+    assert not internal("41.90.1.2") and not internal("2a00:11b1:10a2::1")
+    assert internal("")                     # unknown → stay quiet rather than cry wolf
+    assert not internal("not-an-ip")        # unparseable → log it; a stray line beats a missed user
