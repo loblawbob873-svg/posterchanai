@@ -11,6 +11,7 @@ import time
 import json
 import asyncio
 import logging
+import ipaddress
 from collections import deque
 
 from websockets.datastructures import Headers
@@ -449,7 +450,11 @@ class RelayServer:
     # --- connection handling ------------------------------------------------
 
     async def handle(self, conn) -> None:
-        ip = getattr(conn, "_pcai_ip", "") or "?"
+        # Two spellings on purpose: the log wants a placeholder to print, while online_count() must
+        # keep "" meaning UNKNOWN — collapsing every unidentified connection under one "?" there
+        # would count them as a single person.
+        raw_ip = getattr(conn, "_pcai_ip", "") or ""
+        ip = raw_ip or "?"
         if self._conns >= self.cfg.get("max_connections", 5000):
             # Was a silent 1013: the client just saw its socket close and reconnected forever.
             logger.warning("[nostr-relay] conn refused ip=%s — at max_connections (%d)",
@@ -457,7 +462,7 @@ class RelayServer:
             await conn.close(code=1013, reason="overloaded")
             return
         self._conns += 1
-        self._conn_ips[conn] = getattr(conn, "_pcai_ip", "") or ""
+        self._conn_ips[conn] = raw_ip
         # Bigger than the query hard_cap (5000) so a full-page REQ response fits without the
         # synchronous send loop overflowing. Overflow no longer costs the EOSE (see _OutQ) — it
         # costs EVENTS, which is the difference between a stale feed and a hung query.
@@ -494,12 +499,14 @@ class RelayServer:
         them has the proxy as its TCP peer — the app, the bridge on router.lan, the bots and the
         node agents all open short-lived query sockets from the LAN. Excluding only loopback (the
         first cut of this) would have left the journal full of our own machinery at INFO, burying
-        the user reports this log exists to surface. Anything unparseable counts as remote: better a
-        stray line than a silently ignored user."""
-        if not ip or ip in ("127.0.0.1", "::1", "localhost"):
+        the user reports this log exists to surface.
+
+        An address we can't place — unparseable, or the "?" the caller uses when it has none — counts
+        as REMOTE. Our own machinery always has a LAN peer to report, so "unknown" is genuinely odd,
+        and a stray line is cheaper than a silently ignored user."""
+        if ip in ("127.0.0.1", "::1", "localhost"):
             return True
         try:
-            import ipaddress
             addr = ipaddress.ip_address(ip.strip("[]").split("%")[0])
             return addr.is_private or addr.is_loopback or addr.is_link_local
         except ValueError:

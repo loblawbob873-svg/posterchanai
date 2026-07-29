@@ -207,5 +207,6 @@ def test_only_public_clients_count_as_remote():
     assert internal("192.168.0.1") and internal("10.0.0.5") and internal("172.16.3.9")
     assert internal("169.254.1.1") and internal("fe80::1") and internal("[fe80::1%eth0]")
     assert not internal("41.90.1.2") and not internal("2a00:11b1:10a2::1")
-    assert internal("")                     # unknown → stay quiet rather than cry wolf
-    assert not internal("not-an-ip")        # unparseable → log it; a stray line beats a missed user
+    # Unknown counts as remote, in both spellings: our own machinery always has a LAN peer to
+    # report, so an address we can't place is genuinely odd and worth the line.
+    assert not internal("") and not internal("?") and not internal("not-an-ip")
