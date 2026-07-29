@@ -216,23 +216,39 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
 
 ## Notable features
 
-- **Music generation** (`musicgeni` command; `app/services/music_service.py` +
-  `music_factory.py`): text-to-song via a self-hosted **ACE-Step 1.5** REST server (`acestep-api`).
-  ACE-Step needs Python 3.11–3.12 and a conflicting torch stack and is **not on PyPI**, so it runs
-  as a SEPARATE process (installed by `./install.sh --music` via uv+git-clone, or the Docker
-  `acestep` service) and the app is just an HTTP client — like `image_server_urls`/`music_server_urls`.
-  `music_factory` mirrors `image_factory`: round-robin LB over `music_server_urls`, and the local
-  `music_api_base` path takes the shared `GPUResourceLock` + `vram_manager.prepare_for_music()`
-  (one GPU task at a time, swap LLM/image out). **Output is a branded MP4**, not raw audio:
+- **Music generation** (`musicgeni` command; `app/services/music_local.py` + `music_service.py` +
+  `music_factory.py`): text-to-song with **ACE-Step 1.5, NATIVE in-process** — same as video gen, on
+  the app's own venv/torch/GPU lock. There is no `acestep.service`, no second venv, no HTTP hop
+  (`Dockerfile.acestep` is retired). ACE-Step is **not on PyPI**, so its SOURCE is cloned and
+  installed `--no-deps` by `./install.sh --music` (its pyproject pins CUDA torch + gradio, which
+  would wreck a torch-XPU/ROCm box); its real inference deps are in `requirements.txt`. It loads
+  through upstream's **`AceStepHandler`**, NOT diffusers' `AceStepPipeline` — that class exists, but
+  `from_pretrained` wants a `model_index.json` no published ACE-Step repo carries, so it 404s. That
+  404 is what once justified the sidecar; the weights load fine through the handler, which is the
+  same code the sidecar ran. `music_factory` mirrors `image_factory`: round-robin LB over other
+  nodes' `/api/generate-music`, and the local path takes the shared `GPUResourceLock` +
+  `vram_manager.prepare_for_music()` (one GPU task at a time, swap LLM/image out).
+  **Gotchas, all of which failed SILENTLY once:** (1) `music_local.is_available()` gates
+  native-vs-legacy-HTTP and must probe **`acestep`**, not diffusers — probing the wrong package sent
+  a node to a sidecar that no longer exists, and on a `video_free_music` node that means
+  `_ensure_music_server` polls a dead port for **90s synchronously on the single uvicorn worker**,
+  per song. (2) Duration comes from **`music_default_duration`** (the key Admin → Music writes) —
+  a private `music_duration` read silently pinned every song to the fallback length.
+  (3) `AceStepHandler` is a plain object with **no `.to()`**; unload must drop
+  `model`/`vae`/`text_encoder`/`mlx_*`/`silence_latent` explicitly, or the VRAM swap frees nothing
+  and leaves ~6.3GB resident on the shared 12/16GB GPUs. Covered by `tests/test_music_native.py`.
+  `music_api_base` still forces the old HTTP path for a node that really has a remote server.
+  **Output is a branded MP4**, not raw audio:
   `media_service.make_music_video` puts the song over a generic PosterChan background
   (`render_music_background`) then appends the `append_outro` end-card ("watermark"); result type
   `generated_video` (falls back to `generated_audio` if ffmpeg is missing). **Vocals** need lyrics,
   so with no `| lyrics` the LLM auto-writes them (`_music_write_lyrics`); `instrumental` skips that.
-  Web UI + Telegram only (NOT the fedi bots — abuse surface). REST gotchas: `/query_result` field
-  is **`task_id_list`** (not `task_ids`), and its `result` is a **JSON-encoded string** whose items
-  carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan (RTX 3060, CUDA) and the Arc (server1,
-  A770 XPU) host ACE-Step and serve music fine (the Arc's torch-XPU trio works — see the musicgeni
-  memory for the soundfile/torchcodec workarounds).
+  Web UI + Telegram only (NOT the fedi bots — abuse surface). The legacy REST client
+  (`music_service.generate_once`, only reachable via an explicit remote `music_api_base`) keeps its
+  own gotchas: `/query_result` field is **`task_id_list`** (not `task_ids`), and its `result` is a
+  **JSON-encoded string** whose items carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan
+  (RTX 3060, CUDA) and the Arc (server1, A770 XPU) generate music in-process (measured on the Arc:
+  load 6.9s, a 12s song in 14.3s, unload reclaims 100% of the 6.5GB).
 - **Video generation** (`videogeni` command; `app/services/video_service.py` + `video_factory.py` +
   `app/routers/video_api.py`): text-to-video, **NATIVE in-process diffusers** (unlike music — LTX/Wan/
   CogVideoX are stock diffusers pipelines on the SAME torch stack as image gen, so no separate

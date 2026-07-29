@@ -1,7 +1,8 @@
 # Music Generation (`musicgeni`)
 
-Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), served by a
-self-hosted ACE-Step REST server (`acestep.service`). Available in the **web UI** and **Telegram**
+Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), generated
+**in-process** — on the app's own venv, torch and GPU lock, exactly like video generation. There is
+no `acestep.service`, no second venv and no HTTP hop. Available in the **web UI** and **Telegram**
 (intentionally *not* the Misskey/Pleroma bots — abuse surface).
 
 ```
@@ -57,29 +58,41 @@ The turbo DiT fits a **12 GB** GPU.
 
 - **`music_server_urls`** (Admin → Music) = OTHER posterchanai NODES (e.g. `http://nas.lan:3051`),
   not acestep servers. They're called via their `/api/generate-music` endpoint, which runs that
-  node's own local generation — so the remote node frees ITS GPU (`prepare_for_music`) before its
-  acestep generates. This is the same node→node pattern image gen uses (`/api/generate-image`).
-- **`music_api_base`** = this node's own acestep server (`http://localhost:8001`). The local path
-  takes the shared `GPUResourceLock` (so chat, image AND music all QUEUE on one GPU) and runs
-  `vram_manager.prepare_for_music()` (unloads our LLM/image first).
+  node's own local generation — so the remote node frees ITS GPU (`prepare_for_music`) before it
+  generates. This is the same node→node pattern image gen uses (`/api/generate-image`).
+- **local** = this process. `music_local` loads ACE-Step's own `AceStepHandler` under the shared
+  `GPUResourceLock` (so chat, image AND music all QUEUE on one GPU) after
+  `vram_manager.prepare_for_music()` unloads our LLM/image, and idle-unloads afterwards.
+- **`music_api_base`** — leave it **EMPTY**. It now means "I really do have an ACE-Step REST server
+  over *there*" and forces the legacy HTTP path; a leftover `http://localhost:8001` points at a
+  daemon that no longer exists (a plain localhost value is ignored for exactly that reason).
 
 Each request **round-robins across [remote nodes…, local]**, so songs spread over every node; a
 failed node falls through to the next (and finally local). `_music_gen_lock` serializes music per
 node so concurrent requests queue instead of OOMing one GPU. A node may safely list **itself** in
 `music_server_urls` (a self-call just generates locally) — no loops.
 
-> **Critical:** a single 12–16 GB GPU can't hold the chat/image models AND an acestep generation at
+> **Critical:** a single 12–16 GB GPU can't hold the chat/image models AND a music generation at
 > once. That's why the local path **unloads** (`prepare_for_music`) and everything **queues** on the
-> shared GPU lock — one model on the GPU at a time. acestep loads its model on demand (idle ≈ 0.5 GB).
+> shared GPU lock — one model on the GPU at a time. Because the model now lives in OUR address space,
+> unloading is our job: `music_local` drops the handler's model refs explicitly (it is not an
+> `nn.Module`, so `.to("cpu")` does nothing) and idle-unloads after `music_idle_timeout`.
+> Measured on the Arc: ~6.3 GB held while loaded, 100% reclaimed on unload.
 
 ## Setup
 
 ```bash
-./install.sh --music     # clones ACE-Step, installs it with uv, registers acestep.service
+./install.sh --music     # clones ACE-Step, installs it into the APP venv with --no-deps
 ```
 
-Then **Admin → Music**: enable music and set Local Server URL to `http://localhost:8001`. Remote
-Servers fan out to other nodes. `⬇ Download music model` fetches/warms the weights.
+`--no-deps` is load-bearing: ACE-Step's pyproject pins `torch==2.10.0+cu128` and gradio, and letting
+pip resolve those would replace a hand-built torch-XPU/ROCm install and break image gen on the same
+box. Its real inference deps live in `requirements.txt`; only `torchaudio` is resolved by the
+installer, from the same index as the installed torch. The installer also removes any leftover
+`acestep.service`.
+
+Then **Admin → Music**: enable music and leave **Local Server URL empty**. Remote Servers fan out to
+other nodes. Models download on first use into `<ACE-Step clone>/checkpoints` (several GB).
 
 
 ## Admin → Music settings
