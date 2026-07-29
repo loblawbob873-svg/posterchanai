@@ -174,17 +174,23 @@ def mouth_frac(img) -> float | None:
         if bb:
             img = img.crop(bb)
         W, H = img.size
-        top = img.crop((0, 0, W, max(2, int(H * 0.45))))
-        scale = max(1.0, 560.0 / max(1, top.width))
-        if scale > 1.0:
-            top = top.resize((int(top.width * scale), int(top.height * scale)), _Img.LANCZOS)
-        flat = _Img.new("RGB", top.size, (255, 255, 255))
-        flat.paste(top, mask=top.split()[-1] if top.mode == "RGBA" else None)
-        buf = _BIO(); flat.save(buf, "PNG")
-        hit = _locate_mouth(buf.getvalue())
-        if not hit:
-            return None
-        return float(hit[1] / scale / H)
+        # Search the top 45% FIRST (cheap, and on a full-body pose that is where the head is), then
+        # widen. A fixed 45% window silently failed on every BUST-framed character: when the head
+        # fills the frame the mouth sits around 75-80% of the figure, outside the crop entirely, so
+        # detection returned None and the caller fell back to "38% of the figure" — eye level. That is
+        # why the bubble on old Steve Rogers and on the teacher sat too high.
+        for frac in (0.45, 0.80, 1.0):
+            top = img.crop((0, 0, W, max(2, int(H * frac))))
+            scale = max(1.0, 560.0 / max(1, top.width))
+            if scale > 1.0:
+                top = top.resize((int(top.width * scale), int(top.height * scale)), _Img.LANCZOS)
+            flat = _Img.new("RGB", top.size, (255, 255, 255))
+            flat.paste(top, mask=top.split()[-1] if top.mode == "RGBA" else None)
+            buf = _BIO(); flat.save(buf, "PNG")
+            hit = _locate_mouth(buf.getvalue())
+            if hit:
+                return float(hit[1] / scale / H)
+        return None
     except Exception as e:
         logger.debug("mouth detection failed: %s", e)
         return None
@@ -412,7 +418,8 @@ def render_lookingaway_alpha(dur: float = None) -> bytes:
 
 
 def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_right: int,
-                          band_cap: int = 0, mouth_y: int = None, row_edges=None):
+                          band_cap: int = 0, mouth_y: int = None, row_edges=None,
+                          prefer_side: str = ""):
     """Draw `text` on `base` (RGBA, modified in place) as the character's DIALOGUE: a rounded speech
     bubble in the wider gutter beside them with the tail on them, or — when no gutter can hold
     readable text — a plain white meme banner above their head.
@@ -438,7 +445,15 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     # image — fall back to the band above her head rather than cramming it into a 3-character column.
     left_w, right_w = char_left - 2 * margin, W - char_right - 2 * margin
     side = "right" if right_w >= left_w else "left"
-    band_w = max(left_w, right_w)
+    # A character can ask for a side (see _BUBBLE_SIDE): which way they FACE decides where their
+    # speech belongs, and that is a property of the art, not of which gutter happens to be wider.
+    # Honoured only if that gutter can hold readable text — otherwise the wider one still wins.
+    if prefer_side in ("left", "right"):
+        if (left_w if prefer_side == "left" else right_w) >= max(int(W * 0.18), 60):
+            side = prefer_side
+    # Size against the gutter actually being used, not the widest one — they differ once a side is
+    # forced, and sizing against the other gutter would overflow the one the bubble sits in.
+    band_w = left_w if side == "left" else right_w
     beside = band_w >= max(int(W * 0.18), 60)
     if band_cap > 0:
         band_w = min(band_w, band_cap)
@@ -570,6 +585,14 @@ def draw_dialogue_caption(base, text: str, char_top: int, char_left: int, char_r
     return beside, (margin if beside else y + th)
 
 
+# Which side a character's speech belongs on, when it isn't just "whichever gutter is wider".
+_BUBBLE_SIDE = {
+    # Steve is turned toward frame-left, so his words read as his coming out that way; on the right
+    # they sat behind his head. The tail flips on its own (`toward_left=(side == "right")`).
+    "nodontthinkiwill": "left",
+}
+
+
 def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str = "") -> bytes:
     """The pointing-up meme format: the character stands bottom-centre pointing at the image above,
     with the caption BESIDE them (whichever side has more room) in a speech bubble, so the character
@@ -592,7 +615,8 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
 
     base, char_top, char_left, char_right, mouth_y, edges = _composite_char_bottom_center(base, cp)
     draw_dialogue_caption(base, caption or char_key, char_top, char_left, char_right,
-                          mouth_y=mouth_y, row_edges=edges)
+                          mouth_y=mouth_y, row_edges=edges,
+                          prefer_side=_BUBBLE_SIDE.get(char_key, ""))
 
     buf = _BIO()
     base.convert("RGB").save(buf, "JPEG", quality=90)
