@@ -332,7 +332,12 @@ _HUGEBITCH_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "hugebitch.mp3"),
     "/var/lib/posterchanai/assets/hugebitch.mp3",
 ]
-_HUGEBITCH_DURATION = 9.8   # clip is 8.83s (whole coub, no trim) — ~1s of headroom
+_HUGEBITCH_DURATION = 3.2   # clip is 2.18s — ~1s of headroom.
+# The source URL is a coub `_looped_` render: 8.83s containing the SAME 2.15s utterance FOUR times
+# (envelope repeat corr +0.995 @ 4.30s, and each of those halves +0.998 @ 2.15s — spectrogram
+# correlation +0.975 with all 182 frames >0.9, i.e. identical, not merely similar). Shipping the
+# whole download made the effect say it four times. Cut at the silent splice seam (2.17s, -89 dB).
+# Any coub URL with `_looped_` in it needs this check before it becomes an asset.
 
 _SLEEPWELL_AUDIO_CANDIDATES = [
     os.environ.get("SLEEPWELL_AUDIO_PATH", ""),
