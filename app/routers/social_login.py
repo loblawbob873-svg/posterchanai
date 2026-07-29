@@ -353,6 +353,13 @@ def _acct_of(account: dict, instance_url: str) -> str:
     return acct.lower()[:255]
 
 
+class _ProbeUnavailable(Exception):
+    """We could not determine whether this fediverse account is already linked here.
+
+    Distinct from "it isn't linked": the caller mints a new account on the latter, and doing that on
+    uncertainty forks an existing user's identity."""
+
+
 async def _find_pleroma_user(db: Session, instance_url: str, acct: str) -> User | None:
     """The User this fediverse account already belongs to, if any.
 
@@ -360,6 +367,12 @@ async def _find_pleroma_user(db: Session, instance_url: str, acct: str) -> User 
     none recorded, so those get backfilled here — ask the instance who each stored token belongs to,
     bounded, once per account. Without this every existing bridge user signing in with Pleroma would
     be handed a brand-new empty identity instead of their own.
+
+    Raises _ProbeUnavailable when a probe FAILED rather than answered, because the caller's "no match"
+    branch MINTS A NEW ACCOUNT. Treating an unreachable instance as "this person is new" is how one
+    dropped request forks somebody's identity into a second, empty account — the same trap the Google
+    flow hit, and the same failure/absence conflation that stripped mentions in the bridge resolver.
+    A 401/403 IS an answer (that token is dead, so it isn't a match); anything else is not.
     """
     hit = db.query(User).filter(User.pleroma_instance_url == instance_url,
                                 User.pleroma_acct == acct).first()
@@ -371,28 +384,47 @@ async def _find_pleroma_user(db: Session, instance_url: str, acct: str) -> User 
                      User.pleroma_access_token.isnot(None),
                      User.pleroma_acct.is_(None))
              .limit(_ACCT_BACKFILL_LIMIT + 1).all())
-    if len(stale) > _ACCT_BACKFILL_LIMIT:
+    # The cap is a bound on how much work one login may do, but an unprobed account is an UNKNOWN
+    # account, not an absent one — if the owner is past the cap we must not conclude they're new.
+    truncated = len(stale) > _ACCT_BACKFILL_LIMIT
+    if truncated:
         logger.info("[social-login] %d unlabelled pleroma links on %s — probing the first %d",
                     len(stale), instance_url, _ACCT_BACKFILL_LIMIT)
         stale = stale[:_ACCT_BACKFILL_LIMIT]
     async def _who(u):
+        """(user, acct, unknown). `unknown` marks "the probe didn't answer", NOT "not a match"."""
         try:
-            return u, _acct_of(await verify_credentials(instance_url, u.pleroma_access_token), instance_url)
+            return u, _acct_of(await verify_credentials(instance_url, u.pleroma_access_token), instance_url), False
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else 0
+            if code in (401, 403):
+                return u, "", False      # revoked/expired token — a real answer: not this person
+            return u, "", True           # 429/5xx — the instance couldn't say
         except Exception:
-            return u, ""     # revoked/expired token — leave it unlabelled, it just isn't a match
+            return u, "", True           # reset/timeout/DNS — the instance couldn't say
 
     # CONCURRENTLY: this runs inside someone's login. Sequentially, 25 probes against a slow instance
     # is 25 round trips stacked end to end — long enough that the person gives up and retries, which
     # starts the whole thing again.
     import asyncio
-    found = None
-    for u, got in await asyncio.gather(*[_who(u) for u in stale]):
+    found, unknown = None, False
+    for u, got, failed in await asyncio.gather(*[_who(u) for u in stale]):
+        if failed:
+            unknown = True
+            continue
         if not got:
             continue
-        u.pleroma_acct = got
+        u.pleroma_acct = got             # backfilled, so this probe never has to run for them again
         if got == acct:
             found = u
-    db.commit()
+    db.commit()                          # keep the handles we DID resolve, even if others failed
+    if found is None and (unknown or truncated):
+        # Concurrency makes this likelier than it looks: 25 probes at once is exactly what gets
+        # rate-limited (429), and this instance is reachable — we just authenticated against it.
+        # `truncated` counts too: the owner may simply be one of the accounts we never asked about.
+        # Each probe backfills a handle permanently, so retrying works through the backlog and the
+        # condition clears itself instead of wedging.
+        raise _ProbeUnavailable()
     return found
 
 
@@ -478,7 +510,15 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
     if not acct:
         return _error_page("That instance did not say who you are.")
 
-    user = await _find_pleroma_user(db, instance, acct)
+    try:
+        user = await _find_pleroma_user(db, instance, acct)
+    except _ProbeUnavailable:
+        # Fail CLOSED. Signing in again costs the user seconds; minting a duplicate identity because
+        # one probe timed out costs an operator a manual DB repair (see the Google strays).
+        logger.warning("[social-login] could not rule out an existing account for %s on %s — "
+                       "refusing to create one", acct, instance)
+        return _error_page("Could not check whether you already have an account here — the instance "
+                           "didn't finish answering. Please try signing in again in a moment.", 503)
     created = False
     if not user:
         user = User(
