@@ -13118,6 +13118,7 @@
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
+      const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
       const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const fco=e.target.closest('.fc-opt'); if(fco){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fco.dataset.fc]; if(st && st.answered[st.idx]==null){ const i=+fco.dataset.opt; st.answered[st.idx]=i; if(i===(st.cards[st.idx]||{}).correct) st.score++; _fcRedraw(fco.dataset.fc); } return; }   // answer a card → ✓/✗ + explanation
@@ -13945,11 +13946,11 @@
     // src attributes are absolutized to the instance origin (_absUrl) so a /api/files/… artifact loads from
     // the server, not https://localhost, in the bundled app. The URL passed to _aiFileActions stays relative
     // so its fetch (re-upload) goes through the shim, which adds credentials for the authed /api/files/ call.
-    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u)));
-    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u)));
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u,'video')));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio')));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
-    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u)));
+    src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image')));
     // Torrent browse buttons: [Download](cmd:torrents download tv 1) → a command button; and
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
@@ -13965,12 +13966,42 @@
   // Inline command-output media (effects/compress/convert) lives at an authed /api/files/ artifact
   // URL (encrypted at rest) — NOT shareable. These fetch those bytes and RE-UPLOAD to PUBLIC Blossom
   // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
-  function _aiFileActions(u){
+  function _aiFileActions(u, kind){
     if(!/^\//.test(u)) return '';
     const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
+    // Keep working on a result instead of it being a dead end: an effect output was final here, so
+    // refining one meant downloading the file and adding it back by hand. The builder takes VIDEO
+    // layers as well as images, which is what makes this worth having for effects at all.
+    // Not offered for audio — addMedia only seeds image/video layers.
+    const mb=(kind==='audio')?'':`<button class="btn btn-cyan small ai-memefile" data-url="${enc(u)}" data-kind="${enc(kind||'image')}">🎞️ Meme Builder</button>`;
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${mb}${copy}</div>`;
+  }
+  // Effect result → Meme Builder. The media has to be uploaded to Blossom FIRST: a layer `src` is
+  // fetched SERVER-side at render time, and /api/files/… is behind get_current_user, so handing the
+  // builder that path renders a layer the server is refused access to. _fileToPublicUrl is the same
+  // upload the Copy link / Post buttons already use, and it caches, so using several of them on one
+  // result uploads once.
+  async function memeBuildFile(u, btn, kind){
+    const label=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{
+      const pub=await _fileToPublicUrl(u);
+      const isVid=(kind==='video')||/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(pub);
+      const from=_ai.replyTo||null;
+      switchView('meme');
+      // Seed AFTER the view renders, or the builder's own first render wipes the new layer — the
+      // same ordering memeBuildPost documents.
+      setTimeout(()=>{
+        const ok=window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(pub, isVid?'video/mp4':'image/jpeg', from);
+        toast(ok?'🎞️ added to the Meme Builder':'could not add that media');
+      }, 60);
+      if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; }
+    }catch(e){
+      toast('failed: '+((e&&e.message)||e));
+      if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; }
+    }
   }
   async function _fileToPublicUrl(u){
     _ai.pubUrl=_ai.pubUrl||{};
