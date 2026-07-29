@@ -116,7 +116,7 @@ the bots) and **falls back to a direct connection if the proxy connect fails** �
 Tor proxy degrades gracefully instead of dropping federation. `Bypass Tor proxy` forces direct
 only (never attempt Tor). This only affects the relay, not the bots.
 
-**Two Tor daemons (load-balanced).** When the second Tor daemon is enabled (Admin → Site Settings →
+**Two Tor daemons (load-balanced).** When the second Tor daemon is enabled (Admin → Network →
 *Second Tor Daemon*, on by default whenever Tor is on), PosterChanAI runs **two** managed `tor`
 instances with different exit regions — `{us}` (SOCKS 9052) and `{ca}` (SOCKS 9062, geographically
 close so minimal latency cost). The built-in HTTP proxy **round-robins across both circuits**, giving

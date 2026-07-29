@@ -938,7 +938,7 @@
 
   async function boot(){
     CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
-    // Custom branding (Admin → Site Settings): override the logo used as the avatar fallback + brand
+    // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
       LOGO = CFG.logo_url;
@@ -6704,7 +6704,7 @@
       map[sc]?`<img class="emoji-inline" src="${enc(map[sc])}" alt="${enc(m)}" title="${enc(m)}" loading="lazy">`:m);
   }
   // ---------- instance custom emoji (NIP-30) ----------
-  // The operator's emoji packs (Admin → Site → Custom Emoji, served by /client/emojis). Loaded ONCE,
+  // The operator's emoji packs (Admin → Emoji, served by /client/emojis). Loaded ONCE,
   // lazily, on the first picker open — a real pack is thousands of entries, so it is never part of
   // startup. Typing/picking a :shortcode: is all the user does; `tagsFor` turns it into the NIP-30
   // ["emoji", code, url] tags that make it render in EVERY client, not just this one.

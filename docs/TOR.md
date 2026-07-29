@@ -4,14 +4,14 @@ Two separate things share the word "Tor" in this app. Don't confuse them:
 
 | | What it is | Where |
 |---|---|---|
-| **Managed Tor service** | An outbound SOCKS5 proxy the *server* uses to fetch things (news, RSS, feeds) through Tor. | Admin → Services, `tor_*` settings |
-| **Onion site** | An inbound v3 hidden service that publishes *this deployment* at a `.onion` address. | Admin → Site Settings → Onion Site |
+| **Managed Tor service** | An outbound SOCKS5 proxy the *server* uses to fetch things (news, RSS, feeds) through Tor. | Admin → Network, `tor_*` settings |
+| **Onion site** | An inbound v3 hidden service that publishes *this deployment* at a `.onion` address. | Admin → Network → Onion Site |
 
 This document is about the second one, and about reaching it from the Android app.
 
 ## Turning the onion on
 
-Admin → Site Settings → **Onion Site** → *Generate .onion site*. One click; it applies live via SIGHUP,
+Admin → Network → **Onion Site** → *Generate .onion site*. One click; it applies live via SIGHUP,
 no restart. The keys live in `<tor_data_dir>/onion_service`, so the address survives restarts and
 survives being disabled and re-enabled.
 

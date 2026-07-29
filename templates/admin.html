@@ -17,18 +17,51 @@
         <h1>Admin Panel</h1>
     </header>
 
-    <!-- Tab Navigation -->
-    <div class="admin-tabs">
-        <button class="tab-btn active" data-tab="ai">LLM</button>
-        <button class="tab-btn" data-tab="image">Image</button>
-        <button class="tab-btn" data-tab="music">Music</button>
-        <button class="tab-btn" data-tab="video">Video</button>
-        <button class="tab-btn" data-tab="services">Services</button>
-        <button class="tab-btn" data-tab="bots">Bots</button>
-        <button class="tab-btn" data-tab="relay">Relay</button>
-        <button class="tab-btn" data-tab="blossom">Blossom</button>
-        <button class="tab-btn" data-tab="site">Site</button>
-    </div>
+    <!-- Tab Navigation — grouped, because one flat row of ~17 tabs was unreadable. The groups are
+         presentation only: admin.js still switches on data-tab, so a tab can be moved between
+         groups freely. On a phone each group is its own scrollable row (see admin-tabs.css). -->
+    <!-- Phones only (hidden by CSS on desktop): 18 tabs in five labelled groups is half a phone
+         screen of nav before any setting, so on mobile the bar collapses behind the current tab. -->
+    <button type="button" class="tabs-toggle" id="tabsToggle" aria-expanded="false" aria-controls="adminTabs">
+        <span id="tabsToggleLabel">AI › LLM</span>
+        <span class="tabs-toggle-caret" aria-hidden="true">▾</span>
+    </button>
+
+    <nav class="admin-tabs" id="adminTabs" aria-label="Admin sections">
+        <div class="tab-group">
+            <span class="tab-group-label">AI</span>
+            <button class="tab-btn active" data-tab="ai">LLM</button>
+            <button class="tab-btn" data-tab="image">Image</button>
+            <button class="tab-btn" data-tab="music">Music</button>
+            <button class="tab-btn" data-tab="video">Video</button>
+            <button class="tab-btn" data-tab="nodes">Nodes</button>
+        </div>
+        <div class="tab-group">
+            <span class="tab-group-label">Nostr</span>
+            <button class="tab-btn" data-tab="relay">Relay</button>
+            <button class="tab-btn" data-tab="blossom">Blossom</button>
+            <button class="tab-btn" data-tab="git">Git</button>
+        </div>
+        <div class="tab-group">
+            <span class="tab-group-label">Messaging</span>
+            <button class="tab-btn" data-tab="bots">Bots</button>
+            <button class="tab-btn" data-tab="telegram">Telegram</button>
+            <button class="tab-btn" data-tab="social">Social</button>
+            <button class="tab-btn" data-tab="email">Email</button>
+        </div>
+        <div class="tab-group">
+            <span class="tab-group-label">Media</span>
+            <button class="tab-btn" data-tab="live">Live</button>
+            <button class="tab-btn" data-tab="tools">Tools</button>
+            <button class="tab-btn" data-tab="emoji">Emoji</button>
+        </div>
+        <div class="tab-group">
+            <span class="tab-group-label">System</span>
+            <button class="tab-btn" data-tab="storage">Storage</button>
+            <button class="tab-btn" data-tab="network">Network</button>
+            <button class="tab-btn" data-tab="site">Site</button>
+        </div>
+    </nav>
 
     <div class="admin-content">
         <form id="settingsForm" class="settings-form" novalidate>
@@ -36,10 +69,19 @@
             {% include 'admin/tabs/image_generation.html' %}
             {% include 'admin/tabs/music_generation.html' %}
             {% include 'admin/tabs/video_generation.html' %}
-            {% include 'admin/tabs/services.html' %}
-            {% include 'admin/tabs/bots.html' %}
+            {% include 'admin/tabs/nodes.html' %}
             {% include 'admin/tabs/nostr_relay.html' %}
             {% include 'admin/tabs/blossom.html' %}
+            {% include 'admin/tabs/git_host.html' %}
+            {% include 'admin/tabs/bots.html' %}
+            {% include 'admin/tabs/telegram.html' %}
+            {% include 'admin/tabs/social.html' %}
+            {% include 'admin/tabs/email.html' %}
+            {% include 'admin/tabs/live.html' %}
+            {% include 'admin/tabs/tools.html' %}
+            {% include 'admin/tabs/emoji.html' %}
+            {% include 'admin/tabs/storage.html' %}
+            {% include 'admin/tabs/network.html' %}
             {% include 'admin/tabs/site_settings.html' %}
 
             <button type="submit" class="btn-primary save-btn">Save Settings</button>

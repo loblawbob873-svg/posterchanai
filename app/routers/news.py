@@ -291,7 +291,7 @@ def get_user_news_sources(user: User, db: Session) -> list:
     account without a list of its own (104 of 105 here) read the ADMIN'S personal feed and couldn't
     tell it apart from an instance default. A new user now starts empty and adds their own RSS/site
     URLs (News ＋, or Settings → News sources); the global setting stays as the default seed shown in
-    Admin → Site Settings and for non-user contexts like the bots."""
+    Admin → Tools → News Sources and for non-user contexts like the bots."""
     if user and user.news_sources and user.news_sources.strip():
         return parse_news_sources(user.news_sources)
     return []

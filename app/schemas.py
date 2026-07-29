@@ -93,11 +93,11 @@ class SettingsResponse(BaseModel):
     # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.
     client_default_theme: str = "cyberpunk"
     # Custom branding: URL of an image to replace the built-in PosterChan logo in the web client's
-    # favicon, login splash and header (Admin → Site Settings). Blank → the default logo. Stored in
+    # favicon, login splash and header (Admin → Site). Blank → the default logo. Stored in
     # the relay like every other setting.
     site_logo_url: str = ""
     # Instance custom emoji (Pleroma/Akkoma-style packs): the directory holding them, managed from
-    # Admin → Site Settings → Custom Emoji and offered in the web client's emoji picker. Relative
+    # Admin → Emoji and offered in the web client's emoji picker. Relative
     # paths resolve against the install root; blank switches the feature off. The FILES are per-node
     # operator content (gitignored) — only this path is a setting.
     custom_emoji_dir: str = "assets/emoji"
@@ -233,6 +233,10 @@ class SettingsResponse(BaseModel):
     llm_use_mlock: str = "true"  # Lock model in RAM
     llm_idle_timeout: str = "0"  # Seconds before unloading LLM model (0=disabled)
     llm_token_timeout: str = "600"  # Max seconds between tokens during streaming
+    # Flash attention (llama_service reads it; seeded in database.py default_settings). It has an
+    # Admin → LLM checkbox, but was missing here — so GET /settings dropped it and the box loaded
+    # unchecked no matter what was stored, then wrote "false" back on the next Save.
+    llm_flash_attn: str = "false"  # enable for Qwen3/3.5 on CUDA builds; OFF on Arc/SYCL
     # LLM generation parameters (the `ollama_` prefix is a legacy key namespace — these are the
     # native llama.cpp backend's sampling/runtime settings, NOT an Ollama connection).
     ollama_model: str = "native"  # display/label for the loaded model
@@ -471,6 +475,15 @@ class SettingsResponse(BaseModel):
     telegram_bot_token: str = ""  # Bot token from @BotFather
     telegram_webhook_url: str = ""  # Webhook URL for receiving updates
     telegram_enabled: str = "false"  # Enable Telegram bot
+    # Local Bot API server (lifts the cloud API's 20 MB download cap to ~2 GB). These are READ at
+    # runtime by telegram_service/_api_base, but were missing from this schema — so GET /settings
+    # never returned them and the admin form loaded them BLANK on every visit. For the checkbox that
+    # was destructive, not just cosmetic: an unhydrated box posts "false" on the next Save and turns
+    # the local server back off. Covered by tests/test_admin_settings_coverage.py.
+    telegram_api_base: str = ""      # e.g. http://localhost:8081 (blank = cloud Bot API)
+    telegram_api_id: str = ""        # from my.telegram.org
+    telegram_api_hash: str = ""      # from my.telegram.org
+    telegram_local_api: str = "false"  # use the local Bot API server
     # Bot framework (merged from ~/posterchan; managed in Admin → Bots). These are the
     # GLOBAL settings shared by every managed bot; per-bot config lives on the Bot model.
     # bot_manager_service maps these into the env vars botframework/config.py expects when it

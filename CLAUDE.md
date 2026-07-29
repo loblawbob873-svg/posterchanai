@@ -162,6 +162,16 @@ arg (`clip <start> <end>`).
   `app/schemas.py:SettingsResponse`; `GET/PUT /api/admin/settings`. Admin UI is plain HTML in
   `templates/admin/tabs/*.html`; `static/js/admin.js` loads/saves **generically** by element
   `id`/`name` (no per-field JS). Add a field = add to `SettingsResponse` + an input in a tab.
+  **One file per tab, grouped in the nav** (`templates/admin.html`: AI / Nostr / Messaging / Media /
+  System). A new tab = a `<div class="tab-content" id="tab-NAME">` file + an `{% include %}` + a
+  `data-tab="NAME"` button; anything lazy-loaded hangs off that button's click (Bots, Emoji, Storage
+  do). admin.js remembers the open tab in `localStorage` and honours `#tab-NAME`.
+  **A field missing from `SettingsResponse` never hydrates.** GET returns the typed model, so an
+  undeclared key is dropped from the response, the input loads blank on every visit, and a CHECKBOX
+  then posts `false` over the stored value on the next Save — silently turning the feature off. That
+  hit `telegram_local_api`, `telegram_api_base/_id/_hash` and `llm_flash_attn` (read at runtime,
+  never declared). `tests/test_admin_settings_coverage.py` fails if it happens again, and also
+  asserts `id` == `name` (hydration reads the id, Save reads the name).
   **REMOVING a setting takes three deletes, not one.** Dropping it from `SettingsResponse` only stops
   the code reading it; the VALUE lives on in two places that will resurrect each other:
   (1) the operator-signed relay doc `pcai:setting:<key>` (per node — each node has its own relay and
@@ -204,7 +214,7 @@ Bot API server via the `telegram_api_base` setting (lifts the 20 MB file cap). B
 callbacks that fire after a request must **not** reuse the request's DB session (it's closed) —
 open a fresh `SessionLocal` and capture any needed config up front.
 
-**Uptime monitoring** (`app/services/uptime_service.py`, Admin → Services → "Uptime Monitoring",
+**Uptime monitoring** (`app/services/uptime_service.py`, Admin → Nodes → "Uptime Monitoring",
 Discover → Server Stats → **Uptime** tab): HTTP monitors with heartbeats, response time and 24h/30d
 uptime, alerting on up→down / down→up over Telegram and NIP-17 DMs. All state is ONE operator-signed
 kind-30078 doc (`pcai:kv:uptime`) — no SQL table. The checks run in the WORKER (sole writer); the app
@@ -308,7 +318,7 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   Migration off the old SQLite DB is `scripts/export_budget_db.py` → paste into Budget → Import
   (it can't be a server script — only the browser holds the key).
 - **Live-stream bitrate clamp** (`stream_service._write_clamp_script` + the `stream_clamp_*` settings,
-  Admin → Services → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what
+  Admin → Live → OBS Streaming): MediaMTX is a pure remux, so without this whatever OBS sends is what
   **every viewer downloads** — one 1080p60/6 Mbps streamer costs 6 Mbps of upload *per viewer*. The clamp
   re-encodes each live stream to a ceiling (default 720p30 @ 1500k) and viewers are served ONLY that.
   **ON by default.** MediaMTX itself supervises the transcode via `runOnReady` (start/stop/restart for
@@ -346,7 +356,7 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   core) for its whole duration in production. `clamp.sh:hw_ok` probes with the REAL argument set (15ms).
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
-  (start → job id → result posted back to the originating channel). Config in Admin → Services
+  (start → job id → result posted back to the originating channel). Config in Admin → Nodes
   (`node_exec_*`). Output: tail inline, full output (≤1 MB) as a `.txt`. **Intentionally
   unrestricted RCE** — gated by enable flag + user allowlist + admins, fully logged. The
   **system-health report** (`logs_scheduler`, see Schedulers) reuses `run_agent` over these same

@@ -115,3 +115,86 @@ legend{ color: var(--accent); font-weight:700; padding:0 6px; }
 
 /* bot cards → glass */
 .bot-card{ background: rgba(18,18,28,.66); border:1px solid var(--border-color); border-radius:13px; backdrop-filter: blur(8px); }
+
+/* ── Grouped tab nav ───────────────────────────────────────────────────────────────────────────
+   The settings were split from 9 catch-all tabs into ~18 focused ones, so the bar is grouped
+   (AI / Nostr / Messaging / Media / System). Groups are presentation only — admin.js still
+   switches on data-tab. */
+.admin-tabs{ align-items:center; gap:10px 14px; }
+.tab-group{
+  display:flex; align-items:center; flex-wrap:wrap; gap:6px;
+  padding:5px 9px 5px 7px; border:1px solid var(--border-color); border-radius:15px;
+  background: rgba(18,18,28,.5);
+}
+.tab-group-label{
+  font-size:10.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
+  color: var(--text-secondary); padding:0 4px; user-select:none;
+}
+.admin-tabs .tab-btn{ padding:7px 13px; }
+.tabs-toggle{ display:none; }   /* phones only — see the media block at the bottom */
+
+/* Boxed explainer inside a fieldset (was inline #1a1a2e styling that ignored the theme). */
+.info-note{
+  padding:12px 14px; background: rgba(10,10,16,.55); border:1px solid var(--border-color);
+  border-radius:10px;
+}
+.info-note p{ margin:8px 0 0; color: var(--text-secondary); font-size:.9em; line-height:1.5; }
+.info-note-title{ color: var(--accent); }
+.onion-addr-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+/* ── Phones / narrow windows ───────────────────────────────────────────────────────────────────
+   This file loads last, so the mobile overrides live here (a media block in admin-tabs.css would
+   lose to the desktop rules above). Nothing scrolls sideways: every group WRAPS instead of
+   overflowing, and inputs are 16px so iOS Safari doesn't zoom the page on focus. */
+@media (max-width: 820px){
+  .admin-container{ padding: 14px 12px 90px; }
+  .admin-header{ margin-bottom:16px; padding-bottom:12px; }
+  .admin-header h1{ font-size:22px; letter-spacing:1px; }
+  .admin-content{ gap:16px; }
+
+  /* The tab bar collapses behind a single "Group › Tab" button, so a phone opens straight onto the
+     settings instead of five rows of nav. Picking a tab closes it again (admin.js). */
+  .tabs-toggle{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    width:100%; box-sizing:border-box; margin:10px 0 0; padding:11px 14px; min-height:46px;
+    background: rgba(18,18,28,.7); border:1px solid var(--border-color); border-radius:12px;
+    color: var(--text-primary); font-size:15px; font-weight:700; cursor:pointer;
+  }
+  /* CSS triangle, not a ▾ glyph — the arrow characters render as a box/bar in some Android fonts. */
+  .tabs-toggle-caret{
+    font-size:0; line-height:0; flex:none; transition: transform .15s;
+    border-left:6px solid transparent; border-right:6px solid transparent;
+    border-top:7px solid var(--accent);
+  }
+  .tabs-toggle[aria-expanded="true"] .tabs-toggle-caret{ transform: rotate(180deg); }
+
+  .admin-tabs{ display:none; gap:8px; margin:8px 0 14px; }
+  .admin-tabs.open{ display:flex; }
+  .tab-group{ width:100%; box-sizing:border-box; padding:6px 8px; }
+  .tab-group-label{ flex:0 0 100%; padding:0 2px 2px; }   /* label on its own line, pills below */
+  .admin-page .tab-btn{ font-size:13.5px; padding:8px 12px; min-height:38px; }
+
+  .tab-content fieldset, .settings-form fieldset, fieldset{ padding:13px 12px; margin-bottom:12px; }
+  legend{ font-size:15px; }
+
+  /* Side-by-side fields stack instead of squeezing to unusable widths. */
+  .form-row{ flex-direction:column; align-items:stretch; gap:10px; }
+  .form-row .form-group{ width:100%; min-width:0; }
+  .admin-page input[type=text], .admin-page input[type=email], .admin-page input[type=url],
+  .admin-page input[type=password], .admin-page input[type=number], .admin-page input[type=time],
+  .admin-page select, .admin-page textarea{
+    width:100%; max-width:100%; box-sizing:border-box; font-size:16px;
+  }
+  /* …including the few fields that pin their own width inline (stream clamp, TURN ports). */
+  .tab-content input[style*="max-width"]{ max-width:100% !important; }
+  .admin-page .btn-primary, .admin-page .btn-secondary, .admin-page .save-btn{ min-height:44px; }
+
+  /* Save is the whole point of the page — keep it reachable without scrolling to the bottom. */
+  .settings-form .save-btn{
+    position:sticky; bottom:12px; z-index:5; width:100%; align-self:stretch;
+  }
+
+  .external-storage-item{ flex-direction:column; align-items:stretch; gap:10px; }
+  .external-storage-actions{ justify-content:flex-end; }
+  .modal-content{ width:96vw; max-width:96vw; max-height:88vh; overflow:auto; }
+}

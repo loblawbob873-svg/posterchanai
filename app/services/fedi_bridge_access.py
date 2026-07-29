@@ -145,7 +145,7 @@ async def enable(db, user, by_admin: bool = False) -> dict:
             return {"ok": False, "error": "Bridge access is granted by the admin on this instance."}
     inst, admin = _home_instance(), _admin_token()
     if not inst or not admin:
-        return {"ok": False, "error": "Bridge home instance / admin token not configured (Admin → Services)."}
+        return {"ok": False, "error": "Bridge home instance / admin token not configured (Admin → Social)."}
     pk = nostr_service.to_pubkey_hex(user.nostr_npub) if getattr(user, "nostr_npub", None) else None
     if not pk:
         return {"ok": False, "error": "Your account has no linked Nostr key."}

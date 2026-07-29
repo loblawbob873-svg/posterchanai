@@ -1,24 +1,70 @@
 // Admin Panel JavaScript
 // Extracted from admin.html for modularity
 
-// Tab switching
+// Tab switching. The settings live in ~18 tabs now (grouped in the nav), so the panel also
+// REMEMBERS the open tab: a save-and-come-back lands where you left off instead of on LLM, and
+// #tab-name in the URL deep-links to one (that's what the moved-section pointers link to).
+function showAdminTab(name, opts) {
+    const pane = document.getElementById('tab-' + name);
+    const btn = document.querySelector('.tab-btn[data-tab="' + name + '"]');
+    if (!pane || !btn) return false;
+
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    pane.classList.add('active');
+
+    // The global "Save Settings" button belongs to the settings tabs only — a tab that manages its
+    // own records instead of settings hides it. (The Users tab, the one such tab, is retired.)
+    const saveBtn = document.querySelector('#settingsForm .save-btn');
+    if (saveBtn) saveBtn.style.display = (name === 'users') ? 'none' : '';
+
+    try { localStorage.setItem('pcaiAdminTab', name); } catch (_) { /* private mode */ }
+
+    // Mobile: the nav is collapsed behind a "Group › Tab" button — keep it labelled with the tab
+    // you're on, and close it again once you've picked one (desktop has no toggle, so this no-ops).
+    const label = document.getElementById('tabsToggleLabel');
+    if (label) {
+        const group = btn.closest('.tab-group')?.querySelector('.tab-group-label')?.textContent.trim();
+        label.textContent = (group ? group + ' › ' : '') + btn.textContent.trim();
+    }
+    if (!(opts && opts.keepNavOpen)) setTabsNavOpen(false);
+    return true;
+}
+
+// Collapsed-nav toggle (mobile). `.admin-tabs.open` is what the media query keys on.
+function setTabsNavOpen(open) {
+    const nav = document.getElementById('adminTabs');
+    const toggle = document.getElementById('tabsToggle');
+    if (!nav || !toggle) return;
+    nav.classList.toggle('open', !!open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+document.getElementById('tabsToggle')?.addEventListener('click', () => {
+    const nav = document.getElementById('adminTabs');
+    setTabsNavOpen(!(nav && nav.classList.contains('open')));
+});
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        // Update button states
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        // Update content
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-
-        // The global "Save Settings" button belongs to the settings tabs only. The Users tab
-        // lives outside #settingsForm and manages users via its own controls, so hide it there.
-        const saveBtn = document.querySelector('#settingsForm .save-btn');
-        if (saveBtn) saveBtn.style.display = (btn.dataset.tab === 'users') ? 'none' : '';
-
+        showAdminTab(btn.dataset.tab);
         if (btn.dataset.tab === 'relay') loadRelayIdentity();
     });
+});
+
+// Restore the last tab (or a #hash deep-link) once the DOM is up. Every per-tab lazy loader is
+// wired to its button's click event, so replay a click rather than calling showAdminTab directly —
+// otherwise a restored Emoji/Bots/Storage tab would render empty. The setTimeout matters: those
+// loaders ATTACH their click listener inside their own DOMContentLoaded handler, which runs after
+// this one (admin.js is the first script), so a click dispatched inline here would hit nothing.
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        let want = (location.hash || '').replace(/^#tab-/, '');
+        if (!want) { try { want = localStorage.getItem('pcaiAdminTab') || ''; } catch (_) { } }
+        if (!want || want === 'ai') return;                   // 'ai' is already the default
+        const btn = document.querySelector('.tab-btn[data-tab="' + want + '"]');
+        if (btn) btn.click();
+    }, 0);
 });
 
 // Relay operator identity — fetched lazily when the Relay tab opens; copy buttons read the cache.
@@ -156,8 +202,8 @@ async function loadSettings() {
 
 // WebDAV sync client code removed
 
-// Reset news sources to defaults
-document.getElementById('resetNewsSourcesBtn').addEventListener('click', () => {
+// Reset news sources to defaults (Tools tab)
+document.getElementById('resetNewsSourcesBtn')?.addEventListener('click', () => {
     document.getElementById('news_sources').value = DEFAULT_NEWS_SOURCES;
 });
 
@@ -974,14 +1020,14 @@ document.getElementById('saveExternalStorageBtn')?.addEventListener('click', asy
     }
 });
 
-// Load external storage when services tab is opened
-document.querySelector('[data-tab="services"]')?.addEventListener('click', async () => {
+// Load external storage when the Storage tab is opened (it lived on Services before the split)
+document.querySelector('[data-tab="storage"]')?.addEventListener('click', async () => {
     await loadUsersForExternalStorage();
     setTimeout(loadExternalStorage, 100);
 });
 
-// Load on page load if services tab is active
-if (document.getElementById('tab-services')?.classList.contains('active')) {
+// Load on page load if the Storage tab is the active one
+if (document.getElementById('tab-storage')?.classList.contains('active')) {
     loadUsersForExternalStorage().then(() => loadExternalStorage());
 }
 loadUsers();
@@ -1040,7 +1086,16 @@ setTimeout(() => {
       if(!n.nodeValue||!n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
       const pe=n.parentElement; if(!pe) return NodeFilter.FILTER_REJECT;
       if(pe.closest('#admin-find,script,style,noscript,option')) return NodeFilter.FILTER_REJECT;
-      if(pe.offsetParent===null) return NodeFilter.FILTER_REJECT;   // hidden (other tab / display:none)
+      // Search INACTIVE tabs too — with the settings spread over ~18 tabs, "which tab is
+      // stream_clamp_bitrate on?" is the main thing you'd Ctrl+F for, and paint() switches to the
+      // tab holding the current hit. Everything else that's hidden (closed modals, collapsed rows)
+      // is still skipped: a hit you can't see and can't reveal is just a dead stop in the list.
+      const pane=pe.closest('.tab-content');
+      if(pane && !pane.classList.contains('active')){
+        const m=pe.closest('.modal');
+        return (m && getComputedStyle(m).display==='none') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      }
+      if(pe.offsetParent===null) return NodeFilter.FILTER_REJECT;   // hidden (display:none)
       return NodeFilter.FILTER_ACCEPT; }});
     const nodes=[]; let n; while(n=w.nextNode()) nodes.push(n);
     for(const node of nodes){
@@ -1057,7 +1112,18 @@ setTimeout(() => {
     }
     cur=hits.length?0:-1; paint(); update();
   }
-  function paint(){ hits.forEach((h,i)=>h.classList.toggle('cur',i===cur)); if(cur>=0&&hits[cur]) hits[cur].scrollIntoView({block:'center',behavior:'smooth'}); }
+  function paint(){
+    hits.forEach((h,i)=>h.classList.toggle('cur',i===cur));
+    if(cur<0||!hits[cur]) return;
+    // The hit may be on a tab that isn't open — switch to it, then scroll (scrollIntoView on a
+    // display:none pane does nothing, which used to look like "Find stopped working").
+    const pane=hits[cur].closest('.tab-content');
+    if(pane && !pane.classList.contains('active')){
+      const btn=document.querySelector('.tab-btn[data-tab="'+pane.id.replace(/^tab-/,'')+'"]');
+      if(btn) btn.click();
+    }
+    hits[cur].scrollIntoView({block:'center',behavior:'smooth'});
+  }
   function step(d){ if(!hits.length) return; cur=(cur+d+hits.length)%hits.length; paint(); update(); }
   function update(){ countEl.textContent=(hits.length?cur+1:0)+'/'+hits.length; }
   function open(){ build(); bar.classList.add('show'); input.focus(); input.select(); if(input.value) run(input.value); }

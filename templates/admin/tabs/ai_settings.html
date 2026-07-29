@@ -190,4 +190,50 @@
             <input type="text" id="ollama_stop" name="ollama_stop" placeholder="</s>, [INST]">
         </div>
     </fieldset>
+
+    <!-- Moved here from Site Settings: watchdogs for the LLM this tab configures. -->
+    <fieldset>
+        <legend>LLM Health Check</legend>
+        <div class="form-group">
+            <label for="llm_health_check_enabled">
+                <input type="checkbox" id="llm_health_check_enabled" name="llm_health_check_enabled"> Enable Health Check
+            </label>
+            <small>Periodically ping the loaded native LLM and reload it in-process if unresponsive.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="llm_health_check_interval">Ping Interval (seconds)</label>
+                <input type="number" id="llm_health_check_interval" name="llm_health_check_interval" value="90" min="30">
+            </div>
+            <div class="form-group">
+                <label for="llm_reload_after_failures">Reload After Failures</label>
+                <input type="number" id="llm_reload_after_failures" name="llm_reload_after_failures" value="5" min="1">
+            </div>
+        </div>
+        <div class="form-group" style="margin-top: 15px;">
+            <label for="gpu_memory_check_enabled">
+                <input type="checkbox" id="gpu_memory_check_enabled" name="gpu_memory_check_enabled"> Enable GPU Memory Monitoring
+            </label>
+            <small>Reload model when GPU VRAM usage exceeds threshold</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="gpu_memory_threshold">VRAM Threshold (%)</label>
+                <input type="number" id="gpu_memory_threshold" name="gpu_memory_threshold" value="99" min="50" max="100">
+            </div>
+            <div class="form-group">
+                <label for="gpu_type">GPU Type</label>
+                <select id="gpu_type" name="gpu_type">
+                    <option value="nvidia">NVIDIA</option>
+                    <option value="intel">Intel Arc</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+            <label for="nvidia_reset_before_reload">
+                <input type="checkbox" id="nvidia_reset_before_reload" name="nvidia_reset_before_reload"> Reset NVIDIA modules before model reload
+            </label>
+            <small>When recovery or VRAM reload is triggered, run <code>scripts/nvidia_reset.sh</code> (rmmod/modprobe) first. Requires passwordless sudo for the script. Only for NVIDIA GPU.</small>
+        </div>
+    </fieldset>
 </div>

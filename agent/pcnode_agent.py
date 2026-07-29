@@ -4,7 +4,7 @@ PosterChan node agent — a lightweight standalone worker.
 
 Runs on router.lan or any machine that CAN'T run the full PosterChanAI app. It:
   * generates a Nostr keypair on first run and prints its npub (paste it into
-    Admin → Services → Worker nodes AND the trusted list on the controller),
+    Admin → Nodes → Worker nodes AND the trusted list on the controller),
   * connects to a relay and listens for encrypted NIP-90 command events (kind 5300)
     p-tagged to its npub, FROM A TRUSTED CONTROLLER NPUB ONLY (Nostr signature = auth),
   * runs each command LOCALLY, ONE AT A TIME (queued — a burst can't overload the box),

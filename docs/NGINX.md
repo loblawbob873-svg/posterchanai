@@ -42,7 +42,7 @@ Then:
 
 ## Git-over-Nostr (GRASP) smart-HTTP
 
-If you enable the built-in git host (**Admin → Services → `git_server_enabled`**; see
+If you enable the built-in git host (**Admin → Git → `git_server_enabled`**; see
 [GIT_OVER_NOSTR.md](GIT_OVER_NOSTR.md)), it runs as its **own subprocess on `127.0.0.1:3053`** so all
 pack work stays off the app's event loop. The template's `location ^~ /git/` block exposes it as
 `https://example.com/git/<npub>/<id>.git`, with `proxy_buffering off` (clones stream) and
@@ -50,7 +50,7 @@ pack work stays off the app's event loop. The template's `location ^~ /git/` blo
 rewrite is needed.
 
 **Multi-node (host on one box, reach it from another).** `git_server_bind`, `git_server_port`, and
-`git_server_proxy_url` are **per-node** settings (each node's own Admin → Services), exactly like the
+`git_server_proxy_url` are **per-node** settings (each node's own Admin → Git), exactly like the
 relay's bind/port. Two roles:
 
 - **Hosting node** (`git_server_proxy_url` empty): holds the repos + hooks + auth. Set

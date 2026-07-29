@@ -1,0 +1,74 @@
+<!-- Tools tab — what the chat/Telegram COMMANDS talk to: search, torrent site, news, screenshot,
+     TTS and the effect end-card. (SearXNG/Torrent/TTS/Screenshot came from Services;
+     News Sources + Effects from Site.) -->
+<div class="tab-content" id="tab-tools">
+    <fieldset>
+        <legend>SearXNG (Search)</legend>
+        <div class="form-group">
+            <label for="searxng_url">URL</label>
+            <input type="url" id="searxng_url" name="searxng_url" placeholder="https://search.example.com">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Torrent Site</legend>
+        <div class="form-group">
+            <label for="torrent_site_url">TorrentGalaxy URL</label>
+            <input type="url" id="torrent_site_url" name="torrent_site_url" placeholder="https://torrentgalaxy.one">
+            <small>Base URL for TorrentGalaxy or compatible site (default: torrentgalaxy.one)</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>News Sources</legend>
+        <div class="form-group">
+            <label for="news_sources">News Websites</label>
+            <textarea id="news_sources" name="news_sources" rows="6" placeholder="drudgereport.com|Drudge Report
+npr.org/sections/news|NPR
+nypost.com|NY Post
+foxnews.com|Fox News
+newsweek.com|Newsweek"></textarea>
+            <small>One per line: <code>domain|Display Name</code> (e.g., <code>npr.org/sections/news|NPR</code>). Leave empty to use defaults.</small>
+            <button type="button" class="btn-secondary" id="resetNewsSourcesBtn" style="margin-top: 8px;">Reset to Defaults</button>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Screenshot</legend>
+        <div class="form-group">
+            <label for="screenshot_allowed_hosts">Allowed Hosts (SSRF bypass)</label>
+            <input type="text" id="screenshot_allowed_hosts" name="screenshot_allowed_hosts" placeholder="poster.place, example.com">
+            <small>Hosts the <code>screenshot</code> command may capture even if they resolve to a private/LAN IP — for your own domains that use split-horizon DNS (e.g. <code>poster.place</code> → a LAN address). Comma/space/newline-separated; a parent domain also covers its subdomains. Everything else is still blocked by the SSRF guard.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Text-to-Speech</legend>
+        <div class="form-group">
+            <label for="tts_voice">Default Voice</label>
+            <input type="text" id="tts_voice" name="tts_voice" value="zh-CN-XiaoxiaoNeural">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tts_rate">Rate</label>
+                <input type="text" id="tts_rate" name="tts_rate" value="+5%">
+            </div>
+            <div class="form-group">
+                <label for="tts_pitch">Pitch</label>
+                <input type="text" id="tts_pitch" name="tts_pitch" value="+10Hz">
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Effects</legend>
+        <div class="form-group">
+            <label for="effect_outro_enabled">Append "made with PosterChanAI" end-card to effect videos</label>
+            <select id="effect_outro_enabled" name="effect_outro_enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+            </select>
+            <small>TikTok-style outro: avatar + @username (web UI / Telegram) or a static card (bot-posted effects).</small>
+        </div>
+    </fieldset>
+</div>

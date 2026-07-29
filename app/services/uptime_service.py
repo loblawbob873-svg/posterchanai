@@ -1,6 +1,6 @@
 """Uptime monitoring — the Uptime-Kuma-shaped half of Discover → Server Stats.
 
-An admin lists endpoints in Admin → Services ("Uptime Monitoring"); this poller checks each one on
+An admin lists endpoints in Admin → Nodes ("Uptime Monitoring"); this poller checks each one on
 its own interval, keeps a heartbeat history, and alerts on a state CHANGE (up→down, down→up) over
 Telegram and/or a Nostr DM.
 

@@ -11,7 +11,7 @@ Copy this `agent/` folder to the machine, then:
 
 It creates a venv, installs deps, generates a keypair, **prints this worker's npub**, and installs +
 starts the `pcnode-agent` systemd service. Paste the printed npub into the controller's
-Admin → Services → *Worker nodes* (name → npub) and its trusted list.
+Admin → Nodes → *Worker nodes* (name → npub) and its trusted list.
 
 ## Manual run
     pip install -r requirements.txt

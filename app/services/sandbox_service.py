@@ -48,12 +48,12 @@ def _s(key: str, default: str = "") -> str:
 
 
 def enabled() -> bool:
-    """Master toggle (Admin → Services). Off by default — the sandbox is not offered until enabled."""
+    """Master toggle (Admin → Nodes). Off by default — the sandbox is not offered until enabled."""
     return _s("node_exec_sandbox_enabled", "false").strip().lower() == "true"
 
 
 def agent_node_name() -> str:
-    """The single node ALL sandbox/agentic runs are pinned to (Admin → Services → 'Agent node'). Empty =
+    """The single node ALL sandbox/agentic runs are pinned to (Admin → Nodes → 'Agent node'). Empty =
     run on THIS host. When it names a full peer node, the whole run (container + agent loop) is dispatched
     there over the existing Nostr transport, and that worker's own 1-at-a-time agent lock QUEUES concurrent
     runs — so we reuse the proven transport + queue instead of a bespoke placement/LB scheme. This replaced

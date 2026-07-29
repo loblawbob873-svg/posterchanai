@@ -27,7 +27,7 @@ deploys *from* it.
 Edited: `app/schemas.py` (`git_server_*` settings), `app/database.py` (default `git_server_enabled=false`),
 `app/main.py` (start/stop under the port-3051 guard + router registration),
 `app/services/nostr_relay/thread.py` (ingest kinds + repo-scoped firehose acceptance),
-`templates/admin/tabs/services.html` (Git Host settings card).
+`templates/admin/tabs/git_host.html` (Admin → Git settings card).
 
 ## Push authorization (P1) — fail-closed
 
@@ -248,7 +248,7 @@ http(s):// scheme is required. Mount matches the recommended nginx `location /gi
 | `nas.lan` | true | `0.0.0.0` | *(empty)* | hosts the repos on `:3053` |
 | `server1` | — | *(default)* | `http://nas.lan:3053` | proxies `/git/` → nas |
 
-## Settings (default-safe; Admin → Services)
+## Settings (default-safe; Admin → Git)
 
 `git_server_enabled` (**false**), `git_server_port` (3053), `git_server_bind` (127.0.0.1),
 `git_server_public_base` (""), `git_server_allowlist` ("" ⇒ admins only), `git_server_repo_max_mb`
@@ -269,7 +269,7 @@ git-host subprocess in place** (no full restart — see `app/routers/admin.py`);
 writes through to the relay for all nodes.
 
 Each key is (a) a typed field in `schemas.SettingsResponse`, (b) seeded in `database.py`
-`default_settings`, (c) an Admin → Services input with `id`==`name`==key (so `static/js/admin.js`
+`default_settings`, (c) an Admin → Git input with `id`==`name`==key (so `static/js/admin.js`
 hydrates + persists it generically). None are secret (no NIP-44 encryption needed).
 
 ## Deps

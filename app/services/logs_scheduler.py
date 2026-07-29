@@ -8,7 +8,7 @@ report into the admin's "Logs" conversation and (optionally) Telegram.
 
 All command execution, SSH, per-command timeouts, job logging and live streaming are delegated to
 ``node_service`` — this module just orchestrates and formats. The set of nodes is the same
-Agentic Node Management config (Admin → Services); ``logs_nodes`` optionally narrows it.
+Agentic Node Management config (Admin → Nodes); ``logs_nodes`` optionally narrows it.
 """
 import logging
 import re
@@ -406,11 +406,11 @@ async def build_health_report(db, admin: User, notify=None) -> str:
 
     if not node_service.is_enabled(db):
         return (f"## 🩺 System Health Report\n🕒 {timestamp}\n\n"
-                "⚠️ Agentic Node Management is disabled — enable it in **Admin → Services** to run "
+                "⚠️ Agentic Node Management is disabled — enable it in **Admin → Nodes** to run "
                 "the agentic health report.")
     if not nodes:
         return (f"## 🩺 System Health Report\n🕒 {timestamp}\n\n"
-                "⚠️ No nodes selected. Configure nodes in **Admin → Services → Remote Node "
+                "⚠️ No nodes selected. Configure nodes in **Admin → Nodes → Agentic Node "
                 "Management**.")
 
     chat_service = ChatService(db, admin)

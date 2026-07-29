@@ -531,7 +531,7 @@ class _TorrentsMixin:
                 return {"type": "text", "content": f"Search timed out. The torrent site may be slow or unavailable."}
             except ValueError as e:
                 msg = str(e)
-                suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+                suffix = "\n\nConfigure proxy in Admin → Network → HTTP Proxy (outbound)" if "requires http proxy" in msg.lower() else ""
                 return {"type": "text", "content": f"{msg}{suffix}"}
             except Exception as e:
                 logger.error(f"Torrent search error: {e}")
@@ -550,7 +550,7 @@ class _TorrentsMixin:
                 return {"type": "text", "content": formatted}
             except ValueError as e:
                 msg = str(e)
-                suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+                suffix = "\n\nConfigure proxy in Admin → Network → HTTP Proxy (outbound)" if "requires http proxy" in msg.lower() else ""
                 return {"type": "text", "content": f"{msg}{suffix}"}
             except Exception as e:
                 logger.error(f"Torrents command error: {e}")
@@ -584,7 +584,7 @@ class _TorrentsMixin:
 
         except ValueError as e:
             msg = str(e)
-            suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+            suffix = "\n\nConfigure proxy in Admin → Network → HTTP Proxy (outbound)" if "requires http proxy" in msg.lower() else ""
             return {"type": "text", "content": f"{msg}{suffix}"}
         except Exception as e:
             logger.error(f"Torrents command error: {e}")
@@ -676,7 +676,7 @@ class _TorrentsMixin:
 
         except ValueError as e:
             msg = str(e)
-            suffix = "\n\nConfigure proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host" if "requires http proxy" in msg.lower() else ""
+            suffix = "\n\nConfigure proxy in Admin → Network → HTTP Proxy (outbound)" if "requires http proxy" in msg.lower() else ""
             return {"type": "text", "content": f"{msg}{suffix}"}
         except Exception as e:
             logger.error(f"Nyaa command error: {e}")

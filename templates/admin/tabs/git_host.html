@@ -1,0 +1,65 @@
+<!-- Git tab — the built-in GRASP git-over-nostr host (was Services → Git Host) -->
+<div class="tab-content" id="tab-git">
+    <fieldset>
+        <legend>🌿 Git Host (GRASP git-over-nostr)</legend>
+        <div class="form-group">
+            <label for="git_server_enabled">
+                <input type="checkbox" id="git_server_enabled" name="git_server_enabled"> Enable the built-in git host
+            </label>
+            <small>Self-contained smart-HTTP git server (subprocess) with push authorized by maintainer-signed Nostr kind-30618 — no HTTP passwords. OFF by default; nothing spawns and /api/git 404s until enabled. See docs/GIT_OVER_NOSTR.md.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_port">Localhost port</label>
+            <input type="text" id="git_server_port" name="git_server_port" placeholder="3053">
+            <small>The git-http subprocess binds 127.0.0.1:&lt;port&gt;; reach it publicly via an nginx <code>location /git/ → proxy_pass 127.0.0.1:3053</code>.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_bind">Bind host</label>
+            <input type="text" id="git_server_bind" name="git_server_bind" placeholder="127.0.0.1">
+            <small>Leave 127.0.0.1 (container turnkey may set 0.0.0.0).</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_public_base">Public base URL</label>
+            <input type="text" id="git_server_public_base" name="git_server_public_base" placeholder="https://poster.place/git">
+            <small>Stamped into 30617 <code>clone</code> URLs, e.g. <code>&lt;base&gt;/&lt;npub&gt;/&lt;id&gt;.git</code>.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_allowlist">Provisioning allowlist (npubs)</label>
+            <textarea id="git_server_allowlist" name="git_server_allowlist" rows="2" placeholder="empty = admins only"></textarea>
+            <small>npubs allowed to create repos (one per line/comma). Empty ⇒ admins only.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_repo_max_mb">Per-repo size cap (MB)</label>
+            <input type="text" id="git_server_repo_max_mb" name="git_server_repo_max_mb" placeholder="512">
+            <small>Enforced in the pre-receive hook; a push over cap is rejected.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_total_gb">Global storage cap (GB)</label>
+            <input type="text" id="git_server_total_gb" name="git_server_total_gb" placeholder="20">
+            <small>The daily reaper gc's repos and warns when total exceeds this.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_allow_force">
+                <input type="checkbox" id="git_server_allow_force" name="git_server_allow_force"> Allow maintainer-signed force-push
+            </label>
+            <small>A non-fast-forward is accepted only because a maintainer signed the new state; turn off to require fast-forward.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_nip98_push">
+                <input type="checkbox" id="git_server_nip98_push" name="git_server_nip98_push"> Accept NIP-98-authenticated pushes
+            </label>
+            <small>Convenience/automation path (e.g. sync.sh): a maintainer-signed NIP-98 header authorizes a push; post-receive derives the 30618.</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_default_private">
+                <input type="checkbox" id="git_server_default_private" name="git_server_default_private"> New repos private by default
+            </label>
+            <small>Private repos require a NIP-98 read auth (allowlisted readers/maintainers) to clone and are NOT announced (no public 30617/30618).</small>
+        </div>
+        <div class="form-group">
+            <label for="git_server_proxy_url">Reverse-proxy to hosting node (multi-node)</label>
+            <input type="text" id="git_server_proxy_url" name="git_server_proxy_url" placeholder="empty = run the local host; e.g. http://nas.lan:3053">
+            <small>When SET, this node runs NO local git subprocess — it forwards smart-HTTP git requests to the hosting node (like the Blossom storage proxy). Auth + repos + hooks stay on the hosting node. Empty ⇒ run the local host (per the enable toggle above).</small>
+        </div>
+    </fieldset>
+</div>

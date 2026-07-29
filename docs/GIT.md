@@ -29,14 +29,14 @@ repo depends on a company's server staying up.
 
 ## 2. Turn it on (operator, once)
 
-In **Admin → Services → Git Host**:
+In **Admin → Git**:
 
 1. **Run the git server on this node** → on (`git_server_enabled`).
 2. **Public base URL** (`git_server_public_base`) → `https://your-domain/git` — this is what gets put
    into clone URLs, so set it before creating repos.
 3. Make sure your nginx has a `location /git/` block pointing at the git host (port **3053**). See
    [NGINX.md](NGINX.md).
-4. Restart the app (`sudo systemctl restart posterchanai`), then check **Admin → Services** shows the
+4. Restart the app (`sudo systemctl restart posterchanai`), then check **Admin → Git** shows the
    git host as running.
 
 Nothing spawns and every git route 404s until step 1 — the feature ships dormant on purpose.
@@ -207,7 +207,7 @@ ngit, …) can see your repos and issues without any extra work on your part.
 | `400 Bad request syntax` on a big push | An old node without chunked-upload support. Update it, or set `git config http.postBuffer 524288000`. |
 | Clone URL is empty in the API response | `git_server_public_base` isn't set. |
 | No ✏️ Edit button | You're not a maintainer of that repo, you're viewing a tag rather than a branch, the file is binary, or you're browsing as a guest. |
-| "the git host did not answer" | The subprocess isn't running (Admin → Services) or `git_server_proxy_url` points somewhere unreachable. |
+| "the git host did not answer" | The subprocess isn't running (Admin → Git) or `git_server_proxy_url` points somewhere unreachable. |
 | Files/Commits tabs missing entirely | That repo isn't hosted here — its clone URL has a username instead of an npub, so there's no file API to read. |
 
 Logs: `journalctl -u posterchanai.service | grep git-host`.

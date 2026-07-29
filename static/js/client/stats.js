@@ -274,11 +274,11 @@
       if(!_up) return `<div class="spinner"></div>`;
       if(!_up.enabled){
         return `<p class="muted">Uptime monitoring is off on this server. An admin can turn it on and
-          add endpoints in <b>Admin → Services → Uptime Monitoring</b>.</p>`;
+          add endpoints in <b>Admin → Nodes → Uptime Monitoring</b>.</p>`;
       }
       if(!(_up.monitors||[]).length){
         return `<p class="muted">No endpoints are being monitored yet. An admin can add them in
-          <b>Admin → Services → Uptime Monitoring</b>.</p>`;
+          <b>Admin → Nodes → Uptime Monitoring</b>.</p>`;
       }
       const all = _up.monitors, down = _up.down|0;
       const overall = all.map(m=>m.uptime_24h).filter(v=>v!=null);

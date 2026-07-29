@@ -290,7 +290,7 @@ class _SystemMixin:
         _full = node_service.user_allowed(self.db, self.user)         # admin/allowlisted → host + remote nodes
         _sbx = node_service.sandbox_allowed(self.db, self.user)       # AI user + sandbox on → a Debian container
         if not _full and not _sbx:
-            return {"type": "text", "content": "⛔ Agentic node management is disabled or you are not authorized. An admin can enable it in Admin → Services → Agentic Node Management."}
+            return {"type": "text", "content": "⛔ Agentic node management is disabled or you are not authorized. An admin can enable it in Admin → Nodes → Agentic Node Management."}
 
         parts = arg.strip().split(maxsplit=2)
         sub = parts[0].lower() if parts else ""
@@ -302,7 +302,7 @@ class _SystemMixin:
         # a sandbox-only user sees ONLY their container. Split into the shapes the rest expects: `nodes`
         # (local-or-sandbox, run via the local job machinery) and `_npub_nodes` (name -> worker pubkey).
         _sbx_target = f"sandbox:{self.user.id}" if self.user else "sandbox:anon"
-        # Global agent node (Admin → Services → 'Agent node', empty = this host): pin every sandbox run to
+        # Global agent node (Admin → Nodes → 'Agent node', empty = this host): pin every sandbox run to
         # ONE node so all agentic GPU work funnels through a single worker, serialized by that worker's
         # existing 1-at-a-time agent lock (the queue). When it names a full peer node, the sandbox target
         # becomes "sandboxnostr:<pk>:<uid>" and the whole run (container + agent loop) is dispatched to that
@@ -333,7 +333,7 @@ class _SystemMixin:
 
         def _fmt_nodes() -> str:
             if not nodes and not _npub_nodes:
-                return "No nodes configured. Add them in Admin → Services → Agentic Node Management (one per line: `name|user@host`, or a Nostr worker `name npub1…`)."
+                return "No nodes configured. Add them in Admin → Nodes → Agentic Node Management (one per line: `name|user@host`, or a Nostr worker `name npub1…`)."
             lines = ["**Configured nodes:**"]
             for _nn, _pk in _npub_nodes.items():
                 lines.append(f"- `{_nn}` → 🛰️ {nostr_dvm.nostr_service.npub_of(_pk)[:18]}…")

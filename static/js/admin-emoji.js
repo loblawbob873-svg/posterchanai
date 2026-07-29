@@ -1,4 +1,4 @@
-// Admin → Site Settings → Custom Emoji. Manages the instance's Pleroma/Akkoma-style packs over
+// Admin → Emoji. Manages the instance's Pleroma/Akkoma-style packs over
 // /api/admin/emoji/* (app/routers/admin_emoji.py); the on-disk format lives in emoji_service.py.
 //
 // The list is PAGED and the grid shows 72px thumbnails: a real pack is thousands of files (the one
@@ -189,10 +189,11 @@ function emojiInit() {
 }
 
 // Every tab is in the DOM from the start (they're shown/hidden), so this could wire on load — but
-// painting 200 thumbnails is wasted work for an admin who never opens Site, so it waits for the tab.
+// painting 200 thumbnails is wasted work for an admin who never opens Emoji, so it waits for the
+// tab. (Emoji got its own tab in the settings reorg; it used to live under Site.)
 document.addEventListener('DOMContentLoaded', () => {
-    const tab = document.getElementById('tab-site');
+    const tab = document.getElementById('tab-emoji');
     if (!tab) return;
     if (tab.classList.contains('active')) { emojiInit(); return; }
-    document.querySelector('.tab-btn[data-tab="site"]')?.addEventListener('click', emojiInit);
+    document.querySelector('.tab-btn[data-tab="emoji"]')?.addEventListener('click', emojiInit);
 });

@@ -1,4 +1,7 @@
-<!-- Site Settings Tab -->
+<!-- Site tab — what a VISITOR sees: branding and the login page's account options.
+     Everything else that used to live here moved to its own tab: Custom Emoji → Emoji,
+     Storage/File cache → Storage, Tor/proxy/torrents → Network, News/Effects → Tools,
+     Load balancing → Nodes, LLM health check → LLM. -->
 <div class="tab-content" id="tab-site">
     <fieldset>
         <legend>Appearance</legend>
@@ -24,377 +27,53 @@
             <small>Replaces the built-in PosterChan logo in the web client's favicon, login splash and
                 header. Use a square PNG for best results. Leave blank for the default logo.</small>
         </div>
-    </fieldset>
-    <!-- Instance custom emoji (Pleroma/Akkoma-style packs). The DIRECTORY is a normal setting (saved
-         by the global Save Settings button); everything below it is a live manager that talks to
-         /api/admin/emoji/* on its own — so none of those controls carry a `name` attribute, which
-         would make the generic settings handler post them as settings. -->
-    <fieldset>
-        <legend>Custom Emoji</legend>
         <div class="form-group">
-            <label for="custom_emoji_dir">Emoji directory</label>
-            <input type="text" id="custom_emoji_dir" name="custom_emoji_dir" placeholder="assets/emoji">
-            <small>Directory of emoji packs, in the same layout Pleroma/Akkoma use — one subdirectory
-                per pack, with an optional <code>pack.json</code>. Copy an existing pack straight in.
-                Relative paths resolve against the install directory; blank turns custom emoji off.
-                <b>Save Settings</b> after changing it, then hit Refresh below.</small>
-        </div>
-        <div class="emoji-admin">
-            <div class="emoji-bar">
-                <select id="emojiPack" title="Pack"></select>
-                <input type="text" id="emojiSearch" class="emoji-search" placeholder="search shortcode…" autocomplete="off">
-                <button type="button" class="btn-secondary" id="emojiNewPack">+ Pack</button>
-                <button type="button" class="btn-secondary" id="emojiDelPack">Delete pack</button>
-                <button type="button" class="btn-secondary" id="emojiReload">Refresh</button>
-            </div>
-            <div class="emoji-drop" id="emojiDrop">
-                <input type="file" id="emojiFiles" accept="image/png,image/gif,image/webp,image/jpeg" multiple hidden>
-                <div class="emoji-drop-main">
-                    <b>Drop images here</b> or <button type="button" class="btn-secondary" id="emojiPick">choose files…</button>
-                </div>
-                <div class="emoji-drop-opts">
-                    <input type="text" id="emojiShortcode" class="emoji-search" placeholder="shortcode (single file only)" autocomplete="off">
-                    <label><input type="checkbox" id="emojiOverwrite"> replace existing</label>
-                </div>
-                <p class="bots-hint">Uploads land in the pack selected above — or in <b>loose files</b>
-                    when "All packs" is showing. The shortcode comes from each filename when you drop
-                    several at once. PNG / GIF / WebP / JPEG, up to 8 MB each — they get embedded in
-                    other people's timelines, so keep them small.</p>
-            </div>
-            <div class="emoji-status" id="emojiStatus">Loading…</div>
-            <div class="emoji-grid" id="emojiGrid"></div>
-            <div class="emoji-more"><button type="button" class="btn-secondary" id="emojiMore" hidden>Load more</button></div>
-        </div>
-    </fieldset>
-    <fieldset>
-        <legend>Effects</legend>
-        <div class="form-group">
-            <label for="effect_outro_enabled">Append "made with PosterChanAI" end-card to effect videos</label>
-            <select id="effect_outro_enabled" name="effect_outro_enabled">
-                <option value="true">Enabled</option>
-                <option value="false">Disabled</option>
-            </select>
-            <small>TikTok-style outro: avatar + @username (web UI / Telegram) or a static card (bot-posted effects).</small>
-        </div>
-    </fieldset>
-    <fieldset>
-        <legend>Load Balancing — IP-based (legacy)</legend>
-        <div class="form-group">
-            <label for="chat_server_urls">Server IPs</label>
-            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="192.168.0.2, 192.168.0.85">
-            <small>Comma-separated node <strong>IPs</strong> (the posterchanai port is assumed). This
-                <strong>one</strong> list load-balances <strong>all</strong> GPU work — chat, image, music
-                and video — round-robin between this server and the listed nodes (each node frees its own
-                GPU first). Full URLs (e.g. <code>http://localhost:3052</code>) accepted for non-default ports.</small>
-        </div>
-        <div class="form-group">
-            <small>🛰️ <strong>Distributed AI over Nostr</strong> is the newer way to do this — it dispatches
-                GPU jobs to a <strong>Web-of-Trust cluster over Nostr</strong> (encrypted, no IPs to manage)
-                and <strong>replaces this IP list when enabled</strong>. Configure it in
-                <strong>Admin → Relay → “Distributed compute (DVM load balancing)”</strong>.</small>
+            <small>Instance custom emoji moved to its own tab — see <strong>Admin → Emoji</strong>.</small>
         </div>
     </fieldset>
 
     <fieldset>
-        <legend>LLM Health Check</legend>
+        <legend>Sign in with an account (login page)</legend>
+        <small style="display:block;margin-bottom:12px;">
+            Extra buttons on the web client's login screen, for people who don't want to manage a Nostr key.
+            Both are <strong>off by default</strong>: they are the only routes where an identity is created by
+            <em>this server</em> rather than in the visitor's browser. Everything else on that screen (extension,
+            remote signer, pasted nsec) keeps the key on the device and is unaffected.
+        </small>
         <div class="form-group">
-            <label for="llm_health_check_enabled">
-                <input type="checkbox" id="llm_health_check_enabled" name="llm_health_check_enabled"> Enable Health Check
+            <label for="pleroma_login_enabled">
+                <input type="checkbox" id="pleroma_login_enabled" name="pleroma_login_enabled"> Enable Pleroma / Mastodon login
             </label>
-            <small>Periodically ping the loaded native LLM and reload it in-process if unresponsive.</small>
+            <small>Sign in with a fediverse account. The OAuth app is registered on the instance automatically (public <code>/api/v1/apps</code>) — nothing to configure on their side. A visitor whose account is already linked here (Fediverse bridge / User Settings → Social) is signed in as that same account, not a new one.</small>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="llm_health_check_interval">Ping Interval (seconds)</label>
-                <input type="number" id="llm_health_check_interval" name="llm_health_check_interval" value="90" min="30">
-            </div>
-            <div class="form-group">
-                <label for="llm_reload_after_failures">Reload After Failures</label>
-                <input type="number" id="llm_reload_after_failures" name="llm_reload_after_failures" value="5" min="1">
-            </div>
+        <div class="form-group">
+            <label for="pleroma_login_instance">Default instance offered</label>
+            <input type="url" id="pleroma_login_instance" name="pleroma_login_instance" placeholder="https://pleroma.example">
+            <small>Pre-filled on the login form; the visitor can type a different one. Blank = the Read Account instance from <strong>Admin → Social</strong>.</small>
         </div>
-        <div class="form-group" style="margin-top: 15px;">
-            <label for="gpu_memory_check_enabled">
-                <input type="checkbox" id="gpu_memory_check_enabled" name="gpu_memory_check_enabled"> Enable GPU Memory Monitoring
+        <div class="form-group" style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border-color,#333);">
+            <label for="google_login_enabled">
+                <input type="checkbox" id="google_login_enabled" name="google_login_enabled"> Enable Google login
             </label>
-            <small>Reload model when GPU VRAM usage exceeds threshold</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="gpu_memory_threshold">VRAM Threshold (%)</label>
-                <input type="number" id="gpu_memory_threshold" name="gpu_memory_threshold" value="99" min="50" max="100">
-            </div>
-            <div class="form-group">
-                <label for="gpu_type">GPU Type</label>
-                <select id="gpu_type" name="gpu_type">
-                    <option value="nvidia">NVIDIA</option>
-                    <option value="intel">Intel Arc</option>
-                </select>
-            </div>
-        </div>
-        <div class="form-group" style="margin-top: 10px;">
-            <label for="nvidia_reset_before_reload">
-                <input type="checkbox" id="nvidia_reset_before_reload" name="nvidia_reset_before_reload"> Reset NVIDIA modules before model reload
-            </label>
-            <small>When recovery or VRAM reload is triggered, run <code>scripts/nvidia_reset.sh</code> (rmmod/modprobe) first. Requires passwordless sudo for the script. Only for NVIDIA GPU.</small>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Storage</legend>
-        <div class="form-group">
-            <label for="upload_path">Upload Path</label>
-            <input type="text" id="upload_path" name="upload_path" value="/var/lib/posterchanai">
-            <small>Directory where user uploads and generated images are stored (local node only)</small>
-        </div>
-        <div class="form-group">
-            <label for="storage_server_url">Storage Server URL</label>
-            <input type="text" id="storage_server_url" name="storage_server_url" placeholder="http://storage-node:3051">
-            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups). Server-to-server requests use load-balanced header authentication.</small>
-        </div>
-        <div class="form-group">
-            <label for="ytdl_cookies_path">yt-dlp cookies path (optional)</label>
-            <input type="text" id="ytdl_cookies_path" name="ytdl_cookies_path" placeholder="/path/to/cookies.txt">
-            <small>Path to a Netscape-format cookies file exported from your browser. Use if YouTube returns 403 Forbidden (e.g. export with &quot;Get cookies.txt&quot; extension). Leave empty to try without cookies.</small>
-        </div>
-        <div class="form-group">
-            <label for="ytdl_no_ssl_verify">
-                <input type="checkbox" id="ytdl_no_ssl_verify" name="ytdl_no_ssl_verify"> yt-dlp: skip SSL certificate verification
-            </label>
-            <small>Enable if you get SSL CERTIFICATE_VERIFY_FAILED or hostname mismatch (e.g. behind a proxy/firewall). Less secure; use only when needed.</small>
-        </div>
-        <div class="form-group" style="padding: 12px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <strong style="color: #4a9eff;">ℹ️ Load-balanced storage</strong>
-            <p style="margin: 8px 0 0 0; color: #aaa; font-size: 0.9em; line-height: 1.5;">
-                For load-balanced setups, set <strong>Storage Server URL</strong> to proxy file requests to a designated storage node.
-                This avoids requiring a shared filesystem (NFS) — one node handles storage, the others proxy requests to it.
-            </p>
-            <p style="margin: 8px 0 0 0; color: #888; font-size: 0.85em;">
-                <strong>Setup:</strong><br>
-                • Storage node: leave <code>storage_server_url</code> empty, set <code>upload_path</code> to a local directory<br>
-                • Client nodes: set <code>storage_server_url</code> to the storage node (e.g. <code>192.168.0.10</code>)
-            </p>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>File Manager Cache</legend>
-        <div class="form-group">
-            <label for="file_cache_enabled">
-                <input type="checkbox" id="file_cache_enabled" name="file_cache_enabled"> Enable File Listing Cache
-            </label>
-            <small>Cache directory listings in memory for faster browsing. Recommended for large directories.</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="file_cache_ttl">Cache TTL (seconds)</label>
-                <input type="number" id="file_cache_ttl" name="file_cache_ttl" value="300" min="60" max="3600">
-                <small>How long to cache directory listings (default: 300 = 5 minutes)</small>
-            </div>
-            <div class="form-group">
-                <label for="file_cache_max_size">Max Cache Entries</label>
-                <input type="number" id="file_cache_max_size" name="file_cache_max_size" value="1000" min="100" max="10000">
-                <small>Maximum number of cached directory listings (default: 1000)</small>
-            </div>
-        </div>
-        <div class="form-group" style="margin-top: 12px; padding: 10px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;">
-            <small style="color: #aaa; display: block;">
-                <strong style="color: #4a9eff;">💡 Tip:</strong> Cache automatically invalidates when files are modified. Lower TTL for frequently changing directories, higher for static content.
+            <small>
+                Needs an OAuth 2.0 <strong>Web application</strong> client from the
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud console</a>:
+                <br>1. APIs &amp; Services → OAuth consent screen → <em>External</em>, add the <code>openid</code>, <code>email</code>
+                and <code>profile</code> scopes, then publish it (or add testers).
+                <br>2. Credentials → Create credentials → OAuth client ID → <em>Web application</em>.
+                <br>3. Authorised JavaScript origin: this node's public origin (e.g. <code>https://poster.place</code>).
+                <br>4. Authorised redirect URI, exactly: <code>&lt;public base&gt;/api/auth/google/callback</code>.
+                <br>5. Paste the client ID and secret below and Save.
             </small>
         </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>News Sources</legend>
         <div class="form-group">
-            <label for="news_sources">News Websites</label>
-            <textarea id="news_sources" name="news_sources" rows="6" placeholder="drudgereport.com|Drudge Report
-npr.org/sections/news|NPR
-nypost.com|NY Post
-foxnews.com|Fox News
-newsweek.com|Newsweek"></textarea>
-            <small>One per line: <code>domain|Display Name</code> (e.g., <code>npr.org/sections/news|NPR</code>). Leave empty to use defaults.</small>
-            <button type="button" class="btn-secondary" id="resetNewsSourcesBtn" style="margin-top: 8px;">Reset to Defaults</button>
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Managed Tor Service</legend>
-        <div class="form-group">
-            <label for="tor_enabled">
-                <input type="checkbox" id="tor_enabled" name="tor_enabled"> Auto-start Tor
-            </label>
-            <small>Automatically start and configure the system <code>tor</code> binary on app launch (requires: <code>apt install tor</code>)</small>
+            <label for="google_client_id">Google Client ID</label>
+            <input type="text" id="google_client_id" name="google_client_id" placeholder="1234567890-abc123.apps.googleusercontent.com">
         </div>
         <div class="form-group">
-            <label for="tor_listen_host">Listen Address</label>
-            <input type="text" id="tor_listen_host" name="tor_listen_host" value="127.0.0.1" placeholder="127.0.0.1 or 0.0.0.0">
-            <small>Use <code>0.0.0.0</code> to allow remote connections, or specific IP like <code>192.168.0.1</code></small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="tor_socks_port">SOCKS5 Port</label>
-                <input type="number" id="tor_socks_port" name="tor_socks_port" value="9052" min="1" max="65535">
-            </div>
-            <div class="form-group">
-                <label for="tor_control_port">Control Port</label>
-                <input type="number" id="tor_control_port" name="tor_control_port" value="9053" min="1" max="65535">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="tor_exit_nodes">Exit Nodes</label>
-            <input type="text" id="tor_exit_nodes" name="tor_exit_nodes" value="{us}" placeholder="{us},{ca},{gb}">
-            <small>Country codes for exit nodes. Format: <code>{us}</code> or <code>{us},{gb}</code>. Default: US only</small>
-        </div>
-        <div class="form-group">
-            <label for="tor_data_dir">Tor Data Directory</label>
-            <input type="text" id="tor_data_dir" name="tor_data_dir" value="/var/lib/posterchanai/tor">
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Onion Site (.onion)</legend>
-        <div class="form-group">
-            <small>Expose this deployment over Tor at a persistent <code>.onion</code> address (requires the Managed Tor Service above). One click generates it and applies it live — no restart. The address survives restarts (Tor keys persist in the data dir).</small>
-        </div>
-        <div class="form-group">
-            <button type="button" class="btn-primary" id="onion-toggle">🧅 Generate .onion site</button>
-            <span id="onion-status" class="muted" style="margin-left:10px;font-size:13px"></span>
-        </div>
-        <div class="form-group" id="onion-addr-row" style="display:none">
-            <label for="onion-addr">Your .onion address</label>
-            <div style="display:flex;gap:8px;align-items:center">
-                <input type="text" id="onion-addr" readonly value="" style="flex:1;font-family:monospace">
-                <button type="button" class="btn-secondary btn-small" id="onion-copy">📋 Copy</button>
-            </div>
-        </div>
-    </fieldset>
-    <script>
-    (function(){
-      const btn=document.getElementById('onion-toggle'), st=document.getElementById('onion-status');
-      const row=document.getElementById('onion-addr-row'), addr=document.getElementById('onion-addr');
-      const copy=document.getElementById('onion-copy');
-      if(!btn) return;
-      let enabled=false, poll=null;
-      function render(s){
-        enabled=!!s.enabled;
-        btn.textContent = enabled ? '🧅 Disable .onion site' : '🧅 Generate .onion site';
-        if(s.address){ addr.value=s.address; row.style.display=''; st.textContent=''; if(poll){clearInterval(poll);poll=null;} }
-        else { row.style.display='none'; st.textContent = enabled ? 'starting… Tor is generating the address (a few seconds)' : ''; }
-      }
-      async function load(){ try{ const r=await fetch('/api/admin/onion'); if(r.ok) render(await r.json()); }catch(_){} }
-      btn.onclick=async()=>{
-        btn.disabled=true; st.textContent='applying…';
-        try{
-          const r=await csrfFetch('/api/admin/onion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!enabled})});
-          if(r.status===409){ st.textContent='Enable the Managed Tor Service first.'; btn.disabled=false; return; }
-          render(await r.json());
-          if(enabled && !addr.value){ let n=0; if(poll)clearInterval(poll); poll=setInterval(async()=>{ if(++n>12){clearInterval(poll);poll=null;return;} try{ const rr=await fetch('/api/admin/onion'); if(rr.ok){ const jj=await rr.json(); if(jj.address) render(jj); } }catch(_){} },2000); }
-        }catch(e){ st.textContent='failed: '+e; }
-        btn.disabled=false;
-      };
-      copy.onclick=()=>{ addr.select(); try{ navigator.clipboard.writeText(addr.value); }catch(_){ document.execCommand('copy'); } st.textContent='copied'; setTimeout(()=>{st.textContent='';},1500); };
-      load();
-    })();
-    </script>
-
-    <fieldset>
-        <legend>Second Tor Daemon (load-balancing)</legend>
-        <div class="form-group">
-            <label for="tor2_enabled">
-                <input type="checkbox" id="tor2_enabled" name="tor2_enabled"> Run a second Tor daemon
-            </label>
-            <small>Runs a second <code>tor</code> instance with its own circuit/exit IP (only when Auto-start Tor above is on). The built-in HTTP proxy round-robins across both — exit-IP diversity that dodges per-IP rate limits and geo-blocks. Torrent traffic stays Tor-only (never falls back to direct).</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="tor2_socks_port">SOCKS5 Port</label>
-                <input type="number" id="tor2_socks_port" name="tor2_socks_port" value="9062" min="1" max="65535">
-            </div>
-            <div class="form-group">
-                <label for="tor2_control_port">Control Port</label>
-                <input type="number" id="tor2_control_port" name="tor2_control_port" value="9063" min="1" max="65535">
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="tor2_exit_nodes">Exit Nodes</label>
-            <input type="text" id="tor2_exit_nodes" name="tor2_exit_nodes" value="{ca}" placeholder="{ca},{gb}">
-            <small>Use a different region than the first daemon for diversity. Default: Canada (<code>{ca}</code>) — geographically close, so minimal latency cost.</small>
-        </div>
-        <div class="form-group">
-            <label for="tor2_data_dir">Tor Data Directory</label>
-            <input type="text" id="tor2_data_dir" name="tor2_data_dir" value="/var/lib/posterchanai/tor2">
-        </div>
-    </fieldset>
-
-    <fieldset>
-        <legend>Built-in HTTP Proxy (HTTP→SOCKS5)</legend>
-        <div class="form-group">
-            <label for="proxy_enabled">
-                <input type="checkbox" id="proxy_enabled" name="proxy_enabled"> Enable Built-in HTTP Proxy
-            </label>
-            <small>HTTP proxy that forwards to SOCKS5 (Tor). Replaces Privoxy.</small>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="proxy_listen_host">Listen Address</label>
-                <input type="text" id="proxy_listen_host" name="proxy_listen_host" value="127.0.0.1" placeholder="127.0.0.1">
-            </div>
-            <div class="form-group">
-                <label for="proxy_listen_port">Listen Port</label>
-                <input type="number" id="proxy_listen_port" name="proxy_listen_port" value="8118" min="1" max="65535">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="proxy_socks_host">SOCKS5 Target Host</label>
-                <input type="text" id="proxy_socks_host" name="proxy_socks_host" placeholder="127.0.0.1 or tor-server-ip">
-            </div>
-            <div class="form-group">
-                <label for="proxy_socks_port">SOCKS5 Target Port</label>
-                <input type="number" id="proxy_socks_port" name="proxy_socks_port" value="9052" min="1" max="65535">
-            </div>
-        </div>
-        <small style="display:block; margin-top:8px;">For distributed setup: Set SOCKS5 host to your Tor server's IP. If using built-in Tor, use 127.0.0.1</small>
-    </fieldset>
-
-    <fieldset>
-        <legend>HTTP Proxy (outbound)</legend>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="bt_proxy_host">HTTP Proxy Host</label>
-                <input type="text" id="bt_proxy_host" name="bt_proxy_host" placeholder="127.0.0.1">
-            </div>
-            <div class="form-group">
-                <label for="bt_proxy_port">Proxy Port</label>
-                <input type="number" id="bt_proxy_port" name="bt_proxy_port" value="8118" min="1" max="65535">
-            </div>
-        </div>
-        <small style="display:block; margin-top:8px;">Shared outbound HTTP proxy (e.g. Privoxy &rarr; Tor). Used by the built-in torrent client <strong>and</strong> Nitter feeds, 4chan, and SearX fetches. Required for torrents and Nitter.</small>
-    </fieldset>
-
-    <fieldset>
-        <legend>Built-in Torrent Client (libtorrent)</legend>
-        <div class="form-group">
-            <label for="bt_enabled">
-                <input type="checkbox" id="bt_enabled" name="bt_enabled"> Enable Built-in Torrent Client
-            </label>
-            <small>All torrent traffic is routed through the HTTP proxy (required)</small>
-        </div>
-        <div class="form-group">
-            <label for="bt_server_url">Remote Torrent Server URL</label>
-            <input type="text" id="bt_server_url" name="bt_server_url" placeholder="http://torrent-server:3051">
-            <small>Leave empty for local. Set URL to forward requests to a remote torrent server. Server-to-server requests use load-balanced header authentication.</small>
-        </div>
-        <div class="form-group">
-            <label for="bt_download_dir">Download Directory</label>
-            <input type="text" id="bt_download_dir" name="bt_download_dir" placeholder="/var/lib/posterchanai/torrents">
-            <small>Where downloaded torrents are saved (local server only)</small>
-        </div>
-        <div class="form-group">
-            <label for="bt_listen_port">BitTorrent Listen Port</label>
-            <input type="number" id="bt_listen_port" name="bt_listen_port" value="6881" min="1024" max="65535">
-            <small>Port for incoming peer connections</small>
+            <label for="google_client_secret">Google Client Secret</label>
+            <input type="password" id="google_client_secret" name="google_client_secret" placeholder="GOCSPX-…">
+            <small>Stored like every other setting: in this node's operator-signed relay document, NIP-44 encrypted — never in the repo or a config file.</small>
         </div>
     </fieldset>
 </div>

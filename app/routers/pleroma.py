@@ -167,7 +167,7 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
             "</style></head><body><div>"
             "<h2>✓ Bridge read account connected!</h2>"
             f"<p>Reading as <strong>@{safe_display}</strong> on <strong>{safe_instance}</strong>.</p>"
-            "<p>You can close this tab. Enable the bridge in Admin → Services and restart.</p>"
+            "<p>You can close this tab. Enable the bridge in Admin → Social and restart.</p>"
             "<script>if(window.opener){window.opener.postMessage('pleroma_bridge_connected','*');}"
             "setTimeout(()=>window.close(),3000);</script>"
             "</div></body></html>"

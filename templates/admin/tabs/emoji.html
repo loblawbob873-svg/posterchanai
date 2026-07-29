@@ -1,0 +1,44 @@
+<!-- Emoji tab — instance custom emoji (Pleroma/Akkoma-style packs), split out of Site Settings.
+     The DIRECTORY is a normal setting (saved by the global Save Settings button); everything below
+     it is a live manager that talks to /api/admin/emoji/* on its own — so none of those controls
+     carry a `name` attribute, which would make the generic settings handler post them as settings.
+     Wiring: static/js/admin-emoji.js (it lazy-loads when THIS tab is opened). -->
+<div class="tab-content" id="tab-emoji">
+    <fieldset>
+        <legend>Custom Emoji</legend>
+        <div class="form-group">
+            <label for="custom_emoji_dir">Emoji directory</label>
+            <input type="text" id="custom_emoji_dir" name="custom_emoji_dir" placeholder="assets/emoji">
+            <small>Directory of emoji packs, in the same layout Pleroma/Akkoma use — one subdirectory
+                per pack, with an optional <code>pack.json</code>. Copy an existing pack straight in.
+                Relative paths resolve against the install directory; blank turns custom emoji off.
+                <b>Save Settings</b> after changing it, then hit Refresh below.</small>
+        </div>
+        <div class="emoji-admin">
+            <div class="emoji-bar">
+                <select id="emojiPack" title="Pack"></select>
+                <input type="text" id="emojiSearch" class="emoji-search" placeholder="search shortcode…" autocomplete="off">
+                <button type="button" class="btn-secondary" id="emojiNewPack">+ Pack</button>
+                <button type="button" class="btn-secondary" id="emojiDelPack">Delete pack</button>
+                <button type="button" class="btn-secondary" id="emojiReload">Refresh</button>
+            </div>
+            <div class="emoji-drop" id="emojiDrop">
+                <input type="file" id="emojiFiles" accept="image/png,image/gif,image/webp,image/jpeg" multiple hidden>
+                <div class="emoji-drop-main">
+                    <b>Drop images here</b> or <button type="button" class="btn-secondary" id="emojiPick">choose files…</button>
+                </div>
+                <div class="emoji-drop-opts">
+                    <input type="text" id="emojiShortcode" class="emoji-search" placeholder="shortcode (single file only)" autocomplete="off">
+                    <label><input type="checkbox" id="emojiOverwrite"> replace existing</label>
+                </div>
+                <p class="bots-hint">Uploads land in the pack selected above — or in <b>loose files</b>
+                    when "All packs" is showing. The shortcode comes from each filename when you drop
+                    several at once. PNG / GIF / WebP / JPEG, up to 8 MB each — they get embedded in
+                    other people's timelines, so keep them small.</p>
+            </div>
+            <div class="emoji-status" id="emojiStatus">Loading…</div>
+            <div class="emoji-grid" id="emojiGrid"></div>
+            <div class="emoji-more"><button type="button" class="btn-secondary" id="emojiMore" hidden>Load more</button></div>
+        </div>
+    </fieldset>
+</div>

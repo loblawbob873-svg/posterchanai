@@ -1,0 +1,129 @@
+<!-- Storage tab — where bytes live: upload path / storage proxy, the file-listing cache, and the
+     File Manager's external mounts (Storage + File Manager Cache came from Site, External Storage
+     from Services). The external-storage list/modal is driven by static/js/admin.js. -->
+<div class="tab-content" id="tab-storage">
+    <fieldset>
+        <legend>Storage</legend>
+        <div class="form-group">
+            <label for="upload_path">Upload Path</label>
+            <input type="text" id="upload_path" name="upload_path" value="/var/lib/posterchanai">
+            <small>Directory where user uploads and generated images are stored (local node only)</small>
+        </div>
+        <div class="form-group">
+            <label for="storage_server_url">Storage Server URL</label>
+            <input type="text" id="storage_server_url" name="storage_server_url" placeholder="http://storage-node:3051">
+            <small>Leave empty for local storage. Set URL to proxy file requests to a remote storage server (for load-balanced setups). Server-to-server requests use load-balanced header authentication.</small>
+        </div>
+        <div class="form-group">
+            <label for="ytdl_cookies_path">yt-dlp cookies path (optional)</label>
+            <input type="text" id="ytdl_cookies_path" name="ytdl_cookies_path" placeholder="/path/to/cookies.txt">
+            <small>Path to a Netscape-format cookies file exported from your browser. Use if YouTube returns 403 Forbidden (e.g. export with &quot;Get cookies.txt&quot; extension). Leave empty to try without cookies.</small>
+        </div>
+        <div class="form-group">
+            <label for="ytdl_no_ssl_verify">
+                <input type="checkbox" id="ytdl_no_ssl_verify" name="ytdl_no_ssl_verify"> yt-dlp: skip SSL certificate verification
+            </label>
+            <small>Enable if you get SSL CERTIFICATE_VERIFY_FAILED or hostname mismatch (e.g. behind a proxy/firewall). Less secure; use only when needed.</small>
+        </div>
+        <div class="form-group info-note">
+            <strong class="info-note-title">ℹ️ Load-balanced storage</strong>
+            <p>
+                For load-balanced setups, set <strong>Storage Server URL</strong> to proxy file requests to a designated storage node.
+                This avoids requiring a shared filesystem (NFS) — one node handles storage, the others proxy requests to it.
+            </p>
+            <p>
+                <strong>Setup:</strong><br>
+                • Storage node: leave <code>storage_server_url</code> empty, set <code>upload_path</code> to a local directory<br>
+                • Client nodes: set <code>storage_server_url</code> to the storage node (e.g. <code>192.168.0.10</code>)
+            </p>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>File Manager Cache</legend>
+        <div class="form-group">
+            <label for="file_cache_enabled">
+                <input type="checkbox" id="file_cache_enabled" name="file_cache_enabled"> Enable File Listing Cache
+            </label>
+            <small>Cache directory listings in memory for faster browsing. Recommended for large directories.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="file_cache_ttl">Cache TTL (seconds)</label>
+                <input type="number" id="file_cache_ttl" name="file_cache_ttl" value="300" min="60" max="3600">
+                <small>How long to cache directory listings (default: 300 = 5 minutes)</small>
+            </div>
+            <div class="form-group">
+                <label for="file_cache_max_size">Max Cache Entries</label>
+                <input type="number" id="file_cache_max_size" name="file_cache_max_size" value="1000" min="100" max="10000">
+                <small>Maximum number of cached directory listings (default: 1000)</small>
+            </div>
+        </div>
+        <div class="form-group info-note">
+            <small><strong class="info-note-title">💡 Tip:</strong> Cache automatically invalidates when files are modified. Lower TTL for frequently changing directories, higher for static content.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>External Storage (File Manager)</legend>
+        <p class="fieldset-info">Mount external directories to make them accessible in the File Manager. Example: Mount <code>/raid/video</code> as <code>video</code>.</p>
+
+        <div id="externalStorageList" class="external-storage-list">
+            <!-- External storage mounts will be loaded here -->
+        </div>
+
+        <div class="form-group" style="margin-top: 20px;">
+            <button type="button" class="btn-primary" id="addExternalStorageBtn">+ Add External Storage</button>
+        </div>
+
+        <!-- Add/Edit External Storage Modal -->
+        <div class="modal" id="externalStorageModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="externalStorageModalTitle">Add External Storage</h3>
+                    <button class="btn-icon modal-close" onclick="document.getElementById('externalStorageModal').style.display='none'">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="externalStorageId">
+                    <div class="form-group">
+                        <label for="externalStorageName">Display Name *</label>
+                        <input type="text" id="externalStorageName" placeholder="Video Storage" required>
+                        <small>The name shown in the File Manager</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageMountPath">Mount Path *</label>
+                        <input type="text" id="externalStorageMountPath" placeholder="/raid/video" required>
+                        <small>Absolute path to the directory on the server (must exist and be readable)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageMountPoint">Mount Point *</label>
+                        <input type="text" id="externalStorageMountPoint" placeholder="video" required>
+                        <small>Virtual path name in File Manager (alphanumeric, dashes, underscores only)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageDescription">Description</label>
+                        <textarea id="externalStorageDescription" rows="2" placeholder="Optional description"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageActive">
+                            <input type="checkbox" id="externalStorageActive" checked> Active
+                        </label>
+                        <small>Enable/disable this mount</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="externalStorageUsers">Allowed Users *</label>
+                        <select id="externalStorageUsers" multiple style="width: 100%; min-height: 120px; padding: 8px;">
+                            <!-- Users will be loaded here -->
+                        </select>
+                        <small>Select users who can access this external storage. Hold Ctrl/Cmd to select multiple users.</small>
+                    </div>
+                    <div id="externalStorageError" class="error-message" style="display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="document.getElementById('externalStorageModal').style.display='none'">Cancel</button>
+                    <button type="button" class="btn-primary" id="saveExternalStorageBtn">Save</button>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+</div>

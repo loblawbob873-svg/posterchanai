@@ -1,0 +1,187 @@
+<!-- Nodes tab — the fleet: load balancing, agentic node management, health report, uptime.
+     (Load balancing came from Site; the rest from Services.) -->
+<div class="tab-content" id="tab-nodes">
+    <fieldset>
+        <legend>Load Balancing — IP-based (legacy)</legend>
+        <div class="form-group">
+            <label for="chat_server_urls">Server IPs</label>
+            <input type="text" id="chat_server_urls" name="chat_server_urls" placeholder="192.168.0.2, 192.168.0.85">
+            <small>Comma-separated node <strong>IPs</strong> (the posterchanai port is assumed). This
+                <strong>one</strong> list load-balances <strong>all</strong> GPU work — chat, image, music
+                and video — round-robin between this server and the listed nodes (each node frees its own
+                GPU first). Full URLs (e.g. <code>http://localhost:3052</code>) accepted for non-default ports.</small>
+        </div>
+        <div class="form-group">
+            <small>🛰️ <strong>Distributed AI over Nostr</strong> is the newer way to do this — it dispatches
+                GPU jobs to a <strong>Web-of-Trust cluster over Nostr</strong> (encrypted, no IPs to manage)
+                and <strong>replaces this IP list when enabled</strong>. Configure it in
+                <strong>Admin → Relay → “Distributed compute (DVM load balancing)”</strong>.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Agentic Node Management</legend>
+        <div class="form-group">
+            <small>Run OS commands and <strong>agentic tasks</strong> (LLM-driven, multi-step goals) on SSH-reachable nodes or <code>local</code> — from chat, Telegram, or the health report.</small>
+            <label for="node_exec_enabled">
+                <input type="checkbox" id="node_exec_enabled" name="node_exec_enabled"> Enable Agentic Node Management
+            </label>
+            <small>Run OS commands on configured nodes from chat/Telegram (<code>node &lt;name&gt; &lt;cmd&gt;</code>, <code>node agent &lt;name&gt; &lt;goal&gt;</code>). ⚠️ This is unrestricted command execution — only enable on a trusted, private deployment.</small>
+        </div>
+        <div class="form-group">
+            <label for="node_exec_users">Allowed Users (npubs)</label>
+            <textarea id="node_exec_users" name="node_exec_users" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
+            <small>Nostr <code>npub</code>s allowed to use this feature — one per line or comma-separated (hex pubkeys / <code>nprofile</code>s also accepted). The first user to sign up (the admin) is always allowed, so their own key is the default.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_agent_max_steps">Agent Max Steps</label>
+                <input type="number" id="node_exec_agent_max_steps" name="node_exec_agent_max_steps" value="30" min="1" max="200">
+                <small>Max tool-call iterations in agentic mode. Real tasks need dozens; the agent trims its own transcript, so this is no longer bounded by the model's context.</small>
+            </div>
+            <div class="form-group">
+                <label for="agent_artifact_ttl_days">Agent Artifact TTL (days)</label>
+                <input type="number" id="agent_artifact_ttl_days" name="agent_artifact_ttl_days" value="14" min="0" max="3650">
+                <small>Transient agent artifacts — the <code>/workspace</code> backups produced by a sandbox run — auto-expire from Blossom after this many days, so a run-every-time auto-archive can't fill storage. <b>0 = keep forever.</b> Chat-generated images/files are not affected.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_agent_context_chars">Agent Context Budget (characters)</label>
+                <input type="number" id="node_exec_agent_context_chars" name="node_exec_agent_context_chars" value="48000" min="4000" step="1000">
+                <small>Roughly 4 characters per token. Once the run's transcript exceeds this, old tool output is shrunk to one line and the oldest steps are dropped. Lower it for a node with a small context window.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_job_timeout">Job Timeout (seconds)</label>
+                <input type="number" id="node_exec_job_timeout" name="node_exec_job_timeout" value="0" min="0">
+                <small>Kill a job after this many seconds. 0 = no timeout (use <code>node kill &lt;id&gt;</code>).</small>
+            </div>
+        </div>
+
+        <hr>
+        <div class="form-group">
+            <small>🛰️ <strong>Nostr transport.</strong> A command is an <em>encrypted NIP-90 event</em> addressed to a worker node's <code>npub</code> (via the built-in relay / DVM). The worker runs it locally and returns an encrypted result — no keys or open ports, works through NAT. Full PosterChanAI nodes (nas, server1) act as workers directly; router.lan / other machines run the lightweight standalone agent (<code>agent/install-agent.sh</code>). <code>local</code> always runs on this host directly. Turn this ON to make THIS host accept commands from its trusted controllers.</small>
+            <label for="node_exec_nostr_enabled">
+                <input type="checkbox" id="node_exec_nostr_enabled" name="node_exec_nostr_enabled"> Act as a Nostr node-agent worker on this host
+            </label>
+        </div>
+        <div class="form-group">
+            <label for="node_exec_node_npubs">Worker nodes (name → npub)</label>
+            <textarea id="node_exec_node_npubs" name="node_exec_node_npubs" rows="4" placeholder="server1 npub1…&#10;nas npub1…&#10;router npub1…"></textarea>
+            <small>One per line: <code>name npub1…</code>. The panel/commands address a worker by <code>name</code>; the command event is sent to its <code>npub</code>. This is the node registry — every remote node is listed here (plus the synthetic <code>local</code>).</small>
+        </div>
+        <div class="form-group">
+            <label for="node_exec_trusted_npubs">Trusted controllers (npubs) — this worker will run their commands</label>
+            <textarea id="node_exec_trusted_npubs" name="node_exec_trusted_npubs" rows="2" placeholder="npub1…&#10;npub1…"></textarea>
+            <small>⚠️ A DEDICATED allowlist (separate from the shared-compute DVM peers). This host will execute commands ONLY from these signature-verified npubs. Running commands is a bigger grant than GPU-offload, so keep this tight.</small>
+        </div>
+
+        <hr>
+        <div class="form-group">
+            <small>🐳 <strong>Per-user Debian sandbox.</strong> Lets <strong>non-admin AI users</strong> (and admins who opt in) run agentic tasks confined to their own throwaway Debian container — the agent can do anything <em>inside</em> it without touching the host. One container per user, created on demand, torn down when an agent run finishes, and idle-reaped. Needs Docker on the host + the service user in the <code>docker</code> group.</small>
+            <label for="node_exec_sandbox_enabled">
+                <input type="checkbox" id="node_exec_sandbox_enabled" name="node_exec_sandbox_enabled"> Enable the per-user Debian sandbox
+            </label>
+            <label for="node_exec_agent_node">Agent node</label>
+            <input type="text" id="node_exec_agent_node" name="node_exec_agent_node" placeholder="(this host)">
+            <small>Pin <strong>all sandbox/agentic runs to ONE node</strong> so agentic GPU work funnels through a single worker instead of competing across the fleet. Enter a node name from the worker list above (e.g. <code>nas.lan</code>); leave blank to run every sandbox on <strong>this host</strong>. When set to a full peer node, the whole run (container + agent loop) is dispatched there over the Nostr transport, and that worker's own 1-at-a-time agent lock <strong>queues</strong> concurrent runs. (Replaces the old deterministic container load-balancer.)</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_sandbox_image">Sandbox image</label>
+                <input type="text" id="node_exec_sandbox_image" name="node_exec_sandbox_image" placeholder="debian:stable-slim">
+                <small>Docker image for each user's container. Default: <code>debian:stable-slim</code>.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_sandbox_workspace">
+                    <input type="checkbox" id="node_exec_sandbox_workspace" name="node_exec_sandbox_workspace"> Give each sandbox a persistent <code>/workspace</code>
+                </label>
+                <small>The container itself is thrown away when a run finishes. This mounts a per-user Docker volume at <code>/workspace</code> that <strong>survives</strong>, so an agent can keep a checkout, scripts and results between runs. Off = every run starts on bare Debian with nothing. Volumes are named <code>pcai-ws-&lt;user&gt;</code> and are never deleted automatically — prune them yourself if disk matters.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_sandbox_network">Sandbox network</label>
+                <input type="text" id="node_exec_sandbox_network" name="node_exec_sandbox_network" placeholder="bridge">
+                <small><code>bridge</code> = internet (so the agent can <code>apt install</code> tools); <code>none</code> = fully isolated. The container can't reach the host either way.</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="node_exec_sandbox_memory">Sandbox memory</label>
+                <input type="text" id="node_exec_sandbox_memory" name="node_exec_sandbox_memory" placeholder="1g">
+                <small>Per-container memory cap (<code>docker --memory</code>). Default: <code>1g</code>.</small>
+            </div>
+            <div class="form-group">
+                <label for="node_exec_sandbox_cpus">Sandbox CPUs</label>
+                <input type="text" id="node_exec_sandbox_cpus" name="node_exec_sandbox_cpus" placeholder="1">
+                <small>Per-container CPU cap (<code>docker --cpus</code>). Default: <code>1</code>.</small>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>System Health Report (Schedulers)</legend>
+        <div class="form-group">
+            <label for="logs_scheduler_enabled">
+                <input type="checkbox" id="logs_scheduler_enabled" name="logs_scheduler_enabled"> Enable Health Report Scheduler
+            </label>
+            <small>🩺 Runs an agentic health check on each node (disks, SMART, RAID, failed services, recent errors) and files the report in the "Logs" conversation + Telegram (admin only). Requires <strong>Agentic Node Management</strong> above to be enabled.</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_schedule">Schedule (cron hours)</label>
+            <input type="text" id="logs_schedule" name="logs_schedule" value="1,12,18" placeholder="1,12,18">
+            <small>Hours to run (comma-separated, 24h format). Default: 1,12,18</small>
+        </div>
+        <div class="form-group">
+            <label for="logs_nodes">Nodes to Check</label>
+            <input type="text" id="logs_nodes" name="logs_nodes" placeholder="empty = ALL nodes (or narrow, e.g. nas.lan,server1)">
+            <small><strong>Leave empty to check every node</strong> (all <strong>Agentic Node Management</strong> nodes). Only fill this in to <em>narrow</em> the report to specific node names.</small>
+        </div>
+        <div class="form-group" style="margin-top: 10px;">
+            <small><strong>Note:</strong> Restart the service after changing scheduler settings.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Uptime Monitoring</legend>
+        <div class="form-group">
+            <label for="uptime_enabled">
+                <input type="checkbox" id="uptime_enabled" name="uptime_enabled"> Enable Uptime Monitoring
+            </label>
+            <small>📡 Polls the endpoints below and shows them in <strong>Discover → Server Stats → Uptime</strong> (heartbeats, response time, 24h/30d uptime), and on a standalone public status page at <code>/status</code> (JSON at <code>/status.json</code>) that needs no account and no JavaScript. Checks run in the background worker process; state is stored in the Nostr relay, not a database table. <strong>Both pages are public</strong> — only list endpoints you're happy to publish.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_monitors">Endpoints (one per line)</label>
+            <textarea id="uptime_monitors" name="uptime_monitors" rows="6" placeholder="Website | https://poster.place&#10;Relay | https://poster.place/relay | 120&#10;Git host | https://poster.place/git | 300 | posterchanai&#10;https://example.com"></textarea>
+            <small><strong>After saving, allow up to ~2 minutes</strong> before the first results appear: the checks run in the background worker, which picks up settings changes on its own re-hydrate cycle. No restart needed. Format: <code>Name | URL | interval seconds | expected text</code>. Only the URL is required — a bare URL line names itself after the host. The interval falls back to the default below; with an <em>expected text</em> field the response body must contain it, otherwise any 2xx/3xx counts as up. Lines starting with <code>#</code> are ignored. Renaming a monitor starts its history over (the name is its id); changing its URL keeps it.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_interval_seconds">Default Check Interval (seconds)</label>
+            <input type="number" id="uptime_interval_seconds" name="uptime_interval_seconds" min="20" placeholder="60">
+            <small>Used by any endpoint that doesn't set its own. Minimum 20s.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_timeout_seconds">Request Timeout (seconds)</label>
+            <input type="number" id="uptime_timeout_seconds" name="uptime_timeout_seconds" min="1" placeholder="15">
+        </div>
+        <div class="form-group">
+            <label for="uptime_retries">Failures Before DOWN</label>
+            <input type="number" id="uptime_retries" name="uptime_retries" min="1" placeholder="2">
+            <small>Consecutive failed checks before a monitor is called down and an alert is sent — stops a single blip from paging you.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_telegram">
+                <input type="checkbox" id="uptime_alert_telegram" name="uptime_alert_telegram"> Telegram alerts
+            </label>
+            <small>Sends 🔴 DOWN / 🟢 UP messages to the admin's Telegram (needs Telegram enabled on the admin account).</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_nostr">
+                <input type="checkbox" id="uptime_alert_nostr" name="uptime_alert_nostr"> Nostr alerts
+            </label>
+            <small>Sends the same message as an encrypted NIP-17 DM from this instance's operator key — it arrives in any Nostr client, not just this one.</small>
+        </div>
+        <div class="form-group">
+            <label for="uptime_alert_npubs">Alert npubs</label>
+            <input type="text" id="uptime_alert_npubs" name="uptime_alert_npubs" placeholder="empty = the admin's own npub">
+            <small>Who receives the Nostr alerts — one npub per line or comma-separated. Leave empty to DM the admin.</small>
+        </div>
+    </fieldset>
+</div>

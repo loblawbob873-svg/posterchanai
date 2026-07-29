@@ -157,6 +157,6 @@ def require_proxy(service_name: str) -> str:
     proxy_config = get_proxy_config()
     if not proxy_config:
         error_msg = f"{service_name} requires HTTP proxy to Tor. Please configure proxy in Admin Settings."
-        logger.error(f"{error_msg} Configure HTTP Proxy Host in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host (required for load-balanced setups), or enable built-in HTTP proxy.")
+        logger.error(f"{error_msg} Configure HTTP Proxy Host in Admin → Network → HTTP Proxy (outbound) (required for load-balanced setups), or enable built-in HTTP proxy.")
         raise ValueError(error_msg)
     return proxy_config

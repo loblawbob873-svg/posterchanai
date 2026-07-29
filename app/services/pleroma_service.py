@@ -232,7 +232,7 @@ async def admin_create_user(instance_url: str, admin_token: str, nickname: str, 
         return {"ok": True, "error": None, "created": False}
     if resp.status_code in (401, 403) or "staff" in txt.lower():
         return {"ok": False, "error": "the configured admin token is NOT a Pleroma admin/moderator "
-                                      "(staff) account. Set 'Admin Token' in Admin → Services → "
+                                      "(staff) account. Set 'Admin Token' in Admin → Social → "
                                       "Nostr ↔ Fediverse Bridge to a staff account's token."}
     return {"ok": False, "error": f"HTTP {resp.status_code}: {txt[:200]}", "created": False}
 

@@ -952,8 +952,8 @@ Built-in BitTorrent client with **required Tor proxy support** for anonymous dow
 - **Thread stats** - Shows reply and image counts
 
 **Setup:**
-1. Configure HTTP proxy in Admin → Site Settings → BitTorrent Client → HTTP Proxy Host
-2. Or enable built-in HTTP proxy in Admin → Site Settings → Built-in HTTP Proxy
+1. Configure HTTP proxy in Admin → Network → HTTP Proxy (outbound)
+2. Or enable built-in HTTP proxy in Admin → Network → Built-in HTTP Proxy
 
 **Features:**
 - **Tor proxy required** - All torrent/nyaa requests MUST be routed through HTTP proxy over Tor (configure in Admin Settings)
@@ -1256,7 +1256,7 @@ Access the file manager from **User Settings → Storage & Cloud** tab:
 
 The file manager uses a configurable memory cache for faster directory browsing:
 
-**Configuration (Admin → Site Settings → File Manager Cache):**
+**Configuration (Admin → Storage → File Manager Cache):**
 - **Enable File Listing Cache**: Enable/disable caching (default: enabled)
 - **Cache TTL**: How long to cache directory listings (default: 300 seconds = 5 minutes)
 - **Max Cache Entries**: Maximum number of cached directory listings (default: 1000)
@@ -1338,7 +1338,7 @@ Access the file manager from **User Settings → Storage & Cloud** tab:
 
 The file manager uses a configurable memory cache for faster directory browsing:
 
-**Configuration (Admin → Site Settings → File Manager Cache):**
+**Configuration (Admin → Storage → File Manager Cache):**
 - **Enable File Listing Cache**: Enable/disable caching (default: enabled)
 - **Cache TTL**: How long to cache directory listings (default: 300 seconds = 5 minutes)
 - **Max Cache Entries**: Maximum number of cached directory listings (default: 1000)

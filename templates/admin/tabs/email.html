@@ -1,0 +1,104 @@
+<!-- Email tab — outbound SMTP + the IMAP Sent-folder copy (was Services) -->
+<div class="tab-content" id="tab-email">
+    <fieldset>
+        <legend>Email (SMTP)</legend>
+        <div class="form-group">
+            <label for="smtp_enabled">
+                <input type="checkbox" id="smtp_enabled" name="smtp_enabled"> Enable SMTP
+            </label>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_host">SMTP Host</label>
+                <input type="text" id="smtp_host" name="smtp_host" placeholder="smtp.example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_port">Port</label>
+                <input type="number" id="smtp_port" name="smtp_port" value="587">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_username">Username</label>
+                <input type="text" id="smtp_username" name="smtp_username" placeholder="user@example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_password">Password</label>
+                <input type="password" id="smtp_password" name="smtp_password">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_from_email">From Email</label>
+                <input type="email" id="smtp_from_email" name="smtp_from_email" placeholder="noreply@example.com">
+            </div>
+            <div class="form-group">
+                <label for="smtp_from_name">From Name</label>
+                <input type="text" id="smtp_from_name" name="smtp_from_name" value="Posterchanai">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="smtp_use_tls">
+                    <input type="checkbox" id="smtp_use_tls" name="smtp_use_tls"> Use STARTTLS
+                </label>
+                <small>For port 587</small>
+            </div>
+            <div class="form-group">
+                <label for="smtp_use_ssl">
+                    <input type="checkbox" id="smtp_use_ssl" name="smtp_use_ssl"> Use SSL
+                </label>
+                <small>For port 465</small>
+            </div>
+        </div>
+        <div class="form-row test-email-row">
+            <div class="form-group">
+                <label for="test_email_address">Test Email</label>
+                <input type="email" id="test_email_address" placeholder="your@email.com">
+            </div>
+            <button type="button" class="btn-secondary" id="sendTestEmailBtn">Send Test</button>
+        </div>
+        <div id="testEmailResult" class="test-result"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Email (IMAP - Sent Folder)</legend>
+        <div class="form-group">
+            <label for="imap_enabled">
+                <input type="checkbox" id="imap_enabled" name="imap_enabled"> Enable IMAP
+            </label>
+            <small>Save sent emails to IMAP Sent folder</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_host">IMAP Host</label>
+                <input type="text" id="imap_host" name="imap_host" placeholder="imap.example.com">
+            </div>
+            <div class="form-group">
+                <label for="imap_port">Port</label>
+                <input type="number" id="imap_port" name="imap_port" value="993">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_username">Username (if different)</label>
+                <input type="text" id="imap_username" name="imap_username" placeholder="Leave empty to use SMTP username">
+            </div>
+            <div class="form-group">
+                <label for="imap_password">Password (if different)</label>
+                <input type="password" id="imap_password" name="imap_password" placeholder="Leave empty to use SMTP password">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="imap_use_ssl">
+                    <input type="checkbox" id="imap_use_ssl" name="imap_use_ssl" checked> Use SSL
+                </label>
+            </div>
+            <div class="form-group">
+                <label for="imap_sent_folder">Sent Folder Name</label>
+                <input type="text" id="imap_sent_folder" name="imap_sent_folder" value="Sent">
+            </div>
+        </div>
+    </fieldset>
+</div>

@@ -97,7 +97,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
   - **Write-back**: a reply, reaction or repost made on Nostr is performed **back** on the fediverse under the acting user's own linked account — not the bridge's.
   - **Personal plane** (opt-in per user): your own fediverse notifications arrive as the matching Nostr events, and your fedi DMs as **NIP-17** gift-wrapped Nostr DMs, keeping their direct visibility on reply.
 
-  Configure under Admin → Services. Self-serve enrolment is off by default (`fedi_bridge_self_serve`).
+  Configure under Admin → Social. Self-serve enrolment is off by default (`fedi_bridge_self_serve`).
 - **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI and Telegram.
 
@@ -245,7 +245,7 @@ image itself. The source URL is appended by default; `post don't include links` 
 Forward new notifications from your connected **Misskey / Pleroma / Nostr** accounts to your
 linked Telegram chat, and reply to them without leaving Telegram. Enable it per-user in
 **User Settings → Telegram → "Relay social notifications to Telegram"** (the admin must also
-turn on the global switch in **Admin → Services → Social Notification Relay**, where the poll
+turn on the global switch in **Admin → Social → Social Notification Relay**, where the poll
 interval is set).
 
 - New mentions, replies, DMs, follows, and reactions/boosts are forwarded as they arrive.
@@ -259,7 +259,7 @@ interval is set).
 ### Remote node management
 
 Run OS commands on a fleet of machines from chat or Telegram. Enable it in
-**Admin → Services → Remote Node Management**, list your nodes (one per line as
+**Admin → Nodes → Agentic Node Management**, list your nodes (one per line as
 `name|user@host`, or `name|local` for this host), and pick which users may use it
 (admins always can). Remote nodes are reached over **SSH** — they need nothing
 installed, just the posterchanai host's SSH public key in their `authorized_keys`.
@@ -293,7 +293,7 @@ The cloud Telegram Bot API limits the bot to downloading files up to **20 MB**, 
 `compress`/`clip`/`convert`/`translate` only work on small uploads there (the web UI
 has no such limit). To lift this to **~2 GB**, run a local Bot API server:
 
-1. In **Admin → Services → Telegram Bot**, enter your **API ID** and **API Hash**
+1. In **Admin → Telegram**, enter your **API ID** and **API Hash**
    (from https://my.telegram.org) and save.
 2. Set it up — either re-run `./install.sh` and pick **option 5** (*Telegram Bot API
    server — add-on only*, which sets up just the server against your existing install

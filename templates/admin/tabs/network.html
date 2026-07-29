@@ -1,0 +1,183 @@
+<!-- Network tab — outbound plumbing: managed Tor (+ .onion), the HTTP→SOCKS5 proxy and the
+     built-in torrent client (all moved out of Site Settings). -->
+<div class="tab-content" id="tab-network">
+    <fieldset>
+        <legend>Managed Tor Service</legend>
+        <div class="form-group">
+            <label for="tor_enabled">
+                <input type="checkbox" id="tor_enabled" name="tor_enabled"> Auto-start Tor
+            </label>
+            <small>Automatically start and configure the system <code>tor</code> binary on app launch (requires: <code>apt install tor</code>)</small>
+        </div>
+        <div class="form-group">
+            <label for="tor_listen_host">Listen Address</label>
+            <input type="text" id="tor_listen_host" name="tor_listen_host" value="127.0.0.1" placeholder="127.0.0.1 or 0.0.0.0">
+            <small>Use <code>0.0.0.0</code> to allow remote connections, or specific IP like <code>192.168.0.1</code></small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tor_socks_port">SOCKS5 Port</label>
+                <input type="number" id="tor_socks_port" name="tor_socks_port" value="9052" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="tor_control_port">Control Port</label>
+                <input type="number" id="tor_control_port" name="tor_control_port" value="9053" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="tor_exit_nodes">Exit Nodes</label>
+            <input type="text" id="tor_exit_nodes" name="tor_exit_nodes" value="{us}" placeholder="{us},{ca},{gb}">
+            <small>Country codes for exit nodes. Format: <code>{us}</code> or <code>{us},{gb}</code>. Default: US only</small>
+        </div>
+        <div class="form-group">
+            <label for="tor_data_dir">Tor Data Directory</label>
+            <input type="text" id="tor_data_dir" name="tor_data_dir" value="/var/lib/posterchanai/tor">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Onion Site (.onion)</legend>
+        <div class="form-group">
+            <small>Expose this deployment over Tor at a persistent <code>.onion</code> address (requires the Managed Tor Service above). One click generates it and applies it live — no restart. The address survives restarts (Tor keys persist in the data dir).</small>
+        </div>
+        <div class="form-group">
+            <button type="button" class="btn-primary" id="onion-toggle">🧅 Generate .onion site</button>
+            <span id="onion-status" class="muted" style="margin-left:10px;font-size:13px"></span>
+        </div>
+        <div class="form-group" id="onion-addr-row" style="display:none">
+            <label for="onion-addr">Your .onion address</label>
+            <div class="onion-addr-row">
+                <input type="text" id="onion-addr" readonly value="" style="flex:1;min-width:0;font-family:monospace">
+                <button type="button" class="btn-secondary btn-small" id="onion-copy">📋 Copy</button>
+            </div>
+        </div>
+    </fieldset>
+    <script>
+    (function(){
+      const btn=document.getElementById('onion-toggle'), st=document.getElementById('onion-status');
+      const row=document.getElementById('onion-addr-row'), addr=document.getElementById('onion-addr');
+      const copy=document.getElementById('onion-copy');
+      if(!btn) return;
+      let enabled=false, poll=null;
+      function render(s){
+        enabled=!!s.enabled;
+        btn.textContent = enabled ? '🧅 Disable .onion site' : '🧅 Generate .onion site';
+        if(s.address){ addr.value=s.address; row.style.display=''; st.textContent=''; if(poll){clearInterval(poll);poll=null;} }
+        else { row.style.display='none'; st.textContent = enabled ? 'starting… Tor is generating the address (a few seconds)' : ''; }
+      }
+      async function load(){ try{ const r=await fetch('/api/admin/onion'); if(r.ok) render(await r.json()); }catch(_){} }
+      btn.onclick=async()=>{
+        btn.disabled=true; st.textContent='applying…';
+        try{
+          const r=await csrfFetch('/api/admin/onion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!enabled})});
+          if(r.status===409){ st.textContent='Enable the Managed Tor Service first.'; btn.disabled=false; return; }
+          render(await r.json());
+          if(enabled && !addr.value){ let n=0; if(poll)clearInterval(poll); poll=setInterval(async()=>{ if(++n>12){clearInterval(poll);poll=null;return;} try{ const rr=await fetch('/api/admin/onion'); if(rr.ok){ const jj=await rr.json(); if(jj.address) render(jj); } }catch(_){} },2000); }
+        }catch(e){ st.textContent='failed: '+e; }
+        btn.disabled=false;
+      };
+      copy.onclick=()=>{ addr.select(); try{ navigator.clipboard.writeText(addr.value); }catch(_){ document.execCommand('copy'); } st.textContent='copied'; setTimeout(()=>{st.textContent='';},1500); };
+      load();
+    })();
+    </script>
+
+    <fieldset>
+        <legend>Second Tor Daemon (load-balancing)</legend>
+        <div class="form-group">
+            <label for="tor2_enabled">
+                <input type="checkbox" id="tor2_enabled" name="tor2_enabled"> Run a second Tor daemon
+            </label>
+            <small>Runs a second <code>tor</code> instance with its own circuit/exit IP (only when Auto-start Tor above is on). The built-in HTTP proxy round-robins across both — exit-IP diversity that dodges per-IP rate limits and geo-blocks. Torrent traffic stays Tor-only (never falls back to direct).</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="tor2_socks_port">SOCKS5 Port</label>
+                <input type="number" id="tor2_socks_port" name="tor2_socks_port" value="9062" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="tor2_control_port">Control Port</label>
+                <input type="number" id="tor2_control_port" name="tor2_control_port" value="9063" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="tor2_exit_nodes">Exit Nodes</label>
+            <input type="text" id="tor2_exit_nodes" name="tor2_exit_nodes" value="{ca}" placeholder="{ca},{gb}">
+            <small>Use a different region than the first daemon for diversity. Default: Canada (<code>{ca}</code>) — geographically close, so minimal latency cost.</small>
+        </div>
+        <div class="form-group">
+            <label for="tor2_data_dir">Tor Data Directory</label>
+            <input type="text" id="tor2_data_dir" name="tor2_data_dir" value="/var/lib/posterchanai/tor2">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Built-in HTTP Proxy (HTTP→SOCKS5)</legend>
+        <div class="form-group">
+            <label for="proxy_enabled">
+                <input type="checkbox" id="proxy_enabled" name="proxy_enabled"> Enable Built-in HTTP Proxy
+            </label>
+            <small>HTTP proxy that forwards to SOCKS5 (Tor). Replaces Privoxy.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="proxy_listen_host">Listen Address</label>
+                <input type="text" id="proxy_listen_host" name="proxy_listen_host" value="127.0.0.1" placeholder="127.0.0.1">
+            </div>
+            <div class="form-group">
+                <label for="proxy_listen_port">Listen Port</label>
+                <input type="number" id="proxy_listen_port" name="proxy_listen_port" value="8118" min="1" max="65535">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="proxy_socks_host">SOCKS5 Target Host</label>
+                <input type="text" id="proxy_socks_host" name="proxy_socks_host" placeholder="127.0.0.1 or tor-server-ip">
+            </div>
+            <div class="form-group">
+                <label for="proxy_socks_port">SOCKS5 Target Port</label>
+                <input type="number" id="proxy_socks_port" name="proxy_socks_port" value="9052" min="1" max="65535">
+            </div>
+        </div>
+        <small style="display:block; margin-top:8px;">For distributed setup: Set SOCKS5 host to your Tor server's IP. If using built-in Tor, use 127.0.0.1</small>
+    </fieldset>
+
+    <fieldset>
+        <legend>HTTP Proxy (outbound)</legend>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="bt_proxy_host">HTTP Proxy Host</label>
+                <input type="text" id="bt_proxy_host" name="bt_proxy_host" placeholder="127.0.0.1">
+            </div>
+            <div class="form-group">
+                <label for="bt_proxy_port">Proxy Port</label>
+                <input type="number" id="bt_proxy_port" name="bt_proxy_port" value="8118" min="1" max="65535">
+            </div>
+        </div>
+        <small style="display:block; margin-top:8px;">Shared outbound HTTP proxy (e.g. Privoxy &rarr; Tor). Used by the built-in torrent client <strong>and</strong> Nitter feeds, 4chan, and SearX fetches. Required for torrents and Nitter.</small>
+    </fieldset>
+
+    <fieldset>
+        <legend>Built-in Torrent Client (libtorrent)</legend>
+        <div class="form-group">
+            <label for="bt_enabled">
+                <input type="checkbox" id="bt_enabled" name="bt_enabled"> Enable Built-in Torrent Client
+            </label>
+            <small>All torrent traffic is routed through the HTTP proxy (required)</small>
+        </div>
+        <div class="form-group">
+            <label for="bt_server_url">Remote Torrent Server URL</label>
+            <input type="text" id="bt_server_url" name="bt_server_url" placeholder="http://torrent-server:3051">
+            <small>Leave empty for local. Set URL to forward requests to a remote torrent server. Server-to-server requests use load-balanced header authentication.</small>
+        </div>
+        <div class="form-group">
+            <label for="bt_download_dir">Download Directory</label>
+            <input type="text" id="bt_download_dir" name="bt_download_dir" placeholder="/var/lib/posterchanai/torrents">
+            <small>Where downloaded torrents are saved (local server only)</small>
+        </div>
+        <div class="form-group">
+            <label for="bt_listen_port">BitTorrent Listen Port</label>
+            <input type="number" id="bt_listen_port" name="bt_listen_port" value="6881" min="1024" max="65535">
+            <small>Port for incoming peer connections</small>
+        </div>
+    </fieldset>
+</div>

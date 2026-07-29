@@ -50,7 +50,7 @@ Status: **Phase 1 (config) DONE** — settings + Admin UI (`node_exec_nostr_*`, 
 5. **logs_scheduler (syslogs)** — reuses `run_agent`, so it inherits the transport automatically once (3)
    routes `local`/remote through Nostr; verify the health report still resolves nodes by npub.
 7. **Live-node config** — after the runtime works+tests: set nas.lan + server1.lan node npubs + mutual
-   trust in Admin → Services.
+   trust in Admin → Nodes.
 
 ## Build order (each independently testable)
 Protocol (this doc) → standalone agent (test: it prints an npub, connects, echoes a signed shell cmd) →

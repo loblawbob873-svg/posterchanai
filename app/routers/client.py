@@ -200,9 +200,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # its own repo instead of ours.
         "source_url": _setting(db, "source_url", "https://github.com/loblawbob873-svg/posterchanai"),
         "name": _setting(db, "site_name", "PosterChan"),
-        # Custom logo URL (Admin → Site Settings); blank → the client keeps its built-in logo.
+        # Custom logo URL (Admin → Site); blank → the client keeps its built-in logo.
         "logo_url": _setting(db, "site_logo_url", ""),
-        # Default UI theme for visitors/devices without their own saved pick (Admin → Site Settings).
+        # Default UI theme for visitors/devices without their own saved pick (Admin → Site).
         "default_theme": _default_theme(db),
         # Community size — the relay's web-of-trust member count (cached in its status file; cheap).
         "users": _relay_user_count(),

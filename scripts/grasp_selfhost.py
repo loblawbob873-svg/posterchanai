@@ -43,7 +43,7 @@ def main():
         db.close()
 
     if not settings_store.get_bool("git_server_enabled", False):
-        print("git_server_enabled is off — enable the git host first (Admin → Services). Aborting.")
+        print("git_server_enabled is off — enable the git host first (Admin → Git). Aborting.")
         return 2
 
     from app.services import keystore

@@ -190,7 +190,7 @@ manages the daemon itself** (SOCKS5 :9052), along with the outbound HTTP proxy (
 the libtorrent client (routed through that proxy). They're a chain (torrents → the :8118 proxy →
 Tor), so they default off together. Opt in per piece with
 `-e POSTERCHANAI_TOR_ENABLED=true` / `_PROXY_ENABLED=true` / `_BT_ENABLED=true`, or toggle in
-Admin → Services. (Only seeded on first run; existing nodes keep their current settings.)
+the matching Admin tab. (Only seeded on first run; existing nodes keep their current settings.)
 
 ## Bring your own image models
 

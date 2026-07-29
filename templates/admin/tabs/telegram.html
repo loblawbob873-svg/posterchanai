@@ -1,0 +1,71 @@
+<!-- Telegram tab — the bot bridge (was Services → Telegram Bot). The buttons are wired in
+     static/js/admin.js (test connection / local server / webhook / linked users). -->
+<div class="tab-content" id="tab-telegram">
+    <fieldset>
+        <legend>Telegram Bot</legend>
+        <div class="form-group">
+            <label for="telegram_enabled">
+                <input type="checkbox" id="telegram_enabled" name="telegram_enabled"> Enable Telegram Bot
+            </label>
+            <small>Allow users to interact with AI via Telegram</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_bot_token">Bot Token</label>
+            <input type="password" id="telegram_bot_token" name="telegram_bot_token" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
+            <small>Get token from @BotFather on Telegram</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_webhook_url">Webhook URL</label>
+            <input type="url" id="telegram_webhook_url" name="telegram_webhook_url" placeholder="https://yourdomain.com/api/telegram/webhook">
+            <small>URL for receiving Telegram updates (must be publicly accessible)</small>
+        </div>
+
+        <div class="form-group" style="margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
+            <strong>Large files on Telegram (optional)</strong>
+            <small>
+                The cloud Bot API caps bot downloads at <b>20&nbsp;MB</b>, so <code>compress</code>/<code>convert</code>
+                only work on small files. A local
+                <a href="https://github.com/tdlib/telegram-bot-api" target="_blank" rel="noopener">telegram-bot-api</a>
+                server raises that to <b>~2&nbsp;GB</b>. Do these <b>in order</b>:
+            </small>
+            <ol style="margin: 8px 0 0 18px; padding: 0; font-size: 0.85em; line-height: 1.6;">
+                <li>Fill in <b>API ID</b>, <b>API Hash</b> and the <b>Bot API server URL</b> below, then click <b>Save Settings</b>.</li>
+                <li>On the bot host (server1) run once: <code>sudo ./scripts/setup-telegram-local-api.sh</code> (builds &amp; starts the server; ~10–20&nbsp;min).</li>
+                <li>Click <b>Test Local Server</b> and wait for the green “OK”.</li>
+                <li>That unlocks <b>Use local Bot API server</b> — tick it, <b>Save Settings</b>, then <b>Setup Webhook</b>.</li>
+            </ol>
+        </div>
+        <div class="form-group">
+            <label for="telegram_api_base">① Bot API server URL</label>
+            <input type="url" id="telegram_api_base" name="telegram_api_base" placeholder="http://localhost:8081">
+            <small>Keep it private — usually <code>http://localhost:8081</code>.</small>
+        </div>
+        <div class="form-row" style="gap: 10px;">
+            <div class="form-group" style="flex: 1;">
+                <label for="telegram_api_id">① API ID</label>
+                <input type="text" id="telegram_api_id" name="telegram_api_id" placeholder="123456" autocomplete="off">
+            </div>
+            <div class="form-group" style="flex: 2;">
+                <label for="telegram_api_hash">① API Hash</label>
+                <input type="password" id="telegram_api_hash" name="telegram_api_hash" placeholder="0123456789abcdef0123456789abcdef" autocomplete="off">
+            </div>
+        </div>
+        <div class="form-group">
+            <small>Get <b>API ID</b> / <b>API Hash</b> from <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> — paste only the values (no labels).</small>
+        </div>
+        <div class="form-group">
+            <label for="telegram_local_api" id="telegram_local_api_label" style="opacity: 0.5;">
+                <input type="checkbox" id="telegram_local_api" name="telegram_local_api" disabled> ④ Use local Bot API server
+            </label>
+            <small id="telegram_local_api_hint">🔒 Locked until <b>Test Local Server</b> succeeds (step&nbsp;3) — this prevents enabling it before the server is running.</small>
+        </div>
+
+        <div class="form-row" style="gap: 10px; margin-top: 15px;">
+            <button type="button" class="btn-secondary" id="testTelegramBtn">Test Connection</button>
+            <button type="button" class="btn-secondary" id="testLocalApiBtn">Test Local Server</button>
+            <button type="button" class="btn-secondary" id="setupWebhookBtn">Setup Webhook</button>
+            <button type="button" class="btn-secondary" id="viewTelegramUsersBtn">View Linked Users</button>
+        </div>
+        <div id="telegramStatus" class="test-result"></div>
+    </fieldset>
+</div>

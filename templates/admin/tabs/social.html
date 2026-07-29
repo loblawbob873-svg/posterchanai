@@ -1,0 +1,112 @@
+<!-- Social tab — fediverse: notification relay to Telegram + the Nostr ↔ Fediverse bridge
+     (was Services). Per-user opt-in lives in the client's User Settings → Social. -->
+<div class="tab-content" id="tab-social">
+    <fieldset>
+        <legend>Social Notification Relay</legend>
+        <div class="form-group">
+            <label for="social_notif_enabled">
+                <input type="checkbox" id="social_notif_enabled" name="social_notif_enabled"> Enable Social Notification Relay
+            </label>
+            <small>Master kill-switch for forwarding Misskey/Pleroma notifications to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
+        </div>
+        <div class="form-group">
+            <label for="social_notif_poll_seconds">Poll Interval (seconds)</label>
+            <input type="number" id="social_notif_poll_seconds" name="social_notif_poll_seconds" value="60" min="15">
+            <small>How often to check connected accounts for new notifications (minimum 15). Restart after changing.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Nostr ↔ Fediverse Bridge</legend>
+        <div class="form-group">
+            <label for="fedi_bridge_enabled">
+                <input type="checkbox" id="fedi_bridge_enabled" name="fedi_bridge_enabled"> Enable Fediverse → Nostr bridge
+            </label>
+            <small>Mirror the fediverse <strong>global timeline</strong> into this instance's Nostr global timeline. Each fedi author becomes a Nostr "puppet" account with a NIP-05 here; replies and quote-posts are preserved. One shared read account (below) feeds the mirror for everyone — it never posts on anyone's behalf. To <em>interact</em> (reply/like/repost) or receive personal DMs/notifications, each user links their own Pleroma account in User Settings → Social and opts in there (and must be a NIP-05 user on this instance). Restart after changing.</small>
+        </div>
+        <div class="form-group">
+            <label for="fedi_bridge_instance_url">Read Account Instance URL</label>
+            <input type="url" id="fedi_bridge_instance_url" name="fedi_bridge_instance_url" placeholder="https://pleroma.example">
+        </div>
+        <div class="form-group">
+            <button type="button" class="btn-secondary" id="fedi_bridge_oauth_btn">🔗 Connect read account with OAuth</button>
+            <span id="fedi_bridge_oauth_status" style="margin-left:8px;color:#888;"></span>
+            <small>One click: authorize the account above and its token is saved automatically — no pasting. Used only to READ the global timeline; its own block &amp; mute lists are honored at ingest.</small>
+        </div>
+        <details class="form-group">
+            <summary style="cursor:pointer;color:#888;">Or paste an access token manually</summary>
+            <label for="fedi_bridge_access_token">Read Account Access Token</label>
+            <input type="text" id="fedi_bridge_access_token" name="fedi_bridge_access_token" placeholder="Pleroma/Mastodon access token (read-only use)">
+        </details>
+        <div class="form-group">
+            <label for="fedi_bridge_admin_token">Admin Token (for 1-click Bridge Access)</label>
+            <input type="text" id="fedi_bridge_admin_token" name="fedi_bridge_admin_token" placeholder="Pleroma admin token on the read instance (blank = reuse the read token)">
+            <small>Lets a native Nostr user click "Bridge Access" in their profile to auto-create a fediverse account on the instance above. Needs a Pleroma <strong>admin</strong> token. Leave blank to reuse the read token if that account is an admin.</small>
+        </div>
+        <script>
+        (function(){
+          var btn = document.getElementById('fedi_bridge_oauth_btn');
+          if (!btn || btn._wired) return; btn._wired = true;
+          var status = document.getElementById('fedi_bridge_oauth_status');
+          btn.addEventListener('click', async function(){
+            var inst = (document.getElementById('fedi_bridge_instance_url')||{}).value || '';
+            inst = inst.trim();
+            if (!/^https?:\/\//.test(inst)) { status.textContent = 'Enter the instance URL first (https://…).'; return; }
+            status.textContent = 'Opening authorization…';
+            try {
+              var r = await fetch('/api/pleroma/oauth/start', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({instance_url: inst, target: 'bridge'})
+              });
+              var d = await r.json();
+              if (!r.ok || !d.auth_url) { status.textContent = 'Failed: ' + (d.detail || 'could not start OAuth'); return; }
+              window.open(d.auth_url, 'fedibridge_oauth', 'width=600,height=750');
+              status.textContent = 'Waiting for authorization…';
+            } catch(e){ status.textContent = 'Error: ' + e; }
+          });
+          window.addEventListener('message', function(ev){
+            if (ev.data === 'pleroma_bridge_connected') {
+              status.textContent = '✓ Connected. Enable the bridge above and restart.';
+              status.style.color = '#4caf50';
+            }
+          });
+        })();
+        </script>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="fedi_bridge_type">Timeline</label>
+                <select id="fedi_bridge_type" name="fedi_bridge_type">
+                    <option value="global">Global / Federated</option>
+                    <option value="local">Local</option>
+                    <option value="home">Home</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="fedi_bridge_poll_seconds">Poll Interval (seconds)</label>
+                <input type="number" id="fedi_bridge_poll_seconds" name="fedi_bridge_poll_seconds" value="90" min="15">
+            </div>
+            <div class="form-group">
+                <label for="fedi_bridge_retention_days">Mirror retention (days)</label>
+                <input type="number" id="fedi_bridge_retention_days" name="fedi_bridge_retention_days" value="0" min="0">
+                <small>How long to keep mirrored fediverse posts. The relay's general retention does not apply to bridge content — this setting alone governs its age. <strong>0 = keep forever</strong> (a busy bridge may then need a value here, or a relay event cap, to bound disk).</small>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="fedi_bridge_include_replies">
+                <input type="checkbox" id="fedi_bridge_include_replies" name="fedi_bridge_include_replies"> Mirror replies (threaded)
+            </label>
+            <small>Mirror reply posts too, threaded via Nostr e/p tags.</small>
+        </div>
+        <div class="form-group">
+            <label for="fedi_bridge_broadcast">
+                <input type="checkbox" id="fedi_bridge_broadcast" name="fedi_bridge_broadcast"> Broadcast mirrored notes to other Nostr relays
+            </label>
+            <small><strong>Off by default.</strong> When off, the mirror stays local to this instance's relay. Turn on only if you intend to federate the fediverse mirror to the wider Nostr network.</small>
+        </div>
+        <div class="form-group">
+            <label for="fedi_bridge_blocked_domains">Blocked fediverse domains (one per line)</label>
+            <textarea id="fedi_bridge_blocked_domains" name="fedi_bridge_blocked_domains" rows="3" placeholder="spam.example&#10;bad.instance.tld"></textarea>
+            <small>Posts whose author host (or origin instance) matches are never mirrored. A parent domain covers its subdomains.</small>
+        </div>
+    </fieldset>
+</div>

@@ -899,7 +899,7 @@ async def _handle_message(update, db):
                         f"❌ `{_ov_name}` is {_ov_size / (1024 * 1024):.1f} MB. The cloud Telegram Bot "
                         f"API only lets bots download files up to 20 MiB (≈20.97 MB).\n\n"
                         f"Use the **web UI** for larger files, or enable a local Bot API server "
-                        f"in Admin → Services."
+                        f"in Admin → Nodes."
                     )
                 await telegram_service.send_message(chat_id, _msg)
                 return {"ok": True}
