@@ -115,7 +115,7 @@ x-common: &common
     # at /var/lib/posterchanai/models/<your-file>.safetensors in Admin → Settings.
     # (The auto-downloaded LLM GGUF also lands here, so you can see/replace it.)
     - ./models:/var/lib/posterchanai/models
-    # Per-user Debian SANDBOX (Admin → Services → node_exec_sandbox_enabled, OFF by default).
+    # Per-user Debian SANDBOX (Admin → Nodes → node_exec_sandbox_enabled, OFF by default).
     # The app spawns SIBLING containers via docker-outside-of-docker. To enable it in Docker, uncomment
     # the socket mount below AND `group_add` below, AND build an image that has the docker CLI (the
     # stock image doesn't — see the note in the Dockerfile). Bare-metal installs use `./install.sh --sandbox`.

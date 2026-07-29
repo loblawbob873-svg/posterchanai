@@ -10,7 +10,7 @@ setup_telegram_botapi() {
     print_step "Setting up local Telegram Bot API server (option 5)"
     echo ""
     echo "  Credentials come from the web UI: enter your API ID / API Hash in"
-    echo "  Admin -> Services -> Telegram Bot (and Save) if you haven't already."
+    echo "  Admin -> Telegram (and Save) if you haven't already."
     echo "  This step reads them from the database — it won't ask you here."
     echo ""
 
@@ -20,7 +20,7 @@ setup_telegram_botapi() {
         print_success "Local Telegram Bot API server is set up."
     else
         print_warning "Local Bot API setup didn't complete. Most likely the API ID/Hash"
-        print_warning "aren't saved yet — set them in Admin -> Services -> Telegram Bot, then run:"
+        print_warning "aren't saved yet — set them in Admin -> Telegram, then run:"
         echo "    ./scripts/setup-telegram-local-api.sh"
     fi
 }

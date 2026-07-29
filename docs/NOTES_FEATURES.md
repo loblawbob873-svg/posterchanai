@@ -127,7 +127,7 @@ Where:
 - Chat files are stored at: `{upload_path}/{username}/{conversation_id}/{filename}`
 - Notes attachments are stored at: `{upload_path}/{username}/notes/{note_id}/{filename}`
 
-This uses the same `upload_path` setting configured in Admin > Site Settings, ensuring consistent storage management.
+This uses the same `upload_path` setting configured in Admin → Storage, ensuring consistent storage management.
 
 **⚠️ Load Balancing Configuration:**
 

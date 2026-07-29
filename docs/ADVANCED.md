@@ -363,7 +363,7 @@ gpu_type: intel
 
 Posterchanai supports round-robin load balancing for both chat and image generation across multiple servers.
 
-**Admin > Site Settings > Load Balancing:**
+**Admin → Nodes → Load Balancing:**
 - `Chat Server URLs` - Comma-separated list of posterchanai servers for LLM/chat requests
 - `Image Server URLs` - Comma-separated list of posterchanai servers for image generation
 
@@ -410,7 +410,7 @@ Proxy file requests to a designated storage node. This avoids requiring shared f
 
 All nodes share the same storage location via network filesystem:
 
-- **Upload Path**: Configure `upload_path` in Admin > Site Settings to point to a **shared storage location**
+- **Upload Path**: Configure `upload_path` in Admin → Storage to point to a **shared storage location**
 - **Shared Storage Options**:
   - **NFS mount**: Mount NFS share to same path on all nodes (e.g., `/var/lib/posterchanai`)
   - **Network filesystem**: CIFS/SMB, GlusterFS, or similar
@@ -626,7 +626,7 @@ Download YouTube videos or audio via yt-dlp. Requires `yt-dlp` and (for MP3) `ff
 
 **Tab autocomplete:** Type `ytdl ` and press Tab for `mp3` / `video` subcommands.
 
-Files are saved to local storage or to the configured storage server (Admin > Site Settings). Optional: set `ytdl_cookies_path` for age-restricted or region-locked videos, and `ytdl_no_ssl_verify` if you see certificate errors.
+Files are saved to local storage or to the configured storage server (Admin → Storage). Optional: set `ytdl_cookies_path` for age-restricted or region-locked videos, and `ytdl_no_ssl_verify` if you see certificate errors.
 
 ## Voice Input
 
@@ -966,10 +966,10 @@ Built-in BitTorrent client with **required Tor proxy support** for anonymous dow
 
 1. Nothing to install — `libtorrent` comes from `requirements.txt` as a prebuilt PyPI wheel
    (no OS package; see "Built-in Torrent Client" under Requirements for the Python-version caveat)
-2. Enable in Admin > Services > BitTorrent Client
+2. Enable in Admin → Network → Built-in Torrent Client
 3. Configure download path and optional proxy
 
-**Admin Settings (Admin > Services > BitTorrent):**
+**Admin Settings (Admin → Network → Built-in Torrent Client):**
 
 | Setting | Description |
 |---------|-------------|

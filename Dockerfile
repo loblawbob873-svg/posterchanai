@@ -322,7 +322,7 @@ ENV POSTERCHANAI_PORT=3051 \
 # defaults and means outbound relay/social traffic is proxied out of the box; without it the proxy
 # never listened on :8118 and every upstream connect hit ECONNREFUSED before falling back to direct.
 # Torrenting stays OFF (opt in with -e POSTERCHANAI_BT_ENABLED=true). Disable the proxy/Tor with
-# -e POSTERCHANAI_TOR_ENABLED=false -e POSTERCHANAI_PROXY_ENABLED=false, or toggle in Admin → Services
+# -e POSTERCHANAI_TOR_ENABLED=false -e POSTERCHANAI_PROXY_ENABLED=false, or toggle in Admin → Network
 # (seeded only on first run, so this never overrides an existing choice).
 
 EXPOSE 3051

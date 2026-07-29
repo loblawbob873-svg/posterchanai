@@ -40,7 +40,7 @@ echo "                      Liberation-Sans-Bold); without one they fall back to
 echo "  • tesseract-ocr   — PDF OCR for scanned documents."
 echo "  • tor + libtorrent — the built-in Tor proxy + torrent client are ON by default on a manual"
 echo "                      install, so install these or they won't work (or turn them off in"
-echo "                      Admin → Site Settings). PosterChanAI runs + manages the tor daemon(s)"
+echo "                      Admin → Network). PosterChanAI runs + manages the tor daemon(s)"
 echo "                      itself — two by default (US + Canada exits, load-balanced); it just"
 echo "                      needs the system 'tor' binary + Python libtorrent on PATH."
 echo "  Debian/Ubuntu: sudo apt install ffmpeg tesseract-ocr fonts-dejavu fonts-liberation tor python3-libtorrent"

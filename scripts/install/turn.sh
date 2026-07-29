@@ -33,7 +33,7 @@ setup_turn_server() {
 
     cat <<'EOF'
 
-Next steps to turn it on (Admin → Services → "Voice/Video Calls + Built-in TURN Relay"):
+Next steps to turn it on (Admin → Live → "Voice/Video Calls + Built-in TURN Relay"):
   1. DNS: add a GREY-CLOUDED (DNS-only, NOT proxied) A record  turn.<yourdomain>  → this server's PUBLIC IP.
   2. Firewall/router: forward these to this machine —
        - UDP + TCP 3478            (STUN + TURN)

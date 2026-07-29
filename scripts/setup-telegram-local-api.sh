@@ -33,7 +33,7 @@ _db_get() {
     psql "$PG_DSN" -tAc "SELECT value FROM settings WHERE key='$(_sqlq "$1")';" 2>/dev/null
 }
 # NOTE: with settings_backend=relay the Setting table is hydrated from the relay on startup, so a
-# direct write here can be reverted on the next restart — set telegram_api_base in Admin -> Services
+# direct write here can be reverted on the next restart — set telegram_api_base in Admin -> Telegram
 # to persist it. The credential *reads* above are always correct.
 _db_set() {
     psql "$PG_DSN" -c "INSERT INTO settings (key, value) VALUES ('$(_sqlq "$1")', '$(_sqlq "$2")') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;" >/dev/null 2>&1 || true
@@ -56,8 +56,8 @@ SERVICE_NAME="telegram-bot-api"
 RUN_USER="${RUN_USER:-${SUDO_USER:-$(id -un)}}"
 WORK_DIR="${WORK_DIR:-/var/lib/telegram-bot-api}"
 
-[ -n "${API_ID:-}" ]  || err "No API ID found (set it in Admin -> Services -> Telegram Bot, or pass API_ID=…). Get it from https://my.telegram.org"
-[ -n "${API_HASH:-}" ] || err "No API Hash found (set it in Admin -> Services -> Telegram Bot, or pass API_HASH=…). Get it from https://my.telegram.org"
+[ -n "${API_ID:-}" ]  || err "No API ID found (set it in Admin -> Telegram, or pass API_ID=…). Get it from https://my.telegram.org"
+[ -n "${API_HASH:-}" ] || err "No API Hash found (set it in Admin -> Telegram, or pass API_HASH=…). Get it from https://my.telegram.org"
 
 # ---------------------------------------------------------------------------
 # 1. Build telegram-bot-api from source.
@@ -158,7 +158,7 @@ if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
 ✅ Local Bot API server is running on port ${PORT}, and the web UI is configured to use it.
    Telegram can now process files up to ~2 GB. Nothing else to do.
    (If a webhook was configured, give it a few minutes after logOut, or click
-    "Setup Webhook" in Admin -> Services once.)
+    "Setup Webhook" in Admin -> Telegram once.)
 EOF
 else
     err "Service failed to start. Check: ${SUDO} journalctl -u ${SERVICE_NAME} -n 50"

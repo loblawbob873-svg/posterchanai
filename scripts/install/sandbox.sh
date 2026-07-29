@@ -10,7 +10,7 @@
 #   3) the base image pulled (node_exec_sandbox_image, default python:3.12-slim — it ships an
 #      interpreter so an agent run does not burn its first two steps apt-get installing python3).
 #
-# After this, enable it in Admin → Services → "Enable the per-user Debian sandbox" (off by default),
+# After this, enable it in Admin → Nodes → "Enable the per-user Debian sandbox" (off by default),
 # then restart the service so the new docker-group membership is picked up.
 #
 # Docker itself is NOT auto-installed here (too distro-specific + a big host change): if it's missing we
@@ -85,6 +85,6 @@ setup_sandbox() {
 
     echo ""
     print_success "Sandbox host setup done."
-    echo "   Next: Admin → Services → enable \"Enable the per-user Debian sandbox\", then RESTART the"
+    echo "   Next: Admin → Nodes → enable \"Enable the per-user Debian sandbox\", then RESTART the"
     echo "   service (so the docker-group membership is active). It stays OFF until you enable it."
 }

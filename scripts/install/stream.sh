@@ -14,7 +14,7 @@
 # deps.sh) and uses the GPU's media engine when there is one — NVENC/VAAPI are auto-detected, else CPU.
 # No new port to forward: it reads and writes over RTSP bound to 127.0.0.1. If ffmpeg is missing the
 # transcode simply never starts and viewers get the unclamped source, so nothing breaks — it just costs
-# far more bandwidth. Turn it off in Admin → Services → OBS Streaming.
+# far more bandwidth. Turn it off in Admin → Live → OBS Streaming.
 
 setup_stream_server() {
     print_banner 2>/dev/null || true
@@ -64,7 +64,7 @@ setup_stream_server() {
 
     cat <<'EOF'
 
-Next steps to turn it on (Admin → Services → "OBS Streaming"):
+Next steps to turn it on (Admin → Live → "OBS Streaming"):
   1. Firewall/router: forward to this machine —
        - TCP 1935            (RTMP ingest from OBS)
        - UDP 8189            (WebRTC media — needed for "Go live from phone" over the internet)

@@ -104,7 +104,7 @@ if [ "${SOURCE_ONEAPI:-0}" = "1" ] && [ -f /opt/intel/oneapi/setvars.sh ]; then
 fi
 
 # Chat model: NOT auto-downloaded (saves bandwidth). The admin pulls it on demand from
-# Admin → AI Settings → "Download chat model" (shows progress + ✓/✗). Opt back into the
+# Admin → LLM → "Download chat model" (shows progress + ✓/✗). Opt back into the
 # turnkey background pull with DOWNLOAD_MODEL=1 (needs POSTERCHANAI_MODEL_URL + _LLM_MODEL_PATH).
 if [ "${DOWNLOAD_MODEL:-0}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
    [ -n "${POSTERCHANAI_LLM_MODEL_PATH:-}" ] && [ ! -f "$POSTERCHANAI_LLM_MODEL_PATH" ]; then
@@ -115,7 +115,7 @@ if [ "${DOWNLOAD_MODEL:-0}" = "1" ] && [ -n "${POSTERCHANAI_MODEL_URL:-}" ] && \
             mv -f "$tmp" "$POSTERCHANAI_LLM_MODEL_PATH"
             echo "[entrypoint] model download complete: $POSTERCHANAI_LLM_MODEL_PATH"
         else
-            echo "[entrypoint] WARNING: model download failed; set a model in Admin → Settings or retry."
+            echo "[entrypoint] WARNING: model download failed; set a model in Admin → LLM or retry."
         fi
     ) &
 fi

@@ -99,7 +99,7 @@ check_git_host() {
     done
     if [ -z "$GITBK" ]; then
         echo "  MISSING: git-http-backend (ships with git; check /usr/libexec/git-core or /usr/lib/git-core)"; return 1; fi
-    echo "OK — enable the host in Admin → Services (git_server_enabled) and set its public base URL."
+    echo "OK — enable the host in Admin → Git (git_server_enabled) and set its public base URL."
     echo "     Repos will live under <Storage Path>/git_repos. Guide: docs/GIT.md"
     return 0
 }
@@ -278,7 +278,7 @@ main() {
 
     # Step 9f: Verify the built-in git server's prerequisites (git + git-http-backend). Nothing to
     # install — it's stdlib + the git package — so this only reports, and the host still ships OFF
-    # (Admin → Services). Non-fatal: a box without git simply can't host repos.
+    # (Admin → Git). Non-fatal: a box without git simply can't host repos.
     check_git_host || print_warning "Git host prerequisites missing; docs/GIT.md explains what to install"
 
     # Step 10: Setup XPU image instance for Intel Arc
