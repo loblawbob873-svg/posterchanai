@@ -3915,6 +3915,10 @@ body.modal-open .mobilenav{display:none}
 .mb-f input[type=color]{width:100%;height:34px;padding:2px;background:var(--panel2);
   border:1px solid var(--line);border-radius:8px}
 .mb-frow{display:flex;gap:8px}
+/* The flip toggles are the only mb- buttons with an ON state, and there was no .btn.on rule to
+   carry it — an unlit toggle is worse than no toggle, you cannot tell whether the layer is
+   mirrored. Same treatment as .tl-cmp-btn.on. */
+.mb-frow .btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan);border-color:rgba(var(--accent-rgb),.55)}
 .mb-frow .mb-f{flex:1 1 0}
 /* Visual clip trimmer (video layer): the source video IS the scrubber. Bright band = kept, dark = trimmed,
    neon bars = drag handles. Theme vars only for the frame; the dim/handles are fixed so they read on any clip. */

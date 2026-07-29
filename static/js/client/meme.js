@@ -206,6 +206,7 @@
       start: tail, dur: type==='text' ? 3 : (type==='audio' ? Math.max(projEnd(), 1) : 4), trim: 0,
       x: 0, y: 0, w: type==='text' ? 0 : P.w, h: type==='text' ? 0 : Math.round(P.h/2),
       opacity: 1, effect: 'none', volume: 1, mute: false,
+      flipH: false, flipV: false, rotate: 0,
       text: type==='text' ? 'top text' : '', size: 64, color:'#ffffff', stroke:'#000000',
       align: '',
     }, extra||{});
@@ -306,14 +307,19 @@
         ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
+    // Mirror the renderer's mirror+rotate. Order matters and CSS applies transforms RIGHT to LEFT, so
+    // `rotate(...) scaleX(-1) scaleY(-1)` runs flip-then-rotate — the same order as the ffmpeg chain
+    // (hflip/vflip, then rotate). Put it on the IMG, not on .mb-item, so the layer's box and its resize
+    // handle stay axis-aligned and still grab where you expect. .mb-item has no overflow:hidden, so the
+    // corners spill out exactly as the renderer's rotw()/roth() growth allows.
     // object-fit must mirror the renderer: 'cover' fills the box and crops, 'contain' letterboxes.
     const ofit = (l.fit==='cover') ? 'cover' : 'contain';
     // `#t=0.1` (a media fragment) makes the browser seek to 0.1s and DISPLAY that frame as a poster the
     // moment the layer mounts — otherwise `preload` alone decodes nothing and the clip shows blank until
     // you scrub/play (the "I have to render to see the effect" bug). preload=auto so the frame loads eagerly.
     const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}"></video>`
-      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}">`;
+      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${_xformCss(l)}"></video>`
+      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${_xformCss(l)}">`;
     return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${l.opacity}">${inner}<i class="mb-h"></i></div>`;
   }
 
@@ -354,6 +360,18 @@
         </div>
       </div>
     </div>`;
+  }
+
+  // CSS equivalent of the renderer's flip+rotate for this layer ('' when it is untouched).
+  function _xformCss(l){
+    const t=_xform(l); return t ? `;transform:${t};transform-origin:center` : '';
+  }
+  function _xform(l){
+    const p=[]; const r=+l.rotate||0;
+    if(r) p.push(`rotate(${r}deg)`);
+    if(l.flipH) p.push('scaleX(-1)');
+    if(l.flipV) p.push('scaleY(-1)');
+    return p.join(' ');
   }
 
   function inspector(){
@@ -424,6 +442,8 @@
       </select></label>
       ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
       <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
+      <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right">⇄ Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom">⇅ Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright">⌾ 0°</button></div>
+      <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>
       <div class="mb-order">
         <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
         <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
@@ -960,6 +980,7 @@
             start: base ? (+base.start||0) : 0,
             dur: base ? ((+base.dur>0) ? +base.dur : nominal) : nominal,
             trim:0, opacity:1, effect:'none', volume:1, mute:false, fit:'contain',
+            flipH:false, flipV:false, rotate:0,
             sound:j.sound||'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'' }, box);
           // Draw ABOVE the layer it dresses up, but still BELOW any caption — a caption buried under an
           // overlay is the same bug addLayer guards against for ordinary media.
@@ -994,6 +1015,7 @@
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
+          flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
           // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
           volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
           text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
@@ -1159,6 +1181,17 @@
     on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
     on('mb-f-op','input',(e)=>{ l.opacity=clamp(e.target.value,0.05,1); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });
+    // Flip/rotate repaint the layer's transform IN PLACE rather than re-rendering the board: a full
+    // re-render on every slider step would rebuild the <video> elements and restart them from frame 0.
+    const _paintX=()=>{ const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
+      const m=it && it.querySelector('img,video'); if(!m) return;
+      m.style.transform=_xform(l); m.style.transformOrigin='center'; };
+    on('mb-fliph','click',(e)=>{ l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
+    on('mb-flipv','click',(e)=>{ l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
+    on('mb-f-rot','input',(e)=>{ l.rotate=clamp(e.target.value,-180,180); save();
+      const v=root.querySelector('#mb-rot-val'); if(v) v.textContent=Math.round(l.rotate)+'°'; _paintX(); });
+    on('mb-rot0','click',()=>{ l.rotate=0; l.flipH=false; l.flipV=false; save(); inspector();
+      const b=root.querySelector('#mb-f-rot'); if(b) b.value=0; _paintX(); });
     on('mb-del','click',async()=>{
       if(!await uiConfirm('Delete this layer?')) return;
       P.layers=P.layers.filter(x=>x.id!==l.id); sel=null; save(); render();

@@ -14,6 +14,7 @@ exactly like every other video this app produces. It does NOT append the outro c
 reply or a reaction, and a branded end card on a two-second clip is noise; wire it in if that changes.
 """
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -548,9 +549,30 @@ def render(edit: dict, sources: dict) -> bytes:
                 chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
                          f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
                          "setsar=1", f"fps={fps}", "format=rgba"]
+            # MIRROR before the effect (hflip/vflip preserve the frame size, so the effect chain still
+            # sees the lw x lh box it was built for) and ROTATE after it — so a spin/zoom animates the
+            # upright artwork and the whole result is then turned, rather than the effect's own geometry
+            # being rotated out from under it.
+            if layer.get("flipH"):
+                chain.append("hflip")
+            if layer.get("flipV"):
+                chain.append("vflip")
             fx = _fx_chain(effect, lw, lh, dur, fps)
             if fx:
                 chain.append(fx)
+            # Free rotation about the layer's CENTRE. `ow=rotw(a)/oh=roth(a)` grows the frame to hold the
+            # whole rotated image so the corners aren't sliced off; that growth is symmetric, so the
+            # overlay origin has to move back by half of it or the layer would visibly drift down-right as
+            # you rotate. fillcolor=none keeps the new corners transparent (the chain is already rgba).
+            ox, oy = lx, ly
+            rot = _num(layer.get("rotate"), -360, 360, 0)
+            if abs(rot) > 0.01:
+                rad = math.radians(rot)
+                c, sn = abs(math.cos(rad)), abs(math.sin(rad))
+                ow, oh = lw * c + lh * sn, lw * sn + lh * c        # same as rotw()/roth()
+                chain.append(f"rotate={rad:.6f}:ow=rotw({rad:.6f}):oh=roth({rad:.6f}):fillcolor=none")
+                ox = lx - int(round((ow - lw) / 2))
+                oy = ly - int(round((oh - lh) / 2))
             if opacity < 1.0:
                 chain.append(f"colorchannelmixer=aa={opacity:.3f}")
             # setpts shifts the layer to its slot on the project timeline; the overlay `enable` then
@@ -559,7 +581,7 @@ def render(edit: dict, sources: dict) -> bytes:
             chains.append(f"[{idx}:v]" + ",".join(chain) + f"[l{n}]")
 
             nxt = f"[v{n}]"
-            chains.append(f"{cur}[l{n}]overlay=x={lx}:y={ly}:"
+            chains.append(f"{cur}[l{n}]overlay=x={ox}:y={oy}:"
                           f"enable='between(t,{start:.3f},{end:.3f})':eof_action=pass{nxt}")
             cur = nxt
 
