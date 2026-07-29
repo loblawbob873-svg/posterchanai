@@ -118,7 +118,7 @@ _BOT_HELP_TEXT = (
     "     akbar · retard · whoabuddy · diarrhea · seth · robocop · titan · terminator · reze · vibe · rebecca · makima · sopranos · cheers · munsters · happydays ·\n"
     "     dontwanttowait · strangerthings · adamsfamily · xmen · futurama · charliesangles ·\n"
     "     differentstroke · seinfeld · jerry · onepiece · overtaken · freebird · kanye · darkness ·\n"
-    "     bike · jobs · ree · liberal · moving · harlem · wasteland · mixalot · thug · feltedtables · prayer · feliz · sleepwell · horse\n"
+    "     bike · jobs · ree · liberal · moving · harlem · wasteland · mixalot · thug · feltedtables · prayer · feliz · sleepwell · horse · knightrider · hugebitch\n"
     "🌟 Glow:  glow (on an image) · glow <text> (a glowing neon text post)\n"
     "✨ Add motion to any effect:  zoom · shake · medshake · beginshake · pulse,\n"
     "     and/or trippy colours — e.g.  dildo zoom trippy\n"
@@ -172,7 +172,7 @@ def _handle_media_command(status, command, arg, own_acct, visibility):
     skipped = [f["filename"] for f in out_files
                if not f["content_type"].startswith(("image/", "video/"))]
     # meme's result IS the image — reply with just the image, no summary caption.
-    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider") else (summary or "Done.")
+    text = "" if command in ("meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch") else (summary or "Done.")
     if skipped:
         text += f"\n\n(Couldn't attach {', '.join(skipped)} here — fediverse posts only take images/video.)"
     # Main reply carries the summary + all images + the first video; any further
@@ -428,7 +428,7 @@ def process_notifications():
             # Handle media commands (compress/clip/convert/meme) on an attached file.
             lower_prompt = prompt_text.lower()
             _media_cmd = None
-            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider"):
+            for _c in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch"):
                 if lower_prompt == _c or lower_prompt.startswith(_c + " "):
                     _media_cmd = _c
                     break

@@ -98,7 +98,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `heat`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `rebecca`, `makima`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `jerry`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `uwu`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse` or `knightrider` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `heat`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `rebecca`, `makima`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `jerry`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `uwu`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse`, `knightrider` or `hugebitch` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -289,6 +289,7 @@ _FX_SOUNDS = [
     ("🎱 Felted Tables", "feltedtables"), ("🙏 Prayer", "prayer"),
     ("🎉 Feliz", "feliz"), ("😴 Sleep Well", "sleepwell"),
     ("🐴 Horse", "horse"), ("🚗 Knight Rider", "knightrider"),
+    ("🗣️ Huge Bitch", "hugebitch"),
 ]
 _FX_MEMES = [
     ("🍆 Dildo", "dildo"), ("💩 Poo", "poo"),

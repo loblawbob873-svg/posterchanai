@@ -327,6 +327,12 @@ _KNIGHTRIDER_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/knightrider.mp3",
 ]
 _KNIGHTRIDER_DURATION = 9.0   # clip is 8.05s (Knight Rider theme, 0:33-0:41) — ~1s of headroom
+_HUGEBITCH_AUDIO_CANDIDATES = [
+    os.environ.get("HUGEBITCH_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "hugebitch.mp3"),
+    "/var/lib/posterchanai/assets/hugebitch.mp3",
+]
+_HUGEBITCH_DURATION = 9.8   # clip is 8.83s (whole coub, no trim) — ~1s of headroom
 
 _SLEEPWELL_AUDIO_CANDIDATES = [
     os.environ.get("SLEEPWELL_AUDIO_PATH", ""),

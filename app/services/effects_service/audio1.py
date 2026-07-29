@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _BEAVIS_OVERLAY_CANDIDATES, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _REBECCA_AUDIO_CANDIDATES, _REBECCA_DANCE_CANDIDATES, _REBECCA_DURATION, _MAKIMA_AUDIO_CANDIDATES, _MAKIMA_SHOOT_CANDIDATES, _MAKIMA_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _HEAT_AUDIO_CANDIDATES, _HEAT_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _AKBAR_AUDIO_CANDIDATES, _AKBAR_DURATION, _BEAVIS_AUDIO_CANDIDATES, _BEAVIS_DURATION, _BEAVIS_OVERLAY_CANDIDATES, _CHEERS_AUDIO_CANDIDATES, _CHEERS_DURATION, _CURB_AUDIO_CANDIDATES, _CURB_DURATION, _DEPRESSING_AUDIO_CANDIDATES, _DEPRESSING_DURATION, _FAHH_AUDIO_CANDIDATES, _FAHH_AUDIO_START, _FAHH_DURATION, _FBI_AUDIO_CANDIDATES, _FBI_DURATION, _FELIZ_AUDIO_CANDIDATES, _FELIZ_DURATION, _FELTEDTABLES_AUDIO_CANDIDATES, _FELTEDTABLES_DURATION, _GIGITY_AUDIO_CANDIDATES, _GIGITY_DURATION, _GONG_AUDIO_CANDIDATES, _GONG_DURATION, _HAVA_AUDIO_CANDIDATES, _HAVA_DURATION, _HELPME_AUDIO_CANDIDATES, _HELPME_DURATION, _HOOD_AUDIO_CANDIDATES, _HOOD_DURATION, _HORSE_AUDIO_CANDIDATES, _HORSE_DURATION, _KNIGHTRIDER_AUDIO_CANDIDATES, _KNIGHTRIDER_DURATION, _HUGEBITCH_AUDIO_CANDIDATES, _HUGEBITCH_DURATION, _INDIAN_AUDIO_CANDIDATES, _INDIAN_DURATION, _PRAYER_AUDIO_CANDIDATES, _PRAYER_DURATION, _REDEEM_AUDIO_CANDIDATES, _REDEEM_DURATION, _RETARD_AUDIO_CANDIDATES, _RETARD_DURATION, _REZE_AUDIO_CANDIDATES, _REZE_DANCE_CANDIDATES, _REZE_DURATION, _VIBE_AUDIO_CANDIDATES, _VIBE_DANCE_CANDIDATES, _VIBE_DURATION, _REBECCA_AUDIO_CANDIDATES, _REBECCA_DANCE_CANDIDATES, _REBECCA_DURATION, _MAKIMA_AUDIO_CANDIDATES, _MAKIMA_SHOOT_CANDIDATES, _MAKIMA_DURATION, _ROBOCOP_AUDIO_CANDIDATES, _ROBOCOP_DURATION, _SETH_AUDIO_CANDIDATES, _SETH_DURATION, _SLEEPWELL_AUDIO_CANDIDATES, _SLEEPWELL_DURATION, _SMELL_AUDIO_CANDIDATES, _SMELL_DURATION, _TERMINATOR_AUDIO_CANDIDATES, _TERMINATOR_DURATION, _TITAN_AUDIO_CANDIDATES, _TITAN_DURATION, _WHOABUDDY_AUDIO_CANDIDATES, _WHOABUDDY_DURATION, _HEAT_AUDIO_CANDIDATES, _HEAT_DURATION, _DIARRHEA_AUDIO_CANDIDATES, _DIARRHEA_DURATION, _YAKETY_AUDIO_CANDIDATES, _YAKETY_DURATION, _YAMETE_AUDIO_CANDIDATES, _YAMETE_DURATION, _human_size, _pad_audio_to_duration, is_image, logger, os
 
 def _hava_audio_path() -> str:
     """First existing Hava Nagila mp3 from the candidate list ("" if none)."""
@@ -1394,6 +1394,46 @@ def knightrider_attachments(
     if not outputs:
         return [], "No image to add the Knight Rider clip to."
     return outputs, f"🚗 Knight Rider ({_human_size(sum(len(o['data']) for o in outputs))})"
+
+
+def _hugebitch_audio_path() -> str:
+    """First existing hugebitch mp3 from the candidate list ("" if none)."""
+    for p in _HUGEBITCH_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_hugebitch(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing the hugebitch clip over it. MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _hugebitch_audio_path()
+    if not audio:
+        raise RuntimeError("Huge Bitch audio (assets/hugebitch.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_HUGEBITCH_DURATION)
+
+
+def hugebitch_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a Huge Bitch MP4 (mirrors knightrider_attachments)."""
+    outputs: List[OutputFile] = []
+    for filename, data, content_type in attachments or []:
+        if not is_image(filename, content_type):
+            continue
+        stem = Path(filename).stem or "image"
+        try:
+            result = add_hugebitch(data, filename)
+            outputs.append({
+                "filename": f"{stem}_hugebitch.mp4",
+                "data": result,
+                "content_type": "video/mp4",
+            })
+        except Exception as e:
+            logger.error(f"hugebitch failed for {filename}: {e}", exc_info=True)
+    if not outputs:
+        return [], "No image to add the Huge Bitch clip to."
+    return outputs, f"🗣️ Huge Bitch ({_human_size(sum(len(o['data']) for o in outputs))})"
 
 
 def _sleepwell_audio_path() -> str:

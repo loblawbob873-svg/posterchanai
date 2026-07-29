@@ -15,7 +15,7 @@ NO_CAPTION_COMMANDS = (
     "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece",
     "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
     "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables",
-    "prayer", "feliz", "sleepwell", "horse", "knightrider",
+    "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch",
 )
 
 # All commands that consume a file: the no-caption ones plus the generic transforms.
