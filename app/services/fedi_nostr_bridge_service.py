@@ -584,9 +584,13 @@ def _source_ts(post: dict) -> int | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         ts = int(dt.timestamp())
-        # Sanity: a clock-skewed or garbage date must not park a note in 1970 or the far future.
-        now = int(__import__("time").time())
-        return ts if 0 < ts <= now + 3600 else None
+        # Bound must stay INSIDE the relay's own limit. server.py rejects created_at > now+900 with
+        # "invalid: created_at too far in the future", and `invalid` is on this module's PERMANENT
+        # reject list — so a too-future stamp would not merely be corrected, it would make the post
+        # be SKIPPED and the cursor advance past it. A little slack absorbs normal inter-instance
+        # clock skew; anything beyond that falls back to now rather than risking the drop.
+        now = int(time.time())
+        return ts if 0 < ts <= now + 300 else None
     except Exception:
         return None
 
