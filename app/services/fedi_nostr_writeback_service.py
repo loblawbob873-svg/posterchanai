@@ -63,11 +63,40 @@ def _port() -> int:
 _allowed_cache: dict = {"at": -3600.0, "set": frozenset(), "uid": {}, "all_uid": {}}
 
 
+def _blocked_pubkeys() -> set:
+    """The relay's hard denylist (Admin → Relay "Blocked accounts" / POST /client/block), as hex.
+
+    Parsed exactly the way the relay thread parses it — npub OR hex, comma OR newline separated — so
+    "blocked on the relay" and "blocked on the bridge" cannot drift apart.
+    """
+    out = set()
+    for tok in (settings_store.get("nostr_relay_blocked_pubkeys", "") or "").replace(",", "\n").split():
+        h = nostr_service.to_pubkey_hex(tok.strip())
+        if h:
+            out.add(h)
+    return out
+
+
 def _refresh_allowed() -> None:
     """Refresh (≤30s) in ONE DB pass: the write-back WHITELIST (`set`) + its pubkey→uid map (`uid`,
     for action gating), and a BROADER pubkey→uid map of ALL linked-Pleroma users (`all_uid`, for
     mention translation — a mentioned user may have a fedi account without bridge/crosspost on). So
-    every per-event lookup is O(1), no full-table scan."""
+    every per-event lookup is O(1), no full-table scan.
+
+    Blocking a profile on the relay is the operator's abuse lever, and it has to work HERE too, not
+    only at ingest. For kinds 1/6/7/5 the denylist already settles it: those are signed by the author,
+    so the relay rejects and purges them and nothing ever reaches our subscription. A NIP-17 DM does
+    NOT work that way — the kind-1059 gift wrap is signed by an EPHEMERAL key, so no pubkey denylist
+    can match it, the relay accepts it, and _handle_dm_reply unwraps it and gates on THIS whitelist.
+    A blocked account could therefore keep pushing direct messages onto the fediverse under its own
+    linked handle. Dropping blocked keys from the whitelist closes that path and makes the one admin
+    action complete. Also dropped from `all_uid`, so a blocked account stops resolving in mention
+    translation as well.
+
+    Not instant, unlike the relay's own gate+purge: this runs in the WORKER, which re-hydrates
+    settings from the relay every 120s, so a fresh block reaches the bridge within ~2.5 min. Blocking
+    is a moderation action, not a live filter — but don't read a short delay here as a failed block.
+    """
     now = time.monotonic()
     if now - _allowed_cache["at"] <= 30:
         return
@@ -76,10 +105,14 @@ def _refresh_allowed() -> None:
     db = SessionLocal()
     out, uid, all_uid = set(), {}, {}
     try:
+        blocked = _blocked_pubkeys()   # inside the try: a failure here keeps the last good maps, it
+        # does not escape into the per-event dispatch that calls this
         for u in db.query(User).filter(User.pleroma_enabled == True).all():   # noqa: E712
             npub = getattr(u, "nostr_npub", None)
             h = nostr_service.to_pubkey_hex(npub) if npub else None
             if not (h and u.pleroma_instance_url and u.pleroma_access_token):
+                continue
+            if h in blocked:
                 continue
             all_uid[h] = u.id
             if getattr(u, "fedi_bridge_enabled", False) or getattr(u, "fedi_crosspost_enabled", False):

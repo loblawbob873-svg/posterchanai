@@ -577,6 +577,18 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
     if not user.pleroma_access_token:
         user.pleroma_access_token = token
         user.pleroma_enabled = True
+        # Signing in WITH a fediverse account is opting that account onto the bridge. Without this the
+        # link is inert: the write-back whitelist (fedi_nostr_writeback_service._refresh_allowed) only
+        # admits a user with one of these two on, so a fresh fedi sign-in could read the bridged
+        # timeline while nothing they posted, replied or reacted ever reached the fediverse. It's the
+        # same pair `fedi_bridge_access.enable()` flips for the admin's 1-click grant, so "on the
+        # bridge" means one thing everywhere. Only on the FIRST link — a later sign-in must not undo
+        # someone who turned the toggles off in Settings — and never against a REVOCATION, for the
+        # reason apply_fedi_access spells out: a ban that lasts until the next login is not a ban.
+        if not getattr(user, "access_revoked", False):
+            user.fedi_bridge_enabled = True
+            user.fedi_crosspost_enabled = True
+            logger.info("[social-login] bridge enabled for %s (%s) on first fedi link", user.username, acct)
     if apply_fedi_access(user):
         logger.info("[social-login] granted AI+Blossom to %s (%s)", user.username, acct)
     elif user.access_revoked:
