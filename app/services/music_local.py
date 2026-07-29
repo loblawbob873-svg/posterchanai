@@ -35,7 +35,11 @@ from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "ACE-Step/Ace-Step1.5"
+_ACESTEP_ROOT = os.environ.get("ACESTEP_ROOT", "/home/verita84/ACE-Step-1.5")
+# A CHECKPOINT DIRECTORY NAME under <ACESTEP_ROOT>/checkpoints, not a Hugging Face repo id. The
+# handler resolves it locally; "ACE-Step/Ace-Step1.5" (the HF id the diffusers attempt used) is not
+# a thing it can load.
+DEFAULT_MODEL = "acestep-v15-turbo"
 DEFAULT_IDLE_TIMEOUT = 600          # seconds; free the VRAM when nobody is making songs
 _SAMPLE_RATE_FALLBACK = 48000
 
@@ -131,29 +135,35 @@ class MusicService:
                 return
             if self._pipe is not None:
                 self._unload_internal()   # already holding _load_lock; unload_model() would deadlock
-            import torch
-            from diffusers import AceStepPipeline
             device = self._resolve_device(cfg["device"])
             self._device = device
             logger.info(f"[music] loading {model_id} on {device} ...")
             t0 = time.time()
-            # bf16 everywhere but CPU — same reasoning as video: it halves VRAM and is the dtype the
-            # model card ships. nas shares 12GB between music and video, so this is not optional.
-            dtype = torch.float32 if device == "cpu" else torch.bfloat16
-            pipe = AceStepPipeline.from_pretrained(model_id, torch_dtype=dtype)
-            if device != "cpu" and cfg.get("cpu_offload"):
-                # CUDA-only: accelerate's offload hooks do not work on XPU (meta-tensor bug), which
-                # is why the Arc must fit the model outright.
-                pipe.enable_model_cpu_offload(device=device)
-            elif device != "cpu":
-                pipe = pipe.to(device)
-            try:
-                pipe.vae.enable_tiling()
-            except Exception:
-                pass
-            self._pipe = pipe
+            # ACE-Step's OWN handler, not diffusers' AceStepPipeline. The pipeline CLASS exists in
+            # diffusers, but from_pretrained looks for model_index.json first and NO published
+            # ACE-Step repo carries one (checked Ace-Step1.5, acestep-v15-xl-*, ACE-Step-v1-3.5B and
+            # the Comfy mirror) — that 404 is what forced music back onto an external server. The
+            # weights ARE loadable, just through the upstream handler, which is the same code that
+            # server ran. Importing it instead of talking HTTP to it is the whole point.
+            from acestep.handler import AceStepHandler
+            handler = AceStepHandler()
+            msg, ok = handler.initialize_service(
+                project_root=_ACESTEP_ROOT,
+                config_path=model_id,
+                device="auto" if device != "cpu" else "cpu",
+                # SDPA only — flash-attn is not portable to Arc/ROCm (same rule as image + video).
+                use_flash_attention=False,
+                compile_model=False,
+                # accelerate's offload hooks are CUDA-only (meta-tensor bug on XPU), so the Arc has
+                # to fit the model outright; nas may offload.
+                offload_to_cpu=bool(cfg.get("cpu_offload")) and device != "xpu",
+                offload_dit_to_cpu=False,
+            )
+            if not ok:
+                raise MusicLocalError(f"music model failed to load: {str(msg)[:200]}")
+            self._pipe = handler
             self._model_id = model_id
-            self._sample_rate = int(getattr(pipe, "sample_rate", 0) or _SAMPLE_RATE_FALLBACK)
+            self._sample_rate = _SAMPLE_RATE_FALLBACK
             logger.info(f"[music] loaded in {time.time()-t0:.1f}s (sample_rate={self._sample_rate})")
 
     def unload_model(self, skip_if_generating: bool = False):
@@ -196,34 +206,40 @@ class MusicService:
             self.load_model(db)
             if self._pipe is None:
                 raise MusicLocalError("music model failed to load")
-            import torch
+            import tempfile, shutil, os as _os
+            from acestep.inference import generate_music, GenerationParams, GenerationConfig
             dur = float(duration or cfg["duration"])
             n_steps = int(steps or cfg["steps"])
             gscale = float(guidance if guidance is not None else cfg["guidance"])
             logger.info(f"[music] generating {dur:.0f}s, {n_steps} steps — {prompt[:60]!r}")
             t0 = time.time()
-            with torch.inference_mode():
-                out = self._pipe(
-                    prompt=prompt,
-                    lyrics=lyrics or "",
-                    audio_duration=dur,
-                    num_inference_steps=n_steps,
-                    guidance_scale=gscale,
-                    output_type="np",
-                )
-            audio = out.audios if hasattr(out, "audios") else out[0]
-            logger.info(f"[music] rendered in {time.time()-t0:.1f}s")
-            wav = _to_wav_bytes(audio, self._sample_rate)
+            # thinking=False: our own LLM already wrote the lyrics/style (see _music_write_lyrics),
+            # so ACE-Step's chain-of-thought LM is not needed and llm_handler stays None — that is
+            # what keeps this to ONE model on the GPU instead of two.
+            params = GenerationParams(
+                caption=prompt or "", lyrics=lyrics or "", instrumental=not (lyrics or "").strip(),
+                duration=dur, inference_steps=n_steps, guidance_scale=gscale, thinking=False,
+            )
+            gconf = GenerationConfig(batch_size=1, audio_format=(fmt or "mp3").lower())
+            out_dir = tempfile.mkdtemp(prefix="pcai_music_")
+            try:
+                result = generate_music(self._pipe, None, params, gconf, out_dir, None)
+                if not getattr(result, "success", False):
+                    raise MusicLocalError(f"generation failed: {getattr(result, 'error', '')}"[:200])
+                paths = [a.get("path") or a.get("file") for a in (result.audios or []) if isinstance(a, dict)]
+                paths = [x for x in paths if x and _os.path.exists(x)]
+                if not paths:
+                    raise MusicLocalError("generation produced no audio")
+                data = open(paths[0], "rb").read()
+                ext = (_os.path.splitext(paths[0])[1] or ".mp3").lstrip(".").lower()
+            finally:
+                shutil.rmtree(out_dir, ignore_errors=True)
+            logger.info(f"[music] rendered in {time.time()-t0:.1f}s ({len(data)/1e6:.2f} MB)")
             self._last_used = time.time()
-            # Return a bare EXTENSION, not a MIME type: every consumer treats slot 2 as a file
-            # suffix (media_service.make_music_video builds f"song.{audio_ext}"), so "audio/mpeg"
-            # here yields the path "song.audio/mpeg" -> FileNotFoundError, swallowed by that
-            # function's broad except -> the branded video silently degrades to raw audio.
-            if fmt and fmt.lower() != "wav":
-                enc, _ctype = _transcode(wav, fmt)
-                if enc:
-                    return enc, fmt.lower()
-            return wav, "wav"
+            # ACE-Step writes the encoded file itself, so there is nothing to transcode: return its
+            # bytes and a bare EXTENSION (consumers build f"song.{ext}"; a MIME type here would
+            # produce the path "song.audio/mpeg").
+            return data, ext
         finally:
             self._generating -= 1
             self._last_used = time.time()

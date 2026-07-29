@@ -143,10 +143,19 @@ faster-whisper>=1.0.0
 libtorrent>=2.0.0
 torpy
 
-# Music generation (musicgeni) needs NOTHING extra here — the app only uses httpx (above) to talk
-# to a separate ACE-Step REST server. ACE-Step is NOT on PyPI and conflicts with this venv, so it
-# is installed on its own: `./install.sh --music` (uv + git clone) or the Docker `acestep` service
-# (Dockerfile.acestep). See docs/MUSIC.md.
+# Music generation (musicgeni) runs IN-PROCESS, on the same torch as image/video gen — no sidecar
+# service, no second venv, no HTTP hop. ACE-Step is still not on PyPI, so its SOURCE is cloned by
+# `./install.sh --music` and installed with `--no-deps` (its pyproject pins CUDA torch and gradio,
+# neither of which we want); these are the runtime deps that install skips. It is NOT importable
+# from PyPI, which is why there is no `ace-step` line here.
+#
+# torchaudio must MATCH the installed torch build (…+xpu / +cu…) — install.sh resolves it from the
+# same index as torch. Pinning a plain version here would drag in a CPU torch and break the Arc.
+soundfile>=0.13.1
+loguru>=0.7.3
+einops>=0.8.1
+einx
+vector-quantize-pytorch>=1.27.15
 
 # PWA Web Push notifications (mentions/zaps/replies delivered when the client is closed). Pulls in
 # py-vapid + cryptography (already present) + http-ece. Server-side only; the client uses the browser

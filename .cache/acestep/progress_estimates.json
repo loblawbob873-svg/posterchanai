@@ -1,0 +1,1 @@
+{"records": [{"device": "xpu", "infer_steps": 8, "batch_size": 1, "duration_sec": 12.0, "duration_bucket": "short", "per_step_sec": 0.3212581276893616, "updated_at": 1785291094.795078}], "updated_at": 1785291094.7950835}
