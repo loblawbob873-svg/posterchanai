@@ -76,14 +76,14 @@ async def _generate_local(db: Session, cfg: dict, prompt: str, lyrics: str, dura
     from app.services import music_local
     cpu_mode = cfg["device"] == "cpu"
     explicit_server = bool((cfg.get("base_url_explicit") or "").strip())
-    # OPT-IN, default OFF. diffusers ships AceStepPipeline, but NO published ACE-Step repo is in
     # NATIVE BY DEFAULT. The earlier attempt at this failed for one reason: it loaded through
     # diffusers' AceStepPipeline, whose from_pretrained wants a model_index.json that NO published
     # ACE-Step repo carries. That 404 was read as "the model can't run in-process" and music went
     # back to a per-node sidecar over HTTP. Wrong conclusion — the weights load fine through
     # ACE-Step's OWN AceStepHandler, which is exactly the code that sidecar was running. Proven on
     # the Arc before this flip: load 10.2s, a 12s song in 15.3s, valid mp3.
-    # `music_api_base`/`music_native=false` still force the HTTP path for a node that wants it.
+    # music_local.is_available() gates on the `acestep` PACKAGE (what load_model imports), not the
+    # diffusers pipeline; `music_api_base`/`music_native=false` still force the HTTP path.
     use_native = (music_local.is_available() and not explicit_server
                   and str(settings_store.get("music_native", "true")).lower() in ("1", "true", "yes", "on"))
     async with GPUResourceLock("Music", f"prompt={prompt[:30]}...", cpu_mode=cpu_mode):

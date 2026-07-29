@@ -15,6 +15,14 @@ _JOBS: dict = {}          # kind -> {state, message, pct, updated}
 _lock = threading.Lock()
 
 
+def _run_sync(coro):
+    """Run one coroutine to completion from a download thread. Safe for a self-contained awaitable
+    (an httpx call that builds its own client); the GPU lock is deliberately NOT taken this way —
+    see GPUResourceLockSync, an asyncio.Lock cannot cross event loops."""
+    import asyncio
+    return asyncio.run(coro)
+
+
 def _set(kind: str, state: str, message: str = "", pct=None):
     with _lock:
         _JOBS[kind] = {"state": state, "message": message, "pct": pct, "updated": time.time()}
@@ -105,26 +113,32 @@ def _download_tools(db):
 # TWO models (the base image_model_path + the optional image_anime_model_path), so fetch both. ----------
 def _download_image(db):
     from app.services.diffusers_service import get_diffusers_service
+    from app.services.locks import GPUResourceLockSync
     from app.services.vram_manager import prepare_for_image
-    prepare_for_image(db)   # free the LLM first so the model fits on a shared GPU
-    svc = get_diffusers_service(db)
-    _set("image", "running", "downloading + loading the base image model…")
-    svc._ensure_model_loaded()
-    anime = (getattr(svc, "anime_model_path", "") or "").strip()
-    if anime:
-        _set("image", "running", "downloading + loading the anime model…")
-        svc._ensure_model_loaded(anime)
+    # UNDER THE GPU LOCK. This runs in a download THREAD, so it needs the sync twin — without any
+    # lock, pressing Download while a song/clip/chat was generating ran prepare_for_image (which
+    # unloads the LLM/music/video model) and loaded the image model onto the GPU underneath the
+    # in-flight task.
+    with GPUResourceLockSync("Image", "model download"):
+        prepare_for_image(db)   # free the LLM first so the model fits on a shared GPU
+        svc = get_diffusers_service(db)
+        _set("image", "running", "downloading + loading the base image model…")
+        svc._ensure_model_loaded()
+        anime = (getattr(svc, "anime_model_path", "") or "").strip()
+        if anime:
+            _set("image", "running", "downloading + loading the anime model…")
+            svc._ensure_model_loaded(anime)
     _set("image", "done", "Image model(s) ready." + (" (base + anime)" if anime else ""))
 
 
 # ---------- music: fetch the ACE-Step weights (and prove they load) ----------
 def _download_music(db):
     """Fetch the model, then load it once so a failure surfaces HERE rather than on someone's first
-    song. Music is in-process now (diffusers AceStepPipeline), so this no longer pokes a REST server
-    — that path is kept only for a node still pointed at one via music_api_base."""
-    import asyncio
+    song. Music is in-process now (upstream's `AceStepHandler` — NOT diffusers' AceStepPipeline,
+    which no published checkpoint can satisfy), so this no longer pokes a REST server — that path is
+    kept only for a node still pointed at one via music_api_base."""
     from app.services import music_service, music_local
-    from app.services.locks import GPUResourceLock
+    from app.services.locks import GPUResourceLockSync
     from app.services.vram_manager import prepare_for_music
     cfg = music_service.get_settings(db)
     # Decide the SAME way music_factory._generate_local does, or the button warms a path generation
@@ -135,39 +149,48 @@ def _download_music(db):
         body = music_service.build_request_body(cfg, "ambient test tone", "", duration=10, steps=4)
         base = cfg.get("base_url") or music_service.DEFAULT_BASE_URL
         _set("music", "running", "warming up the external ACE-Step server…")
-
-        async def _run():
-            async with GPUResourceLock("Music", "model download", cpu_mode=(cfg.get("device") == "cpu")):
-                prepare_for_music(db)
-                await music_service.generate_once(base, body, timeout=1800.0, fmt=cfg.get("fmt", "mp3"))
-        asyncio.run(_run())
+        # We are in a download THREAD. The old spelling wrapped this in `asyncio.run()` to reach the
+        # async lock, but `_gpu_lock_base` is bound to the MAIN event loop — awaiting it from a
+        # second loop attaches futures to the wrong loop instead of excluding anything. Take the
+        # cross-process file lock directly, which is what actually serialises against generations.
+        with GPUResourceLockSync("Music", "model download", cpu_mode=(cfg.get("device") == "cpu")):
+            prepare_for_music(db)
+            _run_sync(music_service.generate_once(base, body, timeout=1800.0, fmt=cfg.get("fmt", "mp3")))
         _set("music", "done", "Music model ready (external server).")
         return
 
     model_id = music_local._get_settings(db)["model"]
-    # DOWNLOAD FIRST, outside the GPU lock: it is the long, purely-network part, and holding the GPU
-    # through a multi-GB fetch would block chat/image/video for the whole download.
-    _set("music", "running", f"downloading {model_id} (large, one-time)…")
-    try:
-        from huggingface_hub import snapshot_download
-        snapshot_download(model_id)
-    except Exception as e:
-        _set("music", "error", f"download failed: {e}")
-        return
-    # Then load once, under the lock, so an OOM or a backend incompatibility is reported here.
-    _set("music", "running", "verifying the model loads on this GPU…")
+    # NO snapshot_download here. `music_model` is a CHECKPOINT DIRECTORY NAME under
+    # <ACESTEP_ROOT>/checkpoints (see music_local.DEFAULT_MODEL) — passing it to the Hub as a repo id
+    # made this button fail 100% of the time with "Repository Not Found for
+    # .../models/acestep-v15-turbo" (a 401, so it read as an auth problem) on a node whose weights
+    # were sitting on disk and generating songs fine. Upstream's handler fetches whatever is missing
+    # into that directory on first use, so LOADING is the download — and the one step worth timing
+    # out on. Loading is also the only thing that proves the checkpoint is usable on this GPU.
+    #
+    # Load once, under the lock, so an OOM or a backend incompatibility is reported here. The lock is
+    # REAL now: this said "under the lock" while taking none, so verifying the download loaded a
+    # second multi-GB model onto a GPU that a song or chat was already using. The old code fetched
+    # outside the lock to avoid holding the GPU through a long download — but the handler couples
+    # fetch and load, and that split is what let two models land on one GPU. Serialising wins: this
+    # is a one-time admin action, and a first-run fetch happens on a node nobody is chatting on yet.
+    _set("music", "running", f"downloading + loading {model_id} on this GPU (first run fetches several GB)…")
     svc = music_local.get_music_service(db)
     try:
-        prepare_for_music(db)
-        svc.load_model(db)
+        with GPUResourceLockSync("Music", "model download", cpu_mode=(cfg.get("device") == "cpu")):
+            prepare_for_music(db)
+            try:
+                svc.load_model(db)
+            finally:
+                # Unload INSIDE the lock — freeing VRAM after releasing it would race the next
+                # generation, which may already have loaded its own model.
+                try:
+                    svc.unload_model()      # don't hold VRAM just because someone pressed Download
+                except Exception:
+                    pass
     except Exception as e:
-        _set("music", "error", f"downloaded, but loading failed: {e}")
+        _set("music", "error", f"loading failed: {e}")
         return
-    finally:
-        try:
-            svc.unload_model()      # don't hold VRAM just because someone pressed Download
-        except Exception:
-            pass
     _set("music", "done", "Music model downloaded and verified.")
 
 

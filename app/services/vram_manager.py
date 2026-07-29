@@ -33,8 +33,12 @@ def _native_music_active() -> bool:
     explicitly configured) — the same test music_factory routes on."""
     try:
         from app.services import music_local, settings_store, music_service
-        if str(settings_store.get("music_native", "false")).lower() not in ("1", "true", "yes", "on"):
-            return False        # native is opt-in — see music_factory._generate_local
+        # Default must MATCH music_factory._generate_local and the schema, both "true". It read
+        # "false" here, so if music_native is unset the factory sent real gens native while this said
+        # "external" — prepare_for_music then waited 90s on the dead sidecar and the Download button
+        # warmed the wrong path. Same default everywhere = the two paths can't disagree.
+        if str(settings_store.get("music_native", "true")).lower() not in ("1", "true", "yes", "on"):
+            return False        # native forced off — see music_factory._generate_local
         if music_service._explicit_server(settings_store.get("music_api_base", "")):
             return False
         return music_local.is_available()
@@ -234,13 +238,13 @@ def prepare_for_image(db: Session) -> bool:
 
 
 def prepare_for_music(db: Session) -> bool:
-    """Prepare VRAM for LOCAL music generation (an ACE-Step server co-located on this GPU).
-
-    Music runs in a SEPARATE process (the acestep REST server), so unlike the LLM/image we can't
-    load/unload its model from here — it manages (and idle-unloads) its own weights. What we CAN
-    do, in shared mode, is unload OUR in-process LLM and image models to free VRAM for it. No-op
-    in dedicated mode (assumes enough VRAM / a separate GPU). Always paired with the GPU lock in
-    music_factory so only one model uses the GPU at a time."""
+    """Prepare VRAM for LOCAL music generation. Music is now generated IN-PROCESS (ACE-Step via
+    `music_local`), so this mirrors prepare_for_image/video: in shared mode, unload our OTHER
+    in-process models (LLM, image, native video) so the music model — loaded on-demand inside
+    music_local.generate — has the GPU to itself. No-op model-unloading in dedicated mode. Always
+    paired with the shared GPUResourceLock in music_factory so only one model uses the GPU at a time.
+    (A node still pointed at an EXTERNAL acestep server takes the legacy `_ensure_music_server`
+    path below instead.)"""
     global _current_mode
 
     # LEGACY external server only. _ensure_music_server polls localhost:8001 for up to 90s

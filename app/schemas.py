@@ -116,15 +116,21 @@ class SettingsResponse(BaseModel):
     image_attention_slicing: str = "off"  # "off" (fastest), "auto" (balanced), "max" (least VRAM, slowest)
     image_subprocess_mode: str = "false"  # Run each image in subprocess for VRAM release (Intel XPU)
     # Music generation (ACE-Step). ACE-Step needs its own Python 3.11-3.12 env and ships a REST
-    # server, so it runs as a SEPARATE service and the app talks to it over HTTP at the local
-    # default (localhost:8001); cross-node LB uses chat_server_urls. Web UI + Telegram only.
+    # server. It now generates IN-PROCESS on the app's own torch stack + GPU lock (no sidecar, no
+    # second venv, no HTTP hop); cross-node LB uses chat_server_urls. Web UI + Telegram only.
     music_enabled: str = "true"
     music_gpu_device: str = "auto"  # "auto"/"cuda"/"xpu"/"cpu" — picks the GPU vs CPU lock locally
-    music_model: str = ""  # DiT model name/path, e.g. acestep-v15-turbo (blank = server default)
-    # Generate music IN-PROCESS via diffusers' AceStepPipeline instead of the external ACE-Step
-    # server. OFF by default: the pipeline exists but no published ACE-Step repo ships a
-    # diffusers-format checkpoint (no model_index.json), so from_pretrained cannot load one yet.
+    music_model: str = ""  # checkpoint DIR under <ACESTEP_ROOT>/checkpoints (blank = acestep-v15-turbo)
+    # Generate music IN-PROCESS via upstream's AceStepHandler instead of an external ACE-Step server.
+    # ON by default — the sidecar is retired. (diffusers' AceStepPipeline is NOT what loads: no
+    # published ACE-Step repo ships a model_index.json, so its from_pretrained 404s.)
     music_native: str = "true"   # in-process ACE-Step (no sidecar); false forces the HTTP path
+    # The native path's own knobs. These were read by music_local but defined in NO schema, so they
+    # could never be written, never became `pcai:setting:` events, and silently stayed at the code
+    # default forever — the same defect that pinned every song to the fallback duration.
+    music_cpu_offload: str = "false"  # accelerate CPU offload; CUDA-only (meta-tensor bug on XPU)
+    music_guidance: str = "7.5"       # classifier-free guidance scale
+    music_idle_timeout: str = "600"   # seconds before the idle monitor frees the music model's VRAM
     music_default_duration: str = "180"  # seconds (ACE-Step range 10-600)
     music_default_steps: str = "8"  # diffusion steps (turbo ~8, base up to ~200)
     music_format: str = "mp3"  # mp3 | wav | flac | opus | aac

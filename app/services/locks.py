@@ -24,6 +24,8 @@ CPU_LOCK_FILE = os.path.join(LOCK_DIR, "cpu.lock")  # For CPU mode (both LLM and
 _image_generation_lock = asyncio.Lock()
 _gpu_lock_base = asyncio.Lock()
 _gpu_lock_holder = None
+# Set by GPUResourceLockSync — a GPU task held from a plain thread, off the event loop.
+_sync_lock_holder = None
 
 # Max time a request will WAIT to acquire the GPU lock before failing. Must exceed the longest
 # single GPU hold: a multi-second video clip (Wan) can hold the GPU ~5 min, so the old 180s made any
@@ -33,8 +35,9 @@ GPU_LOCK_WAIT_TIMEOUT = 630.0
 
 def gpu_busy() -> bool:
     """True if THIS node's GPU lock is currently held (an LLM/image/music/video task is running).
-    Used by the load-balancing factories to prefer an idle remote node over queueing locally."""
-    return _gpu_lock_holder is not None
+    Used by the load-balancing factories to prefer an idle remote node over queueing locally.
+    Counts the SYNC holder too, so a model download also pushes new work to an idle remote node."""
+    return _gpu_lock_holder is not None or _sync_lock_holder is not None
 
 
 def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
@@ -165,6 +168,60 @@ class GPUResourceLock:
             logger.error(f"[{lock_name}-LOCK] Error releasing async lock: {e}")
 
 
+class GPUResourceLockSync:
+    """Blocking, THREAD-safe twin of GPUResourceLock, for GPU work that is NOT on the event loop.
+
+    The model-download worker runs in a plain `threading.Thread`, and there the async lock is
+    unusable in both available spellings: `_gpu_lock_base` is an asyncio.Lock bound to the MAIN
+    loop, so awaiting it under a fresh `asyncio.run()` attaches futures to the wrong loop, and it
+    cannot be awaited at all from sync code. Both download paths therefore ran their VRAM swap and
+    model load with NO exclusion — pressing Download mid-song unloaded the music/LLM model out from
+    under a running generation and put a second model on the GPU.
+
+    So this takes only the cross-process FILE lock, which is thread- and process-safe. That is
+    sufficient: every async GPU task acquires the same file lock (right after the in-process one),
+    so while a download holds it, generations wait at that step instead of co-loading. It is also
+    deadlock-free — this side never wants the asyncio lock.
+    """
+
+    def __init__(self, request_type: str, request_id: str = None, cpu_mode: bool = False,
+                 timeout: float = GPU_LOCK_WAIT_TIMEOUT):
+        self.request_type = request_type
+        self.request_id = request_id
+        self.timeout = timeout
+        self.acquired_at = None
+        self._fd = None
+        self._lock_file = CPU_LOCK_FILE if cpu_mode else GPU_LOCK_FILE
+        self._label = f"{request_type}{' ' + request_id if request_id else ''}"
+
+    def __enter__(self):
+        global _sync_lock_holder
+        deadline = time.time() + self.timeout
+        while True:
+            fd = _try_acquire_file_lock(self._lock_file)
+            if fd is not None:
+                self._fd = fd
+                break
+            if time.time() >= deadline:
+                raise TimeoutError(
+                    f"Failed to acquire GPU lock within {self.timeout:.0f}s for {self._label}"
+                )
+            time.sleep(0.5)     # a plain thread — blocking here does NOT stall the event loop
+        _sync_lock_holder = self._label
+        self.acquired_at = time.time()
+        logger.info(f"[GPU-LOCK] {self._label} acquired GPU (sync/thread)")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        global _sync_lock_holder
+        _sync_lock_holder = None
+        if self._fd is not None:
+            _release_file_lock(self._fd)
+            self._fd = None
+        held = time.time() - self.acquired_at if self.acquired_at else 0
+        logger.info(f"[GPU-LOCK] {self._label} released GPU (sync/thread, held {held:.2f}s)")
+
+
 # For backwards compatibility
 image_generation_lock = _image_generation_lock
 
@@ -184,4 +241,4 @@ def _log_lock_init():
 
 _log_lock_init()
 
-__all__ = ['image_generation_lock', 'GPUResourceLock', 'get_gpu_lock_status']
+__all__ = ['image_generation_lock', 'GPUResourceLock', 'GPUResourceLockSync', 'get_gpu_lock_status']

@@ -29,7 +29,27 @@ from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
-_ACESTEP_ROOT = os.environ.get("ACESTEP_ROOT", "/home/verita84/ACE-Step-1.5")
+def _resolve_acestep_root() -> str:
+    """Where ACE-Step is checked out; `<root>/checkpoints` holds the weights.
+
+    This used to default to the literal string "/home/verita84/ACE-Step-1.5" — one developer's home
+    directory — so it resolved correctly only on a node whose Linux user happened to share that
+    name, and every other bare-metal install pointed the handler at a path that does not exist.
+    Docker sets ACESTEP_ROOT=/opt/ace-step; `install.sh --music` clones to
+    ${ACESTEP_DIR:-$HOME/ACE-Step-1.5} and exports nothing, so honour BOTH spellings and otherwise
+    take the first checkout that is actually on disk."""
+    for env in ("ACESTEP_ROOT", "ACESTEP_DIR"):
+        v = (os.environ.get(env) or "").strip()
+        if v:
+            return v
+    home_default = os.path.join(os.path.expanduser("~"), "ACE-Step-1.5")
+    for cand in (home_default, "/opt/ace-step"):
+        if os.path.isdir(cand):
+            return cand
+    return home_default
+
+
+_ACESTEP_ROOT = _resolve_acestep_root()
 # A CHECKPOINT DIRECTORY NAME under <ACESTEP_ROOT>/checkpoints, not a Hugging Face repo id. The
 # handler resolves it locally; "ACE-Step/Ace-Step1.5" (the HF id the diffusers attempt used) is not
 # a thing it can load.

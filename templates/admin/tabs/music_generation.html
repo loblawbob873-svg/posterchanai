@@ -3,11 +3,12 @@
     <fieldset>
         <legend>Music Generation (ACE-Step)</legend>
         <p class="vram-info">
-            ACE-Step needs its own Python 3.11–3.12 environment, so it runs as a <strong>separate
-            service</strong> (the <code>acestep-api</code> REST server) and PosterChanAI talks to it
-            over HTTP — like the external image servers. Start it with
-            <code>install.sh</code> (option) or the Docker <code>acestep</code> service, then point
-            the URL below at it. Generation is available in the web UI and Telegram via
+            Songs are generated <strong>in-process</strong>, on this app's own torch stack and GPU
+            lock — the same way video generation works. There is no <code>acestep.service</code>, no
+            second virtualenv and no HTTP hop. Install the engine once with
+            <code>./install.sh --music</code>; the weights land in
+            <code>&lt;ACESTEP_ROOT&gt;/checkpoints</code> and load on first use. Generation is
+            available in the web UI and Telegram via
             <code>musicgeni &lt;style prompt&gt; [| lyrics]</code>.
         </p>
         <div class="form-group">
@@ -17,9 +18,16 @@
             </label>
             <small>Off by default. When off, <code>musicgeni</code> returns a friendly notice.</small>
         </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="music_native" name="music_native">
+                <span>Generate in-process (native)</span>
+            </label>
+            <small>On by default, and what every node runs. Turn this OFF only on a node that really
+                has a remote ACE-Step REST server — it forces the legacy HTTP path.</small>
+        </div>
         <p class="vram-info">
-            The local <code>acestep-api</code> server is assumed at <code>http://localhost:8001</code>
-            (the ACE-Step default), and cross-node load balancing uses the single
+            Cross-node load balancing uses the single
             <strong>Site → Load Balancing → Server URLs</strong> list — no per-feature server config here.
         </p>
         <div class="form-group">
@@ -30,25 +38,37 @@
                 <option value="xpu">XPU (Intel Arc)</option>
                 <option value="cpu">CPU</option>
             </select>
-            <small>Which lock the local server uses (GPU vs CPU). Set CPU only if the local
-                ACE-Step runs on CPU, so it doesn't needlessly block GPU chat/image.</small>
+            <small>Which lock music takes (GPU vs CPU). Set CPU only if music really runs on CPU
+                here, so it doesn't needlessly block GPU chat/image/video.</small>
         </div>
         <div class="form-group">
             <label for="music_model">Music Model</label>
             <input type="text" id="music_model" name="music_model" placeholder="acestep-v15-turbo">
-            <small>DiT model name/path passed to the server (e.g. <code>acestep-v15-turbo</code> for
-                fast 8-step generation, <code>acestep-v15-base</code> for quality). Fits a 12&nbsp;GB
-                GPU. Leave empty to use the server's default.</small>
+            <small>A checkpoint <strong>directory name</strong> under
+                <code>&lt;ACESTEP_ROOT&gt;/checkpoints</code> — <code>acestep-v15-turbo</code> for
+                fast 8-step generation, <code>acestep-v15-base</code> for quality. Not a Hugging Face
+                repo id. Fits a 12&nbsp;GB GPU. Leave empty for the default.</small>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="music_cpu_offload" name="music_cpu_offload">
+                <span>Offload to CPU between steps</span>
+            </label>
+            <small>Fits a bigger model on a small GPU, at a speed cost. <strong>CUDA only</strong> —
+                accelerate's offload hooks hit a meta-tensor bug on Intel XPU, so the Arc ignores
+                this and must fit the model outright.</small>
         </div>
         <div class="form-group">
             <button type="button" class="btn-secondary" id="dl-music-btn" onclick="downloadModel('music','dl-music-btn','dl-music-st')">⬇ Download music model</button>
             <span id="dl-music-st" style="margin-left:10px;font-size:13px"></span>
-            <small>Models are NOT downloaded automatically. Click to fetch + warm up the ACE-Step model now (one-time, large). Uses whichever engine is active: the ACE-Step server by default, or the in-process pipeline if <code>music_native</code> is on.</small>
+            <small>Models are NOT downloaded automatically. Click to fetch the weights and prove
+                they load on this GPU (one-time, several GB). It takes the GPU lock, so it queues
+                behind any song, image or chat in flight rather than fighting it for VRAM.</small>
         </div>
         <div class="form-row">
             <div class="form-group">
                 <label for="music_default_duration">Default Duration (seconds)</label>
-                <input type="number" id="music_default_duration" name="music_default_duration" value="60" min="10" max="600">
+                <input type="number" id="music_default_duration" name="music_default_duration" value="180" min="10" max="600">
             </div>
             <div class="form-group">
                 <label for="music_default_steps">Diffusion Steps</label>
@@ -71,6 +91,19 @@
                 <label for="music_timeout">Timeout (ms)</label>
                 <input type="number" id="music_timeout" name="music_timeout" value="300000">
                 <small>Max time to wait for a song to render.</small>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="music_guidance">Guidance Scale</label>
+                <input type="number" id="music_guidance" name="music_guidance" value="7.5" min="0" max="30" step="0.5">
+                <small>Classifier-free guidance: higher follows the style prompt more literally.</small>
+            </div>
+            <div class="form-group">
+                <label for="music_idle_timeout">Idle Unload (seconds)</label>
+                <input type="number" id="music_idle_timeout" name="music_idle_timeout" value="600" min="0">
+                <small>Free the music model's VRAM after this long with no songs. The GPU is shared
+                    with chat, image and video, so it should not sit resident.</small>
             </div>
         </div>
     </fieldset>
