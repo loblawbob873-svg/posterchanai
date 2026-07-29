@@ -3908,8 +3908,11 @@ body.modal-open .mobilenav{display:none}
 .mb-side{min-width:0}
 .mb-inspector{display:flex;flex-direction:column;gap:9px;padding:12px;
   border:1px solid var(--line);border-radius:var(--r)}
-.mb-insp-hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mb-insp-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .mb-insp-hd .btn{margin:0}
+/* Duplicate + Delete stay together on the right — space-between with three loose children would strand
+   Duplicate in the middle of the header, away from the buttons it belongs with. */
+.mb-insp-acts{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 0 auto}
 .mb-f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:0}
 .mb-f .input,.mb-f textarea{margin:0}
 .mb-f input[type=color]{width:100%;height:34px;padding:2px;background:var(--panel2);

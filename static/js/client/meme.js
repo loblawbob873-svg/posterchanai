@@ -239,6 +239,36 @@
     save(); return l;
   }
 
+  // Copy a layer into a new one sitting directly ABOVE it in the draw order. Everything carries over —
+  // source, size, trim, effect, sound, opacity, flip/rotate and the timeline slot — because that is the
+  // whole point: you built one layer up and want a second like it (two of the same character on screen, a
+  // caption in the same font, the same clip again with a different trim). Only two things change:
+  //   * a fresh id (the id IS the identity everywhere — selection, stage/timeline lookups, seek), and
+  //   * a small nudge, since a pixel-perfect copy hides exactly behind the original and reads as
+  //     "the button did nothing". A caption drops a line (its own font size); media shifts 4%/2% of the
+  //     canvas. A centred caption is nudged in Y only — the renderer computes its x, so moving it does
+  //     nothing and the two would land on top of each other in the export.
+  // Insert at i+1 rather than the end so a duplicated clip cannot jump above a caption (text lives at the
+  // tail of P.layers), and no re-timing happens: the copy overlaps the original until you drag it.
+  function duplicateLayer(l){
+    if(!l) return null;
+    if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
+    const c = Object.assign({}, l, { id: nid() });
+    if(c.type === 'text'){
+      if(_alignOf(c) !== 'center') c.x = clamp(c.x + Math.round(P.w*0.04), 0, Math.max(0, P.w-16));
+      c.y = clamp(c.y + Math.round((+c.size||64) * 1.2), 0, Math.max(0, P.h-16));
+    } else if(_isVisual(c)){
+      c.x = clamp(c.x + Math.round(P.w*0.04), 0, Math.max(0, P.w-16));
+      c.y = clamp(c.y + Math.round(P.h*0.02), 0, Math.max(0, P.h-16));
+    }
+    const i = P.layers.indexOf(l);
+    P.layers.splice(i < 0 ? P.layers.length : i+1, 0, c);
+    sel = c.id;
+    save(); render();
+    toast(c.type==='audio' ? 'track duplicated' : 'layer duplicated — drag it where you want it');
+    return c;
+  }
+
   // ---------- rendering the UI ----------
   function view(){
     return `
@@ -386,7 +416,10 @@
       return `
       <div class="mb-insp-hd">
         <b>🎵 Music layer</b>
-        <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+        <span class="mb-insp-acts">
+          <button class="btn btn-cyan small" id="mb-dup" title="Make a second copy of this track">⧉ Duplicate</button>
+          <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+        </span>
       </div>
       <div class="muted small mb-dbg">${enc(l.name || srcName(l.src))}</div>
       <button class="btn btn-cyan small full" id="mb-aud-all" title="Start at 0 and run to the end of the meme">⇔ Span the whole meme</button>
@@ -402,7 +435,10 @@
     return `
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
-        <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+        <span class="mb-insp-acts">
+          <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
+          <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+        </span>
       </div>
       ${isText ? `
         <label class="mb-f"><span>Text</span><textarea class="input" id="mb-f-text" rows="2">${enc(l.text)}</textarea></label>
@@ -1192,6 +1228,7 @@
       const v=root.querySelector('#mb-rot-val'); if(v) v.textContent=Math.round(l.rotate)+'°'; _paintX(); });
     on('mb-rot0','click',()=>{ l.rotate=0; l.flipH=false; l.flipV=false; save(); inspector();
       const b=root.querySelector('#mb-f-rot'); if(b) b.value=0; _paintX(); });
+    on('mb-dup','click',()=>duplicateLayer(l));
     on('mb-del','click',async()=>{
       if(!await uiConfirm('Delete this layer?')) return;
       P.layers=P.layers.filter(x=>x.id!==l.id); sel=null; save(); render();
