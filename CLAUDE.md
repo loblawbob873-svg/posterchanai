@@ -237,6 +237,23 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   (3) `AceStepHandler` is a plain object with **no `.to()`**; unload must drop
   `model`/`vae`/`text_encoder`/`mlx_*`/`silence_latent` explicitly, or the VRAM swap frees nothing
   and leaves ~6.3GB resident on the shared 12/16GB GPUs. Covered by `tests/test_music_native.py`.
+  (4) **`transformers<5` is required, not preferred.** The Dockerfile always pinned it; nothing
+  pinned it for a BARE-METAL install, so a node drifted to 5.14.1 on an unrelated `pip install` and
+  ACE-Step (a `trust_remote_code` custom-code model) stopped loading with *"Tensor.item() cannot be
+  called on meta tensors"* for both sdpa and eager — same repo, same checkpoint, same commit as the
+  working node. Now pinned in `requirements.txt`.
+  (5) **`torchaudio.save` routes through `torchcodec`** on torchaudio ≥2.9, and torchcodec is in
+  neither `requirements.txt` nor the Dockerfile. ACE-Step's `AudioSaver` calls it for the mp3 temp
+  WAV and the wav/flac paths, so on a STOCK checkout every song dies at the final save
+  (*"TorchCodec is required for save_with_torchcodec"*) **after** all the GPU work. This hid for
+  weeks because ONE node's ACE-Step working tree had been hand-edited to call soundfile — untracked,
+  in no repo/installer/image — so that box looked fine while every fresh clone and Docker build was
+  broken. `music_local._install_torchaudio_save_shim()` now re-points `torchaudio.save` at
+  `soundfile` (already a hard dep) before acestep is imported; **do not "fix" this by patching the
+  ACE-Step checkout again.**
+  **Duration/steps/format resolve on the REQUESTING node** and travel explicitly to whoever
+  generates — settings are per-node, so forwarding `None` made one `musicgeni` yield 4 minutes
+  locally and 60s whenever the LB picked the other node.
   `music_api_base` still forces the old HTTP path for a node that really has a remote server.
   **Output is a branded MP4**, not raw audio:
   `media_service.make_music_video` puts the song over a generic PosterChan background

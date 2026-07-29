@@ -94,6 +94,18 @@ installer, from the same index as the installed torch. The installer also remove
 Then **Admin → Music**: enable music and leave **Local Server URL empty**. Remote Servers fan out to
 other nodes. Models download on first use into `<ACE-Step clone>/checkpoints` (several GB).
 
+Two dependency facts are load-bearing, and both failed *silently* on a node once:
+
+- **`transformers<5`** — ACE-Step is a `trust_remote_code` custom-code model and does not load on
+  5.x at all (`Tensor.item() cannot be called on meta tensors`, sdpa and eager alike). Pinned in
+  `requirements.txt` and the Dockerfile.
+- **No `torchcodec` needed.** `torchaudio.save` delegates to torchcodec on torchaudio ≥2.9, which
+  would kill every song at the final save after the GPU work is already done. The app re-points
+  `torchaudio.save` at `soundfile` before importing acestep
+  (`music_local._install_torchaudio_save_shim`). Don't patch the ACE-Step checkout to work around
+  this — a hand-edit like that is what hid the bug, since the patched box worked while every fresh
+  clone and Docker build did not.
+
 `ACESTEP_ROOT` says where that checkout is. It is set for you in Docker; on bare metal the app takes
 `ACESTEP_ROOT`, then the installer's `ACESTEP_DIR`, then the first of `$HOME/ACE-Step-1.5` or
 `/opt/ace-step` that exists. (It used to be a hardcoded home directory, so it resolved only for one
