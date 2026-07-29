@@ -311,7 +311,12 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
             import base64 as _b64m
             _mrel = await _save_artifact_blossom(user.id, conversation_id, _b64m.b64decode(result[_mkey]), _mext)
             if _mrel:
-                _mmd, _mlabel = ("!video", "video") if _mkey == "video" else ("!audio", "song")
+                # The label is not decoration: the persisted markdown is ALL the client gets when it
+                # re-renders this message (the payload fields are long gone), so "does this MP4 have
+                # an audio track" has to ride in it. `song` → the client offers Convert to MP3;
+                # videogeni's silent clip stays `video` and doesn't.
+                _mmd, _mlabel = ("!video", "song" if result.get("has_audio") else "video") \
+                    if _mkey == "video" else ("!audio", "song")
                 save_content = (save_content + f"\n\n{_mmd}[{_mlabel}]({_artifact_url(_mrel, conversation_id)})").strip()
             else:
                 logger.warning(f"[CHAT] generated {_mkey} not persisted (Blossom store failed)")

@@ -13172,6 +13172,9 @@
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
+      const svf=e.target.closest('.ai-savefile'); if(svf){ e.preventDefault(); saveFileToBlossom(svf.dataset.url, svf); return; }   // artifact → Blossom drive
+      const dlf=e.target.closest('.ai-dlfile'); if(dlf){ e.preventDefault(); downloadFileUrl(dlf.dataset.url, dlf); return; }       // artifact → device
+      const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
       const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
       const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
@@ -14000,8 +14003,8 @@
     // src attributes are absolutized to the instance origin (_absUrl) so a /api/files/… artifact loads from
     // the server, not https://localhost, in the bundled app. The URL passed to _aiFileActions stays relative
     // so its fetch (re-upload) goes through the shim, which adds credentials for the authed /api/files/ call.
-    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u,'video')));
-    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio')));
+    src=src.replace(/!video\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><video controls src="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></video></div>`+_aiFileActions(u,'video',a)));
+    src=src.replace(/!audio\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><audio controls src="${enc(_absUrl(u))}"></audio></div>`+_aiFileActions(u,'audio',a)));
     // inline images from a command output (effects/stamps, compress/convert) → show with the same
     // copy-link / reply buttons; stash BEFORE mdToHtml so it doesn't render a plain <img>.
     src=src.replace(/!\[([^\]]*)\]\(\s*((?:https?:\/\/|\/)[^)\s]+)\s*\)/g,(m,a,u)=>stash(`<div class="ai-media"><img src="${enc(_absUrl(u))}" data-full="${enc(_absUrl(u))}" onerror="window.__aiMediaRetry(this)"></div>`+_aiFileActions(u,'image')));
@@ -14020,17 +14023,56 @@
   // Inline command-output media (effects/compress/convert) lives at an authed /api/files/ artifact
   // URL (encrypted at rest) — NOT shareable. These fetch those bytes and RE-UPLOAD to PUBLIC Blossom
   // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
-  function _aiFileActions(u, kind){
+  function _aiFileActions(u, kind, label){
     if(!/^\//.test(u)) return '';
     const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
+    const save=`<button class="btn btn-ghost small ai-savefile" data-url="${enc(u)}">💾 Save to Blossom</button>`;
+    const dl=`<button class="btn btn-ghost small ai-dlfile" data-url="${enc(u)}">⬇ Download</button>`;
+    // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
+    // carries no payload fields — so the distinction rides in the label the server writes:
+    // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
+    const mp3=(kind==='video' && /song|music|narrat/i.test(label||''))
+      ? `<button class="btn btn-cyan small ai-mp3file" data-url="${enc(u)}">🎵 Convert to MP3</button>` : '';
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
     // Keep working on a result instead of it being a dead end: an effect output was final here, so
     // refining one meant downloading the file and adding it back by hand. The builder takes VIDEO
     // layers as well as images, which is what makes this worth having for effects at all.
     // Not offered for audio — addMedia only seeds image/video layers.
     const mb=(kind==='audio')?'':`<button class="btn btn-cyan small ai-memefile" data-url="${enc(u)}" data-kind="${enc(kind||'image')}">🎞️ Meme Builder</button>`;
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${mb}${copy}</div>`;
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
+  }
+  // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
+  async function saveFileToBlossom(u, btn){
+    if(btn){ btn.disabled=true; btn.textContent='saving…'; }
+    try{ await _fileToPublicUrl(u); toast('saved to Blossom — find it in Files');
+      if(btn){ btn.textContent='✓ saved'; btn.disabled=false; } }
+    catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='💾 Save to Blossom'; } }
+  }
+  // Download an artifact to the device. The URL is AUTHED, so an <a download> pointing at it would
+  // 401 — fetch with credentials, then click an object URL of the bytes.
+  async function downloadFileUrl(u, btn){
+    if(btn){ btn.disabled=true; btn.textContent='downloading…'; }
+    try{
+      const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+      const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
+      const o=URL.createObjectURL(blob); const a=document.createElement('a');
+      a.href=o; a.download='posterchan-'+Date.now()+'.'+ext;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(o), 10000);
+      if(btn){ btn.textContent='✓ downloaded'; btn.disabled=false; }
+    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='⬇ Download'; } }
+  }
+  // Branded MP4 artifact → MP3, via the same `extractaudio` command a user could type.
+  async function mp3FromFileUrl(u, btn){
+    if(btn){ btn.disabled=true; btn.textContent='converting…'; }
+    try{
+      const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
+      await aiAddFiles([new File([blob], 'song.mp4', { type:blob.type||'video/mp4' })]);
+      const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
+      aiSend();
+      if(btn){ btn.textContent='🎵 Convert to MP3'; btn.disabled=false; }
+    }catch(e){ toast('convert failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='🎵 Convert to MP3'; } }
   }
   // Effect result → Meme Builder. The media has to be uploaded to Blossom FIRST: a layer `src` is
   // fetched SERVER-side at render time, and /api/files/… is behind get_current_user, so handing the
