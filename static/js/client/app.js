@@ -10950,6 +10950,14 @@
   // server-side check. It came one successful decrypt from destroying the only surviving copy of a
   // drive's folder index. Superseded index blobs are ~133 KB; keeping them is free, and they are
   // the backup. Any reclamation belongs in a server-side sweep with an age floor, not in a browser.
+  // sha -> decrypted object URL, LRU-capped so a long listening session doesn't leak blobs.
+  // RESTORED: this declaration was dropped by 760c492d while its four uses were left behind, so
+  // both identifiers have been undeclared ever since. Every reference threw ReferenceError —
+  // which is why `delBlob` never reached its toast()/renderBlossom() and a deleted file sat on
+  // screen until a manual refresh, and why decrypting a Music track failed. The bulk-delete path
+  // hid the same throw in its per-file try/catch (counting it as a failure) and redrew anyway,
+  // which is exactly why bulk "worked" and single didn't.
+  const _trackUrls={}, _trackUrlOrder=[];
   async function trackUrl(sha){
     if(_trackUrls[sha]) return _trackUrls[sha];
     const m=FilesIdx.meta(sha); if(!m||!m.enc) throw new Error('not an encrypted track');
