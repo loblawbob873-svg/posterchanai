@@ -11,6 +11,7 @@ import time
 import json
 import asyncio
 import logging
+from collections import deque
 
 from websockets.datastructures import Headers
 from websockets.http11 import Response
@@ -126,6 +127,51 @@ class SubscriptionManager:
                     send(conn, ["EVENT", sub_id, ev])
 
 
+class _OutQ:
+    """One connection's outbound frame queue: a bounded deque + a wakeup event.
+
+    Not an ``asyncio.Queue`` because when the queue is full we need to choose WHAT to drop. An
+    EVENT is re-pullable, so dropping one is survivable. An ``EOSE``/``OK``/``CLOSED`` is NOT: the
+    client's ``query()`` then waits out its own timeout, and the zombie detector answers that by
+    tearing the socket down and reconnecting — "slow, keeps disconnecting, content missing" on any
+    link too slow to drain the queue (it never reproduces on a LAN, where nothing ever queues up).
+    So a control frame evicts the OLDEST event instead of being dropped itself.
+
+    Single-threaded by the same invariant the old ``put_nowait`` relied on: only the relay's event
+    loop touches this. ``sent``/``dropped`` are what the per-connection close log reports.
+    """
+
+    __slots__ = ("dq", "wake", "maxlen", "sent", "dropped")
+
+    def __init__(self, maxlen: int):
+        self.dq = deque()
+        self.wake = asyncio.Event()
+        self.maxlen = max(16, int(maxlen or 8192))
+        self.sent = 0
+        self.dropped = 0
+
+    def push(self, msg: str, is_event: bool) -> bool:
+        if len(self.dq) >= self.maxlen:
+            self.dropped += 1
+            if is_event:
+                return False                      # re-pullable — drop it, never stall the fanout
+            for i, queued in enumerate(self.dq):  # control frame: make room, oldest event first
+                if queued.startswith('["EVENT"'):
+                    del self.dq[i]
+                    break
+            else:
+                return False                      # nothing but control frames queued: nothing to evict
+        self.dq.append(msg)
+        self.wake.set()
+        return True
+
+    async def pop(self) -> str:
+        while not self.dq:
+            self.wake.clear()
+            await self.wake.wait()
+        return self.dq.popleft()
+
+
 class RelayServer:
     def __init__(self, store, gate, config: dict, outbox_cb=None):
         self.store = store
@@ -145,16 +191,13 @@ class RelayServer:
         self._bridge_pubkeys: set = set()   # puppet pubkeys (values of _bridge_nip05) — DM inbox set
 
     def _send(self, conn, obj) -> None:
-        """Enqueue a message to a client WITHOUT blocking. If the client is too slow and its
-        queue is full, drop the message (live events are re-pullable) — a slow consumer must
-        never stall the firehose/fanout or other clients."""
+        """Enqueue a message to a client WITHOUT blocking — a slow consumer must never stall the
+        firehose/fanout or other clients. On a full queue an EVENT is dropped (re-pullable) and a
+        control frame evicts the oldest event instead; see _OutQ for why that distinction matters."""
         q = self._outq.get(conn)
         if q is None:
             return
-        try:
-            q.put_nowait(json.dumps(obj))
-        except asyncio.QueueFull:
-            pass
+        q.push(json.dumps(obj), obj[0] == "EVENT" if obj else False)
 
     async def _keepalive(self, conn) -> None:
         """Push a tiny application-level NOTICE to the client every ~40s. Unlike a WebSocket PING frame —
@@ -177,8 +220,9 @@ class RelayServer:
         """Drain one connection's outbound queue at the client's own pace."""
         try:
             while True:
-                msg = await q.get()
+                msg = await q.pop()
                 await conn.send(msg)
+                q.sent += 1
         except Exception:
             pass
 
@@ -352,17 +396,23 @@ class RelayServer:
     # --- connection handling ------------------------------------------------
 
     async def handle(self, conn) -> None:
+        ip = getattr(conn, "_pcai_ip", "") or "?"
         if self._conns >= self.cfg.get("max_connections", 5000):
+            # Was a silent 1013: the client just saw its socket close and reconnected forever.
+            logger.warning("[nostr-relay] conn refused ip=%s — at max_connections (%d)",
+                           ip, self._conns)
             await conn.close(code=1013, reason="overloaded")
             return
         self._conns += 1
         self._conn_ips[conn] = getattr(conn, "_pcai_ip", "") or ""
-        # Bigger than the query hard_cap (5000) so a full-page REQ response + its EOSE always
-        # fit without the synchronous send loop overflowing the queue and dropping the EOSE.
-        q = asyncio.Queue(maxsize=self.cfg.get("outq_size", 8192))
+        # Bigger than the query hard_cap (5000) so a full-page REQ response fits without the
+        # synchronous send loop overflowing. Overflow no longer costs the EOSE (see _OutQ) — it
+        # costs EVENTS, which is the difference between a stale feed and a hung query.
+        q = _OutQ(self.cfg.get("outq_size", 8192))
         self._outq[conn] = q
         writer = asyncio.create_task(self._writer(conn, q))
         keepalive = asyncio.create_task(self._keepalive(conn))
+        opened = time.time()
         try:
             async for raw in conn:
                 await self._dispatch(conn, raw)
@@ -372,11 +422,42 @@ class RelayServer:
         finally:
             writer.cancel()
             keepalive.cancel()
+            self._log_session(conn, ip, opened, q)
             self._outq.pop(conn, None)
             self._conn_ips.pop(conn, None)
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
             self._conns -= 1
+
+    # Close codes that mean "the client is done with us": a normal close, a page/tab going away,
+    # or no code at all (1005) — the ordinary end of a session, not a fault.
+    _CLEAN_CLOSE = (1000, 1001, 1005)
+
+    def _log_session(self, conn, ip: str, opened: float, q) -> None:
+        """One line per finished connection, so a user reporting "it keeps disconnecting" stops being
+        invisible. Sessions that ended badly — frames dropped, an abnormal close code, or a life so
+        short it implies a reconnect loop — log at INFO; ordinary ones at DEBUG, or 130 idle sockets
+        would bury the journal. Dropped frames are the number to watch: they mean this client could
+        not drain what we sent (see _OutQ).
+
+        The short-session rule applies to REMOTE clients only: our own services (settings_store,
+        users_store, the bots) each open a loopback socket, run one query and close, so counting
+        those as suspicious would drown the very reports this exists to surface."""
+        try:
+            dur = time.time() - opened
+            code = getattr(conn, "close_code", None)
+            reason = (getattr(conn, "close_reason", "") or "")[:60]
+            dropped = getattr(q, "dropped", 0)
+            remote = ip not in ("127.0.0.1", "::1", "localhost")
+            bad = dropped or (remote and dur < 60) or (code is not None and code not in self._CLEAN_CLOSE)
+            logger.log(
+                logging.INFO if bad else logging.DEBUG,
+                "[nostr-relay] conn closed ip=%s dur=%.1fs sent=%d dropped=%d subs=%d code=%s%s",
+                ip, dur, getattr(q, "sent", 0), dropped, self.subs.count(conn),
+                code, f" reason={reason!r}" if reason else "",
+            )
+        except Exception:
+            pass   # diagnostics must never break teardown
 
     def online_count(self) -> int:
         """A closer estimate of *people* online than the raw socket count: distinct client IPs
@@ -710,7 +791,8 @@ class RelayServer:
             return
         # Send oldest-first, newest last (common client expectation). Yield every chunk so the
         # writer drains the shared per-connection queue — otherwise a big response (with other
-        # subs also enqueuing) could overflow the queue and drop the trailing EOSE.
+        # subs also enqueuing) overflows it and this client loses events it asked for. (The EOSE
+        # itself is safe either way now: _OutQ never drops a control frame.)
         for n, ev in enumerate(reversed(events)):
             self._send(conn, ["EVENT", sub_id, ev])
             if n % 512 == 511:
