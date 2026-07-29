@@ -7139,6 +7139,20 @@
       // Files grid: thumbnails load ?thumb=1, so open the parent link's FULL url in the lightbox
       // (images) — videos/docs fall through to their <a> (new tab / download).
       const fa=e.target.closest('.file-card a'); if(fa){ const fm=fa.dataset.mime||'';
+        // SELECTION MODE: once anything in the drive is ticked, a tap on a card TOGGLES it instead of
+        // opening it — the same rule Finder/Explorer/Drive use. Without this, one stray tap on a
+        // thumbnail while picking 30 files opened the lightbox and the run was lost. Only applies to
+        // the drive grid (a card with a checkbox); AI-files cards have none and open as before.
+        const _selCard=fa.closest('.file-card');
+        if(_selCard && _filesSel.size && _selCard.querySelector('.selbox')){
+          e.preventDefault(); e.stopPropagation();
+          const sha=_selCard.dataset.sha;
+          if(_filesSel.has(sha)) _filesSel.delete(sha); else _filesSel.add(sha);
+          const cb=_selCard.querySelector('.selbox'); if(cb) cb.checked=_filesSel.has(sha);
+          _selCard.classList.toggle('selected', _filesSel.has(sha));
+          const g=document.getElementById('bl-grid'); if(g) _filesSelBar(g, _filesGridList);
+          return;
+        }
         if(/^video\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'video'); }
         else if(/^audio\//.test(fm)){ e.preventDefault(); openLightbox(fa.getAttribute('href'), 'audio'); }
         else if(/^image\//.test(fm) || fa.querySelector('img')){ e.preventDefault(); openLightbox(fa.getAttribute('href')); }
@@ -10581,6 +10595,7 @@
   // (paging, folder switch, VOD labels landing). Cleared on folder change so a hidden selection in
   // another folder can't be deleted by a later "Delete selected".
   let _filesSel = new Set();
+  let _filesGridList = null;   // last list _renderFilesGrid drew, so the global click handler can refresh the toolbar
   function _filesSelClear(){ _filesSel.clear(); }
   // The visible, selectable shas for the CURRENT folder+page — "Select all" must mean what's on
   // screen, never the whole drive (3000+ blobs, where a mis-tap would be catastrophic).
@@ -10590,6 +10605,7 @@
   function _filesSelBar(grid, list){
     const bar=grid.parentNode && grid.parentNode.querySelector('#bl-selbar'); if(!bar) return;
     const vis=_filesVisibleShas(grid), n=_filesSel.size;
+    grid.classList.toggle('selmode', n>0);   // drives the card cursor (tap = select, not open)
     const allSel = vis.length && vis.every(sha=>_filesSel.has(sha));
     bar.innerHTML = `<button class="btn btn-ghost small" id="bl-selall">${allSel?'☑':'☐'} Select all${vis.length?' ('+vis.length+')':''}</button>`
       + `<button class="btn btn-ghost small" id="bl-selnone"${n?'':' disabled'}>✖ Select none</button>`
@@ -10659,6 +10675,7 @@
 
   function _renderFilesGrid(grid, list){
     if(!grid) return;
+    _filesGridList = list;
     // hide encrypted MUSIC ciphertext from the normal grid (it lives in the Music folder's track list);
     // encrypted files in other folders DO show, as lock cards that decrypt in-browser on open.
     const inFolder = list.filter(b=>{
