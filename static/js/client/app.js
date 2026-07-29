@@ -2450,6 +2450,11 @@
   // bandwidth). Cached per-device for instant use on load; ALSO synced to Nostr (kind-30078) so it
   // follows across devices (see save/restoreClientPrefsNostr).
   let NO_IMAGES = ClientSettings.get('noImages', false) === true;
+  // Auto-show new posts: ON by default = live notes prepend themselves while you sit at the top of the
+  // timeline. OFF = they're ALWAYS buffered behind the "↑ N new posts" pill, whatever the scroll
+  // position, so the feed only ever moves when the user asks it to. Per-device for instant use, and
+  // synced to Nostr (kind-30078 client-prefs) so it follows across devices.
+  let AUTO_NEW_POSTS = ClientSettings.get('autoNewPosts', true) !== false;
   // Media-cache size (GB) → write the chosen byte budget to the SW-read config cache (per-device). The SW's
   // trimMedia reads pc-config-v1/media-budget to cap the offline media cache; default 4 GB if never set.
   function _applyMediaCacheBudget(gb){
@@ -2545,7 +2550,8 @@
     // While the user is reading below the top, DON'T mutate the timeline under them (prepending +
     // hydrating link cards shifts content and is what made it "keep refreshing"). Stash the new
     // posts and surface them with a "↑ N new posts" pill; flush when they scroll back up / tap it.
-    if(feed.scrollTop > _LIVE_READ_PX){
+    // …and with "auto-show new posts" off, hold them at ANY scroll position — including the top.
+    if(!AUTO_NEW_POSTS || feed.scrollTop > _LIVE_READ_PX){
       for(const ev of evs) _livePending.push(ev);
       if(_livePending.length>300) _livePending=_livePending.slice(-300);
       _updateNewPostsPill(); return;
@@ -2583,9 +2589,26 @@
       (document.querySelector('.main')||document.body).appendChild(p); }
     return p;
   }
+  // The pill floats over .main (which doesn't scroll — #feed does), so its resting place has to clear
+  // whatever sits at the TOP of the feed. The CSS constant only ever had to clear the topbar, because the
+  // pill could only appear once you'd scrolled past _LIVE_READ_PX; with auto-show off it appears at
+  // scrollTop 0 too, where the inline composer is — and a button parked over a textarea eats the clicks
+  // meant for it. Measure the tab bar rather than guessing a height: it's directly under the composer at
+  // the top and sticks to the feed's top edge once you scroll, so "just below it" is right in both states,
+  // on desktop (no topbar) and mobile (topbar) alike. The measured distance is in ZOOMED pixels (display
+  // scaling puts a `zoom` on <body> — 0.72 at 1400px wide) while `style.top` is read UNZOOMED, so the raw
+  // rect delta lands the pill ~28% too high, back on the very bar it was meant to clear: divide by the
+  // effective scale, recovered from rect-vs-offset width (offsetWidth is the unzoomed one) rather than by
+  // parsing a zoom the breakpoints own.
+  function _placePill(p){
+    const main=document.querySelector('.main'), tabs=document.querySelector('#feed .tl-tabs');
+    if(!main||!tabs) return;                       // no timeline header to measure → keep the CSS default
+    const box=main.getBoundingClientRect(), z=(main.offsetWidth ? box.width/main.offsetWidth : 1) || 1;
+    p.style.top = Math.max(0, (tabs.getBoundingClientRect().bottom - box.top + 10) / z) + 'px';
+  }
   function _updateNewPostsPill(){
     const p=_newPostsPill(); const n=(VIEW==='home'||VIEW==='global')?_livePending.length:0;
-    if(n>0){ p.textContent='↑ '+n+' new post'+(n>1?'s':''); p.classList.remove('hidden'); } else p.classList.add('hidden');
+    if(n>0){ p.textContent='↑ '+n+' new post'+(n>1?'s':''); _placePill(p); p.classList.remove('hidden'); } else p.classList.add('hidden');
   }
   function _flushPending(){
     const feed=$('#feed'); if(!feed) return;
@@ -3032,7 +3055,7 @@
     const feed=$('#feed'); if(!feed) return;
     if(VIEW==='home'||VIEW==='global') _reviveOnInteract();
     // scrolled back near the top → show the buffered live posts and clear the pill
-    if((VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
+    if(AUTO_NEW_POSTS && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending();
     if(feed.scrollTop + feed.clientHeight < feed.scrollHeight - 700) return;   // not near the bottom yet
     if(VIEW==='home'||VIEW==='global') loadOlderTimeline();
     else if(VIEW==='trending') loadMoreTrending();
@@ -9510,6 +9533,12 @@
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
       }
+      if(!_prefTouched.has('autoNewPosts') && typeof pr.autoNewPosts==='boolean' && pr.autoNewPosts!==AUTO_NEW_POSTS){
+        AUTO_NEW_POSTS=pr.autoNewPosts; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);
+        // Synced ON while notes are already parked behind the pill → adopt them now (see the toggle handler).
+        if(AUTO_NEW_POSTS){ const feed=$('#feed');
+          if(feed && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending(); }
+      }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
@@ -14553,6 +14582,8 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🎉 Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
@@ -14783,6 +14814,15 @@
         NO_IMAGES = ni.checked; ClientSettings.set('noImages', NO_IMAGES); _prefTouched.add('noImages'); saveClientPrefsNostr({ noImages: NO_IMAGES });
         toast(NO_IMAGES?'data saver on — tap to load images':'images load automatically');
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }; }
+    // Auto-show new posts: persist + sync to Nostr. Turning it ON adopts whatever is already buffered
+    // (the pill would otherwise sit there until the next live note); turning it OFF leaves the feed as-is.
+    { const an=$('#set-auto-new-posts'); if(an) an.onchange=()=>{
+        AUTO_NEW_POSTS = an.checked; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);
+        _prefTouched.add('autoNewPosts'); saveClientPrefsNostr({ autoNewPosts: AUTO_NEW_POSTS });
+        toast(AUTO_NEW_POSTS?'new posts appear automatically':'new posts wait behind the ↑ button');
+        if(AUTO_NEW_POSTS){ const feed=$('#feed');
+          if(feed && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending(); }
       }; }
     // Post effects (celebratory note animations): persist + sync to Nostr, then re-render so the change
     // shows immediately (turning OFF drops data-celebrate from notes; the sweep stops on its own).
