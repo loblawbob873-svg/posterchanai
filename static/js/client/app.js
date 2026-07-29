@@ -1602,6 +1602,14 @@
       hydrateUser();
       setTimeout(()=>{ _rbBooted=true; loadRightbar(); }, 1500);
       if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
+    // Is the user mid-input? Focus in any field counts — and so does text still sitting in either
+    // composer that lives INSIDE #feed, because those are rebuilt empty by a repaint even when focus
+    // has moved on (tapping 📎 to attach, say). Cheap enough to call on every reconnect.
+    const _isTyping = ()=>{
+      const el = document.activeElement;
+      if(el && (el.tagName==='TEXTAREA' || el.tagName==='INPUT' || el.isContentEditable)) return true;
+      return ['#tl-cmp-ta','#dm-in'].some(sel=>{ const n=$(sel); return !!(n && n.value && n.value.trim()); });
+    };
     // On a RECONNECT (socket dropped + came back, common during the login burst), the relay re-arms
     // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
     // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
@@ -1612,7 +1620,21 @@
       // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
       // case for those, so it'd blank them to a spinner). The fetches also self-render these.
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-        .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
+        .then(()=>{
+          if(GUEST || !['home','global','notifications','messages','bookmarks'].includes(VIEW)) return;
+          // NEVER repaint out from under someone who is typing. A reconnect is routine — the socket
+          // freezes every time the tab is backgrounded, so this fires on the way back from a tab
+          // switch — but #feed owns the inline composer (#tl-cmp-ta) and the DM box (#dm-in), and a
+          // repaint rebuilds them EMPTY and drops focus. That is the reported "switching tabs resets
+          // the whole UI and I have to click the box and type again". _drawTimeline already refuses
+          // to wipe the composer on its own redraws (see the note there); this is the same promise
+          // for the reconnect path. Nothing is lost by skipping: relay.js re-arms the live subs on
+          // reopen, so posts keep arriving, and the next navigation repaints anyway.
+          if(_isTyping()) return;
+          // reset=false: no spinner-blank. It keeps the composer, the scroll position and the paging
+          // cursor — a reconnect should be invisible, not a full teardown of what you were reading.
+          try{ renderView(false); }catch(_){}
+        });
     };
     connectRelays();
     // Guest→login WITHOUT a page reload: the relay is already connected from guest browsing, so the
