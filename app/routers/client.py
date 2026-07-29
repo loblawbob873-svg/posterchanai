@@ -2930,6 +2930,9 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     u = await _find_or_create_user(db, target)   # pre-grant: create the account if it doesn't exist
     _was = bool(u.can_ai)
     u.can_ai = bool(data.grant)
+    # Same marker the admin capability form sets: without it a revoked user could restore their own
+    # AI access simply by signing in with their fediverse account again.
+    u.access_revoked = not bool(data.grant)
     db.commit()
     logger.info("[client] AI access %s for %s", "granted" if data.grant else "revoked", u.username)
     # Tell them straight away. Only on the 0->1 transition: re-saving the same permission shouldn't

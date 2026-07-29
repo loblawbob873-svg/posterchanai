@@ -157,30 +157,39 @@ def _unique_username(db: Session, base: str) -> str:
 
 
 async def _ensure_identity(db: Session, user: User) -> str:
-    """Return this user's nsec, minting and storing one if the account has no key yet.
+    """Return this user's nsec, minting and storing one if the account has no key yet, and make sure
+    the key is admitted to the relay's web of trust.
 
-    Also admits a brand-new key to the relay's web of trust, the same as a browser-side signup —
-    without it the account can post nowhere and receive no DMs.
+    The WoT admission runs on EVERY sign-in, not only when a key is first minted. The relay is
+    WoT-only, so a key that isn't in it can post nowhere and receive no DMs — and the admission is a
+    best-effort call that only WARNS on failure. Doing it once, at mint time, meant any user whose
+    admission failed that day (or who was dropped by a later WoT rebuild) was permanently silenced
+    with nothing in the UI to explain it and no way to retry. Signing in again now repairs it, which
+    is what `follow_and_admit`'s own docstring already claims it is for. Both are idempotent: the WoT
+    add is a set insert and the operator follow short-circuits on "already followed".
     """
-    if user.nostr_nsec:
-        return user.nostr_nsec
-    nsec, npub = _mint_keypair()
-    user.nostr_nsec = nsec
-    user.nostr_npub = npub
-    user.nostr_enabled = True
-    db.commit()
+    minted = None
+    if not user.nostr_nsec:
+        nsec, npub = _mint_keypair()
+        user.nostr_nsec = nsec
+        user.nostr_npub = npub
+        user.nostr_enabled = True
+        db.commit()
+        minted = npub
     try:
         from app.services.nostr import nostr_service
         from app.routers.client import follow_and_admit
-        await follow_and_admit(db, nostr_service.to_pubkey_hex(npub))
+        await follow_and_admit(db, nostr_service.to_pubkey_hex(user.nostr_npub))
     except Exception as e:
-        logger.warning("[social-login] follow/admit failed for %s: %s", npub[:16], e)
+        logger.warning("[social-login] follow/admit failed for %s: %s", (user.nostr_npub or "")[:16], e)
     try:
         from app.services import nostr_store
-        nostr_store.user_storage_seckey(db, user)
+        nostr_store.user_storage_seckey(db, user)   # get-or-create
     except Exception as e:
         logger.warning("[social-login] storage key provisioning failed: %s", e)
-    return nsec
+    if minted:
+        logger.info("[social-login] minted a key for %s (%s)", user.username, minted[:16])
+    return user.nostr_nsec
 
 
 def _handoff(user: User, provider: str, detail: str, created: bool) -> str:
@@ -351,6 +360,28 @@ def _acct_of(account: dict, instance_url: str) -> str:
     if "@" not in acct:
         acct = f"{acct}@{urllib.parse.urlparse(instance_url).hostname or ''}"
     return acct.lower()[:255]
+
+
+def apply_fedi_access(user) -> bool:
+    """Grant AI + Blossom to someone who just proved they hold a fediverse account. True if changed.
+
+    A bare Nostr signup stays gated until an admin approves, because anyone can mint a keypair. A
+    fediverse sign-in is different: holding an account on an instance we allow sign-in from IS the
+    identity check `can_ai` stands in for, and leaving it off meant a fedi user connected an account
+    and then couldn't use the thing they came for.
+
+    Runs on EVERY sign-in, not just the first, so people who linked before this (or through Settings)
+    aren't left locked out with no way to see why. It only ever widens — except when an admin has
+    REVOKED access, which is the whole reason `access_revoked` exists: re-granting there would make a
+    revocation last precisely until the user's next login, i.e. not be a revocation at all.
+    """
+    if getattr(user, "access_revoked", False):
+        return False
+    if user.can_ai and user.can_blossom:
+        return False
+    user.can_ai = True
+    user.can_blossom = True
+    return True
 
 
 class _ProbeUnavailable(Exception):
@@ -525,7 +556,7 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
             username=_unique_username(db, acct.split("@")[0]), email=None, password_hash="",
             is_admin=False, email_verified=True,
             can_image=True, can_music=True, can_video=False, can_torrent=False,
-            can_blossom=False, can_ai=False,
+            can_blossom=False, can_ai=False,   # apply_fedi_access below grants these
         )
         from app.auth import get_password_hash
         user.password_hash = get_password_hash(secrets.token_urlsafe(32))
@@ -546,6 +577,10 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
     if not user.pleroma_access_token:
         user.pleroma_access_token = token
         user.pleroma_enabled = True
+    if apply_fedi_access(user):
+        logger.info("[social-login] granted AI+Blossom to %s (%s)", user.username, acct)
+    elif user.access_revoked:
+        logger.info("[social-login] %s signed in but access was revoked — not re-granting", user.username)
     db.commit()
     await _ensure_identity(db, user)
     return RedirectResponse(f"/client?login={_handoff(user, 'pleroma', acct, created)}", status_code=302)

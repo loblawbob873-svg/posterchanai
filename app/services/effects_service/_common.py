@@ -211,6 +211,12 @@ _WHOABUDDY_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/whoabuddy.mp3",
 ]
 _WHOABUDDY_DURATION = 6.0
+_HEAT_AUDIO_CANDIDATES = [
+    os.environ.get("HEAT_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "heat.mp3"),
+    "/var/lib/posterchanai/assets/heat.mp3",
+]
+_HEAT_DURATION = 15.0
 _DIARRHEA_AUDIO_CANDIDATES = [
     os.environ.get("DIARRHEA_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "diarrhea.mp3"),

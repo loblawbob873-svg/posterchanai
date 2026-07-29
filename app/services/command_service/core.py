@@ -89,6 +89,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "hood": "Turn an attached image into a 10s MP4 set to the hood clip: hood",
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
         "retard": "Turn an attached image into a short MP4 set to the retard-alert clip: retard",
+        "heat": "Turn an attached image into a 15s MP4 set to Heat of the Moment: heat",
         "whoabuddy": "Turn an attached image into a short MP4 set to the whoa buddy clip: whoabuddy",
         "diarrhea": "Turn an attached image into a short MP4 set to the explosive diarrhea clip: diarrhea",
         "seth": "Turn an attached image into a short MP4 set to the seth clip: seth",
@@ -195,7 +196,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "collage", "meme", "theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
+        "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "uwu",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider",
@@ -707,6 +708,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._akbar_command(attachments)
         elif command == "retard":
             return await self._retard_command(attachments)
+        elif command == "heat":
+            return await self._heat_command(attachments)
         elif command == "whoabuddy":
             return await self._whoabuddy_command(attachments)
         elif command == "diarrhea":

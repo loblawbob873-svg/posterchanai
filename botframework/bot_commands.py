@@ -9,7 +9,7 @@ NO_CAPTION_COMMANDS — of those, the ones whose result IS the media (no text ca
 NO_CAPTION_COMMANDS = (
     "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "glow", "gay", "blacked",
     "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing",
-    "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "smell", "hood", "akbar",
+    "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar",
     "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos",
     "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily",
     "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece",

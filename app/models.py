@@ -40,6 +40,13 @@ class User(Base):
     # AI access privilege (opt-in). With the Nostr client as the face of the app, anyone can sign
     # up with a Nostr key, but the AI features stay gated until an admin approves (see can_ai flow).
     can_ai = Column(Boolean, default=False)
+    # An admin TOOK AI/Blossom away, as opposed to never having granted it. Only the automatic grants
+    # need to tell those apart: a fediverse sign-in hands out AI+Blossom (holding an account on an
+    # instance we trust IS the identity check can_ai stands in for), and without this marker that
+    # grant would undo every revocation the next time the user signed in — so the one lever for
+    # dealing with abuse would quietly last only until their next login. Cleared when an admin grants
+    # the capability back, so a revoke is never permanent by accident.
+    access_revoked = Column(Boolean, default=False)
 
     # Telegram integration settings
     telegram_enabled = Column(Boolean, default=False)

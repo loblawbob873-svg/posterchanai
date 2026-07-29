@@ -904,6 +904,12 @@ def update_user_capabilities(
     user.can_stream = can_stream
     _newly = [k for k, was, now in (("ai", _was_ai, can_ai), ("blossom", _was_blossom, can_blossom),
                                     ("stream", _was_stream, can_stream)) if now and not was]
+    # Remember a REVOCATION, so the automatic fediverse-sign-in grant can't hand it straight back the
+    # next time they log in. Granting either capability clears the mark.
+    if (_was_ai and not can_ai) or (_was_blossom and not can_blossom):
+        user.access_revoked = True
+    elif (can_ai and not _was_ai) or (can_blossom and not _was_blossom):
+        user.access_revoked = False
     db.commit()
     db.refresh(user)
     from app.services import users_store
