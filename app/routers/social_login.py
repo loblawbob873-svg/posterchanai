@@ -59,6 +59,12 @@ _HANDOFF_TTL = 120      # the browser collects immediately; this is only for a s
 # _find_pleroma_user). Bounded so one login can't turn into hundreds of calls to an instance.
 _ACCT_BACKFILL_LIMIT = 25
 
+# What a fediverse sign-in asks the instance for. ONE constant because the scope is fixed when the
+# app is REGISTERED and then repeated on the authorize URL — if the two ever disagree the instance
+# rejects the consent request, so they must not be able to drift apart.
+# Matches routers/pleroma.py's "user" target exactly: connecting an account should leave it usable.
+_PLEROMA_LOGIN_SCOPES = "read write follow"
+
 
 def _evict() -> None:
     now = time.time()
@@ -397,7 +403,15 @@ class PleromaLoginStart(BaseModel):
 @router.post("/pleroma/start")
 async def pleroma_start(data: PleromaLoginStart, request: Request):
     """Register this app on the instance (public /api/v1/apps — no admin anything) and return the
-    consent URL. Read-only scope: signing in is not permission to post as you."""
+    consent URL.
+
+    Asks for the SAME scopes as linking an account by hand (routers/pleroma.py's "user" target), so
+    signing in once leaves you able to actually use the account you just connected. It was `read`
+    on the theory that signing in isn't permission to post as you — but that left a first-time user
+    connected and unable to post, needing a second, separate trip through Settings to become useful.
+    NOT the bridge target's `admin:read admin:write`: those are for the operator's own account
+    creating fediverse accounts, no ordinary user on someone else's instance would be granted them,
+    and some instances fail the whole authorize request on a scope they won't grant."""
     if not _on("pleroma_login_enabled"):
         raise HTTPException(status_code=403, detail="fediverse sign-in is not enabled on this server")
     instance = (data.instance_url or "").strip().rstrip("/")
@@ -425,7 +439,7 @@ async def pleroma_start(data: PleromaLoginStart, request: Request):
     from app.services.pleroma_service import register_app, build_auth_url
     redirect_uri = f"{_base_url(request)}/api/auth/pleroma/callback"
     try:
-        app_data = await register_app(instance, redirect_uri, scopes="read")
+        app_data = await register_app(instance, redirect_uri, scopes=_PLEROMA_LOGIN_SCOPES)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"could not reach that instance: {e}")
     cid, csec = app_data.get("client_id"), app_data.get("client_secret")
@@ -435,7 +449,8 @@ async def pleroma_start(data: PleromaLoginStart, request: Request):
     state = secrets.token_urlsafe(24)
     _STATES[state] = {"t": time.time(), "p": "pleroma", "instance": instance,
                       "client_id": cid, "client_secret": csec, "redirect_uri": redirect_uri}
-    return {"auth_url": build_auth_url(instance, cid, redirect_uri, scopes="read") + f"&state={state}"}
+    return {"auth_url": build_auth_url(instance, cid, redirect_uri,
+                                       scopes=_PLEROMA_LOGIN_SCOPES) + f"&state={state}"}
 
 
 @router.get("/pleroma/callback")
@@ -483,12 +498,11 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
     # configured by hand, so a fresh account comes back already connected to its instance.
     user.pleroma_instance_url = instance
     user.pleroma_acct = acct
-    # …but do NOT overwrite a token that is already there. This flow asks for `read` only — signing in
-    # is not permission to post as you — whereas the account-linking flow in routers/pleroma.py asks
-    # for `read write follow`, which is what the bridge's write-back (replying/liking from Nostr) runs
-    # on. Refreshing the token here would quietly downgrade an existing bridge user to read-only the
-    # first time they signed in with Pleroma, and the failure would surface much later as "my replies
-    # stopped reaching the fediverse".
+    # …but do NOT overwrite a token that is already there. This flow now asks for the same
+    # `read write follow` an ordinary hand-link does, so it can no longer cost a normal user their
+    # write access — but the OPERATOR's bridge token also carries `admin:read admin:write`, and
+    # replacing it here would strip those. That failure surfaces far from its cause, as
+    # "Insufficient permissions: admin:read:accounts" the next time the bridge creates an account.
     if not user.pleroma_access_token:
         user.pleroma_access_token = token
         user.pleroma_enabled = True
