@@ -10538,7 +10538,7 @@
       };
     } else { const rb=$('#bl-request',pane); if(rb) rb.onclick=()=>requestBlossomAccess(rb); }
     let list=null;
-    try{ const r=await fetch(server+'/list/'+ME.pubkey); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
+    try{ const r=await fetch(server+'/list/'+ME.pubkey, { cache:'no-store' }); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
     catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
     if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
       // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
@@ -10595,6 +10595,11 @@
   // (paging, folder switch, VOD labels landing). Cleared on folder change so a hidden selection in
   // another folder can't be deleted by a later "Delete selected".
   let _filesSel = new Set();
+  // Blobs this session has deleted. The DELETE succeeded, but if anything between us and the app
+  // serves a stale /list/ the file reappears and the delete looks broken. Filtering on the client
+  // makes the grid correct immediately and independently of every cache in the path. Entries are
+  // dropped once the server stops listing them, so this can never permanently hide a live file.
+  let _filesDeleted = new Set();
   let _filesGridList = null;   // last list _renderFilesGrid drew, so the global click handler can refresh the toolbar
   function _filesSelClear(){ _filesSel.clear(); }
   // The visible, selectable shas for the CURRENT folder+page — "Select all" must mean what's on
@@ -10634,7 +10639,7 @@
         const auth=await sign(24242,'Delete blob',[['t','delete'],['x',sha],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
         const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
         // 404 = already gone server-side, but still drop it from the index (same rule as delBlob).
-        if(res.ok || res.status===404){ FilesIdx.forget(sha); delete _trackUrls[sha]; ok++; }
+        if(res.ok || res.status===404){ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; ok++; }
         else fail++;
       }catch(_){ fail++; }
     }
@@ -10678,7 +10683,11 @@
     _filesGridList = list;
     // hide encrypted MUSIC ciphertext from the normal grid (it lives in the Music folder's track list);
     // encrypted files in other folders DO show, as lock cards that decrypt in-browser on open.
+    // Forget tombstones the server has already stopped listing — keeps the set from growing and lets
+    // a re-uploaded (same-hash) file come back.
+    if(_filesDeleted.size){ const live=new Set(list.map(b=>b.sha256)); [..._filesDeleted].forEach(sha=>{ if(!live.has(sha)) _filesDeleted.delete(sha); }); }
     const inFolder = list.filter(b=>{
+      if(_filesDeleted.has(b.sha256)) return false;                            // deleted this session (see _filesDeleted)
       if(b.sha256===FilesIdx._lastIndexSha) return false;                      // the encrypted Files index blob itself
       const m=FilesIdx.meta(b.sha256);
       if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
@@ -11211,7 +11220,7 @@
     const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
     // 404 = the blob is already gone from the server, but a stale entry is still in the Files index → still
     // forget it, so an already-deleted blob can be cleared from the file manager (was stuck as "delete failed").
-    if(res.ok || res.status===404){ FilesIdx.forget(sha); delete _trackUrls[sha]; toast(res.ok?'deleted':'removed'); renderBlossom(); }
+    if(res.ok || res.status===404){ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; toast(res.ok?'deleted':'removed'); renderBlossom(); }
     else toast('delete failed');
   }
 

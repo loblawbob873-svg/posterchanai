@@ -292,8 +292,12 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
     base = _base_url(request, db)
     blobs = blossom_service.list_for_pubkey(db, pk_hex)
     names = blossom_service.names_for_pubkey(db, pk_hex)   # one query, not one per blob
+    # no-store: this listing changes the moment a user uploads or deletes, and it carried NO cache
+    # headers at all — which leaves a browser (or an upstream proxy) free to apply heuristic freshness
+    # and serve a stale drive. That reads as "I deleted a file and Files didn't update".
     return JSONResponse([blossom_service.descriptor(b, base, name=names.get(b.sha256, ""))
-                         for b in blobs], headers=_CORS)
+                         for b in blobs],
+                        headers={**_CORS, "Cache-Control": "no-store, max-age=0"})
 
 
 @router.api_route("/{sha256}", methods=["GET", "HEAD"])
