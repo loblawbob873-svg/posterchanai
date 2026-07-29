@@ -108,3 +108,4 @@ streamserver/
 # Instance custom emoji (Pleroma/Akkoma-style packs, Admin → Site Settings → Custom emoji
 # directory). Operator content — hundreds of MB of images, per-node, never committed.
 assets/emoji/
+.cache/
