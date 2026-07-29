@@ -151,6 +151,13 @@ torpy
 #
 # torchaudio must MATCH the installed torch build (…+xpu / +cu…) — install.sh resolves it from the
 # same index as torch. Pinning a plain version here would drag in a CPU torch and break the Arc.
+#
+# transformers <5 is REQUIRED, not a preference. The Dockerfile has always pinned it, but nothing
+# pinned it for a BARE-METAL install, so a node drifted to 5.14.1 on an unrelated `pip install` and
+# ACE-Step (a trust_remote_code custom-code model) stopped loading entirely: "Tensor.item() cannot
+# be called on meta tensors", for both sdpa and eager. Same repo, same checkpoint, same commit as
+# the working node — only this version differed.
+transformers>=4.37,<5
 soundfile>=0.13.1
 loguru>=0.7.3
 einops>=0.8.1

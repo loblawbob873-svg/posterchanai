@@ -59,8 +59,10 @@ class _GenMixin:
                 "song. Respond EXACTLY in this format and nothing else:\n"
                 "STYLE: <one line: genre, mood, tempo, instrumentation, and vocal type>\n"
                 "LYRICS:\n"
-                "<lyrics using [verse], [chorus], [bridge] section tags; concise, ~24 lines max, "
-                "suitable for a short song>")},
+                "<lyrics using [verse], [chorus], [bridge] section tags. Write a FULL-LENGTH song of "
+                "roughly 3-5 minutes: at least two or three verses, a chorus repeated after each, and "
+                "a bridge before the final chorus. Around 40-60 lines. Do NOT write a short song — "
+                "too few lines and the model pads the rest of the track with instrumental filler.>")},
             {"role": "user", "content": (request or "")[:2000]},
         ]
         _orig_np = self.chat_service.num_predict

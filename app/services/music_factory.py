@@ -128,6 +128,7 @@ async def generate_music_for_user(
     steps: Optional[int] = None,
     local_only: bool = False,
     dvm_offload: bool = True,
+    fmt: Optional[str] = None,
 ) -> Tuple[bytes, str]:
     """Generate a song with node→node load balancing + (local) GPU lock + VRAM swap. Returns
     (audio_bytes, ext). `local_only` skips remote nodes (set by the /api/generate-music endpoint so
@@ -141,7 +142,20 @@ async def generate_music_for_user(
         )
 
     timeout = cfg["timeout"]
-    fmt = cfg["fmt"]
+    # Same rule as duration/steps below: an explicit format from the CALLER wins over this node's
+    # own `music_format`. /api/generate-music accepted a `format` field and then dropped it on the
+    # floor, so a forwarded request silently came back in whatever the remote node preferred.
+    fmt = (fmt or "").strip().lower() or cfg["fmt"]
+
+    # Resolve length + steps HERE, on the node the user actually asked, and hand the resolved values
+    # to whoever generates. Settings are PER NODE (each has its own relay and operator key), so
+    # forwarding None let a remote node fall back to ITS OWN music_default_duration: one `musicgeni`
+    # produced a 4-minute song when it ran locally and a 60-second one whenever the LB picked another
+    # node. The requester's configured length is the one the user is owed.
+    if duration is None:
+        duration = cfg["duration"]
+    if steps is None:
+        steps = cfg["steps"]
 
     # Round-robin across remote nodes AND this node's local acestep, so songs spread over both
     # machines. A forwarded request (/api/generate-music) is local_only — it generates HERE.

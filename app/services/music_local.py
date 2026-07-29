@@ -29,6 +29,53 @@ from app.services import settings_store
 
 logger = logging.getLogger(__name__)
 
+_save_shim_installed = False
+
+
+def _install_torchaudio_save_shim() -> None:
+    """Make `torchaudio.save` write through soundfile, before ACE-Step is imported.
+
+    On torchaudio >= 2.9 `save()` delegates to **torchcodec**, a torch-version-coupled binary wheel
+    we do not ship (it is in neither requirements.txt nor the Dockerfile, and pinning one per
+    torch/XPU/ROCm/CUDA build is exactly the portability trap this project avoids). ACE-Step's
+    AudioSaver calls torchaudio.save in three places — the temp WAV behind an mp3 export, and the
+    wav/flac/other output paths — so on a STOCK checkout every song dies at the final save with
+    "TorchCodec is required for save_with_torchcodec", *after* all the GPU work is done.
+
+    This survived unnoticed because one node's ACE-Step working tree had been hand-edited to call
+    soundfile directly. That patch was in no git repo, no installer and no image, so the node that
+    got a fresh clone (and every Docker build) was broken while the patched box looked fine. Fixing
+    it HERE means the fix ships with the app instead of living in an untracked file on one machine.
+
+    soundfile is already a hard requirement and handles wav/flac everywhere; mp3/opus/aac still go
+    through ACE-Step's own ffmpeg step, which reads the WAV this writes.
+    """
+    global _save_shim_installed
+    if _save_shim_installed:
+        return
+    try:
+        import torchaudio
+    except Exception:
+        return
+    original = getattr(torchaudio, "save", None)
+
+    def _save(uri, src, sample_rate, channels_first: bool = True, **kwargs):
+        import soundfile as _sf
+        data = src.detach().cpu() if hasattr(src, "detach") else src
+        if channels_first and hasattr(data, "transpose"):
+            data = data.transpose(0, 1)     # [channels, samples] -> [samples, channels]
+        _sf.write(str(uri), data.numpy() if hasattr(data, "numpy") else data, int(sample_rate))
+
+    try:
+        torchaudio.save = _save
+        _save_shim_installed = True
+        logger.info("[music] torchaudio.save routed through soundfile (torchcodec not required)")
+    except Exception as e:      # a read-only module attribute is not fatal — upstream may still work
+        logger.warning("[music] could not install the torchaudio.save shim: %s", e)
+        if original is not None:
+            torchaudio.save = original
+
+
 def _resolve_acestep_root() -> str:
     """Where ACE-Step is checked out; `<root>/checkpoints` holds the weights.
 
@@ -164,6 +211,7 @@ class MusicService:
             # the Comfy mirror) — that 404 is what forced music back onto an external server. The
             # weights ARE loadable, just through the upstream handler, which is the same code that
             # server ran. Importing it instead of talking HTTP to it is the whole point.
+            _install_torchaudio_save_shim()
             from acestep.handler import AceStepHandler
             handler = AceStepHandler()
             msg, ok = handler.initialize_service(

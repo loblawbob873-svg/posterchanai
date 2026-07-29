@@ -82,6 +82,7 @@ async def generate_music(
             duration=request.duration,
             steps=request.steps,
             local_only=True,
+            fmt=request.format,
         )
         return MusicResponse(audio=base64.b64encode(audio_bytes).decode(), format=ext)
     except MusicError as e:
