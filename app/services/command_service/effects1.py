@@ -653,6 +653,25 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _nodontthinkiwill_command(self, attachments: Optional[list], args: str = "") -> dict:
+        """Old Steve Rogers + caption on an attached image: `nodontthinkiwill [text]`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `nodontthinkiwill`."}
+
+        import asyncio
+        from app.services.effects_service import add_nodontthinkiwill
+        from app.services.effects_service.character import _pointing_attachments
+
+        caption = (args or "").strip()
+        fn = ((lambda d: add_nodontthinkiwill(d, caption)) if caption else add_nodontthinkiwill)
+        outputs, summary = await asyncio.to_thread(
+            _pointing_attachments, attachments, "nodontthinkiwill", "No, I Don't Think I Will", fn)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _nothingeverhappens_command(self, attachments: Optional[list], args: str = "") -> dict:
         """The angry teacher + caption on an attached image: `nothingeverhappens [text]`."""
         from app.services.media_service import is_image

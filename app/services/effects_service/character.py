@@ -201,6 +201,15 @@ def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
         draw.rectangle([x1 - outline, ty - tl // 2 + outline, x1 - outline // 2, ty + tl // 2 - outline], fill=(255, 255, 255))
 
 
+def add_nodontthinkiwill(data: bytes, caption: str = "NO, I DON'T THINK I WILL") -> bytes:
+    """`nodontthinkiwill` — old Steve Rogers declining (see _add_pointing_meme).
+
+    He does not point at anything; the bubble reads as what he is SAYING, which is the meme. Caption
+    defaults to the line and an argument replaces it.
+    """
+    return _add_pointing_meme(data, "nodontthinkiwill", caption)
+
+
 def add_nothingeverhappens(data: bytes, caption: str = "NOTHING EVER HAPPENS") -> bytes:
     """`nothingeverhappens` — the angry teacher pointing at his board (see _add_pointing_meme).
 
@@ -614,6 +623,11 @@ def _pointing_attachments(attachments, key: str, title: str, fn):
 
 def theraped_attachments(attachments):
     return _pointing_attachments(attachments, "theraped", "The Raped", add_theraped)
+
+
+def nodontthinkiwill_attachments(attachments):
+    return _pointing_attachments(attachments, "nodontthinkiwill", "No, I Don't Think I Will",
+                                 add_nodontthinkiwill)
 
 
 def nothingeverhappens_attachments(attachments):

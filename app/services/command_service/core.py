@@ -52,6 +52,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "meme": "Add outlined white meme text to an attached image: meme <text>",
         "theraped": "Point at an attached image with the pointing-up meme character: theraped",
         "nothingeverhappens": "The angry teacher lectures your image: nothingeverhappens [text]",
+        "nodontthinkiwill": "Old Steve Rogers declines your image: nodontthinkiwill [text]",
         "would": "Old man points up at an attached image saying WOULD: would",
         "shrug": "Rabbi shrugs at an attached image: \"Whaddya gonna do?\": shrug",
         "carl": "Carl points at an attached image: carl",
@@ -168,6 +169,9 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         # maps these names to the art, but that only serves `char <name>` — a bare `neh` is a
         # COMMAND, so it has to resolve here too or it falls through to the LLM.
         "neh": "nothingeverhappens",
+        "nodont": "nodontthinkiwill",
+        "idontthinkiwill": "nodontthinkiwill",
+        "dontthinkiwill": "nodontthinkiwill",
         "nothingever": "nothingeverhappens",
         "nothinghappens": "nothingeverhappens",
         "torrent": "torrents",
@@ -202,7 +206,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "lookaway": "lookingaway",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "theraped", "nothingeverhappens", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
+        "collage", "meme", "theraped", "nothingeverhappens", "nodontthinkiwill", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
@@ -641,6 +645,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._theraped_command(attachments)
         elif command == "nothingeverhappens":
             return await self._nothingeverhappens_command(attachments, arg)
+        elif command == "nodontthinkiwill":
+            return await self._nodontthinkiwill_command(attachments, arg)
         elif command == "would":
             return await self._would_command(attachments)
         elif command == "shrug":

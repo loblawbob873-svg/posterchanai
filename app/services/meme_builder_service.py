@@ -190,7 +190,8 @@ _ALPHA_CHARACTERS = [
     # (`anyways` is the original command name and still resolves; see COMMAND_ALIASES.)
     ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
     ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
-    ("jerry", "🎤 Jerry (stand-up)"), ("nothingeverhappens", "🧑\u200d🏫 Nothing ever happens"),
+    ("jerry", "🎤 Jerry (stand-up)"), ("nothingeverhappens", "🏫 Nothing ever happens"),
+    ("nodontthinkiwill", "🙅 No, I don't think I will"),
 ]
 
 

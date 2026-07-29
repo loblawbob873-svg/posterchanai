@@ -573,6 +573,10 @@ _CHARACTERS = {
     # The angry MS-Paint teacher at his whiteboard. Keyed out of the KnowYourMeme still, so the
     # WHITEBOARD is deliberately not in the asset — he points at the caption bubble instead,
     # which is what makes the format work on an arbitrary photo.
+    # Old Steve Rogers. NOT hand art like the rest of this registry — a live-action frame with the
+    # forest behind him removed by segmentation (scripts/gen_nodontthink.py), cropped to a bust.
+    "nodontthinkiwill": "nodontthinkiwill.png", "nodont": "nodontthinkiwill.png",
+    "idontthinkiwill": "nodontthinkiwill.png", "dontthinkiwill": "nodontthinkiwill.png",
     "nothingeverhappens": "nothingeverhappens.png", "neh": "nothingeverhappens.png",
     "nothingever": "nothingeverhappens.png", "nothinghappens": "nothingeverhappens.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
@@ -595,7 +599,7 @@ _CHARACTERS = {
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
 CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry",
-                   "nothingeverhappens"]
+                   "nothingeverhappens", "nodontthinkiwill"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
