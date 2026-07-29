@@ -982,6 +982,14 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     await telegram_service.send_message(chat_id, "🗣️ Sheeeit…")
                     _imgs = [a for a in _atts if is_image(a[0], a[2])]
                     await _send_files_result(await cb_command_service.execute_command("clay", "", attachments=_imgs))
+            elif _action == "uwu":
+                # Animated overlay — run immediately and post the result.
+                if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                    await telegram_service.send_message(chat_id, "Nothing to overlay — that upload has no image.")
+                else:
+                    await telegram_service.send_message(chat_id, "\U0001F97A uwu…")
+                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                    await _send_files_result(await cb_command_service.execute_command("uwu", "", attachments=_imgs))
             elif _action == "wasteland":
                 # No caption needed — render the video and post it.
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):

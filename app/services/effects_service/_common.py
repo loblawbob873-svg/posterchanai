@@ -493,6 +493,20 @@ _CLAY_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/clay.mp3",
 ]
 _CLAY_DURATION = 2.6
+# `uwu` — an ORIGINAL cute anime girl (see scripts/gen_uwu_dance.py), rendered by this node's own
+# anime model and cut out with rembg, then animated into a hop/sway cycle. The .mov is ONE cycle that
+# stream-loops; the duration is the length of the "uwu" voice clip, not of the asset.
+_UWU_OVERLAY_CANDIDATES = [
+    os.environ.get("UWU_OVERLAY_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "uwu_dance.mov"),
+    "/var/lib/posterchanai/assets/uwu_dance.mov",
+]
+_UWU_AUDIO_CANDIDATES = [
+    os.environ.get("UWU_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "uwu.mp3"),
+    "/var/lib/posterchanai/assets/uwu.mp3",
+]
+_UWU_DURATION = 4.8
 _HARLEM_AUDIO_CANDIDATES = [
     os.environ.get("HARLEM_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "harlem.mp3"),

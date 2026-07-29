@@ -22,6 +22,16 @@ EFFECTS = set(CS.MOTION_EFFECTS) | set(CS.ANIMATED_EFFECTS)
 EFFECT_ALIASES = {k: v for k, v in CS.COMMAND_ALIASES.items() if v in EFFECTS}
 
 
+class TestAnimatedAreCompressed(unittest.TestCase):
+    def test_animated_effects_are_also_motion_effects(self):
+        """Auto-compress is keyed on MOTION_EFFECTS alone, while the outro end-card is keyed on
+        MOTION_EFFECTS *or* ANIMATED_EFFECTS. So an effect added only to ANIMATED_EFFECTS gets the
+        watermark but ships UNCOMPRESSED — a full-resolution video, silently. Nothing in the code
+        says the two sets are related, so this is the thing that says it."""
+        missing = sorted(set(CS.ANIMATED_EFFECTS) - set(CS.MOTION_EFFECTS))
+        self.assertEqual(missing, [], f"animated but never compressed: {missing}")
+
+
 class TestAttachmentGate(unittest.TestCase):
     def test_every_effect_is_handed_the_upload(self):
         missing = sorted(n for n in EFFECTS if not CS.wants_attachments(n))

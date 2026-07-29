@@ -543,6 +543,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _uwu_command(self, attachments: Optional[list]) -> dict:
+        """Overlay a dancing cute anime girl on an image, set to an uwu clip: `uwu`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `uwu`."}
+
+        import asyncio
+        from app.services.effects_service import uwu_attachments
+
+        outputs, summary = await asyncio.to_thread(uwu_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _wasteland_command(self, attachments: Optional[list]) -> dict:
         """Turn an attached image into an MP4 set to the Teenage Wasteland intro: `wasteland`."""
         from app.services.media_service import is_image

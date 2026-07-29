@@ -129,6 +129,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "chimp": "Overlay the animated chimp gif on the lower third of an attached image: chimp",
         "consider": "Overlay the 'consider the following' cutout on an attached image: consider",
         "clay": "Overlay the background-removed Clay Davis 'Shiiiit' clip on an image: clay",
+        "uwu": "Overlay a dancing cute anime girl on an image, set to an uwu clip: uwu",
         "wasteland": "Turn an attached image into an MP4 set to the Teenage Wasteland intro: wasteland",
         "mixalot": "Turn an attached image into an MP4 set to the Baby Got Back clip: mixalot",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
@@ -196,12 +197,13 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
-        "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug",
+        "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "uwu",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
-    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman", "beavis"}
+    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman", "beavis",
+                        "uwu"}
     # NON-effect commands that work on the uploaded FILE BYTES rather than on text extracted from
     # them. Every EFFECT does too, but they are deliberately NOT repeated here — see
     # wants_attachments.
@@ -785,6 +787,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._consider_command(attachments)
         elif command == "clay":
             return await self._clay_command(attachments)
+        elif command == "uwu":
+            return await self._uwu_command(attachments)
         elif command == "wasteland":
             return await self._wasteland_command(attachments)
         elif command == "mixalot":
@@ -817,7 +821,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             "`glow` `trippy`, which stack on top. E.g. `dildo zoom trippy`, "
             "`whoabuddy pulse glow`. A second movement is refused rather than half-applied, "
             "and `alive` (3D parallax needs a still) is refused on the effects that always "
-            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` `makima` — where the other movements work fine.\n"
+            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` `makima` `uwu` — where the other movements work fine.\n"
         )
 
         return {"type": "text", "content": help_text}
