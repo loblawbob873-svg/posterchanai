@@ -155,12 +155,13 @@ class _OutQ:
             self.dropped += 1
             if is_event:
                 return False                      # re-pullable — drop it, never stall the fanout
-            for i, queued in enumerate(self.dq):  # control frame: make room, oldest event first
-                if queued.startswith('["EVENT"'):
-                    del self.dq[i]
-                    break
-            else:
+            # Control frame: make room by evicting the oldest EVENT. Find the index first and
+            # delete after the loop — deleting mid-iteration only works because of the break that
+            # would follow it, which is a trap for the next person to edit this.
+            victim = next((i for i, q in enumerate(self.dq) if q.startswith('["EVENT"')), None)
+            if victim is None:
                 return False                      # nothing but control frames queued: nothing to evict
+            del self.dq[victim]
         self.dq.append(msg)
         self.wake.set()
         return True
@@ -198,6 +199,14 @@ class RelayServer:
         if q is None:
             return
         q.push(json.dumps(obj), obj[0] == "EVENT" if obj else False)
+        # The session line below only prints when a connection CLOSES, which can be hours after it
+        # started struggling — no use while someone is telling you it's happening right now. So say
+        # it once, the moment a connection first falls behind. `dropped` only ever increments, so
+        # == 1 fires exactly once per connection.
+        if q.dropped == 1:
+            logger.warning("[nostr-relay] conn ip=%s is not keeping up — queue full (%d), dropping "
+                           "frames; see its 'conn closed' line for the total",
+                           self._conn_ips.get(conn) or "?", q.maxlen)
 
     async def _keepalive(self, conn) -> None:
         """Push a tiny application-level NOTICE to the client every ~40s. Unlike a WebSocket PING frame —

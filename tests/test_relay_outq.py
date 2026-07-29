@@ -44,6 +44,20 @@ def test_control_frame_evicts_the_oldest_event_instead_of_being_dropped():
     assert q.dropped == 1
 
 
+def test_eviction_takes_the_oldest_event_and_spares_queued_control_frames():
+    """A control frame already waiting in the queue is just as un-droppable as the incoming one —
+    the victim has to be the oldest EVENT, not simply the head of the queue."""
+    q = _OutQ(16)
+    q.push(OK, False)                           # sits at the head, must survive
+    for i in range(15):
+        q.push(ev(i), True)
+    q.push(EOSE, False)
+    assert OK in q.dq
+    assert ev(0) not in q.dq                    # oldest event went
+    assert ev(1) in q.dq
+    assert q.dq[-1] == EOSE
+
+
 def test_control_frame_dropped_only_when_nothing_is_evictable():
     """A queue of nothing but control frames has no event to sacrifice — drop rather than grow
     without bound (an unbounded queue on a dead-slow client is how a relay OOMs)."""
@@ -101,3 +115,20 @@ def test_send_on_an_unknown_conn_is_a_noop():
     srv = RelayServer.__new__(RelayServer)
     srv._outq = {}
     srv._send("gone", ["EOSE", "s1"])           # teardown races fanout — must not raise
+
+
+def test_falling_behind_warns_exactly_once(caplog):
+    """The close log arrives when the session ends, which can be hours after it started struggling.
+    This warning is the live signal — but it must fire ONCE, not once per dropped frame, or a slow
+    client turns the journal into its own denial of service."""
+    srv = RelayServer.__new__(RelayServer)
+    q = _OutQ(16)
+    srv._outq = {"conn": q}
+    srv._conn_ips = {"conn": "41.0.0.1"}
+    with caplog.at_level("WARNING"):
+        for i in range(200):                    # 16 fit, 184 are dropped
+            srv._send("conn", ["EVENT", "s1", {"id": f"{i:064x}"}])
+    warnings = [r for r in caplog.records if "not keeping up" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "41.0.0.1" in warnings[0].getMessage()
+    assert q.dropped == 184
