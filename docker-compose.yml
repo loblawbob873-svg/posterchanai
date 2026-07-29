@@ -75,11 +75,13 @@ x-common: &common
     # Records to POSTERCHANAI_STREAM_RECORD_DIR (default /tmp/posterchanai-streams) then uploads to Blossom;
     # mount that path as tmpfs if you want it RAM-backed. Per-user opt-in still applies. See docs/STREAMING.md.
     - POSTERCHANAI_STREAM_RECORD=${POSTERCHANAI_STREAM_RECORD:-0}
-    # Turnkey music: set POSTERCHANAI_MUSIC=1 (with `--profile music`) and the app auto-enables
-    # music pointed at the acestep container — no manual Admin config needed. (In-process generation
-    # exists behind `music_native` but has no loadable checkpoint yet — see docs/MUSIC.md.)
+    # Turnkey music: set POSTERCHANAI_MUSIC=1 and the app auto-enables music. Generation is
+    # IN-PROCESS — no acestep container, no profile, no URL. Build the image with
+    # --build-arg INSTALL_MUSIC=1 so ACE-Step is present; the model downloads on first request into
+    # the persisted HF cache. Needs a GPU profile (cuda/rocm/intel). See docs/MUSIC.md.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
-    - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+    # Only set this to fall BACK to a separate ACE-Step REST server; empty = generate in-process.
+    - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
     # Turnkey video: set POSTERCHANAI_VIDEO=1 and the app auto-enables native text-to-video
     # (Wan2.1-1.3B by default; override with POSTERCHANAI_VIDEO_MODEL). Model auto-downloads to
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
@@ -234,7 +236,7 @@ services:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
       - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
-      - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-http://acestep:8001}
+      - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
       - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
       - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
       - POSTERCHANAI_NOSTR_RELAY=${POSTERCHANAI_NOSTR_RELAY:-0}
@@ -246,83 +248,12 @@ services:
       - NOSTR_RELAY_PG_DSN=host=postgres port=5432 dbname=posterchan_relay user=posterchan password=${POSTGRES_PASSWORD:-posterchan_local}
 
   # ACE-Step music server (the `musicgeni` command). Runs as its OWN service because ACE-Step needs
-  # Python 3.11-3.12 and a conflicting dependency stack; the app talks to it over HTTP. TURNKEY:
-  #   POSTERCHANAI_MUSIC=1 docker compose --profile cuda --profile music up -d --build
-  # NVIDIA only (needs nvidia-container-toolkit on the host); the turbo model fits a 12 GB GPU and
-  # auto-downloads on first request into the pc-acestep volume (first song is slower). Pin a repo
-  # ref with ACESTEP_REF if upstream changes.
-  acestep:
-    profiles: ["music"]
-    image: posterchanai-acestep:${TAG:-local}
-    restart: unless-stopped
-    build:
-      context: .
-      dockerfile: Dockerfile.acestep
-      args:
-        ACESTEP_REF: ${ACESTEP_REF:-main}
-    ports:
-      - "${ACESTEP_PORT:-8001}:8001"
-    volumes:
-      - pc-acestep:/root/.cache/huggingface
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: ["gpu"]
-
-  # AMD/ROCm music. Same as `acestep` but builds the ROCm torch trio (TORCH_INDEX) and passes the
-  # render nodes through instead of using the nvidia runtime. The `acestep` network alias means the
-  # app still reaches it at the default http://acestep:8001 — no URL change needed. TURNKEY:
-  #   POSTERCHANAI_MUSIC=1 docker compose --profile rocm --profile music-rocm up -d --build
-  acestep-rocm:
-    profiles: ["music-rocm"]
-    image: posterchanai-acestep:${TAG:-local}-rocm
-    restart: unless-stopped
-    build:
-      context: .
-      dockerfile: Dockerfile.acestep
-      args:
-        ACESTEP_REF: ${ACESTEP_REF:-main}
-        TORCH_INDEX: ${ACESTEP_TORCH_INDEX:-https://download.pytorch.org/whl/rocm6.3}
-    ports:
-      - "${ACESTEP_PORT:-8001}:8001"
-    volumes:
-      - pc-acestep:/root/.cache/huggingface
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    security_opt:
-      - seccomp:unconfined
-    networks:
-      default:
-        aliases: [acestep]
-
-  # Intel Arc/XPU music. Builds the XPU torch trio and exposes only /dev/dri. Same `acestep` alias.
-  #   POSTERCHANAI_MUSIC=1 docker compose --profile intel --profile music-intel up -d --build
-  acestep-intel:
-    profiles: ["music-intel"]
-    image: posterchanai-acestep:${TAG:-local}-xpu
-    restart: unless-stopped
-    build:
-      context: .
-      dockerfile: Dockerfile.acestep
-      args:
-        ACESTEP_REF: ${ACESTEP_REF:-main}
-        TORCH_INDEX: ${ACESTEP_TORCH_INDEX:-https://download.pytorch.org/whl/xpu}
-    ports:
-      - "${ACESTEP_PORT:-8001}:8001"
-    volumes:
-      - pc-acestep:/root/.cache/huggingface
-    devices:
-      - /dev/dri
-    networks:
-      default:
-        aliases: [acestep]
+  # NOTE: the `acestep` / `acestep-rocm` / `acestep-intel` sidecars are GONE. Music generates inside
+  # the app container now (build with --build-arg INSTALL_MUSIC=1), on the same torch and the same
+  # GPU lock as image and video — one model server instead of two, and no HTTP hop between them.
+  # Set POSTERCHANAI_ACESTEP_URL to point at an external ACE-Step server if you still want one.
 
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)
-  pc-acestep:
   pc-pg:   # PostgreSQL data (app + Nostr relay)

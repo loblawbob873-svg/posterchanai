@@ -232,6 +232,32 @@ RUN if [ "$GPU" = "nostr" ]; then \
           && pip install "numpy>=2,<2.5" "transformers<5" diffusers accelerate safetensors huggingface_hub sentencepiece ftfy ; \
     fi
 
+# --- music generation (musicgeni), IN-PROCESS ---------------------------------
+# ACE-Step now generates inside the app process, on the torch installed above — there is no separate
+# acestep container, no second venv and no HTTP hop (Dockerfile.acestep is retired). Opt in with
+# --build-arg INSTALL_MUSIC=1; the model itself downloads on first request into the HF cache volume.
+#
+# --no-deps is LOAD-BEARING. ACE-Step's pyproject pins torch==2.10.0+cu128 and gradio; resolving
+# those would replace the GPU torch installed above and break image gen in the same image. Its real
+# runtime deps ship in requirements.txt. torchaudio is resolved from the SAME index as torch for the
+# same reason — a bare `pip install torchaudio` pulls a CPU torch in behind it.
+ARG INSTALL_MUSIC=0
+ARG ACESTEP_REF=main
+RUN if [ "$INSTALL_MUSIC" = "1" ] && [ "$GPU" != "nostr" ]; then \
+      set -eu; \
+      case "$GPU" in \
+        intel) _TA_INDEX="$TORCH_XPU_INDEX" ;; \
+        rocm)  _TA_INDEX="$TORCH_ROCM_INDEX" ;; \
+        cuda)  _TA_INDEX="$TORCH_CUDA_INDEX" ;; \
+        *)     _TA_INDEX="https://download.pytorch.org/whl/cpu" ;; \
+      esac; \
+      pip install --no-deps torchaudio --index-url "$_TA_INDEX"; \
+      git clone --depth 1 --branch "$ACESTEP_REF" https://github.com/ace-step/ACE-Step-1.5.git /opt/ace-step; \
+      pip install --no-deps -e /opt/ace-step; \
+      python3 -c 'from acestep.handler import AceStepHandler' ; \
+    fi
+ENV ACESTEP_ROOT=/opt/ace-step
+
 # --- app source ---------------------------------------------------------------
 COPY . /app
 

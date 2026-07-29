@@ -271,7 +271,7 @@ async def startup():
                 # Only point at a container when one was EXPLICITLY given. Music is in-process now,
                 # so seeding the old acestep URL by default would send every Docker deployment at a
                 # sidecar it no longer runs — and make prepare_for_music try to start it.
-                _ace = os.environ.get("POSTERCHANAI_ACESTEP_URL", "http://acestep:8001").strip()
+                _ace = os.environ.get("POSTERCHANAI_ACESTEP_URL", "").strip()
                 if _ace and not _ss.exists("music_api_base"):
                     _ss.put("music_api_base", _ace)
                 logging.info("Music auto-configured from POSTERCHANAI_MUSIC env (native in-process%s)",
