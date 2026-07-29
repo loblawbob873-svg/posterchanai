@@ -18,12 +18,24 @@
 # restored. The weights load fine through upstream's OWN AceStepHandler — the same code the service
 # was running — which is what this installs.
 
+# Resolve the app venv. NOT a hardcoded `venv-unified`: the nodes disagree — server1 (Arc) has
+# `venv-unified/`, nas has plain `venv/`, and install.sh's own steps use `venv/`. Hardcoding either
+# one made `./install.sh --music` abort with "App venv not found" on the other node, i.e. half the
+# fleet could not install music at all. Honour VENV_DIR, else take whichever exists.
+_music_find_venv() {
+    if [ -n "${VENV_DIR:-}" ]; then echo "$VENV_DIR"; return; fi
+    for c in "$SCRIPT_DIR/venv-unified" "$SCRIPT_DIR/venv"; do
+        [ -x "$c/bin/python" ] && { echo "$c"; return; }
+    done
+    echo "$SCRIPT_DIR/venv-unified"   # nothing found: report the conventional path in the error
+}
+
 setup_music_server() {
     print_banner
     print_step "Setting up in-process music generation (ACE-Step)..."
 
     local CLONE_DIR="${ACESTEP_DIR:-$HOME/ACE-Step-1.5}"
-    local VENV="${VENV_DIR:-$SCRIPT_DIR/venv-unified}"
+    local VENV; VENV="$(_music_find_venv)"
     local PY="$VENV/bin/python"
 
     if [ ! -x "$PY" ]; then
@@ -103,7 +115,7 @@ _music_retire_sidecar() {
 # Still --no-deps, so an upstream pyproject change can never pull CUDA torch over the GPU build.
 update_music_server() {
     local CLONE_DIR="${ACESTEP_DIR:-$HOME/ACE-Step-1.5}"
-    local VENV="${VENV_DIR:-$SCRIPT_DIR/venv-unified}"
+    local VENV; VENV="$(_music_find_venv)"
     if [ ! -d "$CLONE_DIR/.git" ]; then
         return 0  # ACE-Step not installed here
     fi

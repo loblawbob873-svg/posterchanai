@@ -1,31 +1,25 @@
-"""Native (in-process) music generation — ACE-Step via diffusers, on the SAME torch stack as image
-and video gen.
+"""Native (in-process) music generation — ACE-Step on the SAME torch stack as image and video gen.
 
-NOT ACTIVE BY DEFAULT — gated behind the `music_native` setting (default off), because no published
-ACE-Step checkpoint is in diffusers format: none carry model_index.json, so from_pretrained 404s
-(checked ACE-Step/Ace-Step1.5, acestep-v15-xl-{base,turbo}, ACE-Step-v1-3.5B and the Comfy-Org
-mirror, every branch and PR ref). The released weights are a transformers custom-code model
-(auto_map -> modeling_acestep_v15_turbo, trust_remote_code) plus a diffusers VAE, so they cannot be
-pointed at AceStepPipeline without a weight port. Music is served by the external acestep-api server
-(see docs/MUSIC.md); this module is the ready-to-go client for the day an official diffusers
-checkpoint ships — flip music_native then.
+ACTIVE BY DEFAULT (`music_native`, default on). It loads through ACE-Step's OWN `AceStepHandler`,
+NOT diffusers' `AceStepPipeline`: that pipeline class exists in diffusers, but `from_pretrained`
+wants a `model_index.json` no published ACE-Step repo carries, so it 404s. That 404 is what once
+sent music back to a per-node sidecar over HTTP — the wrong conclusion, because the released weights
+load fine through upstream's handler, which is the very code that sidecar was running. Importing it
+instead of talking HTTP to it is the whole point of this module.
 
 Deliberately mirrors video_service: module-level singleton, `_load_lock` around load/unload, an idle
 monitor that unloads after `music_idle_timeout`, and an in-flight counter so the monitor can't unload
 mid-generation. Callers must still hold the shared GPUResourceLock (music_factory does) — that lock
 is the QUEUE that keeps chat/image/music/video to one GPU task at a time.
 
-Audio out: the pipeline yields float samples at the VAE's rate (48kHz). We write a WAV with the
-STDLIB `wave` module and let ffmpeg (already a hard dependency for every media path) transcode to
-mp3 — so this adds NO new Python dependency. soundfile/torchaudio are deliberately not required.
+Audio out: ACE-Step encodes the file itself (mp3/wav/flac via `GenerationConfig.audio_format`), so we
+return its bytes untouched — there is no WAV round-trip and nothing to transcode here.
 """
 import gc
-import io
 import logging
 import os
 import threading
 import time
-import wave
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
@@ -48,6 +42,7 @@ _executor = ThreadPoolExecutor(max_workers=1)   # one GPU task at a time (the GP
 _load_lock = threading.Lock()
 _idle_thread: Optional[threading.Thread] = None
 _idle_stop = threading.Event()
+_available: Optional[bool] = None   # memoised is_available() probe
 
 
 class MusicLocalError(Exception):
@@ -77,7 +72,11 @@ def _get_settings(db: Session) -> dict:
         "cpu_offload": str(s.get("music_cpu_offload", "false")).lower() == "true",
         "steps": _i("music_default_steps", 8),        # ACE-Step 1.5 turbo is an 8-step model
         "guidance": _f("music_guidance", 7.5),
-        "duration": _f("music_duration", 60.0),
+        # `music_default_duration` — the SAME key music_service.get_settings reads for the HTTP path,
+        # and the one Admin → Music writes. Reading a private `music_duration` here (which no schema
+        # defines, so it never holds a value) silently pinned every native song to the fallback and
+        # ignored the admin's setting — a regression the external path never had.
+        "duration": _f("music_default_duration", 180.0),
         "idle_timeout": _i("music_idle_timeout", DEFAULT_IDLE_TIMEOUT),
     }
 
@@ -176,8 +175,19 @@ class MusicService:
         """Caller MUST hold _load_lock (load_model reuses it; the lock is not reentrant)."""
         if self._pipe is None:
             return
+        # AceStepHandler is a plain object, NOT an nn.Module — it has no `.to()`. Calling one (as
+        # this used to) raised AttributeError straight into a bare except and freed exactly nothing,
+        # leaving several GB of DiT+VAE resident at the precise moment we swap to the LLM/image/video
+        # model — an OOM on the shared 12/16GB GPUs the swap exists to protect. The weights hang off
+        # these attributes, so drop them explicitly, then let upstream's own reclaim helper run.
+        for attr in ("model", "vae", "text_encoder", "mlx_decoder", "mlx_vae", "silence_latent"):
+            try:
+                if getattr(self._pipe, attr, None) is not None:
+                    setattr(self._pipe, attr, None)
+            except Exception:
+                pass
         try:
-            self._pipe.to("cpu")
+            self._pipe._release_system_memory()
         except Exception:
             pass
         self._pipe = None
@@ -198,8 +208,9 @@ class MusicService:
     def generate(self, db: Session, prompt: str, lyrics: str = "", duration: Optional[float] = None,
                  steps: Optional[int] = None, guidance: Optional[float] = None,
                  fmt: str = "mp3") -> Tuple[bytes, str]:
-        """Render one song. Returns (bytes, content_type). BLOCKING — call it through
-        `generate_async` so the event loop keeps serving requests."""
+        """Render one song. Returns (bytes, ext) — a bare extension like "mp3", NOT a MIME type;
+        consumers build f"song.{ext}". BLOCKING — call it through `generate_async` so the event loop
+        keeps serving requests."""
         cfg = _get_settings(db)
         self._generating += 1
         try:
@@ -245,59 +256,6 @@ class MusicService:
             self._last_used = time.time()
 
 
-def _to_wav_bytes(audio, sample_rate: int) -> bytes:
-    """float samples (channels-first or -last, batched or not) -> 16-bit PCM WAV, stdlib only."""
-    import numpy as np
-    a = np.asarray(audio, dtype=np.float32)
-    while a.ndim > 2:                 # drop the batch dim(s)
-        a = a[0]
-    if a.ndim == 1:
-        a = a[None, :]
-    # channels-first if the short axis is first (2xN, not Nx2) — ACE-Step returns (channels, samples)
-    if a.shape[0] > a.shape[1]:
-        a = a.T
-    a = np.clip(a, -1.0, 1.0)
-    pcm = (a * 32767.0).astype("<i2").T.reshape(-1)    # interleave for WAV
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(int(a.shape[0]))
-        w.setsampwidth(2)
-        w.setframerate(int(sample_rate or _SAMPLE_RATE_FALLBACK))
-        w.writeframes(pcm.tobytes())
-    return buf.getvalue()
-
-
-_CTYPE = {"mp3": "audio/mpeg", "flac": "audio/flac", "ogg": "audio/ogg", "wav": "audio/wav"}
-
-
-def _transcode(wav_bytes: bytes, fmt: str) -> Tuple[Optional[bytes], str]:
-    """WAV -> mp3/flac/ogg via ffmpeg, which every other media path already depends on. Returns
-    (None, "") on failure so the caller can fall back to serving the WAV rather than nothing."""
-    import subprocess
-    import tempfile
-    from app.services.media_service import resolve_ffmpeg
-    fmt = (fmt or "mp3").lower()
-    fd, out_path = tempfile.mkstemp(suffix="." + fmt)
-    os.close(fd)
-    try:
-        p = subprocess.run(
-            [resolve_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
-             "-f", "wav", "-i", "pipe:0", "-b:a", "192k", out_path],
-            input=wav_bytes, capture_output=True, timeout=300)
-        if p.returncode == 0 and os.path.getsize(out_path) > 0:
-            with open(out_path, "rb") as fh:
-                return fh.read(), _CTYPE.get(fmt, "application/octet-stream")
-        logger.warning("[music] ffmpeg transcode failed (%s): %s", p.returncode, p.stderr[-200:])
-    except Exception as e:
-        logger.warning("[music] transcode error: %s", e)
-    finally:
-        try:
-            os.unlink(out_path)
-        except Exception:
-            pass
-    return None, ""
-
-
 def get_music_service(db: Session) -> MusicService:
     global _instance
     if _instance is None:
@@ -318,11 +276,25 @@ async def generate_async(db: Session, prompt: str, lyrics: str = "", duration=No
 
 
 def is_available() -> bool:
-    """True when the diffusers build actually has ACE-Step. Lets callers fall back to a configured
-    REST server instead of failing, on an older diffusers."""
-    try:
-        import importlib.util
-        return importlib.util.find_spec("diffusers") is not None and \
-            hasattr(__import__("diffusers", fromlist=["AceStepPipeline"]), "AceStepPipeline")
-    except Exception:
-        return False
+    """True when THIS process can actually load ACE-Step — i.e. the `acestep` package is installed.
+
+    Probe the package the load path really uses. This used to test diffusers for `AceStepPipeline`,
+    which `load_model` never touches, so it was wrong in both directions:
+      - acestep installed but an older diffusers → reported UNAVAILABLE, and callers fell back to an
+        HTTP sidecar that no longer exists. On a node with `video_free_music` on, that fallback runs
+        `vram_manager._ensure_music_server`, which `systemctl start`s the retired unit and then polls
+        port 8001 for 90s SYNCHRONOUSLY on the single uvicorn worker — the whole app stalls, per song.
+      - acestep NOT installed but diffusers new enough → reported available, then ImportError deep
+        inside generate().
+    Probes the TOP-LEVEL package only, and memoises: `find_spec("acestep.handler")` would import the
+    parent to read its `__path__` (dragging in torch), and `vram_manager._native_music_active` calls
+    this on every prepare_for_* swap, so it has to stay cheap.
+    """
+    global _available
+    if _available is None:
+        try:
+            import importlib.util
+            _available = importlib.util.find_spec("acestep") is not None
+        except Exception:
+            _available = False
+    return _available
