@@ -489,7 +489,7 @@ class _Effects1Mixin:
         return {"type": "files", "content": summary, "files": outputs}
 
     async def _beavis_command(self, attachments: Optional[list]) -> dict:
-        """Turn an attached image into a short MP4 set to the Beavis laugh: `beavis`."""
+        """Overlay Beavis and Butt-Head cackling on an image, set to the laugh: `beavis`."""
         from app.services.media_service import is_image
 
         if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):

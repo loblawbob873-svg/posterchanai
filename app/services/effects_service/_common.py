@@ -172,6 +172,14 @@ _BEAVIS_AUDIO_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "beavis.mp3"),
     "/var/lib/posterchanai/assets/beavis.mp3",
 ]
+# Transparent (background fully keyed out) Beavis + Butt-Head cackling loop that plays over the image
+# alongside the laugh. ONE headbang cycle — the motion is periodic, so 43 frames chosen for the
+# lowest-error seam loop cleanly instead of shipping 12s of ProRes.
+_BEAVIS_OVERLAY_CANDIDATES = [
+    os.environ.get("BEAVIS_OVERLAY_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "beavis_laugh.mov"),
+    "/var/lib/posterchanai/assets/beavis_laugh.mov",
+]
 _BEAVIS_DURATION = 12.0
 _SMELL_AUDIO_CANDIDATES = [
     os.environ.get("SMELL_AUDIO_PATH", ""),

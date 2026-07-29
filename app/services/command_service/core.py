@@ -84,7 +84,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "fbi": "Turn an attached image into a short MP4 set to the FBI open up clip: fbi",
         "redeem": "Turn an attached image into a short MP4 set to the do not redeem clip: redeem",
         "gigity": "Turn an attached image into a short MP4 set to the giggity clip: gigity",
-        "beavis": "Turn an attached image into a short MP4 set to the Beavis laugh: beavis",
+        "beavis": "Overlay Beavis and Butt-Head cackling on an attached image, set to the laugh: beavis",
         "smell": "Turn an attached image into a short MP4 set to the can you imagine the smell clip: smell",
         "hood": "Turn an attached image into a 10s MP4 set to the hood clip: hood",
         "akbar": "Turn an attached image into a short MP4 set to the akbar clip: akbar",
@@ -201,7 +201,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
-    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman"}
+    ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman", "beavis"}
     # NON-effect commands that work on the uploaded FILE BYTES rather than on text extracted from
     # them. Every EFFECT does too, but they are deliberately NOT repeated here — see
     # wants_attachments.
