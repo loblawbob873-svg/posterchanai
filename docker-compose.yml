@@ -75,10 +75,13 @@ x-common: &common
     # Records to POSTERCHANAI_STREAM_RECORD_DIR (default /tmp/posterchanai-streams) then uploads to Blossom;
     # mount that path as tmpfs if you want it RAM-backed. Per-user opt-in still applies. See docs/STREAMING.md.
     - POSTERCHANAI_STREAM_RECORD=${POSTERCHANAI_STREAM_RECORD:-0}
-    # Turnkey music: set POSTERCHANAI_MUSIC=1 and the app auto-enables music. Generation is
-    # IN-PROCESS — no acestep container, no profile, no URL. Build the image with
-    # --build-arg INSTALL_MUSIC=1 so ACE-Step is present; the model downloads on first request into
-    # the persisted HF cache. Needs a GPU profile (cuda/rocm/intel). See docs/MUSIC.md.
+    # Turnkey music: set POSTERCHANAI_MUSIC=1 and the app auto-enables music AND builds ACE-Step into
+    # the image (the build arg reads this same variable, so the engine can't be missing from an image
+    # that has the feature switched on). Generation is IN-PROCESS — no acestep container, no profile,
+    # no URL; the model downloads on first request into the persisted HF cache. A GPU profile
+    # (cuda/rocm/intel) is what you want for real use, but the `cpu` profile also generates — measured
+    # ~27s for a 10s clip on a desktop CPU, which is fine for a Docker Desktop/WSL2 smoke test.
+    # See docs/MUSIC.md.
     - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
     # Only set this to fall BACK to a separate ACE-Step REST server; empty = generate in-process.
     - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
@@ -145,7 +148,11 @@ services:
     image: posterchanai:${TAG:-local}-cpu
     build:
       context: .
-      args: { GPU: cpu }
+      # INSTALL_MUSIC rides on the SAME env var that enables music at runtime. Without this,
+      # POSTERCHANAI_MUSIC=1 switched the feature on in an image that has no ACE-Step, so `musicgeni`
+      # fell through to the retired HTTP path and failed against a localhost:8001 nobody is serving.
+      # Music on the cpu profile works but is SLOW — fine for a WSL/Docker Desktop smoke test.
+      args: { GPU: cpu, INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
 
   # Nostr-only: a self-hosted Nostr relay + the Nostr web client + Blossom, with NO AI stack
   # (no torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay
@@ -183,7 +190,8 @@ services:
       context: .
       # BASE_IMAGE selects the CUDA toolkit base; passing it here (not via a base-* stage) means
       # only this profile ever references it, so cpu/nostr builds don't pull it.
-      args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:12.5.1-devel-ubuntu24.04}" }
+      args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:12.5.1-devel-ubuntu24.04}",
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
     # Requires the NVIDIA Container Toolkit on the host.
     deploy:
       resources:
@@ -205,7 +213,8 @@ services:
       context: .
       # ROCm builds on plain ubuntu:24.04 (the default BASE_IMAGE) and installs ROCm userspace in
       # the image. Override with a prebuilt rocm/dev-ubuntu-24.04:*-complete base if you prefer.
-      args: { GPU: rocm, BASE_IMAGE: "${ROCM_BASE:-ubuntu:24.04}" }
+      args: { GPU: rocm, BASE_IMAGE: "${ROCM_BASE:-ubuntu:24.04}",
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
     # ROCm userspace is in the image; the kernel driver comes from the host. The
     # container runs as root, so it reaches the render node without group juggling;
     # the entrypoint auto-sets HSA_OVERRIDE_GFX_VERSION for consumer RDNA cards.
@@ -223,7 +232,8 @@ services:
       context: .
       # oneAPI 2025.2+ base (2025.0's SYCL compiler makes the Arc emit EMPTY thinking/code gens).
       # Only this profile references it, so cpu/nostr builds never pull the heavy oneAPI image.
-      args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04}" }
+      args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04}",
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
     # Intel Arc: expose the render nodes; host needs the i915 driver.
     devices:
       - /dev/dri

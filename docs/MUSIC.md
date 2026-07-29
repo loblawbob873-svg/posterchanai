@@ -94,21 +94,61 @@ installer, from the same index as the installed torch. The installer also remove
 Then **Admin → Music**: enable music and leave **Local Server URL empty**. Remote Servers fan out to
 other nodes. Models download on first use into `<ACE-Step clone>/checkpoints` (several GB).
 
+`ACESTEP_ROOT` says where that checkout is. It is set for you in Docker; on bare metal the app takes
+`ACESTEP_ROOT`, then the installer's `ACESTEP_DIR`, then the first of `$HOME/ACE-Step-1.5` or
+`/opt/ace-step` that exists. (It used to be a hardcoded home directory, so it resolved only for one
+username.)
+
+### Docker
+
+```bash
+POSTERCHANAI_MUSIC=1 docker compose --profile cuda up -d --build
+```
+
+That one variable both **enables** music and **builds ACE-Step into the image** — the build arg
+reads it too, so you can't end up with the feature switched on in an image that has no engine (which
+used to fail against a `localhost:8001` nobody serves). Works on the `cuda`, `rocm`, `intel` and
+`cpu` profiles.
+
+### CPU-only (Docker Desktop / WSL2)
+
+The `cpu` profile really does generate — no GPU needed:
+
+```bash
+POSTERCHANAI_MUSIC=1 docker compose --profile cpu up -d --build
+```
+
+Measured on a desktop CPU: a 10-second clip in **~27s** end-to-end (8-step turbo — DiT diffusion
+~1.05s/step, then VAE decode), producing a valid 128 kbps MP3. Longer songs scale roughly linearly,
+so a 180s default is minutes, not seconds — set `music_default_duration` low while smoke-testing.
+Set **`music_gpu_device` = `cpu`** so music takes the CPU lock instead of the GPU one and doesn't
+serialise against chat/image. Leave `music_cpu_offload` **off** — it is a CUDA-only accelerate
+feature. Expect a one-time multi-GB weight download on the first request, and note the model needs
+several GB of RAM, so raise the WSL2 memory limit in `.wslconfig` if the container gets OOM-killed.
+The harmless `pytorch_wavelets is not installed` warning just disables an optional quality
+refinement (DCW); install `pytorch_wavelets PyWavelets` if you want it.
+
 
 ## Admin → Music settings
 
 | Setting | Meaning |
 |---|---|
 | `music_enabled` | Master on/off (default off) |
-| `music_api_base` | Local ACE-Step server URL (GPU-locked + VRAM-swapped) |
-| `music_server_urls` | Remote ACE-Step servers, round-robin (no local lock) |
-| `music_gpu_device` | `auto`/`cuda`/`xpu`/`cpu` — GPU vs CPU lock for the local server |
-| `music_model` | DiT model name/path (blank = server default, `acestep-v15-turbo`) |
-| `music_default_duration` | Seconds (10–600) |
+| `music_native` | Generate in-process (default **on**). Off forces the legacy HTTP path |
+| `music_api_base` | Only for a node with a REMOTE ACE-Step server; no UI field (env-seeded). A `localhost` value is ignored on purpose — every pre-native install has one, and honouring it would route songs at a daemon that no longer exists |
+| `music_gpu_device` | `auto`/`cuda`/`xpu`/`cpu` — which lock music takes (GPU vs CPU) |
+| `music_model` | Checkpoint **directory name** under `<ACESTEP_ROOT>/checkpoints` (blank = `acestep-v15-turbo`). NOT a Hugging Face repo id |
+| `music_cpu_offload` | accelerate CPU offload — **CUDA only** (meta-tensor bug on XPU) |
+| `music_guidance` | Classifier-free guidance scale (default 7.5) |
+| `music_idle_timeout` | Seconds before the idle monitor frees the music model's VRAM |
+| `music_default_duration` | Seconds (10–600). This is the key the native path reads — a private `music_duration` once pinned every song to the fallback |
 | `music_default_steps` | Diffusion steps (turbo ≈ 8, base up to ~200) |
 | `music_format` | `mp3`/`wav`/`flac`/`opus`/`aac` |
 | `music_timeout` | Request timeout (ms) |
 | `music_watermark_enabled` | Append the branded end-card to the song video |
+
+Cross-node fan-out uses the single unified **Site → Load Balancing** list (`chat_server_urls`), not a
+music-specific one.
 
 ## REST contract (validated against ACE-Step 1.5)
 
