@@ -1357,6 +1357,32 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
                             await websocket.send_json({"type": "stream", "content": f"❌ PDF merge error: {_merge_top_err}"})
                             await websocket.send_json({"type": "stream_end"})
                             continue
+                    # END THE TRANSACTION BEFORE THE SLOW ATTACHMENT WORK.
+                    #
+                    # Everything below — PDF merge/extract, document extract, and above all
+                    # artifact_store.save_bytes (encrypt + upload to Blossom) — can run for well over
+                    # a minute on a video. Holding this request's transaction open across it hits
+                    # Postgres' idle_in_transaction_session_timeout (60s, set in database.py), which
+                    # KILLS the connection; the next statement then dies with "server closed the
+                    # connection unexpectedly" and takes the whole websocket down. Seen on
+                    # `extractaudio` with a video attached: the conversation-exists guard right after
+                    # the upload was the statement that hit the dead socket, so the command failed
+                    # with no result and no error shown to the user.
+                    #
+                    # pool_pre_ping does NOT cover this: it validates a connection as it is checked
+                    # OUT of the pool, and this one is already held by the session for the whole
+                    # upload. Committing here releases it, so the next query checks out a fresh,
+                    # pre-pinged connection instead. Nothing is pending but reads at this point, so
+                    # the commit itself writes nothing.
+                    try:
+                        db.commit()
+                    except Exception as _txn_err:
+                        logger.warning("[CHAT] could not release the DB transaction before upload: %s", _txn_err)
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+
                     # PDFs: if multiple provided (not merge intent), merge for unified text extraction
                     if pdfs and len(pdfs) > 1:
                         _pdf_bytes_list = [_b64.b64decode(p["base64"]) for p in pdfs if p.get("base64")]

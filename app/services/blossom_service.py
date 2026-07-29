@@ -651,6 +651,15 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         _meta_put(_meta_from_row(existing))
         return _descriptor_fields(existing)
 
+    # End the read transaction BEFORE the upload — the same reason save_blob_file does it below, and
+    # this variant is the one the CHAT ATTACHMENT path uses (artifact_store.save_bytes). A video
+    # attached to `extractaudio` held this connection idle-in-transaction past Postgres'
+    # idle_in_transaction_session_timeout (60s); Postgres killed it, and the next statement after the
+    # upload died with "server closed the connection unexpectedly", taking the websocket down so the
+    # command produced no result and no error. pool_pre_ping can't catch it — the connection is
+    # already checked out and held. Reads above are done; a fresh txn opens on the insert.
+    db.rollback()
+
     if cfg["backend"] == "proxy":
         path = await _proxy_put(cfg["storage_url"], sha256, data, mime)
         storage = "proxy"
