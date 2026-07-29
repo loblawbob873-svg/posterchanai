@@ -10307,7 +10307,7 @@
     // proved the server has none). _pullBlocked = the server HAS an index we could not read — the one
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _dirty:false, _saving:false,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulled:false, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
     _key(){ return 'pc_files_idx_'+((ME&&ME.pubkey)||'anon'); },
     _norm(){ if(!this.data||typeof this.data!=='object') this.data={folders:['Music'],files:{},encFolders:[]};
       if(!Array.isArray(this.data.folders)) this.data.folders=['Music'];
@@ -10351,6 +10351,7 @@
           let idx=null;
           if(ptr.indexSha){                         // v2: index lives in an encrypted Blossom blob (scales to 1000s)
             this._lastIndexSha=ptr.indexSha;        // remembered so the grid can hide the index blob itself
+            this._indexShas.add(ptr.indexSha);
             // Own try: a signer that can't unwrap the master key, an offline media host or a 404'd blob
             // must fall through to the _pullBlocked check below, NOT escape to the outer catch — which
             // would leave us looking like a fresh empty drive that is safe to overwrite.
@@ -10461,7 +10462,7 @@
         // The superseded index blob is deliberately KEPT. It is ~133 KB and it is the only
         // standalone backup of every filename and folder on the drive — deleting it to reclaim
         // that space is what left a wiped index with nothing to restore from.
-        if(ptr.indexSha) this._lastIndexSha=ptr.indexSha;
+        if(ptr.indexSha){ this._lastIndexSha=ptr.indexSha; this._indexShas.add(ptr.indexSha); }
       }catch(e){
         // The edit is NOT saved, so it must not stay marked clean: `_dirty=false` was set at the
         // capture point above, and leaving it there tells the next pull() it's free to overwrite local
@@ -10688,7 +10689,13 @@
     if(_filesDeleted.size){ const live=new Set(list.map(b=>b.sha256)); [..._filesDeleted].forEach(sha=>{ if(!live.has(sha)) _filesDeleted.delete(sha); }); }
     const inFolder = list.filter(b=>{
       if(_filesDeleted.has(b.sha256)) return false;                            // deleted this session (see _filesDeleted)
-      if(b.sha256===FilesIdx._lastIndexSha) return false;                      // the encrypted Files index blob itself
+      // EVERY index blob, not just the newest. Each edit (upload/delete/move/rename) re-encrypts the
+      // whole index and uploads it as a NEW blob, and the superseded one is deliberately kept as the
+      // only standalone backup of every filename+folder. Hiding only _lastIndexSha meant that after a
+      // delete the FRESH index blob was hidden but the one it replaced popped into the grid — an
+      // unnamed ~671KB tile appearing exactly where the deleted file had been, which reads as
+      // "the file didn't delete". They are all bookkeeping; none of them is a user file.
+      if(b.sha256===FilesIdx._lastIndexSha || FilesIdx._indexShas.has(b.sha256)) return false;
       const m=FilesIdx.meta(b.sha256);
       if(!m && /octet-stream/.test(b.type||'')) return false;                  // stale index blobs / unnamed binaries (the "OCTET-STE" noise)
       if(m && m.enc && FilesIdx.folderOf(b.sha256)==='Music') return false;    // music ciphertext → Music list only
