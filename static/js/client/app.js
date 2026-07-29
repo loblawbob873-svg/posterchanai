@@ -15442,11 +15442,15 @@
     let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id)])];
     for(let round=0; round<4 && frontier.length; round++){
       const batch=frontier.slice(0,60);                     // one REQ per round, not one per node
-      let got=await Relay.query([{ kinds:[1], '#e':batch, limit:500 }]).catch(()=>[]);
+      // kinds 1 AND 1111: a NIP-22 comment that e-tags a post IS a reply to it, so a kind-1-only query
+      // rendered every comment thread as just the ancestors — the tapped comment's siblings, and often the
+      // comment itself, were simply absent. That is what made a community/thread mention impossible to
+      // interact with: there was no card for it on screen to reply to.
+      let got=await Relay.query([{ kinds:[1,1111], '#e':batch, limit:500 }]).catch(()=>[]);
       // A query that timed out instead of EOSEing may have returned only PART of the answer. Rendering
       // that as the whole conversation is what made replies "go missing" until a refresh.
       if(got && got.complete===false){
-        const retry=await Relay.query([{ kinds:[1], '#e':batch, limit:500 }]).catch(()=>[]);
+        const retry=await Relay.query([{ kinds:[1,1111], '#e':batch, limit:500 }]).catch(()=>[]);
         if(retry.length>got.length) got=retry;
       }
       if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away / opened another thread mid-expansion
