@@ -1591,6 +1591,39 @@ def still_to_alpha_video(image, dur: float = 6.0, fps: int = 6) -> bytes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def alpha_clip_to_video(src_path: str, dur: float = None) -> bytes:
+    """Re-encode a ready-made TRANSPARENT clip (the ProRes 4444 `.mov` overlays in assets/ — beavis,
+    reze, makima, …) into the SAME silent VP9-alpha .webm that frames_to_alpha_video and
+    still_to_alpha_video produce, so it drops onto the Meme Builder timeline like any other layer.
+
+    These clips already carry a real alpha channel (yuva444p12le); they only need the codec the
+    browser preview and the compositing render both expect. SILENT on purpose — audio would corrupt
+    VP9 alpha, and the effect's sound rides the layer's `sound` field instead (see
+    meme_builder_service.alpha_effect_catalog).
+
+    `dur` trims; it never pads, because looping a dance mid-step reads as a glitch and the caller
+    already sizes the timeline slot from the clip's natural length."""
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+    if not (src_path and os.path.exists(src_path)):
+        raise RuntimeError(f"alpha clip not found: {src_path}")
+    tmp_dir = tempfile.mkdtemp(prefix="media_alphaclip_")
+    out_path = os.path.join(tmp_dir, "output.webm")
+    try:
+        cmd = [ffmpeg, "-i", src_path]
+        if dur:
+            cmd += ["-t", f"{max(0.3, min(float(dur), 30.0)):.3f}"]
+        cmd += _ALPHA_VCODEC + ["-an", "-y", out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=600, text=True)
+        if not (result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+            raise RuntimeError(f"alpha clip→video failed: {(result.stderr or '')[-400:]}")
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def image_gif_overlay_video(image_data: bytes, source_filename: str, gif_path: str,
                             duration: float = 6.0, audio_path: Optional[str] = None,
                             height_frac: float = 0.55) -> bytes:

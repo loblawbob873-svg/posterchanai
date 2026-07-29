@@ -193,6 +193,58 @@ _ALPHA_CHARACTERS = [
 ]
 
 
+# Ready-made TRANSPARENT overlay clips shipped in assets/ (`<effect>_<something>.mov`, ProRes 4444).
+# They are the effect's own animation on a clear background — exactly what a layer is — but the
+# catalogue below only ever listed the hand-drawn character poses, so `beavis`, `reze`, `makima`,
+# `rebecca`, `uwu`, `vibe` and `clay` could not be added as layers even though their art was sitting
+# right there. Nice labels only; membership is DISCOVERED from the files (see _alpha_clips).
+_ALPHA_CLIP_LABELS = {
+    "beavis": "🤤 Beavis (laughing)", "clay": "🗿 Clay", "makima": "🔫 Makima (shooting)",
+    "rebecca": "💃 Rebecca (dancing)", "reze": "💣 Reze (dancing)", "uwu": "💗 UwU (dancing)",
+    "vibe": "🕺 Vibe (dancing)",
+}
+
+_alpha_clip_cache: dict = None
+
+
+def _alpha_clips() -> dict:
+    """{effect_name: {"path", "dur"}} for the transparent overlay clips installed on THIS node.
+
+    Discovered, not hard-coded — the same rule alpha_effect_catalog() states for itself. A clip
+    qualifies only if ffprobe reports a real ALPHA pixel format (an opaque .mov would composite as
+    an ugly rectangle, the same failure the end-card logo had) and its name maps to an effect the
+    app actually has. The effect name is the leading token of the filename: beavis_laugh.mov ->
+    beavis. Probed ONCE and cached: this runs on every catalogue fetch, and it is 7 subprocesses."""
+    global _alpha_clip_cache
+    if _alpha_clip_cache is not None:
+        return _alpha_clip_cache
+    import glob
+    import subprocess as _sp
+    from app.services.command_service import CommandService as _C
+    from app.services.effects_service._common import _REPO_ROOT
+    real_effects = set(_C.MOTION_EFFECTS) | set(_C.ANIMATED_EFFECTS)
+    found = {}
+    for base in (os.path.join(_REPO_ROOT, "assets"),):
+        for p in sorted(glob.glob(os.path.join(base, "*.mov"))):
+            name = os.path.basename(p).rsplit(".", 1)[0].split("_")[0].lower()
+            if name in found or name not in real_effects:
+                continue
+            try:
+                r = _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                             "stream=pix_fmt,duration", "-of", "default=nw=1:nk=1", p],
+                            capture_output=True, text=True, timeout=20)
+                parts = (r.stdout or "").split()
+                pix = parts[0] if parts else ""
+                if not (pix.startswith("yuva") or pix in ("rgba", "argb", "bgra")):
+                    continue        # opaque → not a layer
+                dur = float(parts[1]) if len(parts) > 1 else 0.0
+            except Exception:
+                continue
+            found[name] = {"path": p, "dur": round(dur, 2) if dur > 0 else 4.0}
+    _alpha_clip_cache = found
+    return found
+
+
 def alpha_effect_catalog() -> list:
     """The full effects that can be added as a transparent LAYER, filtered to what actually resolves on
     THIS node (so the client never offers a broken pick). Each entry:
@@ -216,6 +268,12 @@ def alpha_effect_catalog() -> list:
             # A still pose holds for as long as you like; the two-panel turn has its own beat.
             out.append({"name": key, "label": f"🧍 {label}", "audio": False,
                         "dur": _ch.LOOKINGAWAY_ALPHA_DUR if key == "lookingaway" else 6.0})
+    # The shipped transparent clips (beavis, reze, makima, …). `dur` is the clip's REAL length, read
+    # off the file, so the timeline slot fits the animation instead of a guessed 6s. Each has its
+    # sound as a separate mp3 — the clip itself stays silent, exactly like every other alpha layer.
+    for name, meta in sorted(_alpha_clips().items()):
+        out.append({"name": name, "label": _ALPHA_CLIP_LABELS.get(name, f"🎬 {name.title()}"),
+                    "audio": bool(_sound_path(name)), "dur": meta["dur"]})
     return out
 
 
@@ -241,7 +299,11 @@ def render_alpha_effect(name: str, dur: float = None) -> tuple:
     meta = allowed.get(name)
     if not meta:
         raise ValueError(f"unknown effect: {name}")
-    if name == "nakedman":
+    clips = _alpha_clips()
+    if name in clips:
+        # Already a transparent clip on disk — only the codec differs, so there is nothing to draw.
+        data = media_service.alpha_clip_to_video(clips[name]["path"], dur=dur)
+    elif name == "nakedman":
         data = _nm.render_nakedman_alpha(dur=dur or 8.0)
     elif name == "shrug":
         data = _ch.render_shrug_alpha(dur=dur)
