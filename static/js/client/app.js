@@ -8665,7 +8665,7 @@
     // Remove the draft ONLY once the relay has actually stored the post. On any failure the draft stays —
     // it is the recovery path (the user retries from here), so its text is never lost.
     try{
-      const r=await publish(1, content, tags);
+      const r=await publish(replyKindFor(d.reply?Store.get(d.reply):null), content, tags);
       if(r && r.ok){ Drafts.remove(id); toast('posted'); }   // failure toast + kept draft handled by publish()
       if(VIEW==='drafts') renderDrafts();
     }
@@ -9247,7 +9247,7 @@
         // already gone by then). On success we remove it; on failure it stays in Drafts as the recovery path.
         _saveDraftNow();
         closeModal();
-        { const r=await publish(1, content, tags);
+        { const r=await publish(replyKindFor(reply?Store.get(reply):null), content, tags);
           if(r && r.ok){ _dropDraft(); toast('posted'); } }   // failure toast + kept draft handled by publish()
         if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
@@ -9316,7 +9316,30 @@
   // Format a Date as a <input type="datetime-local"> value (LOCAL time, no tz): YYYY-MM-DDTHH:MM.
   function _dtLocal(d){ const p=n=>String(n).padStart(2,'0');
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+  // The root scope of a NIP-22 comment thread: its uppercase E/A/I (+K/P) tags, which every comment in
+  // the thread repeats verbatim. Returns [] when the parent isn't a scoped comment, which is what makes
+  // `replyKindFor` fall back to a plain NIP-10 kind-1 rather than emit a rootless 1111.
+  function _commentScope(parent){
+    if(!parent || parent.kind!==1111) return [];
+    const up=parent.tags.filter(t=>['E','A','I','K','P'].includes(t[0]));
+    return up.some(t=>t[0]==='E'||t[0]==='A'||t[0]==='I') ? up.map(t=>t.slice()) : [];
+  }
+  // Replying to a comment has to STAY a comment. A kind-1 reply into a NIP-22 thread is not threaded by
+  // clients that use NIP-22 for it (Amethyst), so the answer silently never appears under the comment it
+  // was written for — it just shows up as a loose note.
+  function replyKindFor(parent){ return _commentScope(parent).length ? 1111 : 1; }
   function replyTags(parent, id, pk){
+    const scope=_commentScope(parent);
+    if(scope.length){
+      // NIP-22: uppercase = the unchanged ROOT, lowercase = the immediate parent. Note t[3] on a NIP-22
+      // `e` tag is the AUTHOR pubkey, not a NIP-10 marker — reading it as one is what made the NIP-10
+      // path below pick the parent's parent as "root".
+      const r=CFG.relay_url||'', ppk=pk||parent.pubkey||'';
+      const tags=scope.concat([['e',id,r,ppk],['k',String(parent.kind||1111)],['p',ppk,r]]);
+      const seen=new Set(tags.filter(t=>t[0]==='p').map(t=>t[1]));
+      for(const t of parent.tags){ if(t[0]==='p' && t[1] && !seen.has(t[1])){ seen.add(t[1]); tags.push(['p',t[1]]); } }
+      return tags;
+    }
     const tags=[]; let root=null;
     if(parent){
       const marked=parent.tags.find(t=>t[0]==='e'&&t[3]==='root');
@@ -11693,7 +11716,11 @@
     // your message, which would be the wrong target). For a reaction/repost/zap, open the post they
     // acted on (the last referenced e-tag).
     const ref=(e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
-    const tgt = (e.kind===1 || e.kind===42 || e.kind===1621 || e.kind===1617) ? e.id : (ref||e.id);
+    // 1111 belongs in the first group: it IS their reply, so open it. It was falling through to
+    // `ref` — the last lowercase `e` tag — which on a NIP-22 comment is the PARENT, so tapping a
+    // community/thread mention landed on somebody else's older comment with nothing of theirs to
+    // reply to. Exactly the trap the kind-42 note below describes.
+    const tgt = (e.kind===1 || e.kind===42 || e.kind===1111 || e.kind===1621 || e.kind===1617) ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
