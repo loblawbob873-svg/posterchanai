@@ -8,8 +8,6 @@ import time
 def main():
     parser = argparse.ArgumentParser(description="Poster Chan AI Bot for Pleroma and Nostr")
     parser.add_argument(
-    )
-    parser.add_argument(
         "--image", action="store_true", help="Post Images every so often"
     )
     parser.add_argument(
