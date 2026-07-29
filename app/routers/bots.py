@@ -20,7 +20,7 @@ import httpx
 from app.database import get_db
 from app.models import Bot, User
 from app.auth import get_admin_user
-from app.services import bot_manager_service, pleroma_service, misskey_service
+from app.services import bot_manager_service, pleroma_service
 from app.services.nostr import nostr_service
 
 logger = logging.getLogger(__name__)
@@ -32,18 +32,17 @@ class BotPayload(BaseModel):
     name: str
     enabled: bool = True
     bot_type: str = "text"          # "text" | "image"
-    platform: str = "misskey"       # "misskey" | "pleroma"
+    platform: str = "pleroma"       # "pleroma"
     host: Optional[str] = ""        # node hostname; empty = any node
     modes: Optional[str] = ""       # comma-separated main.py flags
     config: Dict[str, Any] = {}     # all other per-bot fields (creds, prompt, feature opts)
 
 
 class OAuthTokenPayload(BaseModel):
-    platform: str = "pleroma"       # "pleroma" (OAuth password grant) | "misskey" (/api/signin)
+    platform: str = "pleroma"       # "pleroma" (OAuth password grant)
     server: str                     # instance URL, e.g. https://poster.place
     username: str                   # bot account login (handle, no leading @)
     password: str
-    totp: str = ""                  # optional 2FA code (Misskey only)
     scopes: str = "read write follow push"
 
 
@@ -151,22 +150,17 @@ def bots_status(admin: User = Depends(get_admin_user)):
 @router.post("/oauth/token")
 async def mint_oauth_token(payload: OAuthTokenPayload, admin: User = Depends(get_admin_user)):
     """Mint a fedi access token from the bot account's username/password so an admin can
-    connect a bot in the UI without running a script or a browser auth flow. Pleroma uses the
-    OAuth password grant; Misskey uses /api/signin. The token is returned for the caller to
-    save into the bot's config; nothing is persisted here."""
+    connect a bot in the UI without running a script or a browser auth flow, via the Pleroma
+    OAuth password grant. The token is returned for the caller to save into the bot's config;
+    nothing is persisted here."""
     server = (payload.server or "").strip()
     username = (payload.username or "").lstrip("@").strip()
     if not server or not username or not payload.password:
         raise HTTPException(status_code=400, detail="Server, username and password are required")
     try:
-        if payload.platform == "misskey":
-            token = await misskey_service.password_signin(
-                server, username, payload.password, token=payload.totp.strip(),
-            )
-        else:
-            token = await pleroma_service.password_grant(
-                server, username, payload.password, scopes=payload.scopes,
-            )
+        token = await pleroma_service.password_grant(
+            server, username, payload.password, scopes=payload.scopes,
+        )
     except httpx.HTTPStatusError as e:
         body = e.response.text[:300] if e.response is not None else ""
         raise HTTPException(status_code=400,

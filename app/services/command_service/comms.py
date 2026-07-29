@@ -870,7 +870,7 @@ class _CommsMixin:
     async def _post_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Share text (and an optional attached image) to the user's connected fediverse accounts —
         the web equivalent of the Telegram 📣 Post flow. Posts to every connected platform
-        (Misskey + Pleroma); no-op with a clear message when none are connected."""
+        (Pleroma + Nostr); no-op with a clear message when none are connected."""
         import base64 as _b64
         from app.services.media_service import is_image
 
@@ -878,19 +878,16 @@ class _CommsMixin:
         if user is None:
             return {"type": "text", "content": "Sign in to post to social."}
 
-        # Connected-platform detection mirrors the Telegram helpers (_has_misskey/_has_pleroma).
-        has_mk = bool(getattr(user, "misskey_enabled", False)
-                      and getattr(user, "misskey_instance_url", None)
-                      and getattr(user, "misskey_api_token", None))
+        # Connected-platform detection mirrors the Telegram helper (_has_pleroma).
         has_plr = bool(getattr(user, "pleroma_enabled", False)
                        and getattr(user, "pleroma_instance_url", None)
                        and getattr(user, "pleroma_access_token", None))
         # Nostr: a linked sending key (nostr_nsec) lets us publish a kind-1 to the built-in relay,
         # which federates it out. (Web-client users sign in-browser via the composer instead.)
         has_nostr = bool(getattr(user, "nostr_nsec", None))
-        if not (has_mk or has_plr or has_nostr):
+        if not (has_plr or has_nostr):
             return {"type": "text", "content": (
-                "No social platforms connected. Connect Misskey or Pleroma in **Settings → "
+                "No social platforms connected. Connect Pleroma in **Settings → "
                 "Social**, or link a Nostr key in **Settings → Nostr**, then `post <text>`.")}
 
         text = (arg or "").strip()
@@ -910,18 +907,9 @@ class _CommsMixin:
         if not text and not img_bytes:
             return {"type": "text", "content": (
                 "Usage: `post <text>` — optionally attach an image to share it too. Goes to your "
-                "connected Misskey/Pleroma.")}
+                "connected Pleroma/Nostr.")}
 
         results = []
-        if has_mk:
-            try:
-                from app.services.misskey_service import post_note
-                await post_note(user.misskey_instance_url, user.misskey_api_token, text,
-                                image_bytes=img_bytes, image_mime=img_mime)
-                results.append("✅ Misskey")
-            except Exception as e:
-                logger.error(f"[post] Misskey failed: {e}", exc_info=True)
-                results.append(f"❌ Misskey: {e}")
         if has_plr:
             try:
                 from app.services.pleroma_service import post_status

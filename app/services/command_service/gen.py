@@ -42,11 +42,33 @@ class _GenMixin:
             
             return {"type": "text", "content": error_msg}
 
+        # Compress before it leaves the server. The backend hands back a full-size PNG (~1.4 MB for
+        # 1024²), and that blob is pushed over the WebSocket, held in the conversation, and re-sent on
+        # every reload — the same waste the bots had. media_service.compress_image is the compressor
+        # the `compress` command uses, so chat images get exactly what the rest of the app applies.
+        # `mime` travels with it because the result is now JPEG, and the client must not label it PNG.
+        image_mime = "image/png"
+        try:
+            import base64 as _b64i
+            from app.services import media_service as _ms
+            _raw = _b64i.b64decode(image_data)
+            _small = _ms.compress_image(_raw)
+            # Keep the ORIGINAL when the re-encode doesn't actually help (flat/graphic output, where
+            # PNG wins) — compressing to a bigger file would be worse than doing nothing.
+            if _small and len(_small) < len(_raw):
+                logger.info(f"[geni] compressed image {len(_raw)} -> {len(_small)} bytes")
+                image_data = _b64i.b64encode(_small).decode()
+                image_mime = "image/jpeg"
+        except Exception as _c_err:
+            # Never fail a generation over an optimisation — ship the original.
+            logger.warning(f"[geni] image compression skipped ({type(_c_err).__name__}: {_c_err})")
+
         # Don't save automatically - just display the image with a save button
         return {
             "type": "generated_image",
             "content": f"Generated image for: {prompt}",
             "image": image_data,
+            "mime": image_mime,
             "prompt": prompt,
         }
 
@@ -153,6 +175,9 @@ class _GenMixin:
                 "video": _b64.b64encode(video_bytes).decode(),
                 "format": "mp4",
                 "prompt": prompt,
+                # The branded MP4 wraps a real audio track, so the client can offer "Convert to MP3".
+                # videogeni's output is silent and deliberately does NOT set this.
+                "has_audio": True,
             }
         # Fallback: deliver the raw audio if video wrapping wasn't possible (e.g. no ffmpeg).
         return {
@@ -228,6 +253,7 @@ class _GenMixin:
                 "video": _b64.b64encode(video_bytes).decode(),
                 "format": "mp4",
                 "prompt": arg.strip(),
+                "has_audio": True,          # speech track — same MP3 extraction applies
             }
         # Fallback: deliver the raw speech audio if video wrapping wasn't possible (e.g. no ffmpeg).
         return {

@@ -1,7 +1,7 @@
 # Bot manager (`botframework/`)
 
 > **Using the bots / command reference:** see [`COMMANDS.md`](COMMANDS.md) — how to drive each
-> bot (web, Telegram, Pleroma, Misskey) and every command grouped by category.
+> bot (web, Telegram, Pleroma) and every command grouped by category.
 
 
 PosterChanAI bundles a full **autonomous bot framework** (formerly the separate `~/posterchan`
@@ -13,7 +13,7 @@ in-process. No separate repo, no hand-edited `bots_config.py`.
 
 A **bot** is one long-running listener (or a scheduled image poster) on one fediverse account:
 
-- **Platforms:** Misskey, Pleroma/Mastodon, Nostr.
+- **Platforms:** Pleroma/Mastodon, Nostr.
 - **Types:** **text** (continuous listener) or **image** (scheduled poster, daily at 0/6/12/18).
 - **Features** (text bots) map to behaviours: reply to mentions, nitter relays, and the
   blockbot / welcome / report / hashtag / unfollow daemons.
@@ -69,7 +69,7 @@ The modal shows only the fields the chosen platform/type needs:
 
 - **Name, Type, Platform, Host** — `Host` empty = run on any node; otherwise must match the
   node's hostname (so each node runs only its own bots).
-- **Credentials** — Misskey/Pleroma: Server URL, Bot username, Access token (Pleroma report bot
+- **Credentials** — Pleroma: Server URL, Bot username, Access token (Pleroma report bot
   also needs an **admin token**).
 - **Features** (text bots) → `main.py` modes: Reply to mentions, Nitter feeds, Welcome, Block,
   Report, Hashtag, Unfollow, **Data Vending Machine (NIP-90)**. (No raw `--flags` to type.)
@@ -144,9 +144,9 @@ cut-over node won't have the old service resurrected.
 - **Dependencies:** `psycopg2-binary`, `edge-tts`, `beautifulsoup4`, `lxml`, `Pillow`, `pytz`,
   `requests` (in `botframework/requirements.txt`, merged into the installer).
 - **Incremental dedup (opt-in):** per platform a parity shim can route a bot's network calls
-  through the app's shared service (`app/services/{pleroma,misskey}_service.py`) instead of
+  through the app's shared service (`app/services/pleroma_service.py`) instead of
   the bot's own client. Enable with `"use_app_service": true` in a bot's Advanced config; validate
-  offline with `botframework/test_{pleroma,misskey}_parity.py`. Off by default.
+  offline with `botframework/test_pleroma_parity.py`. Off by default.
 
 ## Troubleshooting
 

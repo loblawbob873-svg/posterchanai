@@ -46,7 +46,7 @@ def afallback_transport() -> httpx.AsyncBaseTransport:
     return _AsyncProxyFallback(px) if px else httpx.AsyncHTTPTransport(retries=0)
 
 # Short-TTL cache: get_proxy_config is called on every social/bot HTTP client and relay
-# connect (~8 per Nostr op, ~14 per Misskey op). The proxy setting changes very rarely, so
+# connect (~8 per Nostr op). The proxy setting changes very rarely, so
 # caching the resolved value for a few seconds avoids opening a DB session on every call.
 _CACHE_TTL = 30.0
 _cache: dict = {"value": None, "ts": 0.0}

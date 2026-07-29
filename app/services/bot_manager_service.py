@@ -319,7 +319,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
 
     if is_image:
         # Image bots post to their own platform — set creds for whichever it is (the
-        # one-shot imageposter picks pleroma/misskey/nostr from these env vars).
+        # one-shot imageposter picks pleroma/nostr from these env vars).
         if bot_dict.get("platform") == "pleroma":
             setif("server", "PLEROMA_ENDPOINT")
             setif("username", "PLEROMA_USERNAME", lambda v: str(v).lstrip("@"))
@@ -330,22 +330,14 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             setif("nostr_profile_nip05", "NOSTR_PROFILE_NIP05", _nip05_full)
             setif("nostr_profile_picture", "NOSTR_PROFILE_PICTURE")
             _set_internal_blossom(env)
-        else:
-            setif("server", "MISSKEY_SERVER")
-            setif("username", "MISSKEY_USERNAME", lambda v: str(v).lstrip("@"))
-            setif("access_token", "MISSKEY_ACCESS_TOKEN")
         setif("prompt", "IMAGE_POSTER_PROMPT")
         setif("text", "IMAGE_POSTER_TEXT")
         setif("image_negative", "IMAGE_POSTER_NEGATIVE")  # optional negative prompt
         if bot_dict.get("random_scenes"):
             env["IMAGE_POSTER_RANDOM_SCENES"] = "true"
     else:
-        platform = bot_dict.get("platform", "misskey")
-        if platform == "misskey":
-            setif("server", "MISSKEY_SERVER")
-            setif("username", "MISSKEY_USERNAME", lambda v: str(v).lstrip("@"))
-            setif("access_token", "MISSKEY_ACCESS_TOKEN")
-        elif platform == "pleroma":
+        platform = bot_dict.get("platform", "pleroma")
+        if platform == "pleroma":
             setif("server", "PLEROMA_ENDPOINT")
             setif("username", "PLEROMA_USERNAME", lambda v: str(v).lstrip("@"))
             setif("access_token", "PLEROMA_ACCESS_TOKEN")
@@ -402,12 +394,11 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
         setif("auto_post_seed", "AUTO_POST_SEED")
         setif("auto_post_topics", "AUTO_POST_TOPICS")
 
-        # Phase-4 dedup A/B switch: route this bot's Pleroma/Misskey network ops through the
+        # Phase-4 dedup A/B switch: route this bot's Pleroma network ops through the
         # app's shared services (via botframework/*_shim). Set "use_app_service": true in the
         # bot's Advanced config to test one bot against the legacy clients.
         if bot_dict.get("use_app_service"):
             env["PLEROMA_USE_APP_SERVICE"] = "true"
-            env["MISSKEY_USE_APP_SERVICE"] = "true"
 
         # Image-backend API key: per-bot override beats the global already in base_env.
         setif("posterchanai_api_key", "POSTERCHANAI_API_KEY")
@@ -448,9 +439,8 @@ def _cmd_for(bot_dict: dict) -> list:
         return [sys.executable, str(MAIN_PY), "--image"]
     # Default to the bot's OWN platform when no feature modes are set — a Nostr bot (e.g. a
     # stats-only NostrStats) must run as --nostr (so it goes live + publishes its kind-0
-    # name/nip05/avatar), not as --misskey (which fails with no Misskey creds → never green,
-    # profile never published). Falls back to misskey only if platform is somehow unset.
-    modes = bot_dict.get("modes") or ["--" + (bot_dict.get("platform") or "misskey")]
+    # name/nip05/avatar), not as the platform listener. Falls back to pleroma if platform is unset.
+    modes = bot_dict.get("modes") or ["--" + (bot_dict.get("platform") or "pleroma")]
     return [sys.executable, str(MAIN_PY)] + list(modes)
 
 
@@ -953,7 +943,7 @@ def seed_from_export():
                 json_cfg = {k: v for k, v in cfg.items() if k not in _COLUMN_KEYS}
                 db.add(Bot(
                     name=name, enabled=True, bot_type=cfg.get("bot_type", bot_type),
-                    platform=cfg.get("platform", "misskey"), host=cfg.get("host", "") or "",
+                    platform=cfg.get("platform", "pleroma"), host=cfg.get("host", "") or "",
                     modes=modes, config=json.dumps(json_cfg),
                 ))
                 count += 1

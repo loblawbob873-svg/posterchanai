@@ -137,7 +137,7 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                             <label>
                                 <input type="checkbox" id="socialNotifEnabled"> Relay social notifications to Telegram
                             </label>
-                            <small>Forward new notifications (mentions, replies, DMs, follows, reactions) from your connected Misskey/Pleroma/Nostr accounts to this Telegram chat. Reply to a forwarded message to respond on that platform. Misskey must be re-connected once for the new read permission.</small>
+                            <small>Forward new notifications (mentions, replies, DMs, follows, reactions) from your connected Pleroma/Nostr accounts to this Telegram chat. Reply to a forwarded message to respond on that platform.</small>
                         </div>
 
                         <div class="form-group">
@@ -153,7 +153,7 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                     </fieldset>
                 </div>
 
-                <!-- Social Tab (Pleroma + Misskey) -->
+                <!-- Social Tab (Pleroma) -->
                 <div class="user-tab-content" id="user-tab-social">
                     
 
@@ -183,29 +183,6 @@ www.coindesk.com/price/xrp/news|XRP News"></textarea>
                         </div>
                     </fieldset>
 
-                    <fieldset style="margin-top: 24px;">
-                        <legend>Misskey Integration</legend>
-                        <p class="fieldset-info">Connect to a Misskey server to post notes directly from the Telegram bot's <code>post</code> command.</p>
-
-                        <div class="form-group">
-                            <label for="misskeyInstanceUrl">Instance URL</label>
-                            <input type="url" id="misskeyInstanceUrl" placeholder="https://misskey.example.com">
-                            <small>The full URL of your Misskey instance</small>
-                        </div>
-
-                        <div class="form-group" id="misskeyAuthSection">
-                            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="btn-primary" id="misskeyConnectBtn">Connect with MiAuth</button>
-                                <button type="button" class="btn-danger" id="misskeyDisconnectBtn" style="display: none;">Disconnect</button>
-                            </div>
-                            <div id="misskeyStatus" class="test-result" style="margin-top: 8px;"></div>
-                            <small>MiAuth opens a new tab on your Misskey instance to authorize PosterChanAI. No password is shared.</small>
-                        </div>
-
-                        <div class="form-group" id="misskeyConnectedInfo" style="display: none;">
-                            <div class="settings-status success" id="misskeyConnectedMsg"></div>
-                        </div>
-                    </fieldset>
 
                     <fieldset style="margin-top: 24px;">
                         <legend>Nostr Integration</legend>

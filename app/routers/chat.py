@@ -286,8 +286,12 @@ async def normalize_command_result(db, user, conversation_id, result, storage_se
             try:
                 if chat_store.enabled(db):
                     import base64 as _b64g
+                    # Extension follows the ACTUAL bytes: generated images are compressed to JPEG now
+                    # (see _geni's `mime`), and a .png holding JPEG mislabels the blob's content-type
+                    # for everything that serves it by extension.
+                    _gext = "jpg" if result.get("mime") == "image/jpeg" else "png"
                     generated_image_path = await _save_artifact_blossom(   # fresh session (slow gen kills the held conn)
-                        user.id, conversation_id, _b64g.b64decode(result["image"]), "png")
+                        user.id, conversation_id, _b64g.b64decode(result["image"]), _gext)
                 else:
                     generated_image_path = storage_service.save_image(user.username, conversation_id, result["image"], "generated")
             except Exception as save_err:

@@ -41,10 +41,6 @@ TIMEZONE = os.getenv("TIMEZONE", "MST")
 FEDI_TIMELINE_ROOM_ID = os.getenv("FEDI_TIMELINE_ROOM_ID", "!MaaoDPUoNpHtiDMJAQ:chat.poster.place")
 # SSL verification (set "false" for self-signed certs)
 
-# Misskey Configuration
-MISSKEY_SERVER = os.getenv("MISSKEY_SERVER")
-MISSKEY_USERNAME = os.getenv("MISSKEY_USERNAME")
-MISSKEY_ACCESS_TOKEN = os.getenv("MISSKEY_ACCESS_TOKEN")
 
 # Nostr Configuration. Identity is a secret key (nsec/hex); posts are signed events
 # published to multiple relays; media goes to an external Blossom/NIP-96 host (NOT the

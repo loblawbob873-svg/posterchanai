@@ -6,9 +6,8 @@ import time
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Poster Chan AI Bot for Pleroma, Misskey and Nostr")
+    parser = argparse.ArgumentParser(description="Poster Chan AI Bot for Pleroma and Nostr")
     parser.add_argument(
-        "--misskey", action="store_true", help="Enable Misskey bot functionality"
     )
     parser.add_argument(
         "--image", action="store_true", help="Post Images every so often"
@@ -106,8 +105,8 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one platform is specified
-    if not args.misskey and not args.nostr and not args.dvm and not args.chess and not args.ttt and not args.hangman and not args.connect4 and not args.blackjack and not args.holdem and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
-        print("ERROR: Please specify at least one mode: --misskey, --nostr, --dvm, --chess, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
+    if not args.nostr and not args.dvm and not args.chess and not args.ttt and not args.hangman and not args.connect4 and not args.blackjack and not args.holdem and not args.nitter and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
+        print("ERROR: Please specify at least one mode: --nostr, --dvm, --chess, --nitter, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
         return
 
 
@@ -138,11 +137,11 @@ def main():
             from nitterListener import nitter_poster
             print("Starting Nitter RSS poster mode...")
             nitter_poster()
-        # Run in a thread when combined with a listener (--pleroma/--misskey/--nostr)
+        # Run in a thread when combined with a listener (--pleroma/--nostr)
         # or a daemon, so it doesn't block them; run directly when it's the only mode.
         # (Omitting --nostr here made nitter run directly + return, so a --nostr --nitter
         # bot never started its Nostr listener.)
-        if args.misskey or args.pleroma or args.nostr or threads or has_daemon:
+        if args.pleroma or args.nostr or threads or has_daemon:
             t = threading.Thread(target=run_nitter, daemon=True)
             t.start()
             threads.append(t)
@@ -150,28 +149,6 @@ def main():
             run_nitter()
             return
 
-    # Misskey listener (can run alongside --blockbot, etc.)
-    if args.misskey:
-        def run_misskey():
-            from misskeyListener import process_mentions
-            print("Starting Misskey listener...")
-            while True:
-                try:
-                    process_mentions()
-                except Exception as e:
-                    print(f"[ERROR] process_mentions failed: {e}", flush=True)
-                time.sleep(20)
-        if threads or has_daemon:
-            # Run in thread if other listeners running or daemon mode needed
-            t = threading.Thread(target=run_misskey, daemon=True)
-            t.start()
-            threads.append(t)
-        else:
-            # Run directly if only mode
-            run_misskey()
-            return
-
-    # Pleroma listener (can run alongside --blockbot, etc.)
     if args.pleroma:
         def run_pleroma():
             from pleromaListener import process_notifications
@@ -374,19 +351,16 @@ def main():
             ai_ping()
             time.sleep(90)
     elif args.image:
-        from config import MISSKEY_SERVER
         from config import PLEROMA_ENDPOINT
         from config import NOSTR_NSEC
         imageposter = None
-        if MISSKEY_SERVER:
-            from misskeyListener import imageposter
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             from pleromaListener import imageposter
         elif NOSTR_NSEC:
             from nostrListener import imageposter
         if imageposter is None:
-            print("ERROR: image bot has no platform configured (need MISSKEY_SERVER, "
-                  "PLEROMA_ENDPOINT, or NOSTR_NSEC)")
+            print("ERROR: image bot has no platform configured (need "
+                  "PLEROMA_ENDPOINT or NOSTR_NSEC)")
             return
         print("Starting Image Poster mode (one-shot)...")
         # One-shot mode - post once and exit (botctl handles scheduling)
@@ -403,130 +377,84 @@ def main():
         print("Starting Auto-post preview (no posting)...")
         autopost(print_only=True)
     elif args.blockbot:
-        from blockbot import background, misskey_background, waitToStart
-        from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+        from blockbot import background, waitToStart
+        from config import PLEROMA_ENDPOINT
         waitToStart()
-        # Choose daemon based on platform configuration
-        if MISSKEY_SERVER:
-            print("Starting Misskey blockbot daemon...")
-            misskey_background()
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             print("Starting Pleroma blockbot daemon...")
             background()
         else:
-            print("ERROR: Neither MISSKEY_SERVER nor PLEROMA_ENDPOINT is configured")
+            print("ERROR: PLEROMA_ENDPOINT is not configured")
             return
     elif args.blocks:
-        from blockbot import blocks, misskey_blocks, init_db
-        from config import MISSKEY_SERVER
+        from blockbot import blocks, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_blocks(print_only=False)
-        else:
-            blocks(print_only=False)
+        blocks(print_only=False)
     elif args.blocks_print:
-        from blockbot import blocks, misskey_blocks, init_db
-        from config import MISSKEY_SERVER
+        from blockbot import blocks, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_blocks(print_only=True)
-        else:
-            blocks(print_only=True)
+        blocks(print_only=True)
     elif args.scalps:
-        from blockbot import scalps, misskey_scalps, init_db
-        from config import MISSKEY_SERVER
+        from blockbot import scalps, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_scalps(print_only=False)
-        else:
-            scalps(print_only=False)
+        scalps(print_only=False)
     elif args.scalps_print:
-        from blockbot import scalps, misskey_scalps, init_db
-        from config import MISSKEY_SERVER
+        from blockbot import scalps, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_scalps(print_only=True)
-        else:
-            scalps(print_only=True)
+        scalps(print_only=True)
     elif args.fba:
         from blockbot import fba
         fba()
     elif args.topposts:
-        from engagement import daily_top_posts, misskey_daily_top_posts, post_active_user_stats, misskey_post_active_user_stats, init_db
-        from config import MISSKEY_SERVER
+        from engagement import daily_top_posts, post_active_user_stats, init_db
         init_db()
         try:
-            if MISSKEY_SERVER:
-                misskey_daily_top_posts(print_only=False)
-                time.sleep(5)  # Brief delay between posts
-                misskey_post_active_user_stats(print_only=False)
-            else:
-                daily_top_posts(print_only=False)
-                time.sleep(5)  # Brief delay between posts
-                post_active_user_stats(print_only=False)
+            daily_top_posts(print_only=False)
+            time.sleep(5)  # Brief delay between posts
+            post_active_user_stats(print_only=False)
         except KeyboardInterrupt:
             print("\n\nShutting down...")
             return
     elif args.topposts_print:
-        from engagement import daily_top_posts, misskey_daily_top_posts, post_active_user_stats, misskey_post_active_user_stats, init_db
-        from config import MISSKEY_SERVER
+        from engagement import daily_top_posts, post_active_user_stats, init_db
         init_db()
         try:
-            if MISSKEY_SERVER:
-                misskey_daily_top_posts(print_only=True)
-                print("\n--- DAU/MAU Stats ---\n")
-                misskey_post_active_user_stats(print_only=True)
-            else:
-                daily_top_posts(print_only=True)
-                print("\n--- DAU/MAU Stats ---\n")
-                post_active_user_stats(print_only=True)
+            daily_top_posts(print_only=True)
+            print("\n--- DAU/MAU Stats ---\n")
+            post_active_user_stats(print_only=True)
         except KeyboardInterrupt:
             print("\n\nShutting down...")
             return
     elif args.welcome:
-        from welcomebot import background, misskey_background, waitToStart, init_db
-        from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+        from welcomebot import background, waitToStart, init_db
+        from config import PLEROMA_ENDPOINT
         init_db()
         waitToStart()
-        if MISSKEY_SERVER:
-            print("Starting Misskey welcome bot daemon...")
-            misskey_background()
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             print("Starting Pleroma welcome bot daemon...")
             background()
         else:
-            print("ERROR: Neither MISSKEY_SERVER nor PLEROMA_ENDPOINT is configured")
+            print("ERROR: PLEROMA_ENDPOINT is not configured")
             return
     elif args.welcome_print:
-        from welcomebot import welcome_pleroma, welcome_misskey, init_db
-        from config import MISSKEY_SERVER
+        from welcomebot import welcome_pleroma, init_db
         init_db()
-        if MISSKEY_SERVER:
-            welcome_misskey(print_only=True)
-        else:
-            welcome_pleroma(print_only=True)
+        welcome_pleroma(print_only=True)
     elif args.report:
-        from reportbot import background, misskey_background, waitToStart, init_db
-        from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+        from reportbot import background, waitToStart, init_db
+        from config import PLEROMA_ENDPOINT
         init_db()
         waitToStart()
-        if MISSKEY_SERVER:
-            print("Starting Misskey report bot daemon...")
-            misskey_background()
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             print("Starting Pleroma report bot daemon...")
             background()
         else:
-            print("ERROR: Neither MISSKEY_SERVER nor PLEROMA_ENDPOINT is configured")
+            print("ERROR: PLEROMA_ENDPOINT is not configured")
             return
     elif args.report_print:
-        from reportbot import report_pleroma, report_misskey, init_db
-        from config import MISSKEY_SERVER
+        from reportbot import report_pleroma, init_db
         init_db()
-        if MISSKEY_SERVER:
-            report_misskey(print_only=True)
-        else:
-            report_pleroma(print_only=True)
+        report_pleroma(print_only=True)
     elif args.hashtagbot:
         from hashtagbot import background, waitToStart, get_config
         get_config()
@@ -538,35 +466,24 @@ def main():
         get_config()
         post_trending_hashtags(print_only=True)
     elif args.unfollowbot:
-        from unfollowbot import background, misskey_background, waitToStart, init_db
-        from config import MISSKEY_SERVER, PLEROMA_ENDPOINT
+        from unfollowbot import background, waitToStart, init_db
+        from config import PLEROMA_ENDPOINT
         init_db()
         waitToStart()
-        if MISSKEY_SERVER:
-            print("Starting Misskey unfollowbot daemon...")
-            misskey_background()
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             print("Starting Pleroma unfollowbot daemon...")
             background()
         else:
-            print("ERROR: Neither MISSKEY_SERVER nor PLEROMA_ENDPOINT is configured")
+            print("ERROR: PLEROMA_ENDPOINT is not configured")
             return
     elif args.unfollows:
-        from unfollowbot import pleroma_unfollows, misskey_unfollows, init_db
-        from config import MISSKEY_SERVER
+        from unfollowbot import pleroma_unfollows, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_unfollows(print_only=False)
-        else:
-            pleroma_unfollows(print_only=False)
+        pleroma_unfollows(print_only=False)
     elif args.unfollows_print:
-        from unfollowbot import pleroma_unfollows, misskey_unfollows, init_db
-        from config import MISSKEY_SERVER
+        from unfollowbot import pleroma_unfollows, init_db
         init_db()
-        if MISSKEY_SERVER:
-            misskey_unfollows(print_only=True)
-        else:
-            pleroma_unfollows(print_only=True)
+        pleroma_unfollows(print_only=True)
 
 if __name__ == "__main__":
     main()

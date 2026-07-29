@@ -343,9 +343,6 @@ def _read_config() -> dict:
             # feed notes once over the limit). 0 = unlimited; the 30-day age retention is the only
             # feed cleanup, and registered users' + direct-published events are always preserved.
             "max_events": gi("nostr_relay_max_events", 0),
-            # Nostr↔Fediverse bridge: optional shorter retention for the mirrored global-timeline
-            # firehose (origin='bridge'). 0 = keep forever (the general retention_days prune skips bridge).
-            "bridge_retention_days": gi("fedi_bridge_retention_days", 0),
             "sync_budget_sec": gi("nostr_relay_sync_budget_sec", 100), # per-tick sync work budget
             "wot_refresh_sec": gi("nostr_relay_wot_refresh_sec", 604800),  # weekly (was daily)
             "wot_refresh_hour": gi("nostr_relay_wot_refresh_hour", 4),    # UTC hour for the nightly full crawl
@@ -446,6 +443,9 @@ def _read_config() -> dict:
             "max_filters_per_req": _MAX_FILTERS_PER_REQ,
         }
         cfg["operator"] = _collect_operator_pubkeys(db)
+        # Preserve is a SUPERSET of operator (adds NIP-05 holders + bridged users' puppets) and is
+        # kept separate on purpose — operator grants publish/WoT/DM rights, preserve grants nothing.
+        cfg["preserve"] = _collect_preserve_pubkeys(db)
         # Nostr↔Fediverse bridge: the secret our deterministic fedi "puppet" keys derive from. The
         # relay validates a puppet event by re-deriving its pubkey (see nostr.bridge_keys), so it
         # needs the same secret the app signs with. Local keystore only — never leaves the node.
@@ -530,6 +530,55 @@ def _collect_operator_pubkeys(db) -> list:
     return list(out)
 
 
+def _collect_preserve_pubkeys(db) -> list:
+    """Authors whose events are NEVER auto-pruned.
+
+    A SUPERSET of the operator set, and deliberately NOT the same list: being an operator grants
+    publish/WoT/DM privileges, so that list must stay exactly this node's own keys. Preservation
+    grants nothing — it only says "this is somebody's data, not reconstructable feed content".
+
+    Two groups the operator set misses, both of which were being aged out:
+      - anyone holding a NIP-05 on THIS server (the operator-curated `nostr_relay_nip05_names`);
+      - the PUPPET of a local user's linked fediverse account. A bridged user's own fedi posts are
+        mirrored under their PUPPET key, never under their npub, so preserving the npub alone left
+        their own history to be deleted by Mirror retention.
+
+    Puppet NIP-05 names are NOT read here. Every puppet auto-registers one (alice_host@domain), so
+    honouring those would preserve the entire mirror and Mirror retention would never delete anything.
+    """
+    out = set(_collect_operator_pubkeys(db))
+    # NIP-05 holders on this server — the operator-curated list only.
+    try:
+        from app.services import settings_store   # module-local, as everywhere else in this file
+        # SAME default _read_config serves NIP-05 from. Passing "" here instead would preserve nobody
+        # on a node that never set the key, while the relay still answers /.well-known for the built-in
+        # names — "verified here" and "never deleted here" must be the same list.
+        names, _ = _parse_nip05(
+            settings_store.get("nostr_relay_nip05_names", _DEFAULT_NIP05_NAMES) or _DEFAULT_NIP05_NAMES, "")
+        out |= {pk for pk in names.values() if pk}
+    except Exception as e:
+        # WARNING, not debug: a silent partial collection here means the next prune deletes data it
+        # was supposed to keep. It must be visible in the journal, not swallowed.
+        logger.warning("[nostr-relay] nip05 preserve collection FAILED (%s) — those authors are "
+                       "unprotected this pass", e)
+    # Puppets of local users' linked fediverse accounts.
+    try:
+        from sqlalchemy import func
+        from app.models import FediPuppet, User
+        accts = {(a or "").strip().lower().lstrip("@")
+                 for (a,) in db.query(User.pleroma_acct).filter(User.pleroma_acct.isnot(None)).all()}
+        accts.discard("")
+        if accts:
+            for (pk,) in db.query(FediPuppet.pubkey_hex).filter(
+                    func.lower(FediPuppet.acct).in_(accts)).all():
+                if pk:
+                    out.add(pk)
+    except Exception as e:
+        logger.warning("[nostr-relay] bridged-user puppet preserve collection FAILED (%s) — bridged "
+                       "users' mirrored posts are unprotected this pass", e)
+    return list(out)
+
+
 async def _refresh_preserve(store) -> None:
     """UNION the current operators (registered users/bots/keys) + persisted PINNED authors (explicitly
     backfilled histories, in relay kv) into the store's preserve set, right before a prune/purge.
@@ -542,7 +591,7 @@ async def _refresh_preserve(store) -> None:
         from app.database import SessionLocal
         db = SessionLocal()
         try:
-            return set(_collect_operator_pubkeys(db))
+            return set(_collect_preserve_pubkeys(db))
         finally:
             db.close()
     try:
@@ -568,8 +617,7 @@ async def _main(cfg: dict) -> None:
     logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
     store = RelayStore(
         cfg["pg_dsn"],
-        max_events=cfg["max_events"], retention_days=cfg["retention_days"],
-        bridge_retention_days=cfg.get("bridge_retention_days", 0))
+        max_events=cfg["max_events"], retention_days=cfg["retention_days"])
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(_relay_loop_exception_handler)
     store.open(loop)
@@ -577,7 +625,8 @@ async def _main(cfg: dict) -> None:
     gate.set_operator(cfg["operator"])
     gate.set_blocked(cfg["blocked_pubkeys"])
     gate.set_bridge_secret(cfg.get("bridge_secret"))   # validate fediverse puppet events
-    store.set_preserve_pubkeys(cfg["operator"])   # local users' notes are never pruned
+    store.set_preserve_pubkeys(cfg.get("preserve") or cfg["operator"])   # never pruned: local users,
+    # NIP-05 holders on this server, and bridged users' puppets (their fedi posts mirror under those)
     try:                                            # + persisted PINNED authors (backfilled histories)
         _pinned = await store.kv_get("pinned_pubkeys")
         if _pinned:
@@ -964,9 +1013,10 @@ async def _main(cfg: dict) -> None:
                             cfg["blocked_relays"] = fresh["blocked_relays"]
                             cfg["block_bridged"] = fresh.get("block_bridged", False)   # proxy-tag filter, live
                             cfg["operator"] = fresh["operator"]
+                            cfg["preserve"] = fresh.get("preserve") or fresh["operator"]
                             gate.set_blocked(cfg["blocked_pubkeys"])
                             gate.set_operator(cfg["operator"])              # gate CAN shrink (revoke removed operators)
-                            store.extend_preserve_pubkeys(cfg["operator"])  # preserve is grow-only (keeps pinned)
+                            store.extend_preserve_pubkeys(cfg["preserve"])  # preserve is grow-only (keeps pinned)
                             # Re-mark bridged accounts in the live gate (load_from_store doesn't keep them).
                             if cfg["blocked_relays"]:
                                 asyncio.create_task(_safe(_mark_blocked_relays(store, gate, cfg["blocked_relays"])))
@@ -1028,7 +1078,6 @@ async def _main(cfg: dict) -> None:
                             fresh = _read_config()
                             store.retention_days = fresh["retention_days"]
                             store.max_events = fresh["max_events"]
-                            store.bridge_retention_days = fresh.get("bridge_retention_days", 0)
                             cfg["retention_days"] = fresh["retention_days"]
                             cfg["max_events"] = fresh["max_events"]
                             logger.info("[nostr-relay] control: store config reloaded "

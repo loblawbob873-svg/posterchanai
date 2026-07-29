@@ -1,9 +1,9 @@
 """Auto-split from webhook.py: the message half of _handle_telegram_update."""
 from .messages_command import _msg_command
 from .messages_chat import _msg_chat
-from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _misskey_post_cache, _news_post_cache, _pleroma_post_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
-from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _character_prompt_keyboard, _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _media_action_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
-from .senders import User, _has_misskey, _has_pleroma, _media_action_cache, _misskey_post_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _pleroma_post_cache, _send_4chan_catalog, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
+from ._common import ChatService, CommandService, Conversation, Message, User, _CLIP_END_PROMPT, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _MEDIA_ACTION_TTL, _MEDIA_GROUP_CACHE, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _link_action_cache, _media_action_cache, _news_post_cache, _pleroma_post_cache, _youtube_action_cache, asyncio, datetime, logger, re, telegram_service, time
+from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _character_prompt_keyboard, _has_nostr, _has_pleroma, _help_main_keyboard, _media_action_keyboard, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrent_nav_keyboard, re
+from .senders import User, _has_pleroma, _media_action_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _pleroma_post_cache, _send_4chan_catalog, _send_active_torrents, _send_flashcard, _send_nyaa_results, _send_png_as_document, _send_screenshot, _send_torrent_results, _strip_cmd_links, _torrent_nav_keyboard, asyncio, datetime, logger, re, telegram_service, time
 
 # Telegram matches command words LITERALLY (it never calls parse_command), so it needs its own list —
 # but only of the NON-effect commands. The effects come from CommandService, because a second copy of
@@ -980,9 +980,9 @@ async def _handle_message(update, db):
                         User.telegram_chat_id == chat_id,
                         User.telegram_enabled == True
                     ).first()
-                    if _geni_user and (_has_misskey(_geni_user) or _has_pleroma(_geni_user) or _has_nostr(_geni_user)):
+                    if _geni_user and (_has_pleroma(_geni_user) or _has_nostr(_geni_user)):
                         _geni_caption = response_content or "Generated image"
-                        # Store image BYTES so the Misskey/Pleroma share paths (which all
+                        # Store image BYTES so the Pleroma/Nostr share paths (which all
                         # pass this as image_bytes to send_image) get raw bytes — matching the
                         # pasted-image path. image_data from generate_image is base64 (optionally
                         # a data: URL); storing the base64 string broke image posts on all
@@ -998,7 +998,6 @@ async def _handle_message(update, db):
                                 _geni_bytes = None
                         # Store caption in platform caches using the same offer-post format so
                         # message-text recovery strips the suffix correctly on restart
-                        _misskey_post_cache[chat_id] = _geni_caption
                         _pleroma_post_cache[chat_id] = _geni_caption
                         await _offer_social_post(
                             chat_id, _geni_caption, _geni_user, telegram_service,
@@ -1127,7 +1126,7 @@ async def _handle_message(update, db):
                     _share_u = db.query(User).filter(
                         User.telegram_chat_id == chat_id, User.telegram_enabled == True
                     ).first() if _share else None
-                    if _share and _share_u and (_has_misskey(_share_u) or _has_pleroma(_share_u) or _has_nostr(_share_u)):
+                    if _share and _share_u and (_has_pleroma(_share_u) or _has_nostr(_share_u)):
                         _media_action_cache[chat_id] = {
                             "attachments": [(_share.get("filename", "file"), _share["data"], _share.get("content_type", ""))],
                             "ts": time.time(),

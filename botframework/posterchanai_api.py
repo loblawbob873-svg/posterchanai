@@ -56,10 +56,39 @@ def _login_and_get_token():
         return None
 
 
+def _compress_generated(data: bytes) -> bytes:
+    """Run a freshly generated image through the app's own compressor before a bot uploads it.
+
+    The backend returns a full-size PNG, which is what every bot was posting: each one costs the
+    instance its full size on upload and again for every fetch by every federating server. This is
+    the SAME `media_service.compress_image` the `compress` command uses (longest edge 2048, JPEG
+    q70), so bot images get the compression the rest of the app already applies.
+
+    Best-effort by design: if Pillow or the app package isn't importable in this process, or the
+    bytes aren't a decodable image, return the ORIGINAL. A bot must still be able to post — a
+    bandwidth optimisation is never worth turning a working post into a failed one. Likewise, if the
+    re-encode comes out BIGGER (already-optimised or small source), keep the original.
+    """
+    if not data:
+        return data
+    try:
+        from app.services.media_service import compress_image
+        out = compress_image(data)
+        if out and len(out) < len(data):
+            print(f"[POSTERCHANAI] compressed image {len(data)} -> {len(out)} bytes "
+                  f"({100 - int(100 * len(out) / len(data))}% smaller)")
+            return out
+        return data
+    except Exception as e:
+        print(f"[POSTERCHANAI] image compression skipped ({type(e).__name__}: {e}) — posting original")
+        return data
+
+
 def generate_image_bytes(prompt):
     """
     Generate image using posterchanai's native diffusers backend.
-    Returns image bytes or None.
+    Returns image bytes or None. The bytes are compressed on the way out (see _compress_generated),
+    so every bot image path — listeners, image poster, DVM — gets it from this one place.
     """
     try:
         # Check if API key is set and not empty
@@ -141,7 +170,7 @@ def generate_image_bytes(prompt):
             if image_b64.startswith("data:image"):
                 # Extract base64 part
                 image_b64 = image_b64.split(",", 1)[1]
-            return base64.b64decode(image_b64)
+            return _compress_generated(base64.b64decode(image_b64))
 
         print(f"[POSTERCHANAI] No image in response. Keys: {list(result.keys())}")
         return None
@@ -295,7 +324,7 @@ def process_media(command, arg, media, brand_handle=None, brand_avatar=None):
     `media` is a list of (filename, data_bytes, content_type) tuples. Returns
     (summary_text, output_files) where output_files is a list of
     {"filename", "data" (raw bytes), "content_type"}. On failure returns
-    (error_message, []). Shared by the Misskey and Pleroma listeners (and mirrors
+    (error_message, []). Shared by the Pleroma listener (and mirrors
     the shared backend command endpoint) so they all reuse the
     backend's single HW-accelerated ffmpeg/Pillow path.
 
@@ -357,7 +386,7 @@ def parse_ytdl_postaction(text):
       compress            — shrink it (applied after clip)
     Returns (url, clip_str_or_None, compress_bool). `clip_str` is "start end"
     (e.g. "0:10 0:30") suitable for passing straight to the backend. Shared by
-    the Pleroma and Misskey listeners so the syntax is identical.
+    the Pleroma listener so the syntax is identical.
     """
     import re as _re
     text = text or ""
@@ -382,7 +411,7 @@ def fetch_ytdl_media(url, video=False, clip=None, compress=False):
     """Download YouTube/X media via posterchanai's /api/media/ytdl endpoint.
 
     Identity-agnostic (authenticated by the bot's API key, not a linked user), so
-    the Misskey and Pleroma listeners share it — mirrors the
+    the Pleroma listener uses it — mirrors the
     ytdl. Audio (MP3) by default; video=True fetches MP4. The optional clip
     ("start end") and compress modifiers post-process the video server-side
     (clip → compress). Returns (bytes, mime, None) on success or
@@ -414,7 +443,7 @@ def capture_screenshot(url):
     """Capture a full-page screenshot of a website on the posterchanai backend.
 
     Returns (png_bytes, None) on success or (None, error_message) on failure.
-    Shared by the Misskey and Pleroma listeners, which reuse the backend's single headless
+    Shared by the Pleroma listener, which reuses the backend's single headless
     Chrome/Firefox path.
     """
     api = f"{POSTERCHANAI_API_ENDPOINT}/api/media/screenshot"
@@ -441,7 +470,7 @@ def render_post_card(handle, text, display_name="", timestamp="", media_bytes=No
     """Render a tweet-style post card on the backend (a screenshot of HTML built from
     these fields) and return (png_bytes, None) or (None, error_message).
 
-    Used by the Nitter poster so Misskey/Pleroma get an image of the post
+    Used by the Nitter poster so Pleroma gets an image of the post
     instead of a bare link — link previews fail because Nitter's status pages are
     empty. Tweet media and the author's profile picture are pre-fetched here and sent
     as bytes (the server does no outbound fetch). Mirrors capture_screenshot()'s shape.

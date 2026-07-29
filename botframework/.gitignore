@@ -17,7 +17,6 @@ bots_config_export.json
 .nitter_seen.json
 .nitter_seen.json.tmp
 *_snapshot.json
-.misskey_following_snapshot.json
 .pleroma_following_snapshot.json
 services/
 *.backup

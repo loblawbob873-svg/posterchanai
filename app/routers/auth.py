@@ -571,10 +571,6 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         telegram_notifications=current_user.telegram_notifications if hasattr(current_user, 'telegram_notifications') else "",
         telegram_pending_key=current_user.telegram_key if hasattr(current_user, 'telegram_key') else None,
         telegram_key_expires_at=current_user.telegram_key_expires_at if hasattr(current_user, 'telegram_key_expires_at') else None,
-        # Misskey settings
-        misskey_enabled=current_user.misskey_enabled if hasattr(current_user, 'misskey_enabled') else False,
-        misskey_instance_url=current_user.misskey_instance_url if hasattr(current_user, 'misskey_instance_url') else None,
-        misskey_has_api_token=bool(current_user.misskey_api_token) if hasattr(current_user, 'misskey_api_token') else False,
         # Pleroma settings
         pleroma_enabled=current_user.pleroma_enabled if hasattr(current_user, 'pleroma_enabled') else False,
         pleroma_instance_url=current_user.pleroma_instance_url if hasattr(current_user, 'pleroma_instance_url') else None,
@@ -679,13 +675,6 @@ def update_user_settings(
     if settings.telegram_notifications is not None:
         current_user.telegram_notifications = settings.telegram_notifications
 
-    # Save Misskey settings
-    if settings.misskey_enabled is not None:
-        current_user.misskey_enabled = settings.misskey_enabled
-    if settings.misskey_instance_url is not None:
-        current_user.misskey_instance_url = settings.misskey_instance_url.strip() if settings.misskey_instance_url else None
-    if settings.misskey_api_token is not None:
-        current_user.misskey_api_token = settings.misskey_api_token if settings.misskey_api_token else None
 
     # Nostr settings (the secret key is linked via /api/nostr/connect; here we let the user
     # toggle/disable and tweak relays + media host without re-pasting the key).

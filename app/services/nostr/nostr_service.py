@@ -1,4 +1,4 @@
-"""High-level Nostr client — the app-facing facade (mirrors misskey_service's surface).
+"""High-level Nostr client — the app-facing facade.
 
 Used by the user-linking router, the notification relay, and the bot adapter.
 Posting publishes to every configured relay; reading queries them all. Media is

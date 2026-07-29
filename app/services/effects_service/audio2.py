@@ -396,6 +396,45 @@ def add_seinfeld(image_data: bytes, source_filename: str = "image.jpg") -> bytes
     return image_audio_to_video(image_data, source_filename, audio, duration=_SEINFELD_DURATION)
 
 
+def add_jerry(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Composite the Jerry stand-up cutout over an image, set to the Seinfeld theme. MP4 bytes.
+
+    `seinfeld` is the same theme over your UNTOUCHED image; `jerry` puts Jerry in the frame doing the
+    bit. Deliberately reuses _seinfeld_audio_path — one mp3 on disk, two effects — and composites with
+    the shared reaction-overlay helper (carl/soyjack), so the cutout is placed by the same rules.
+    """
+    from app.services.media_service import image_audio_to_video
+    from .character import _add_reaction_overlay
+    audio = _seinfeld_audio_path()
+    if not audio:
+        raise RuntimeError("Seinfeld audio (assets/seinfeld.mp3) is missing on the server")
+    still = _add_reaction_overlay(image_data, "jerry")   # raises if the cutout art is missing
+    return image_audio_to_video(still, source_filename, audio, duration=_SEINFELD_DURATION)
+
+
+def jerry_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a jerry MP4. Mirrors seinfeld_attachments."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_jerry(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_jerry.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🎤 Jerry\n\n🎤 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"jerry failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
 def seinfeld_attachments(
     attachments: List[Tuple[str, bytes, str]],
 ) -> Tuple[List[OutputFile], str]:

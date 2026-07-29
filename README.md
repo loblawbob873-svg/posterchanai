@@ -6,7 +6,7 @@
 
 ### Your own AI assistant — self-hosted, private, and ridiculously capable.
 
-**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Misskey, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
+**Nostr-native at the core:** a built-in web-of-trust relay (on PostgreSQL) *is* the datastore — your settings, accounts, and AI chats are **encrypted Nostr events you own**, and the app's face is a full cyberpunk **Nostr web client**. One FastAPI backend that also does chat, image generation, voice, email, news, torrents, and runs autonomous bots on **Telegram, Pleroma & Nostr**. Cloud LLMs or fully local. Your hardware, your keys, your rules.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -31,7 +31,7 @@
 - 🟣 **Nostr-native datastore** — the built-in **web-of-trust relay** (backed by PostgreSQL) is the source of truth. Settings, accounts, API keys, and AI chats live as **NIP-44-encrypted `kind-30078` events** signed by your node — not rows in some app DB. Log in with your **Nostr key** (NIP-07/NIP-46), and the web UI is a full Nostr client. No SQLite, no proprietary schema you don't control.
 - 🏠 **Truly self-hosted** — runs on your own box, no telemetry, single-admin multi-user. Your conversations and keys never leave your network; the only local secret is a gitignored keyfile.
 - 🔌 **Bring any model** — cloud (any OpenAI-compatible API) or local: **Ollama** or **llama.cpp** (CPU / CUDA / HIP / **Intel Arc SYCL**). Round-robin load-balance across several backends.
-- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Misskey / Nostr** bots from a single admin tab.
+- 🤖 **It's also a bot platform** — drive everything from **Telegram**, and run autonomous **Pleroma / Nostr** bots from a single admin tab.
 - 🎨 **More than chat** — image generation, TTS/STT, website screenshots, YouTube/X summarize & download, media tools, interactive study flashcards, email, news, budget, torrents — all behind one chat box.
 - 🛠️ **Hackable & honest** — thin routers, services for logic, an interactive installer, and an OpenAI-compatible `/v1/` endpoint that agentic coding clients (e.g. opencode) can drive against your local models.
 
@@ -68,7 +68,7 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 - **Music generation** (`musicgeni`): text-to-song via a self-hosted [ACE-Step](https://github.com/ace-step/ACE-Step-1.5) server (fits a 12 GB GPU); load-balanced + VRAM-swapped like image gen, with a spoken watermark. Web UI + Telegram. See [docs/MUSIC.md](docs/MUSIC.md)
 - **Video generation** (`videogeni`): native in-process text-to-video via **diffusers** — point it at *any* model (Wan2.1 / LTX / CogVideoX, auto-detected) to match your GPU; runs on CUDA / Intel Arc (XPU) / AMD (ROCm), load-balanced + VRAM-swapped across nodes like image gen, with a branded watermark and optional 720p/1080p upscale. Web UI + Telegram. See [docs/VIDEO.md](docs/VIDEO.md)
 - **Website screenshots**: full-page capture with the `screenshot <url>` command (also `shot` / `ss`) — works in the web UI and Telegram. Uses headless Chrome (JS-aware, so SPAs render), Firefox fallback (see [Requirements](#requirements)).
-- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, Misskey, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
+- **YouTube / X**: summarize a video **from its transcript** (so summaries and link-posts reflect the actual content, not the page), grab thumbnails, or **download** audio (MP3) / video with the `ytdl` command — in the web UI, Telegram, and Pleroma. A video download can be trimmed and/or shrunk in one command (`ytdl video <url> clip 0:10 0:30 compress`); Telegram also offers these as buttons after the download
 
 ### PIM & productivity
 
@@ -84,16 +84,16 @@ The app's face is a full cyberpunk **Nostr web client** (PWA at `/client`, plus 
 
 ### Bots & social
 
-- **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma/Misskey reply bots,
+- **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma reply bots,
   nitter relays, plus blockbot/welcome/report/hashtag/unfollow daemons — from a
   single admin tab (add/edit, On/Off, live status), backed by the database. The bot framework is
   **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
   hand-edited config file. See [Bot manager](docs/BOTS.md).
 - **Telegram bot** drives chat, commands, and media from your phone
-- **Social posting** to **Misskey**, **Pleroma/Mastodon**, and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
-- **Social notification relay**: forward mentions/replies/DMs from Misskey/Pleroma/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
+- **Social posting** to **Pleroma/Mastodon** and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
+- **Social notification relay**: forward mentions/replies/DMs from Pleroma/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
 - **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects** and **Nitter→Nostr** feeds; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
-- **Fediverse ↔ Nostr bridge**: mirror a Misskey/Pleroma timeline (home/global/local) onto Nostr. Each fediverse author is published under a stable **puppet** key (derived deterministically, so an author keeps one npub across restarts and instances), with avatar + display name, custom emoji as NIP-30 tags, media, quote-posts, and replies threaded via NIP-10 markers. Federated copies are deduped on the canonical AP URI, so the same post arriving from two instances mirrors once.
+- **Fediverse ↔ Nostr bridge**: mirror a Pleroma timeline (home/global/local) onto Nostr. Each fediverse author is published under a stable **puppet** key (derived deterministically, so an author keeps one npub across restarts and instances), with avatar + display name, custom emoji as NIP-30 tags, media, quote-posts, and replies threaded via NIP-10 markers. Federated copies are deduped on the canonical AP URI, so the same post arriving from two instances mirrors once.
   - **Write-back**: a reply, reaction or repost made on Nostr is performed **back** on the fediverse under the acting user's own linked account — not the bridge's.
   - **Personal plane** (opt-in per user): your own fediverse notifications arrive as the matching Nostr events, and your fedi DMs as **NIP-17** gift-wrapped Nostr DMs, keeping their direct visibility on reply.
 
@@ -224,7 +224,7 @@ The **installer** sets up the virtual environment, dependencies, optional GPU ba
 
 ### Social posting from the bots
 
-Connect a social account in **User Settings → Misskey / Pleroma**, then use
+Connect a social account in **User Settings → Pleroma**, then use
 the `post` command from the **Telegram** bot to publish.
 
 **Telegram** — reply to any message (a bot answer, a link, a photo) and send:
@@ -235,14 +235,14 @@ the `post` command from the **Telegram** bot to publish.
 | `post raw` | Shares the reply **exactly as written** — no rewrite (aliases: `verbatim`, `as-is`, `exact`) |
 | `post <instructions>` | Rewrites following your instructions, e.g. `post professional`, `post funny and short`, `post don't include links` |
 
-The bot then shows share buttons (**📣 Misskey / Pleroma**, **🚀 Post to All**,
+The bot then shows share buttons (**📣 Pleroma / Nostr**, **🚀 Post to All**,
 **❌ Skip**) for whichever platforms you've connected. Replying to a photo shares the
 image itself. The source URL is appended by default; `post don't include links` (or
 "no links", "without url", …) omits it.
 
 ### Social notifications to Telegram
 
-Forward new notifications from your connected **Misskey / Pleroma / Nostr** accounts to your
+Forward new notifications from your connected **Pleroma / Nostr** accounts to your
 linked Telegram chat, and reply to them without leaving Telegram. Enable it per-user in
 **User Settings → Telegram → "Relay social notifications to Telegram"** (the admin must also
 turn on the global switch in **Admin → Social → Social Notification Relay**, where the poll
@@ -251,10 +251,8 @@ interval is set).
 - New mentions, replies, DMs, follows, and reactions/boosts are forwarded as they arrive.
 - **Reply** to a forwarded message in Telegram to respond on the originating platform — your
   reply is posted as a reply to the original post (inheriting its visibility).
-- **Pleroma / Misskey:** DMs are direct-visibility mentions, so they arrive as normal
+- **Pleroma:** DMs are direct-visibility mentions, so they arrive as normal
   notifications and forward with full content; your reply stays `direct`.
-- **Misskey** must be **re-connected once** (User Settings → Misskey) so the new token includes
-  the `read:notifications` permission. Pleroma needs no changes.
 
 ### Remote node management
 
@@ -325,7 +323,7 @@ the Arc environment.
 | Path | Description |
 |------|-------------|
 | `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, mail, torrent, bots, etc.), services |
-| `botframework/` | Merged autonomous bot framework (Pleroma/Misskey/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
+| `botframework/` | Merged autonomous bot framework (Pleroma/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `run.py` | Server entry (uvicorn) |

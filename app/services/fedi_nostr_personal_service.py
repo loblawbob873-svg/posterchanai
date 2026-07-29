@@ -243,7 +243,7 @@ async def _deliver_one_notif(db: Session, port: int, user: User, instance_host: 
         if ntype == "mention" and status:
             post = _norm_pleroma(status)
             if not _is_public_audience(status):
-                # Any non-public-audience mention (direct/private DM, followers-only, Misskey specified/
+                # Any non-public-audience mention (direct/private DM, followers-only, specified/
                 # followers, or unknown) must NOT become a public note — that leaks it. Same allowlist
                 # guard as the mirror. Deliver it privately as a NIP-17 DM from the sender's puppet instead.
                 body = (post.get("text") or "").strip()

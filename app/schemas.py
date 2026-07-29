@@ -327,7 +327,7 @@ class SettingsResponse(BaseModel):
     uptime_alert_npubs: str = ""          # npubs to DM (one per line/comma; empty = the admin's own npub)
     # Nostr Stats Bot is now a per-bot FEATURE (Bot.config.stats_enabled), not a global setting —
     # see app/services/stats_bot_service.py + the Bots tab. (No global stats_bot_* keys.)
-    # Social notification relay (Misskey/Pleroma → Telegram)
+    # Social notification relay (Pleroma → Telegram)
     social_notif_enabled: str = "true"       # global kill-switch (on by default; per-user toggle in User Settings is the real control)
     social_notif_poll_seconds: str = "60"    # poll interval in seconds
     fedi_bridge_enabled: str = "false"          # master switch for the whole bridge (default off)
@@ -343,9 +343,6 @@ class SettingsResponse(BaseModel):
     # feature, which auto-creates a fediverse account for a native Nostr user via the Pleroma admin
     # API. Blank → fall back to the read access token (if that account has admin rights).
     fedi_bridge_admin_token: str = ""
-    # Optional shorter retention (days) for the mirrored firehose (relay origin='bridge'); 0 = use
-    # the relay's general retention. Puppet profiles are never pruned.
-    fedi_bridge_retention_days: str = "0"
     # Admin domain blocklist enforced AT INGEST: posts whose author host (or origin instance) matches
     # are never mirrored. One host per line/comma; a parent domain covers subdomains (mastodon.social
     # covers a.mastodon.social). Independent of the read account's own block/mute lists (also honored).
@@ -755,10 +752,6 @@ class UserSettingsUpdate(BaseModel):
     mail_accounts: Optional[List[dict]] = None  # List of {email, imap_server, imap_port, smtp_server, smtp_port, password}
     # Telegram settings — linking/unlinking managed via /api/telegram/*, not here
     telegram_notifications: Optional[str] = None
-    # Misskey settings
-    misskey_enabled: Optional[bool] = None
-    misskey_instance_url: Optional[str] = None
-    misskey_api_token: Optional[str] = None
     # Pleroma settings (read-only via /api/pleroma/connect; exposed here for display)
     pleroma_enabled: Optional[bool] = None
     pleroma_instance_url: Optional[str] = None
@@ -767,7 +760,7 @@ class UserSettingsUpdate(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Relay social notifications (Misskey/Pleroma) to Telegram
+    # Relay social notifications (Pleroma) to Telegram
     social_notif_enabled: Optional[bool] = None
     # Nostr ↔ Fediverse bridge: opt in to personal fedi DMs + notifications on the Nostr side
     fedi_bridge_enabled: Optional[bool] = None
@@ -796,10 +789,6 @@ class UserSettingsResponse(BaseModel):
     telegram_notifications: str = ""
     telegram_pending_key: Optional[str] = None       # Pending link key (exposed to owner only)
     telegram_key_expires_at: Optional[datetime] = None
-    # Misskey settings
-    misskey_enabled: bool = False
-    misskey_instance_url: Optional[str] = None
-    misskey_has_api_token: bool = False
     # Pleroma settings
     pleroma_enabled: bool = False
     pleroma_instance_url: Optional[str] = None
@@ -811,7 +800,7 @@ class UserSettingsResponse(BaseModel):
     nostr_relays: Optional[str] = None
     nostr_media_service: Optional[str] = None
     nostr_media_endpoint: Optional[str] = None
-    # Relay social notifications (Misskey/Pleroma) to Telegram
+    # Relay social notifications (Pleroma) to Telegram
     social_notif_enabled: bool = False
     # Nostr ↔ Fediverse bridge: personal fedi DMs + notifications mirrored to the Nostr side
     fedi_bridge_enabled: bool = False

@@ -250,12 +250,12 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_plain:
         
         if ai_result:
             logger.info(f"AI summarization successful, length: {len(ai_result)}")
-            # For markdown platforms (Pleroma/Misskey), use markdown format with bold header
+            # For markdown platforms (Pleroma), use markdown format with bold header
             # For plain-text channels, format AI output
             if not for_plain:
-                # Pleroma/Misskey: markdown format with bold header
+                # Pleroma: markdown format with bold header
                 formatted = f"**{source_display_name}:**\n\n{ai_result}"
-                logger.info(f"Pleroma/Misskey format: {len(formatted)} chars")
+                logger.info(f"Pleroma format: {len(formatted)} chars")
             else:
                 # plain text: format AI output through parser
                 formatted = f"{source_display_name}:\n\n{ai_result}"
@@ -279,7 +279,7 @@ def fetch_news_from_source(source_name: str, max_headlines: int = 10, for_plain:
                         # simple format (already correct, no formatting needed)
                         formatted_links.append(f"{text} - {url}")
                     else:
-                        # Pleroma/Misskey: markdown format
+                        # Pleroma: markdown format
                         formatted_links.append(f"- [{text}]({url})")
                     logger.debug(f"Formatted link {i+1}: {text[:50]}... -> {url[:50]}...")
                 else:

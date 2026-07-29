@@ -174,18 +174,17 @@ assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be pr
 class RelayStore:
     def __init__(self, dsn: str = None, *,
                  read_workers: int = 4, max_events: int = 0,
-                 retention_days: int = 30, bridge_retention_days: int = 0):
+                 retention_days: int = 30):
         # `dsn` is a libpq connection string. Postgres tunes its own buffers/WAL server-side, so
         # there are no SQLite-style page-cache/mmap/WAL knobs here — auto-clean is age + count only.
+        # There is exactly ONE age window (retention_days) and it covers every origin, the fediverse
+        # mirror included; the old per-bridge `bridge_retention_days` second cleaner is gone.
         self.dsn = dsn or _DEFAULT_DSN
         self.max_events = max_events
         self.retention_days = retention_days
-        # Retention for the fediverse-bridge mirror (origin='bridge'). Governs bridge content's age on its
-        # OWN — the general retention_days age prune skips origin='bridge'. 0 = keep forever (age-wise; the
-        # count cap still applies as a memory backstop). A busy bridge may want it aged out; profiles
-        # (kind 0) are never pruned regardless.
-        self.bridge_retention_days = bridge_retention_days
-        self.preserve_pubkeys: frozenset = frozenset()  # local users — never age/cap-pruned
+        # Authors nothing auto-deletes: local users, this server's NIP-05 holders, and the puppets of
+        # local users' linked fediverse accounts (see thread._collect_preserve_pubkeys).
+        self.preserve_pubkeys: frozenset = frozenset()
         self._tls = threading.local()
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relay-db-w")
         self._read_exec = ThreadPoolExecutor(max_workers=read_workers, thread_name_prefix="relay-db-r")
@@ -880,39 +879,35 @@ class RelayStore:
             f"AND kind NOT IN ({_gitk}) RETURNING id",
             (int(time.time()),)).fetchall()
         gone += [r["id"] for r in rows]; removed += len(rows)
-        # Age-based auto-cleaner: delete only old feed content (kinds in _PRUNABLE_KINDS — notes/
-        # reposts/reactions/comments + public chat/articles/streams), and only synced copies (the
-        # preserve clause keeps origin='direct' and local users'). Everything else (profiles,
-        # contacts, relay/identity lists, DMs, channel/community defs, …) is never touched.
-        # EXCLUDES origin='bridge' — our own built-in bridge's mirror content's AGE is governed by its own
-        # "Mirror retention" setting (the bridge_retention_days prune below), NOT this general window, so a
-        # Mirror retention of 0 means "keep forever" (age-wise). NOTE: the hard count-cap further below is a
-        # separate MEMORY backstop and still applies to every origin — set max_events (or a Mirror retention)
-        # if a busy bridge could otherwise grow the store without bound.
+        # Age-based auto-cleaner — THE cleaner. Deletes only old feed content (kinds in
+        # _PRUNABLE_KINDS: notes/reposts/reactions/comments + public chat/articles/streams), and only
+        # what the preserve clause allows. Everything else (profiles, contacts, relay/identity lists,
+        # DMs, channel/community defs, …) is never touched, at any age.
+        #
+        # This used to carry `AND origin != 'bridge'`, because fediverse-mirror content had a SECOND
+        # age prune of its own driven by the "Mirror retention" setting. Two cleaners with two windows
+        # and two meanings for 0 was the confusing part, and it hid a real bug: the bridge prune had no
+        # preserve clause, so a bridged user's own fediverse history was aged out. There is now ONE
+        # age window for every origin, and one preserve set that decides what survives it —
+        # _collect_preserve_pubkeys covers local users, this server's NIP-05 holders, and the puppets
+        # of local users' linked fediverse accounts (a bridged user's posts are authored by their
+        # PUPPET key, never their npub, which is why preserving the npub alone never protected them).
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
             rows = conn.execute(
                 f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
-                f"AND {preserve} AND origin != 'bridge' RETURNING id", (cutoff,)).fetchall()
+                f"AND {preserve} RETURNING id", (cutoff,)).fetchall()
             gone += [r["id"] for r in rows]; removed += len(rows)
-        # Puppet-addressed DM gift-wraps/seals (origin='bridge', kinds 13/1059) are transient and not
-        # in _PRUNABLE_KINDS, so without this an attacker spamming derivable puppet npubs grows the DB
-        # forever. Prune them unconditionally past a short TTL.
+        # NOT retention, and deliberately not folded into the setting above: puppet-addressed DM
+        # gift-wraps/seals (origin='bridge', kinds 13/1059) are undeliverable junk anyone can generate,
+        # since puppet npubs are derivable. Auto-clean never touches DMs by design (1059 isn't a
+        # prunable kind), so with no separate bound this is an unbounded write amplifier for a
+        # stranger. Fixed short TTL, no knob.
         dmcut = int(time.time()) - _BRIDGE_DM_TTL_DAYS * 86400
         rows = conn.execute(
             "DELETE FROM events WHERE origin = 'bridge' AND kind IN (13, 1059) AND created_at < ? "
             "RETURNING id", (dmcut,)).fetchall()
         gone += [r["id"] for r in rows]; removed += len(rows)
-        # Fediverse-bridge firehose: optionally age mirrored notes (origin='bridge') out FASTER than
-        # the general WoT feed. Only touches reconstructable mirror content (prunable kinds, never
-        # 'direct'/preserved, never puppet profiles which aren't a prunable kind) — same safety as the
-        # general prune, just a tighter window for the high-volume global timeline.
-        if self.bridge_retention_days:
-            bcut = int(time.time()) - self.bridge_retention_days * 86400
-            rows = conn.execute(
-                f"DELETE FROM events WHERE created_at < ? AND kind IN ({prunable}) "
-                f"AND origin = 'bridge' RETURNING id", (bcut,)).fetchall()
-            gone += [r["id"] for r in rows]; removed += len(rows)
         # Hard count cap (memory bound): trim oldest prunable feed events beyond the limit.
         if self.max_events:
             rows = conn.execute(

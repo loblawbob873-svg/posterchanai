@@ -15,7 +15,7 @@ Users can trigger special commands by mentioning the bot:
 | `@bot regen <changes>` | Regenerate image in thread with modifications (img2img) |
 | `@bot news <source>` | Fetch headlines from a source, then `share <number>` to post one |
 | `@bot yt <url>` | Summarize a YouTube video |
-| `@bot ytdl <url>` | Download audio (`ytdl video <url>` for video) and post the file back — YouTube/X, on Misskey & Pleroma — see note |
+| `@bot ytdl <url>` | Download audio (`ytdl video <url>` for video) and post the file back — YouTube/X, on Pleroma — see note |
 | `@bot ytdl video <url> clip 0:10 0:30 compress` | Trim and/or shrink a video download in one command — `clip <start> <end>` and/or `compress`, applied in that order — see note |
 | upload + `@bot compress` | Shrink the uploaded image(s)/video(s); the bot posts the smaller file back |
 | upload + `@bot clip <start> <end>` | Trim the uploaded video to a span, e.g. `clip 0:10 0:30` (seconds or M:SS / H:MM:SS) |
@@ -51,7 +51,7 @@ of a large source can therefore succeed). Times accept seconds or `M:SS` / `H:MM
 On **Telegram** the same actions are also offered as buttons after a `ytdl video`
 download or the auto-detected 🎬 Movie prompt (Send as-is / Compress / Clip / Clip+Compress).
 
-- **Misskey & Pleroma** listeners call the generic `/api/media/ytdl` endpoint
+- The **Pleroma** listener calls the generic `/api/media/ytdl` endpoint
   (authenticated by `X-API-Key`, like the bots' `compress`/`screenshot` calls) and
   attach the result with `audio_bytes`/`video_bytes`.
 
@@ -69,7 +69,7 @@ The `/narrate` command creates an MP4 video with the bot's avatar and TTS audio.
 ```
 
 Auto-narrate generates video with TTS audio for all bot messages including:
-- Chat bot replies (Misskey/Pleroma)
+- Chat bot replies (Pleroma)
 - Blockbot notifications
 - Welcome messages
 - Unfollow notifications
@@ -196,7 +196,7 @@ These are passed to the bot as the corresponding uppercase environment variables
 
 The `--nitter` mode reposts new items from [Nitter](https://github.com/zedeus/nitter)
 RSS feeds (a Twitter/X front-end) to the bot's
-**fediverse timeline** (Pleroma/Misskey). Feeds are listed in the bot's
+**fediverse timeline** (Pleroma). Feeds are listed in the bot's
 `nitter_feeds` array:
 
 ```python

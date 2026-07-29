@@ -127,7 +127,7 @@ def puppet_for(account: dict, instance_host: str = "") -> dict:
         "acct": acct,
         "host": host,
         "nip05_name": nip05_name_for(acct),
-        # display_name is PLAIN TEXT on Mastodon/Pleroma/Misskey (never HTML) — do NOT tag-strip it, or
+        # display_name is PLAIN TEXT on Mastodon/Pleroma (never HTML) — do NOT tag-strip it, or
         # angle-bracket kaomoji like <(^o^)> get eaten. It keeps its :shortcode: emoji (rendered via the
         # NIP-30 tags below). The BIO is fediverse HTML (<br>, <a>, entities) → flatten to text or the
         # client shows raw markup. Custom-emoji shortcode→url map drives the profile's NIP-30 emoji tags.

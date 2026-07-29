@@ -15,7 +15,7 @@ class DatabaseConnection:
     Thread-safe PostgreSQL connection manager with auto-reconnection.
 
     Usage:
-        db = DatabaseConnection(database='misskey', user='user', password='pass')
+        db = DatabaseConnection(database='pleroma', user='user', password='pass')
         rows = db.execute("SELECT * FROM users WHERE id = %s", (user_id,))
     """
 

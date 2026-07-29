@@ -1,5 +1,5 @@
 """Shared bot command constants (used by the Nostr listener; the older
-misskey/pleroma listeners still inline their own copies).
+pleroma listener still inlines its own copies).
 
 MEDIA_COMMANDS — commands that operate on an attached/linked file.
 NO_CAPTION_COMMANDS — of those, the ones whose result IS the media (no text caption).
@@ -12,7 +12,7 @@ NO_CAPTION_COMMANDS = (
     "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar",
     "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos",
     "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily",
-    "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece",
+    "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece",
     "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
     "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables",
     "prayer", "feliz", "sleepwell", "horse", "knightrider",

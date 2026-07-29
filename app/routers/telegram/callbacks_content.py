@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: content callback handlers. Bodies moved verbatim."""
 from ._common import ChatService, CommandService, User, _MEDIA_ACTION_TTL, _media_action_cache, _news_post_cache, _news_source_cache, _youtube_action_cache, logger, re, telegram_service, time
-from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_misskey, _has_nostr, _has_pleroma, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
-from .senders import User, _has_misskey, _has_pleroma, _media_action_cache, _news_source_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_4chan_catalog, _send_4chan_thread, _send_active_torrents, _send_news_source_selector, _send_torrent_results, _strip_cmd_links, logger, re, telegram_service, time
+from .keyboards import _4chan_initial_keyboard, _build_torrent_keyboard, _has_nostr, _has_pleroma, _news_menu_keyboard, _split_news_into_articles, _strip_cmd_links, _strip_hashtags, _torrents_menu_keyboard, re
+from .senders import User, _has_pleroma, _media_action_cache, _news_source_cache, _offer_social_post, _offer_ytdl_share, _offer_ytdl_video_actions, _send_4chan_catalog, _send_4chan_thread, _send_active_torrents, _send_news_source_selector, _send_torrent_results, _strip_cmd_links, logger, re, telegram_service, time
 
 
 async def _cb_t(update, db, chat_id, data, callback_query, callback_query_id):
@@ -302,7 +302,7 @@ async def _cb_news(update, db, chat_id, data, callback_query, callback_query_id)
             content = _strip_cmd_links(result.get("content", ""))
                     
             # Parse articles and add buttons
-            has_social = _has_misskey(cb_user) or _has_pleroma(cb_user) or _has_nostr(cb_user)
+            has_social = _has_pleroma(cb_user) or _has_nostr(cb_user)
 
             articles = _split_news_into_articles(content)
             if articles:
@@ -344,7 +344,7 @@ async def _cb_news(update, db, chat_id, data, callback_query, callback_query_id)
                     result = await cb_command_service.execute_command("news", source_name)
                     content = _strip_cmd_links(result.get("content", ""))
 
-                    has_social = _has_misskey(cb_user) or _has_pleroma(cb_user) or _has_nostr(cb_user)
+                    has_social = _has_pleroma(cb_user) or _has_nostr(cb_user)
 
                     articles = _split_news_into_articles(content)
                     if articles:
@@ -610,8 +610,8 @@ async def _cb_nk(update, db, chat_id, data, callback_query, callback_query_id):
                 User.telegram_enabled == True
             ).first()
 
-            if not nk_user or (not _has_misskey(nk_user) and not _has_pleroma(nk_user) and not _has_nostr(nk_user)):
-                await telegram_service.send_message(chat_id, "⚠️ No social platform (Misskey, Pleroma, or Nostr) configured on your account.")
+            if not nk_user or (not _has_pleroma(nk_user) and not _has_nostr(nk_user)):
+                await telegram_service.send_message(chat_id, "⚠️ No social platform (Pleroma or Nostr) configured on your account.")
                 return {"ok": True}
 
             await telegram_service.send_message(chat_id, f"⏳ Generating social media post for: {title}")

@@ -54,6 +54,27 @@ def _ext(filename: str) -> str:
     return Path(filename or "").suffix.lower()
 
 
+def detect_mime(data: bytes) -> tuple[str, str]:
+    """(mime, suggested filename) sniffed from magic bytes; falls back to image/jpeg.
+
+    A generic byte sniff with nothing platform-specific in it. It used to live beside one
+    uploader simply because that was the first caller to need it; it belongs here.
+    """
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg", "image.jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png", "image.png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", "image.gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp", "image.webp"
+    if data[4:8] == b"ftyp":
+        return "video/mp4", "video.mp4"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm", "video.webm"
+    return "image/jpeg", "image.jpg"
+
+
 def is_image(filename: str, content_type: Optional[str] = None) -> bool:
     if content_type and content_type.startswith("image/"):
         return True

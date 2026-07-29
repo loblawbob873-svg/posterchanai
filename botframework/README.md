@@ -1,7 +1,7 @@
 # botframework/
 
 The autonomous bot framework, **merged into PosterChanAI**. These are the fediverse listeners
-and daemons (Pleroma/Misskey reply bots, nitter relays, blockbot/welcome/report/
+and daemons (Pleroma reply bots, nitter relays, blockbot/welcome/report/
 hashtag/unfollow) that PosterChanAI's bot manager spawns as child processes.
 
 **You don't run anything in here directly.** Bots are added, configured, and toggled from the
@@ -30,7 +30,7 @@ UI. For reference:
 
 | Mode | Bot |
 |------|-----|
-| `--pleroma` / `--misskey` | reply to mentions on that platform |
+| `--pleroma` | reply to mentions on that platform |
 | `--nitter` | relay Nitter (X/Twitter) RSS into the room/feed |
 | `--welcome` | welcome new local users |
 | `--blockbot` | announce block events |

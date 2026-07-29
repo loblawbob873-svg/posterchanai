@@ -55,10 +55,6 @@ class User(Base):
     telegram_key = Column(String(64), nullable=True, index=True)  # One-time link key generated from User Settings
     telegram_key_expires_at = Column(DateTime, nullable=True)  # Expiry for the pending link key
 
-    # Misskey integration settings
-    misskey_enabled = Column(Boolean, default=False)
-    misskey_instance_url = Column(String(500), nullable=True)
-    misskey_api_token = Column(String(500), nullable=True)
 
     # Pleroma integration settings
     pleroma_enabled = Column(Boolean, default=False)
@@ -91,7 +87,6 @@ class User(Base):
 
     # Social notification relay → Telegram (master per-user toggle + per-platform cursors)
     social_notif_enabled = Column(Boolean, default=False)
-    misskey_notif_since = Column(Text, nullable=True)   # last-seen Misskey notification id
     pleroma_notif_since = Column(Text, nullable=True)   # last-seen Pleroma notification id
     nostr_notif_since = Column(Text, nullable=True)     # last-seen Nostr event created_at (unix)
 
@@ -244,7 +239,7 @@ class SocialReplyMap(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     telegram_chat_id = Column(String(50), nullable=False)
     telegram_message_id = Column(Integer, nullable=False)
-    platform = Column(String(20), nullable=False)   # "misskey" | "pleroma"
+    platform = Column(String(20), nullable=False)   # "pleroma"
     target_id = Column(String(255), nullable=True)   # note/status id to reply to
     visibility = Column(String(20), nullable=True)   # inherit parent visibility on reply
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -386,7 +381,7 @@ class FediBridgeDelivered(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    platform = Column(String(20), nullable=False)        # "pleroma" | "misskey"
+    platform = Column(String(20), nullable=False)        # "pleroma"
     instance_url = Column(String(255), nullable=False)   # instance the note was read from
     note_id = Column(String(255), nullable=False)        # status/note id on instance_url
     note_uri = Column(String(512), nullable=True)        # canonical AP URI (cross-instance key)
@@ -519,7 +514,7 @@ class Bot(Base):
     name = Column(String(100), unique=True, nullable=False, index=True)
     enabled = Column(Boolean, default=True)              # should the manager keep it running / scheduled
     bot_type = Column(String(20), default="text")        # "text" (long-running) | "image" (scheduled)
-    platform = Column(String(20), default="misskey")     # "misskey" | "pleroma"
+    platform = Column(String(20), default="pleroma")     # "pleroma"
     host = Column(String(100), nullable=True)            # node hostname that runs it; empty = any node
     modes = Column(Text, default="")                     # comma-separated main.py flags, e.g. "--pleroma"
     config = Column(Text, default="{}")                  # JSON: all other per-bot fields (creds, prompt, feature opts)

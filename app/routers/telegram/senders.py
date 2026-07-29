@@ -1,6 +1,6 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _misskey_post_cache, _news_source_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
-from .keyboards import _4chan_board_switcher_keyboard, _4chan_thread_keyboard, _flashcard_keyboard, _format_4chan_post, _has_misskey, _has_nostr, _has_pleroma, _news_source_keyboard, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
+from ._common import Optional, SessionLocal, User, _4chan_cache, _4chan_thread_cache, _flashcard_decks_cache, _geni_image_cache, _media_action_cache, _news_source_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, datetime, logger, re, telegram_service, time
+from .keyboards import _4chan_board_switcher_keyboard, _4chan_thread_keyboard, _flashcard_keyboard, _format_4chan_post, _has_nostr, _has_pleroma, _news_source_keyboard, _strip_cmd_links, _torrent_nav_keyboard, _ytdl_video_keyboard
 
 
 async def _post_to_nostr(user, text: str, image_bytes: Optional[bytes] = None) -> None:
@@ -14,8 +14,8 @@ async def _post_to_nostr(user, text: str, image_bytes: Optional[bytes] = None) -
                  "endpoint": getattr(user, "nostr_media_endpoint", None) or ""}
     media_list = []
     if image_bytes:
-        from app.services.misskey_service import _detect_mime
-        mime, _ = _detect_mime(image_bytes)
+        from app.services.media_service import detect_mime
+        mime, _ = detect_mime(image_bytes)
         media_list = [(image_bytes, mime)]
     await _ns.post_note(seckey, relays, text or "", media_list=media_list, media_cfg=media_cfg)
 
@@ -451,11 +451,10 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
     else:
         _geni_image_cache.pop(chat_id, None)
 
-    has_mk = _has_misskey(user)
     has_plr = _has_pleroma(user)
     has_nostr = _has_nostr(user)
 
-    platform_count = sum([has_mk, has_plr, has_nostr])
+    platform_count = sum([has_plr, has_nostr])
     if platform_count == 0:
         # No platforms connected: echo the post text, but never send an EMPTY message
         # (Telegram rejects empty text). Image-only posts — e.g. a glowing text card —
@@ -465,8 +464,6 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
         return
 
     # Store post in all platform caches now so any button works
-    if has_mk:
-        _misskey_post_cache[chat_id] = post_text
     if has_plr:
         _pleroma_post_cache[chat_id] = post_text
     if has_nostr:
@@ -474,8 +471,6 @@ async def _offer_social_post(chat_id: str, post_text: str, user, telegram_svc, p
 
     # Individual platform buttons on the first row
     individual = []
-    if has_mk:
-        individual.append({"text": "📣 Misskey", "callback_data": "mk:post"})
     if has_plr:
         individual.append({"text": "📣 Pleroma", "callback_data": "plr:post"})
     if has_nostr:
@@ -522,7 +517,7 @@ async def _deliver_files_result(chat_id: int, user, result: dict, offer_share: b
                 (f for f in _files if (f.get("content_type") or "").startswith(("image/", "video/"))),
                 None,
             )
-            if _shareable and (_has_misskey(user) or _has_pleroma(user) or _has_nostr(user)):
+            if _shareable and (_has_pleroma(user) or _has_nostr(user)):
                 _media_action_cache[chat_id] = {
                     "attachments": [(
                         _shareable.get("filename", "file"),
@@ -609,7 +604,7 @@ async def _offer_ytdl_share(chat_id: str, filename: str, video_bytes: bytes, db)
     user = db.query(User).filter(
         User.telegram_chat_id == chat_id, User.telegram_enabled == True
     ).first()
-    if not (user and (_has_misskey(user) or _has_pleroma(user) or _has_nostr(user))):
+    if not (user and (_has_pleroma(user) or _has_nostr(user))):
         return
     _media_action_cache[chat_id] = {
         "attachments": [(filename or "video.mp4", video_bytes, "video/mp4")],

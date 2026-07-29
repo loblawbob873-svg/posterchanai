@@ -539,6 +539,9 @@ _REACTION_SIZES = {
     "carl":    (0.46, 0.62),   # landscape, points off to his left — needs room sideways
     "soyjack": (0.44, 0.98),   # a WIDE pair that must span the frame, or they point at nothing
     "anyways": (0.52, 0.42),   # tall and narrow; the side-eye reads at half the frame height
+    # Jerry is chest-up and roughly square (882x674), mic out to one side — a hair over half the
+    # frame height reads without his outstretched hand running off a portrait photo.
+    "jerry":   (0.55, 0.70),
 }
 
 

@@ -1,6 +1,6 @@
 """Nostr account linking — connect by pasting a secret key (no OAuth/instance).
 
-Unlike Misskey/Pleroma there is no instance URL or browser flow: the user pastes
+Unlike Pleroma there is no instance URL or browser flow: the user pastes
 their secret key (nsec/hex), optionally customizes relays and the media host, and
 we derive + store the npub. The secret key is stored like the other platform
 credentials (per-node SQLite); it is never returned to the client.

@@ -101,13 +101,12 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
   Fresh nodes start empty — add bots via the UI.
 - **Dedup is incremental** (Phase 4+). Per platform there's now a **parity shim** that routes the
   bot's network calls through the app's shared service while reusing the bot's higher-level logic
-  verbatim (so behavior can't drift): `botframework/{pleroma,misskey}_shim.py` →
-  `app/services/{pleroma,misskey}_service.py`. They're **opt-in** (per-bot
-  `use_app_service:true` in Admin → Bots, which sets `PLEROMA_/MISSKEY_USE_APP_SERVICE`)
+  verbatim (so behavior can't drift): `botframework/pleroma_shim.py` →
+  `app/services/pleroma_service.py`. It's **opt-in** (per-bot
+  `use_app_service:true` in Admin → Bots, which sets `PLEROMA_USE_APP_SERVICE`)
   and **off by default**; each listener picks shim-vs-legacy at import. Validate a shim offline
-  with `botframework/test_{pleroma,misskey}_parity.py` (A/B's the constructed HTTP). The
-  Misskey shim swaps only the transport primitive (`misskey_post` +
-  upload) and re-exports the unchanged functions; Pleroma's reimplements the thin wrappers. Once a
+  with `botframework/test_pleroma_parity.py` (A/B's the constructed HTTP). Pleroma's shim
+  reimplements the thin wrappers. Once a
   shim is confirmed in prod, delete the duplicated **network** code from the bot's client (keeping
   the pure helpers the shim reuses) — that's the actual line-count reduction, taken safely.
   TTS/search/news are **intentionally not shimmed**: the bot's TTS is mostly local ffmpeg/video
@@ -118,7 +117,7 @@ The bots are managed from **Admin → Bots** (`templates/admin/tabs/bots.html` +
 
 | Area | Where |
 |------|-------|
-| Routers | `app/routers/*.py` (auth, chat, admin, telegram, misskey, pleroma, nostr, streams, …) |
+| Routers | `app/routers/*.py` (auth, chat, admin, telegram, pleroma, nostr, streams, …) |
 | Services | `app/services/*.py` (business logic; routers stay thin) |
 | Models | `app/models.py` (SQLAlchemy); DB init + migrations in `app/database.py` |
 | Schemas | `app/schemas.py` (Pydantic) |
@@ -362,12 +361,11 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   **system-health report** (`logs_scheduler`, see Schedulers) reuses `run_agent` over these same
   nodes, so it needs `node_exec_enabled`.
 - **Social notification relay** (`app/services/social_notifications_service.py`): poller
-  forwards Misskey/Pleroma notifications to a user's Telegram; replying to a forwarded
+  forwards Pleroma notifications to a user's Telegram; replying to a forwarded
   message posts back to the platform (`SocialReplyMap` maps Telegram msg → target). Per-user
-  toggle (User Settings → Telegram) + global kill-switch (default on). Misskey needs a one-time
-  re-connect for the `read:notifications` scope.
+  toggle (User Settings → Telegram) + global kill-switch (default on).
 - **Fediverse ↔ Nostr bridge** — three worker services, all sharing `fedi_normalize.py`:
-  - **`fedi_nostr_bridge_service.py`** (fedi → Nostr): mirrors a Misskey/Pleroma timeline onto
+  - **`fedi_nostr_bridge_service.py`** (fedi → Nostr): mirrors a Pleroma timeline onto
     Nostr under a **puppet** key per fedi author (deterministically derived, so an author keeps
     one npub). `note_uri` (canonical AP URI) is the cross-instance dedup key, `note_id` the
     same-instance fallback. First poll only sets the cursor (no backfill); later polls **drain

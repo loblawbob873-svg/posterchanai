@@ -3,7 +3,7 @@
 One-shot, the text twin of `imageposter`: `main.py --autopost` runs this once and exits,
 and the bot manager (`bot_manager_service._reconcile_scheduled`) spawns it on a schedule.
 Platform is chosen from whichever endpoint the manager configured in the env, exactly the
-way `imageposter` picks misskey vs pleroma — so this works for both platforms unchanged.
+way `imageposter` picks its platform — so this works unchanged.
 """
 
 import os
@@ -58,7 +58,7 @@ def autopost(print_only=False):
     print_only=True is the dry run (--autopost-print): generate one and print between the
     PREVIEW markers, but do NOT publish.
 
-    Platform precedence is Misskey → Pleroma → Nostr.
+    Platform precedence is Pleroma → Nostr.
     """
     if not PROMPT or len(PROMPT.strip()) < 10:
         print("[autopost] No personality PROMPT set; skipping.")
@@ -72,18 +72,15 @@ def autopost(print_only=False):
             print(PREVIEW_END)
         return
 
-    from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, NOSTR_NSEC
+    from config import PLEROMA_ENDPOINT, NOSTR_NSEC
 
-    if MISSKEY_SERVER or PLEROMA_ENDPOINT:
-        # Fediverse: one post. Both modules expose post_to_fediverse(status_text) with
-        # identical BLOCK_PHRASE / length guards.
+    if PLEROMA_ENDPOINT:
+        # Fediverse: one post, via post_to_fediverse(status_text) with its
+        # BLOCK_PHRASE / length guards.
         text = _generate_post()
         if not text:
             return
-        if MISSKEY_SERVER:
-            from misskey import post_to_fediverse
-        else:
-            from pleroma import post_to_fediverse
+        from pleroma import post_to_fediverse
         print(f"[autopost] Posting ({len(text)} chars): {text[:120]}...")
         post_to_fediverse(text)
     elif NOSTR_NSEC:
@@ -97,7 +94,7 @@ def autopost(print_only=False):
         print(f"[autopost] Posting to Nostr ({len(text)} chars): {text[:120]}...")
         post_to_nostr(text)
     else:
-        print("[autopost] No Misskey/Pleroma/Nostr endpoint configured; skipping.")
+        print("[autopost] No Pleroma/Nostr endpoint configured; skipping.")
         return
 
     print("[autopost] Done.")

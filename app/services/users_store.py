@@ -46,7 +46,6 @@ CONFIG_FIELDS = (
     "notification_email", "avatar", "theme",
     "news_sources",
     "telegram_enabled", "telegram_chat_id", "telegram_notifications",
-    "misskey_enabled", "misskey_instance_url", "misskey_api_token",
     "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token",
     "nostr_enabled", "nostr_relays", "nostr_media_service", "nostr_media_endpoint",
     "social_notif_enabled",

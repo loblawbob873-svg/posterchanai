@@ -68,7 +68,7 @@ async def password_grant(
     Registers a throwaway OAuth app (out-of-band redirect) on the instance, then exchanges
     the credentials for a token. Used by Admin → Bots so an admin can connect a Pleroma bot
     account by typing its password instead of running the browser authorization-code flow.
-    Returns the token string. Pleroma/Mastodon only (Misskey uses MiAuth, not this grant).
+    Returns the token string. Pleroma/Mastodon only.
     """
     base = instance_url.rstrip("/")
     oob = "urn:ietf:wg:oauth:2.0:oob"

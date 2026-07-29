@@ -1,7 +1,7 @@
 """Auto-split from messages.py: _msg_chat."""
 from ._common import Conversation, Message, User, _link_action_cache, _youtube_action_cache, asyncio, datetime, logger, telegram_service
-from .keyboards import _has_misskey, _has_nostr, _has_pleroma
-from .senders import User, _has_misskey, _has_pleroma, asyncio, datetime, logger, telegram_service
+from .keyboards import _has_nostr, _has_pleroma
+from .senders import User, _has_pleroma, asyncio, datetime, logger, telegram_service
 
 
 async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc_text, has_images, is_forwarded, message, reply_text, text, user_obj):
@@ -45,7 +45,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                             {"text": "🎬 Movie",    "callback_data": "yt:video"},
                         ]
                     ]
-                    if _has_misskey(_yt_user_for_social) or _has_pleroma(_yt_user_for_social) or _has_nostr(_yt_user_for_social):
+                    if _has_pleroma(_yt_user_for_social) or _has_nostr(_yt_user_for_social):
                         yt_keyboard.append([
                             {"text": "📣 Post", "callback_data": "yt:post"}
                         ])
@@ -75,7 +75,7 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                             {"text": "🎬 Video", "callback_data": "yt:video"},
                         ]
                     ]
-                    if _has_misskey(_x_user_for_social) or _has_pleroma(_x_user_for_social) or _has_nostr(_x_user_for_social):
+                    if _has_pleroma(_x_user_for_social) or _has_nostr(_x_user_for_social):
                         x_keyboard.append([
                             {"text": "📣 Post", "callback_data": "yt:post"}
                         ])

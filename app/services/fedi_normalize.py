@@ -1,4 +1,4 @@
-"""Fediverse object normalisers — Pleroma/Mastodon and Misskey → one flat dict.
+"""Fediverse object normalisers — Pleroma/Mastodon → one flat dict.
 
 Extracted VERBATIM from the old fedi_timeline_service, which has since been deleted; this is the
 proven normalisation logic it was built on. Consumers: fedi_nostr_bridge_service,
@@ -16,50 +16,6 @@ def _strip_html(raw: str) -> str:
     text = _BREAK_RE.sub("\n", raw or "")
     text = _TAG_RE.sub("", text)
     return _html.unescape(text).strip()
-
-
-def _norm_misskey(n: dict) -> dict:
-    user = n.get("user") or {}
-    name = user.get("username", "?")
-    host = user.get("host")
-    acct = f"{name}@{host}" if host else name
-    media = [{"url": f.get("url"), "mime": f.get("type", "")} for f in (n.get("files") or []) if f.get("url")]
-    # A renote with text is a quote; a renote without text is a plain boost. Either way capture
-    # the quoted/boosted note so it isn't lost when the post is rendered.
-    quote = None
-    rn = n.get("renote")
-    if rn:
-        ru = rn.get("user") or {}
-        rname = ru.get("username", "?")
-        rhost = ru.get("host")
-        quote = {
-            "acct": f"{rname}@{rhost}" if rhost else rname,
-            "display": ru.get("name") or rname,
-            "text": rn.get("text") or "",
-            "html": None,
-            "emojis": _emoji_url_map(ru.get("emojis")),
-            "content_emojis": _emoji_url_map(rn.get("emojis")),
-        }
-    return {
-        "id": n.get("id"),
-        "uri": n.get("uri") or n.get("url"),   # local notes carry neither; canonicalized later
-        "author": {
-            "acct": acct,
-            "display": user.get("name") or name,
-            "avatar_url": user.get("avatarUrl"),
-            "url": user.get("url"),            # remote users only; local synthesized later
-            "emojis": _emoji_url_map(user.get("emojis")),
-        },
-        "text": n.get("text") or "",
-        "html": None,                          # Misskey text is MFM/plain → render to HTML
-        "media": media,
-        "quote": quote,
-        "content_emojis": _emoji_url_map(n.get("emojis")),   # custom emoji used in the note text
-        "url": n.get("url"),                   # human URL to the post (remote notes only)
-        "in_reply_to_id": n.get("replyId"),    # parent note id (for proper thread reply chains)
-        "replies_count": n.get("repliesCount") or 0,
-        "created_at": n.get("createdAt"),
-    }
 
 
 def _norm_pleroma(s: dict) -> dict:
@@ -101,17 +57,13 @@ def _norm_pleroma(s: dict) -> dict:
 
 
 def _norm(platform: str, raw: dict) -> dict:
-    return _norm_misskey(raw) if platform == "misskey" else _norm_pleroma(raw)
+    return _norm_pleroma(raw)
 
 
 def _canonical_uri(platform: str, instance_url: str, post: dict) -> str | None:
     """The cross-instance AP URI used to resolve a post on a member's own instance and to
-    dedup federated copies. Misskey local notes have no `uri`, so synthesize the canonical one."""
-    if post.get("uri"):
-        return post["uri"]
-    if platform == "misskey" and post.get("id"):
-        return f"{instance_url.rstrip('/')}/notes/{post['id']}"
-    return None
+    dedup federated copies."""
+    return post.get("uri") or None
 
 
 # --- rendering --------------------------------------------------------------
@@ -142,8 +94,8 @@ def emoji_tags_for(text: str, emap: dict, limit: int = 30) -> list:
 
 
 def _emoji_url_map(raw) -> dict:
-    """Normalize a platform emoji field (Pleroma list of {shortcode,url}; Misskey dict
-    {name: url} or list) to {shortcode: url}."""
+    """Normalize a platform emoji field (a list of {shortcode,url}, or a {name: url} dict)
+    to {shortcode: url}. Both shapes are accepted — instances differ."""
     if isinstance(raw, dict):
         return {k: v for k, v in raw.items() if v}
     if isinstance(raw, list):

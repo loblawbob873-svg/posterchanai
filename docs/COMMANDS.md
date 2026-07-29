@@ -1,7 +1,7 @@
 # Commands & bot usage
 
 The same command set is shared across every interface (web UI, Telegram, Pleroma,
-Misskey) via `app/services/command_service.py`. This page is the user-facing reference: **how
+Pleroma) via `app/services/command_service.py`. This page is the user-facing reference: **how
 to drive each bot**, then **every command** grouped by what it does.
 
 > Canonical source: `CommandService.COMMANDS` + `MOTION_EFFECTS`/`MOTION_ARGS`. If you add a
@@ -15,7 +15,6 @@ to drive each bot**, then **every command** grouped by what it does.
 | **Web UI** (chat) | Type the command in the message box, e.g. `search cats`. Plain talk (no command) goes to the LLM. | Upload a file with the message; media commands (`compress`/`clip`/`convert`/effects) act on it. |
 | **Telegram** | Type a command, **or** use the inline keyboards. Upload an image and tap **Effects** → an effect → the motion menu. Some flows (`clip`, captions) use reply prompts. | Send the photo/file in the same message; the bot caches it for the buttons. |
 | **Pleroma / Mastodon** | `@mention` the bot with a command, e.g. `@bot dildo zoom trippy`. `help` lists everything. | Attach the image/file to the post. |
-| **Misskey** | Same as Pleroma — `@mention` + command, attach media. | Attach to the note. |
 
 Plain conversation works everywhere — anything that isn't a recognised command is answered by
 the LLM. The bots reply with TTS via `/narrate <message>`.

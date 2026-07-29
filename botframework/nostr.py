@@ -4,7 +4,7 @@ This exposes the same functions the listeners import via ``_mk.*``
 (get_mentions/get_note/get_own_account/send_reply/post_image_to_fediverse/
 get_thread_history/get_thread_images/download_image_from_url), but shaped for Nostr.
 All crypto/relay/media lives in the shared ``app.services.nostr`` package (importable
-the same way the Misskey/Pleroma shims import ``app.services``), so there is no
+the same way the Pleroma shim imports ``app.services``), so there is no
 duplicated protocol code. Media is uploaded to the configured Blossom/NIP-96 host
 and the resulting URL embedded in the note content (Nostr's media model).
 """
@@ -64,8 +64,8 @@ def _is_media_url(url: str) -> bool:
 def sniff_mime(data: bytes) -> str:
     """Detect an image/video mime from magic bytes (reuses the shared sniffer)."""
     try:
-        from app.services.misskey_service import _detect_mime
-        mime, _ = _detect_mime(data)
+        from app.services.media_service import detect_mime
+        mime, _ = detect_mime(data)
         return mime
     except Exception:
         return ""

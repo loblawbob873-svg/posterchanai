@@ -9,15 +9,14 @@ import logging
 import threading
 from config import (
     SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE,
-    PLEROMA_ENDPOINT, MISSKEY_SERVER,
+    PLEROMA_ENDPOINT,
     WELCOME_IMAGE, WELCOME_MESSAGE, WELCOME_LOOKBACK_MINUTES,
     WELCOME_PROMPT, OPENAI_ENDPOINT, AUTO_NARRATE,
-    PLEROMA_ACCESS_TOKEN, MISSKEY_ACCESS_TOKEN
+    PLEROMA_ACCESS_TOKEN
 )
 from pleroma import post_image_to_fediverse as pleroma_post_image, post_to_fediverse as pleroma_post
 from ai import generate_reply
 from tts import generate_speech_with_retries, generate_narration_video
-import misskey
 import requests
 
 # Cache for bot avatar URL
@@ -26,16 +25,12 @@ _bot_avatar_cache = {}
 def get_bot_avatar_url():
     """Fetch the bot's avatar URL from the API"""
     global _bot_avatar_cache
-    cache_key = f"{MISSKEY_SERVER or PLEROMA_ENDPOINT}"
+    cache_key = f"{PLEROMA_ENDPOINT}"
     if cache_key in _bot_avatar_cache:
         return _bot_avatar_cache[cache_key]
     avatar_url = None
     try:
-        if MISSKEY_SERVER and MISSKEY_ACCESS_TOKEN:
-            response = requests.post(f"{MISSKEY_SERVER}/api/i", json={"i": MISSKEY_ACCESS_TOKEN}, timeout=10)
-            if response.status_code == 200:
-                avatar_url = response.json().get("avatarUrl")
-        elif PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
+        if PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
             response = requests.get(f"{PLEROMA_ENDPOINT}/api/v1/accounts/verify_credentials", headers={"Authorization": f"Bearer {PLEROMA_ACCESS_TOKEN}"}, timeout=10)
             if response.status_code == 200:
                 avatar_url = response.json().get("avatar")
@@ -47,8 +42,9 @@ def get_bot_avatar_url():
 # State file paths (relative to script location)
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WELCOMED_PLEROMA_FILE = os.path.join(_SCRIPT_DIR, ".welcomed_pleroma_users")
-WELCOMED_MISSKEY_FILE = os.path.join(_SCRIPT_DIR, ".welcomed_misskey_users")
-LAST_MISSKEY_USER_ID_FILE = os.path.join(_SCRIPT_DIR, ".last_welcomed_misskey_user_id")
+# Legacy on-disk names kept: renaming resets the cursor and would re-welcome every user.
+WELCOMED_USERS_FILE = os.path.join(_SCRIPT_DIR, ".welcomed_misskey_users")
+LAST_USER_ID_FILE = os.path.join(_SCRIPT_DIR, ".last_welcomed_misskey_user_id")
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -181,9 +177,7 @@ def cleanup_welcomed_users(filepath, max_entries=1000):
 
 def get_instance_name():
     """Get the instance name from configuration"""
-    if MISSKEY_SERVER:
-        return MISSKEY_SERVER.replace('https://', '').replace('http://', '')
-    elif PLEROMA_ENDPOINT:
+    if PLEROMA_ENDPOINT:
         return PLEROMA_ENDPOINT.replace('https://', '').replace('http://', '')
     return "our instance"
 
@@ -293,10 +287,10 @@ def welcome_pleroma(print_only=False):
 
 
 def get_last_user_id():
-    """Get the last processed Misskey user ID from file"""
+    """Get the last processed user ID from file"""
     try:
-        if os.path.exists(LAST_MISSKEY_USER_ID_FILE):
-            with open(LAST_MISSKEY_USER_ID_FILE, 'r') as f:
+        if os.path.exists(LAST_USER_ID_FILE):
+            with open(LAST_USER_ID_FILE, 'r') as f:
                 return f.read().strip()
     except Exception as e:
         logging.error(f"Failed to read last user ID: {e}")
@@ -304,12 +298,12 @@ def get_last_user_id():
 
 
 def save_last_user_id(user_id):
-    """Save the last processed Misskey user ID to file using atomic write"""
-    temp_file = LAST_MISSKEY_USER_ID_FILE + ".tmp"
+    """Save the last processed user ID to file using atomic write"""
+    temp_file = LAST_USER_ID_FILE + ".tmp"
     try:
         with open(temp_file, 'w') as f:
             f.write(user_id)
-        os.rename(temp_file, LAST_MISSKEY_USER_ID_FILE)
+        os.rename(temp_file, LAST_USER_ID_FILE)
         logging.debug(f"Saved last user ID: {user_id}")
     except Exception as e:
         logging.error(f"Failed to save last user ID: {e}")
@@ -318,91 +312,6 @@ def save_last_user_id(user_id):
                 os.remove(temp_file)
             except OSError:
                 pass
-
-
-def welcome_misskey(print_only=False):
-    """Check for new Misskey users and send welcome messages"""
-    # Get last processed user ID (Misskey IDs are time-based, so we can compare them)
-    last_id = get_last_user_id()
-
-    if last_id:
-        # Get users created after the last one we processed
-        query = """
-        SELECT id, username
-        FROM "user"
-        WHERE host IS NULL
-          AND id > %s
-          AND username NOT IN ('instance.actor')
-        ORDER BY id ASC
-        LIMIT 50;
-        """
-        rows = run_psql(query, (last_id,))
-    else:
-        # First run - get the most recent user to establish baseline
-        query = """
-        SELECT id, username
-        FROM "user"
-        WHERE host IS NULL
-          AND username NOT IN ('instance.actor')
-        ORDER BY id DESC
-        LIMIT 1;
-        """
-        rows = run_psql(query)
-
-    if not rows:
-        logging.debug("No new Misskey users found")
-        return
-
-    # Update last processed ID
-    latest_user_id = rows[-1][0] if last_id else rows[0][0]
-    save_last_user_id(latest_user_id)
-
-    # If first run, don't welcome anyone - just set baseline
-    if not last_id:
-        logging.info(f"Initialized Misskey user tracking. Last user ID: {latest_user_id}")
-        return
-
-    instance_name = get_instance_name()
-
-    for row in rows:
-        user_id, username = row
-
-        # Generate AI welcome message with fallback
-        message = generate_welcome_message(username, instance_name)
-
-        logging.info(f"Welcoming new user: {username}")
-
-        if print_only:
-            print(f"Would post: {message}")
-        else:
-            # Generate TTS video if auto_narrate is enabled
-            audio_bytes = None
-            video_bytes = None
-            if AUTO_NARRATE:
-                logging.info(f"[TTS] Generating video for welcome message...")
-                avatar_url = get_bot_avatar_url()
-                video_bytes = generate_narration_video(message, avatar_url)
-                if video_bytes:
-                    logging.info(f"[TTS] Generated {len(video_bytes)} bytes of video")
-                else:
-                    logging.warning("[TTS] Video generation failed, trying audio...")
-                    audio_bytes = generate_speech_with_retries(message)
-                    if audio_bytes:
-                        logging.info(f"[TTS] Generated {len(audio_bytes)} bytes of audio")
-
-            try:
-                if WELCOME_IMAGE and os.path.exists(WELCOME_IMAGE):
-                    with open(WELCOME_IMAGE, 'rb') as f:
-                        image_bytes = f.read()
-                    misskey.post_image_to_fediverse(message, image_bytes, audio_bytes=audio_bytes, video_bytes=video_bytes)
-                else:
-                    logging.warning(f"Welcome image not found at {WELCOME_IMAGE}, posting without image")
-                    misskey.post_image_to_fediverse(message, audio_bytes=audio_bytes, video_bytes=video_bytes)
-
-                logging.info(f"Successfully welcomed {username}")
-
-            except Exception as e:
-                logging.error(f"Failed to welcome {username}: {e}")
 
 
 def waitToStart():
@@ -433,32 +342,13 @@ def background():
         time.sleep(60)
 
 
-def misskey_background():
-    """Misskey welcome bot daemon loop"""
-    global conn
-    if conn is None:
-        init_db()
-
-    while True:
-        print("Running Welcome Bot (Misskey)")
-        try:
-            welcome_misskey()
-        except Exception as e:
-            logging.error(f"Error in welcome_misskey: {e}")
-            import traceback
-            traceback.print_exc()
-        time.sleep(60)
-
-
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
         print("Usage:")
         print("  daemon          - Run Pleroma welcome bot daemon")
-        print("  misskey-daemon  - Run Misskey welcome bot daemon")
         print("  pleroma [print] - Check Pleroma new users")
-        print("  misskey [print] - Check Misskey new users")
         sys.exit(0)
 
     cmd = sys.argv[1]
@@ -469,13 +359,8 @@ if __name__ == "__main__":
     if cmd == "daemon":
         waitToStart()
         background()
-    elif cmd == "misskey-daemon":
-        waitToStart()
-        misskey_background()
     elif cmd == "pleroma":
         welcome_pleroma(print_only=(arg2 == "print"))
-    elif cmd == "misskey":
-        welcome_misskey(print_only=(arg2 == "print"))
     else:
         print("Unknown command. Use no arguments to see usage.")
 

@@ -23,7 +23,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-from config import MISSKEY_SERVER, PLEROMA_ENDPOINT, NOSTR_NSEC
+from config import PLEROMA_ENDPOINT, NOSTR_NSEC
 
 # Per-bot feeds, set by botctl/the installer from the bot's `nitter_feeds`.
 NITTER_FEEDS = json.loads(os.getenv("NITTER_FEEDS", "[]"))
@@ -58,9 +58,7 @@ _session.trust_env = os.getenv("NITTER_USE_PROXY", "").lower() in ("1", "true", 
 _fedi_post = None
 _fedi_post_image = None
 _is_nostr = False
-if MISSKEY_SERVER:
-    from misskey import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
-elif PLEROMA_ENDPOINT:
+if PLEROMA_ENDPOINT:
     from pleroma import post_to_fediverse as _fedi_post, post_image_to_fediverse as _fedi_post_image
 elif NOSTR_NSEC:
     # Nostr has one post primitive: post_image_to_fediverse(text, image_bytes=None) handles
@@ -70,7 +68,7 @@ elif NOSTR_NSEC:
     _is_nostr = True
 
 # Nitter→Nostr posts are tagged with a hashtag (default #news) so they collect in that
-# hashtag feed. Overridable per-bot via NITTER_NOSTR_HASHTAG; Pleroma/Misskey are
+# hashtag feed. Overridable per-bot via NITTER_NOSTR_HASHTAG; Pleroma is
 # unaffected. The literal #tag is kept in the body (readable / client-linkified) AND a real
 # NIP-12 `t` tag is added by the Nostr poster so it also lands in indexed #hashtag feeds.
 NITTER_NOSTR_HASHTAG = (os.getenv("NITTER_NOSTR_HASHTAG", "news") or "news").lstrip("#").strip() or "news"
@@ -416,7 +414,7 @@ def _post_item(feed, handle, item):
     card = _render_card(handle, item)
     caption = _format_caption(handle, item)
 
-    # Post to the fediverse (Pleroma/Misskey).
+    # Post to the fediverse (Pleroma).
     if _fedi_post is None:
         print("[nitter] Feed has no 'room' and no fediverse is configured; skipping post", flush=True)
         return False

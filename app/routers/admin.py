@@ -597,7 +597,7 @@ def update_settings(
         # startup, so editing them in the UI did nothing until a restart (symptom: "I set prune to 0
         # but old notes still get deleted"). Flush durably first (relay re-reads from Postgres), then
         # push the live update — same pattern as the upstream reload above, no restart.
-        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events", "fedi_bridge_retention_days")
+        _relay_store_keys = ("nostr_relay_retention_days", "nostr_relay_max_events")
         if not _relay_will_restart and any(k in changed_keys for k in _relay_store_keys):
             flushed = False
             try:

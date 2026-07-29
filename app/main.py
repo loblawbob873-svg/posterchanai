@@ -24,7 +24,6 @@ from app.routers import fourchan, youtube_thumb, bots, push, calls, streams, rss
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
-from app.routers.misskey import router as misskey_router
 from app.routers.pleroma import router as pleroma_router
 from app.routers.social_login import router as social_login_router
 from app.routers.nostr import router as nostr_router
@@ -219,7 +218,6 @@ app.include_router(git_router.router)  # /api/git/* (GRASP git host: provision/l
 app.include_router(git_router.smart_router)  # /git/* smart-HTTP reverse-proxy (active only when git_server_proxy_url set)
 app.include_router(storage.router)
 app.include_router(telegram_router)
-app.include_router(misskey_router)
 app.include_router(pleroma_router)
 app.include_router(social_login_router)   # /api/auth/{google,pleroma}/* — sign in with an account
 app.include_router(nostr_router)

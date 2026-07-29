@@ -98,7 +98,7 @@ _HELP_SECTIONS = {
         "• 📝 Summarize — AI summary of the document\n\n"
         "Tips:\n"
         "• Send several images, then tap *To PDF*, to merge them into one PDF.\n"
-        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `heat`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `rebecca`, `makima`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `uwu`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse` or `knightrider` as the caption.\n"
+        "• You can also skip the buttons: send the file with `compress`, `clip 0:10 0:30`, `convert`, `extractaudio`, `circlecrop`, `meme <text>`, `dildo`, `poo`, `cum`, `blood`, `bullethole`, `fire`, `nakedman`, `gay`, `blacked`, `kosher`, `blue`, `barked`, `hava`, `indian`, `yakety`, `yamete`, `curb`, `depressing`, `fahh`, `helpme`, `gong`, `fbi`, `redeem`, `gigity`, `beavis`, `heat`, `smell`, `hood`, `akbar`, `retard`, `whoabuddy`, `diarrhea`, `seth`, `robocop`, `titan`, `terminator`, `reze`, `vibe`, `rebecca`, `makima`, `sopranos`, `cheers`, `munsters`, `happydays`, `dontwanttowait`, `strangerthings`, `adamsfamily`, `xmen`, `futurama`, `charliesangles`, `differentstroke`, `seinfeld`, `jerry`, `onepiece`, `overtaken`, `freebird`, `kanye`, `darkness`, `bike`, `jobs`, `ree`, `liberal`, `moving`, `harlem`, `chimp`, `consider`, `clay`, `uwu`, `wasteland`, `mixalot`, `thug`, `feltedtables`, `feliz`, `sleepwell`, `horse` or `knightrider` as the caption.\n"
         "• Telegram limits bot downloads to 20 MB — use the web UI for bigger files."
     ),
     "youtube": (
@@ -214,7 +214,7 @@ _HELP_SECTIONS = {
         "• `post` — rewrite it into a viral, engaging post\n"
         "• `post raw` — share it *exactly as written*, no rewrite \\(also `verbatim`\\)\n"
         "• `post <instructions>` — rewrite it your way\n\n"
-        "I then show share buttons for your connected platforms \\(Misskey / Pleroma\\)\\.\n\n"
+        "I then show share buttons for your connected platforms \\(Pleroma / Nostr\\)\\.\n\n"
         "*Examples:*\n"
         "\\(reply to a good answer\\) `post raw`\n"
         "\\(reply to an article\\) `post professional`\n"
@@ -228,7 +228,6 @@ _HELP_SECTIONS = {
 }
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 _MAX_SEEN_IDS = 500  # Keep a bounded window; Telegram won't replay further back
-_misskey_post_cache: dict = {}
 _pleroma_post_cache: dict = {}
 _nostr_post_cache: dict = {}
 _CONSUMED = "__consumed__"
@@ -263,6 +262,7 @@ _FX_THEMES = [
     ("🖤 Addams Family", "adamsfamily"), ("❌ X-Men", "xmen"),
     ("🚀 Futurama", "futurama"), ("👼 Charlie's Angels", "charliesangles"),
     ("🌍 Diff'rent Strokes", "differentstroke"), ("🎤 Seinfeld", "seinfeld"),
+    ("🎙️ Jerry", "jerry"),
     ("🦅 Freebird", "freebird"), ("🕺 Harlem", "harlem"),
     ("🎻 Hava", "hava"), ("🎷 Yakety", "yakety"),
     ("😬 Curb", "curb"), ("🎸 Wasteland", "wasteland"),

@@ -449,7 +449,7 @@ LLM on the shared GPU. See [Intel Arc Setup](IPEX-LLM-SETUP.md). (The old dual `
 
 ### Image Generation REST API
 
-Posterchanai provides REST endpoints for external integrations (e.g., Sharkey/Misskey).
+Posterchanai provides REST endpoints for external integrations.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

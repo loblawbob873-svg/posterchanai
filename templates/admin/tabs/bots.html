@@ -94,7 +94,6 @@
                 <div class="form-group">
                     <label for="bot_f_platform">Platform</label>
                     <select id="bot_f_platform" onchange="onBotFormChange()">
-                        <option value="misskey">Misskey</option>
                         <option value="pleroma">Pleroma</option>
                         <option value="nostr">Nostr</option>
                     </select>
@@ -105,7 +104,7 @@
                 </div>
             </div>
 
-            <!-- Misskey / Pleroma credentials -->
+            <!-- Pleroma credentials -->
             <div id="bot_grp_fedi">
                 <div class="form-group">
                     <label for="bot_f_server">Server URL</label>
@@ -126,9 +125,6 @@
                     <div class="form-row">
                         <div class="form-group">
                             <input type="password" id="bot_f_oauth_password" placeholder="Bot account password" autocomplete="new-password">
-                        </div>
-                        <div class="form-group" id="bot_grp_oauth_totp" style="display:none">
-                            <input type="text" id="bot_f_oauth_totp" placeholder="2FA code (if enabled)" autocomplete="off">
                         </div>
                         <div class="form-group" style="flex:0 0 auto">
                             <button type="button" class="btn-small" onclick="botOauthConnect()">Connect</button>

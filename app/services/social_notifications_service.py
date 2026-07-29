@@ -1,4 +1,4 @@
-"""Relay Pleroma / Misskey notifications to a user's Telegram chat, and post
+"""Relay Pleroma notifications to a user's Telegram chat, and post
 replies back to the originating platform when the user replies to a forwarded message.
 
 A background poller (started from app.main on port 3051, mirroring logs_scheduler) calls
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 import json
 from app.models import User, SocialReplyMap, UserSetting
-from app.services import misskey_service, pleroma_service
+from app.services import pleroma_service
 from app.services import settings_store
 from app.services.nostr import nostr_service
 from app.services.telegram_service import TelegramService
@@ -56,25 +56,6 @@ def _strip_html(raw: str) -> str:
     return html.unescape(text).strip()
 
 
-def _norm_misskey(n: dict) -> dict:
-    actor = n.get("user") or {}
-    note = n.get("note") or {}
-    handle = actor.get("username", "?")
-    host = actor.get("host")
-    actor_str = f"@{handle}@{host}" if host else f"@{handle}"
-    return {
-        "platform": "misskey",
-        "type": n.get("type", "notification"),
-        "actor": actor_str,
-        "actor_display": actor.get("name") or handle,
-        "actor_avatar": actor.get("avatarUrl"),
-        "text": note.get("text") or "",
-        "reply_target": note.get("id"),
-        "room_id": None,
-        "event_id": None,
-        "visibility": note.get("visibility", "public"),
-        "url": None,
-    }
 
 
 def _norm_pleroma(n: dict) -> dict:
@@ -159,7 +140,7 @@ def _norm_nostr(ev: dict, actor_label: Optional[str] = None) -> dict:
     }
 
 
-_PLATFORM_ICON = {"misskey": "🍮", "pleroma": "💧", "nostr": "🟣"}
+_PLATFORM_ICON = {"pleroma": "💧", "nostr": "🟣"}
 
 
 def _format(norm: dict) -> str:
@@ -188,7 +169,7 @@ def _prune(db: Session) -> None:
     db.query(SocialReplyMap).filter(SocialReplyMap.created_at < cutoff).delete(synchronize_session=False)
 
 
-# A follow is a ONE-TIME event, but Pleroma/Misskey re-issue the follow notification with a fresh id
+# A follow is a ONE-TIME event, but Pleroma re-issues the follow notification with a fresh id
 # (on re-federation / notification grouping / a transient unfollow-refollow) — that new id slips past
 # the since_id cursor, so a follow from days ago gets re-announced. Dedup follows by ACTOR, persisted
 # per user (UserSetting), so a given account's follow is announced exactly once per relay.
@@ -287,43 +268,6 @@ async def _relay_pleroma(db: Session, tg: TelegramService, user: User, chat_id: 
             break
 
 
-async def _relay_misskey(db: Session, tg: TelegramService, user: User, chat_id: str) -> None:
-    if not user.misskey_notif_since:
-        # First poll: establish the cursor without forwarding the backlog. With no sinceId, Misskey
-        # returns newest-first, so raw[0] is the newest.
-        raw = await misskey_service.fetch_notifications(
-            user.misskey_instance_url, user.misskey_api_token, limit=1)
-        if raw:
-            user.misskey_notif_since = raw[0].get("id")
-            db.commit()
-        return
-    # Drain forward with sinceId. Unlike Pleroma's min_id (newest-first), Misskey's sinceId paginates
-    # ASCENDING (oldest-first), so the page is already chronological: deliver in order and advance to the
-    # LAST (newest) delivered id. (The old code treated raw[0] as newest and reversed the page → the cursor
-    # crawled one id per poll and re-sent the batch tail forever — a perpetual duplicate flood.)
-    for _ in range(_NOTIF_DRAIN_PAGES):
-        raw = await misskey_service.fetch_notifications(
-            user.misskey_instance_url, user.misskey_api_token,
-            since_id=user.misskey_notif_since, limit=_NOTIF_PAGE)
-        if not raw:
-            break
-        raw = sorted(raw, key=lambda n: n.get("id") or "")   # sinceId paginates ascending — make it explicit
-        last_ok = None
-        for n in raw:
-            if not await _deliver(db, tg, user, chat_id, _norm_misskey(n)):
-                break                 # Telegram send failed → stop; advance only to the last delivered
-            last_ok = n.get("id")
-        if last_ok:
-            user.misskey_notif_since = last_ok
-            _prune(db)
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
-                from app.database import commit_in_fresh_session
-                commit_in_fresh_session(lambda s: setattr(s.get(User, user.id), "misskey_notif_since", last_ok))
-        if not last_ok or len(raw) < _NOTIF_PAGE:
-            break
 
 
 def _nostr_cfg(user: User) -> tuple[bytes, list, dict]:
@@ -347,7 +291,7 @@ async def _relay_nostr(db: Session, tg: TelegramService, user: User, chat_id: st
     newest = max(int(ev.get("created_at", 0)) for ev in raw)
     # Cursor is a unix-second timestamp; fetch_mentions queries `since+1` to avoid re-sending
     # the boundary event. Trade-off: a second mention landing in the SAME second as `newest`
-    # after this poll is skipped (Nostr lacks the opaque ids Misskey/Pleroma cursor on). Rare
+    # after this poll is skipped (Nostr lacks the opaque ids Pleroma cursors on). Rare
     # for a single account; accepted over the duplicate-flood the inclusive alternative causes.
     if since is None:
         # First poll: establish the cursor without forwarding the backlog.
@@ -370,11 +314,6 @@ async def _poll_user(db: Session, tg: TelegramService, user: User) -> None:
             await _relay_pleroma(db, tg, user, chat_id)
         except Exception as e:
             logger.warning(f"[social] pleroma relay failed for user {user.id}: {e}")
-    if user.misskey_enabled and user.misskey_instance_url and user.misskey_api_token:
-        try:
-            await _relay_misskey(db, tg, user, chat_id)
-        except Exception as e:
-            logger.warning(f"[social] misskey relay failed for user {user.id}: {e}")
     if getattr(user, "nostr_enabled", False) and user.nostr_nsec:
         try:
             await _relay_nostr(db, tg, user, chat_id)
@@ -432,14 +371,6 @@ async def handle_reply(db: Session, chat_id, reply_to_message_id: int, text: str
                 visibility=row.visibility or "public", in_reply_to_id=row.target_id,
             )
             return "✅ Reply posted to Pleroma."
-        if row.platform == "misskey":
-            if not row.target_id:
-                return "⚠️ That notification has nothing to reply to."
-            await misskey_service.post_note(
-                user.misskey_instance_url, user.misskey_api_token, text,
-                visibility=row.visibility or "public", reply_id=row.target_id,
-            )
-            return "✅ Reply posted to Misskey."
         if row.platform == "nostr":
             if not row.target_id:
                 return "⚠️ That notification has nothing to reply to."

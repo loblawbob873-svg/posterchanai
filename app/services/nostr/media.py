@@ -1,6 +1,6 @@
 """Nostr media upload — Blossom (BUD-02) and NIP-96 (e.g. nostr.build).
 
-Unlike Misskey/Pleroma there is no per-instance Drive: media goes to an external
+Unlike Pleroma there is no per-instance Drive: media goes to an external
 host which returns a URL that we embed in the note content (+ a NIP-92 imeta tag).
 Both flows authenticate with a signed Nostr event (Blossom kind 24242 / NIP-98 kind 27235)
 sent as an `Authorization: Nostr <base64-json-event>` header.

@@ -2,7 +2,7 @@
 
 Identity-agnostic: these are pure byte transforms, so this endpoint only
 authenticates the caller (API key or JWT, reusing the image API's auth) — it does
-not run as a specific user. Shared by the Misskey and Pleroma listener
+not run as a specific user. Shared by the Pleroma listener
 bots so they all reuse one HW-accelerated ffmpeg/Pillow path instead of each
 reimplementing it: the byte transforms live in `app/services/media_service.py`,
 the creative effects (meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked) in `app/services/effects_service.py`.
@@ -99,7 +99,7 @@ async def process_media(
 ):
     """Run a compress/clip/convert/meme/dildo/poo/cum/blood/bullethole/fire/gay/blacked/kosher/barked operation on the supplied attachments."""
     command = (req.command or "").strip().lower()
-    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider"):
+    if command not in ("compress", "clip", "convert", "meme", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "alive", "glow", "gay", "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete", "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem", "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving", "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables", "prayer", "feliz", "sleepwell", "horse", "knightrider"):
         return {"error": f"unsupported command '{command}'"}
 
     # Trailing subcommands on an effect: <effect> [zoom|shake] [meme <text>]
@@ -290,6 +290,8 @@ async def process_media(
             outputs, summary = await asyncio.to_thread(effects_service.differentstroke_attachments, attachments)
         elif command == "seinfeld":
             outputs, summary = await asyncio.to_thread(effects_service.seinfeld_attachments, attachments)
+        elif command == "jerry":
+            outputs, summary = await asyncio.to_thread(effects_service.jerry_attachments, attachments)
         elif command == "onepiece":
             outputs, summary = await asyncio.to_thread(effects_service.onepiece_attachments, attachments)
         elif command == "overtaken":
@@ -394,7 +396,7 @@ async def capture_screenshot(
 
     Identity-agnostic like /process — screenshotting is a pure URL→image transform,
     so this only authenticates the caller (bot API key). Shared by the
-    Misskey and Pleroma listeners so they all reuse the backend's single headless
+    Pleroma listener so they all reuse the backend's single headless
     Chrome/Firefox path (`app/services/command_service.py`).
 
     Response: {"summary": str, "data": b64 PNG, "content_type": "image/png"} on
@@ -483,7 +485,7 @@ async def fetch_ytdl(
     """Download a YouTube/X URL and return the media as base64.
 
     Identity-agnostic like /process and /screenshot — a pure URL→media transform
-    authenticated by the bot API key (not a linked user), so the Misskey
+    authenticated by the bot API key (not a linked user), so the Pleroma
     and Pleroma listeners share one yt-dlp path. Audio (MP3) by default; video=true
     fetches MP4 (capped at 1080p). The optional `clip` ("start end") and `compress`
     modifiers post-process the video server-side (clip → compress) so the bot gets

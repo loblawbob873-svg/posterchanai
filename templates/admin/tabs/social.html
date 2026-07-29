@@ -7,7 +7,7 @@
             <label for="social_notif_enabled">
                 <input type="checkbox" id="social_notif_enabled" name="social_notif_enabled"> Enable Social Notification Relay
             </label>
-            <small>Master kill-switch for forwarding Misskey/Pleroma notifications to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
+            <small>Master kill-switch for forwarding Pleroma notifications to Telegram (on by default). Each user still opts in under User Settings → Telegram; uncheck this only to disable the feature server-wide.</small>
         </div>
         <div class="form-group">
             <label for="social_notif_poll_seconds">Poll Interval (seconds)</label>
@@ -86,9 +86,11 @@
                 <input type="number" id="fedi_bridge_poll_seconds" name="fedi_bridge_poll_seconds" value="90" min="15">
             </div>
             <div class="form-group">
-                <label for="fedi_bridge_retention_days">Mirror retention (days)</label>
-                <input type="number" id="fedi_bridge_retention_days" name="fedi_bridge_retention_days" value="0" min="0">
-                <small>How long to keep mirrored fediverse posts. The relay's general retention does not apply to bridge content — this setting alone governs its age. <strong>0 = keep forever</strong> (a busy bridge may then need a value here, or a relay event cap, to bound disk).</small>
+                <label>Mirror retention</label>
+                <small>Mirrored fediverse posts are cleaned by <strong>Auto-clean</strong> under
+                Nostr → Relay, the relay's single retention window — there is no separate setting here
+                any more. Never auto-deleted: your local users, anyone holding a NIP-05 on this server,
+                and the mirrored posts of a user whose fediverse account is linked here.</small>
             </div>
         </div>
         <div class="form-group">

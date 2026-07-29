@@ -43,7 +43,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "circlecrop": "Circle-crop an attached image (transparent PNG)",
         "ocr": "Read the text out of an attached image or PDF (OCR, no translation): ocr",
         "flashcards": "Make an interactive multiple-choice study quiz from an attached PDF/image/slide deck, or a URL: flashcards <url>",
-        "post": "Share text (and an optional attached image) to your connected Misskey/Pleroma: post <text>",
+        "post": "Share text (and an optional attached image) to your connected Pleroma/Nostr: post <text>",
         "remind": "Set a reminder in natural language: remind <what> <when> (e.g. remind open the oven in 10m, remind me next tuesday to call mom). Delivered in the web UI and Telegram.",
         "reminders": "Show your pending reminders (clickable to cancel): reminders",
         "pin": "Pin something you run often — a search or any command: pin <query|command> (e.g. pin latest xrp news, or pin screenshot https://google.com)",
@@ -116,6 +116,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "charliesangles": "Turn an attached image into an MP4 set to the Charlie's Angels theme clip: charliesangles",
         "differentstroke": "Turn an attached image into an MP4 set to the Diff'rent Strokes theme clip: differentstroke",
         "seinfeld": "Turn an attached image into an MP4 set to the Seinfeld theme clip: seinfeld",
+        "jerry": "Put Jerry on an attached image, set to the Seinfeld theme: jerry",
         "onepiece": "Turn an attached image into an MP4 set to the One Piece theme clip: onepiece",
         "overtaken": "Turn an attached image into an MP4 set to the overtaken clip: overtaken",
         "freebird": "Turn an attached image into an MP4 set to the Free Bird solo: freebird",
@@ -197,7 +198,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
-        "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
+        "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "uwu",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider",
     }
@@ -228,8 +229,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     def __init__(self, db: Session, user: Optional["User"] = None, is_bot: bool = False):
         self.db = db
         self.user = user
-        # Bot-driven contexts (Pleroma/Misskey listeners) are configured in Admin → Bots,
-        # so they're exempt from per-user feature gating. Pleroma/Misskey hit /api/generate-image
+        # Bot-driven contexts (Pleroma listener) are configured in Admin → Bots,
+        # so they're exempt from per-user feature gating. Pleroma hits /api/generate-image
         # directly (never this service).
         self.is_bot = is_bot
         self.search_service = SearchService(db)
@@ -762,6 +763,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._differentstroke_command(attachments)
         elif command == "seinfeld":
             return await self._seinfeld_command(attachments)
+        elif command == "jerry":
+            return await self._jerry_command(attachments)
         elif command == "onepiece":
             return await self._onepiece_command(attachments)
         elif command == "overtaken":

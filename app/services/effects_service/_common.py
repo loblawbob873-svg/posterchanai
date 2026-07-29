@@ -565,6 +565,9 @@ _CHARACTERS = {
     # Reaction overlays (see _add_reaction_overlay): cutouts with no background and no caption —
     # the pose IS the joke, so they stand bottom-centre over the image and say nothing.
     "carl": "carl.png", "brutananadilewski": "carl.png",
+    # Jerry doing stand-up — a reaction cutout like carl/soyjack, but paired with the
+    # Seinfeld theme (it reuses _seinfeld_audio_path, so there is no second mp3).
+    "jerry": "jerry.png", "seinfeldjerry": "jerry.png",
     # NOT "pointing" — that alias belongs to theraped above, and a duplicate key here would silently
     # steal it (last one wins in a dict literal).
     "soyjack": "soyjack.png", "soyjak": "soyjack.png", "soy": "soyjack.png", "soyjaks": "soyjack.png",
@@ -575,7 +578,7 @@ _CHARACTERS = {
     "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway"]
+CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",

@@ -266,7 +266,7 @@ def _visibility_of(st: dict | None) -> str:
     v = ((st or {}).get("visibility") or "").strip().lower()
     if v in ("public", "unlisted", "private", "direct"):
         return v
-    if v == "home":              # Misskey naming for unlisted
+    if v == "home":              # alternate naming for unlisted
         return "unlisted"
     return "unlisted"
 

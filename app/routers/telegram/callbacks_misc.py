@@ -1,7 +1,7 @@
 """Auto-split from callbacks.py: misc callback handlers. Bodies moved verbatim."""
-from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _misskey_post_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
-from .keyboards import _has_misskey, _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
-from .senders import User, _deliver_pin_result, _geni_image_cache, _has_misskey, _has_nostr, _has_pleroma, _link_content_for_llm, _misskey_post_cache, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
+from ._common import ChatService, CommandService, User, _CONSUMED, _HELP_SECTIONS, _flashcard_decks_cache, _geni_image_cache, _link_action_cache, _nostr_post_cache, _pleroma_post_cache, asyncio, logger, telegram_service, time
+from .keyboards import _has_nostr, _has_pleroma, _help_main_keyboard, _recover_post_text, _strip_hashtags
+from .senders import User, _deliver_pin_result, _geni_image_cache, _has_nostr, _has_pleroma, _link_content_for_llm, _offer_social_post, _pleroma_post_cache, _post_to_nostr, _send_flashcard, _send_screenshot, asyncio, logger, telegram_service, time
 
 
 async def _cb_rem(update, db, chat_id, data, callback_query, callback_query_id):
@@ -258,7 +258,7 @@ async def _cb_lnk(update, db, chat_id, data, callback_query, callback_query_id):
 
 
 async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_query_id):
-        _gp = (_misskey_post_cache.get(chat_id) or _pleroma_post_cache.get(chat_id)
+        _gp = (_pleroma_post_cache.get(chat_id)
                or _nostr_post_cache.get(chat_id))
         if _gp in (None, _CONSUMED):
             _gp = _recover_post_text(callback_query) or None
@@ -295,63 +295,10 @@ async def _cb_glowtextpost(update, db, chat_id, data, callback_query, callback_q
         return {"ok": True}
 
 
-async def _cb_mk(update, db, chat_id, data, callback_query, callback_query_id):
-        action = data.split(":", 1)[1]
-
-        if action == "skip":
-            # Clear all social post caches so stale posts can't be sent
-            _misskey_post_cache.pop(chat_id, None)
-            _pleroma_post_cache.pop(chat_id, None)
-            _nostr_post_cache.pop(chat_id, None)
-            _geni_image_cache.pop(chat_id, None)
-            await telegram_service.send_message(chat_id, "Post skipped.")
-            return {"ok": True}
-
-        # action == "post"
-        pending_post = _misskey_post_cache.pop(chat_id, None)
-        if pending_post == _CONSUMED:
-            await telegram_service.send_message(chat_id, "Already posted via 'Post to All'.")
-            return {"ok": True}
-        if pending_post is None:
-            pending_post = _recover_post_text(callback_query) or None
-        if pending_post is None:
-            await telegram_service.send_message(chat_id, "No pending Misskey post found. Please generate a new post.")
-            return {"ok": True}
-
-        mk_user = db.query(User).filter(
-            User.telegram_chat_id == chat_id,
-            User.telegram_enabled == True
-        ).first()
-
-        if (
-            not mk_user
-            or not getattr(mk_user, "misskey_enabled", False)
-            or not getattr(mk_user, "misskey_instance_url", None)
-            or not getattr(mk_user, "misskey_api_token", None)
-        ):
-            await telegram_service.send_message(chat_id, "Misskey is not configured on your account.")
-            return {"ok": True}
-
-        _mk_image = _geni_image_cache.get(chat_id)  # .get so other platforms can still use it
-        try:
-            from app.services.misskey_service import post_note as _misskey_post_note
-            await _misskey_post_note(
-                mk_user.misskey_instance_url,
-                mk_user.misskey_api_token,
-                pending_post,
-                image_bytes=_mk_image,
-            )
-            await telegram_service.send_message(chat_id, "✅ Posted to Misskey!")
-        except Exception as mk_err:
-            logger.error(f"Misskey post error: {mk_err}", exc_info=True)
-            await telegram_service.send_message(chat_id, f"❌ Failed to post to Misskey: {mk_err}")
-
-
 async def _cb_plr(update, db, chat_id, data, callback_query, callback_query_id):
         action = data.split(":", 1)[1]
 
         if action == "skip":
-            _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
@@ -397,7 +344,6 @@ async def _cb_nostr(update, db, chat_id, data, callback_query, callback_query_id
         action = data.split(":", 1)[1]
 
         if action == "skip":
-            _misskey_post_cache.pop(chat_id, None)
             _pleroma_post_cache.pop(chat_id, None)
             _nostr_post_cache.pop(chat_id, None)
             _geni_image_cache.pop(chat_id, None)
@@ -448,20 +394,6 @@ async def _cb_allpost(update, db, chat_id, data, callback_query, callback_query_
         results = []
 
         _all_image = _geni_image_cache.get(chat_id)
-
-        # Misskey — post when there's text OR a media attachment (caption-less post).
-        mk_post = _misskey_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)
-        if (mk_post or _all_image) and all_user and _has_misskey(all_user):
-            try:
-                from app.services.misskey_service import post_note as _mk_note
-                await _mk_note(all_user.misskey_instance_url, all_user.misskey_api_token, mk_post,
-                               image_bytes=_all_image)
-                results.append("✅ Misskey")
-            except Exception as _e:
-                logger.error(f"all:post Misskey error: {_e}", exc_info=True)
-                results.append(f"❌ Misskey: {_e}")
-            # Sentinel prevents old Misskey button from double-posting
-            _misskey_post_cache[chat_id] = _CONSUMED
 
         # Pleroma
         plr_post = _pleroma_post_cache.pop(chat_id, None) or _recover_post_text(callback_query)

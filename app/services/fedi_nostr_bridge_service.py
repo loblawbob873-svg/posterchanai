@@ -146,9 +146,9 @@ def _author_muted(acct: str, host: str, instance_host: str) -> bool:
 # --- delivery ---------------------------------------------------------------
 
 # Fediverse audiences safe to mirror as a PUBLIC Nostr note. ALLOWLIST (not a blocklist of
-# direct/private) so ANY other value — Pleroma `list`/`local`, Misskey `followers`/`specified`, or a
+# direct/private) so ANY other value — Pleroma `list`/`local`, or a
 # missing/unknown one — is never leaked to the public firehose. `unlisted` (Mastodon/Pleroma) and
-# `home` (Misskey) are "not listed but link-public", mirrored by design.
+# `home` is "not listed but link-public", mirrored by design.
 _PUBLIC_AUDIENCE = ("public", "unlisted", "home")
 
 
@@ -312,7 +312,7 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
     """Map each LINKED bridge user's fediverse identity -> their REAL Nostr pubkey, so a mirrored note
     @mentioning them p-tags their REAL key (→ a Nostr NOTIFICATION for them); a bare puppet p-tag isn't
     (their client watches their own key). Indexed by BOTH the actor url and "username@host" so a
-    cross-instance rendering of the mention still matches. Covers Pleroma + Misskey links. All users are
+    cross-instance rendering of the mention still matches. Covers Pleroma links. All users are
     resolved CONCURRENTLY with a bounded per-call timeout so one slow instance can't stall the mirror.
     Cached by timestamp (an empty result is cached too — no rebuild storm during an outage); a shorter
     retry TTL applies when some user failed this cycle."""
@@ -323,7 +323,6 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
         return _linked_actors
     from app.models import User
     from app.services.nostr.nostr_service import to_pubkey_hex
-    from app.services import misskey_service
     try:
         users = db.query(User).filter(User.nostr_npub.isnot(None)).all()
     except Exception:
@@ -340,13 +339,6 @@ async def _linked_actor_pubkeys(db: Session) -> dict:
                     _LINKED_VC_TIMEOUT)
                 inst, url = u.pleroma_instance_url, ((me or {}).get("url") or "").strip()
                 un = ((me or {}).get("username") or "").strip()
-            elif u.misskey_instance_url and u.misskey_api_token:
-                me = await asyncio.wait_for(
-                    misskey_service.call(u.misskey_instance_url, u.misskey_api_token, "i"),
-                    _LINKED_VC_TIMEOUT)
-                inst = u.misskey_instance_url
-                un = ((me or {}).get("username") or "").strip()
-                url = f"https://{urlparse(inst).netloc}/@{un}" if un else ""
             else:
                 return ("skip", u.id, None, None)    # no linked fedi account — not a failure
         except Exception:
@@ -471,11 +463,8 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
 
 
 def _raw_quote_status(platform: str, raw: dict) -> dict | None:
-    """The full quoted status object embedded in `raw` (Pleroma `quote`, or a Misskey renote that
+    """The full quoted status object embedded in `raw` (Pleroma `quote` that
     carries its own text), or None for a plain post/boost."""
-    if platform == "misskey":
-        rn = raw.get("renote")
-        return rn if (isinstance(rn, dict) and (raw.get("text") or "").strip()) else None
     # Pleroma: a quote-post carries `quote`; a boost-with-comment carries `reblog` (+ own content,
     # which is why it wasn't filtered as a pure boost). Mirror _norm_pleroma's quote selection.
     sub = raw.get("quote") or raw.get("reblog")
@@ -928,7 +917,7 @@ async def _drain_timeline(db: Session, port: int, platform: str, instance_url: s
         # assigned at LOCAL ingest, so a late-federating post sorts early while holding a high id — and
         # either break below then committed a cursor past posts that were never mirrored. Those are never
         # re-fetched (min_id excludes them) and nothing logs a gap. Ids are time-ordered on both platforms
-        # (Pleroma FlakeId, Misskey aid), so this also keeps parents ahead of their replies.
+        # (Pleroma FlakeId), so this also keeps parents ahead of their replies.
         raw_posts = sorted(raw_posts, key=lambda r: str(r.get("id") or ""))
         last = None
         transient = False
@@ -980,7 +969,7 @@ async def poll_once(db: Session) -> None:
     token = _get("fedi_bridge_access_token")
     if not (instance_url and token):
         return
-    platform = "pleroma"   # Pleroma/Mastodon API first; misskey is a fast-follow
+    platform = "pleroma"   # Pleroma/Mastodon API
     ttype = _get("fedi_bridge_type", "global")
     include_replies = _get("fedi_bridge_include_replies", "true").lower() == "true"
     instance_host = urlparse(instance_url).netloc.split(":")[0].lower()
@@ -1232,22 +1221,29 @@ def cleanup_state() -> None:
     """Prune delivered-map rows for notes that have aged out of the relay (mirrors are reconstructable
     and the relay prunes them); keeps the bookkeeping table bounded alongside the firehose."""
     from app.database import SessionLocal
+    # Follows Auto-clean (Admin → Relay), the relay's ONE retention window — the mirror no longer has
+    # a retention setting of its own. These rows are bookkeeping, not content: dropping one only means
+    # a post the relay has already aged out could be re-mirrored if the source resurfaces it, so the
+    # ledger must not outlive the events it describes, nor be reaped before them. 0 (Auto-clean off)
+    # therefore means keep the ledger too — matching "nothing is auto-deleted".
     try:
-        days = int(_get("fedi_bridge_retention_days", "0") or "0")
+        keep_days = int(_get("nostr_relay_retention_days", "30") or "30")
     except ValueError:
-        days = 0
-    keep_days = days or int(_get("nostr_relay_retention_days", "30") or "30")
+        keep_days = 30
     db = SessionLocal()
     try:
-        cutoff = datetime.utcnow() - timedelta(days=max(1, keep_days))
-        # Keep note_id="" rows: those are the write-back TOMBSTONES/markers _check_deletions goes out
-        # of its way to preserve ("a permanent marker, not bookkeeping to reap"). Reaping them let a
-        # reply to an old thread pull the user's own status back through fetch_context, where _seen no
-        # longer knew about it — so their post was re-published under a PUPPET key, appearing twice in
-        # the global timeline under two identities.
-        (db.query(FediBridgeDelivered)
-           .filter(FediBridgeDelivered.created_at < cutoff, FediBridgeDelivered.note_id != "")
-           .delete(synchronize_session=False))
+        # Auto-clean off (0) → the events are kept, so their ledger is kept too. The SKIP ledger below
+        # still prunes: it is diagnostics, not bookkeeping about anything that exists.
+        if keep_days > 0:
+            cutoff = datetime.utcnow() - timedelta(days=keep_days)
+            # Keep note_id="" rows: those are the write-back TOMBSTONES/markers _check_deletions goes
+            # out of its way to preserve ("a permanent marker, not bookkeeping to reap"). Reaping them
+            # let a reply to an old thread pull the user's own status back through fetch_context, where
+            # _seen no longer knew about it — so their post was re-published under a PUPPET key,
+            # appearing twice in the global timeline under two identities.
+            (db.query(FediBridgeDelivered)
+               .filter(FediBridgeDelivered.created_at < cutoff, FediBridgeDelivered.note_id != "")
+               .delete(synchronize_session=False))
         # The skip ledger is PURELY diagnostic, so it gets a short retention of its own rather than the
         # relay's — nothing reads a month-old skip, and leaving it unpruned is how a diagnostic table
         # quietly becomes the biggest one in the database. (fedi_reconcile_state is self-limiting: one

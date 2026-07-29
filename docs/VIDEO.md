@@ -1,7 +1,7 @@
 # Video Generation (`videogeni`)
 
 Native, in-process **text-to-video** via Hugging Face `diffusers`. Available in the **web UI** and
-**Telegram** (intentionally *not* the Misskey/Pleroma bots — abuse surface).
+**Telegram** (intentionally *not* the Pleroma bots — abuse surface).
 
 ```
 videogeni <prompt>                 # generate a short clip

@@ -13166,6 +13166,9 @@
       const fxm=e.target.closest('.fx-mot[data-add]'); if(fxm){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ if(_ai.fxImage && !_ai.attach.length) aiAddFiles([_ai.fxImage]); _fxApplyMod(ta, fxm.dataset.add); ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // motion → single geometry / glow·alive·trippy compose
       const rfx=e.target.closest('.ai-reply-fx'); if(rfx){ e.preventDefault(); sendEffectReply(rfx.dataset.mid, rfx); return; }   // post the generated effect back as a reply
       const cfx=e.target.closest('.ai-copy-fx'); if(cfx){ e.preventDefault(); copyEffectUrl(cfx.dataset.mid, cfx); return; }   // upload + copy the public Blossom URL
+      const sfx=e.target.closest('.ai-save-fx'); if(sfx){ e.preventDefault(); saveEffectToBlossom(sfx.dataset.mid, sfx); return; }   // keep generated media on the user's Blossom drive
+      const dfx=e.target.closest('.ai-dl-fx'); if(dfx){ e.preventDefault(); downloadEffectMedia(dfx.dataset.mid, dfx); return; }     // save the bytes to the device
+      const mfx=e.target.closest('.ai-mp3-fx'); if(mfx){ e.preventDefault(); convertEffectToMp3(mfx.dataset.mid, mfx); return; }     // branded MP4 → MP3 via `extractaudio`
       const cpf=e.target.closest('.ai-copyfile'); if(cpf){ e.preventDefault(); copyFileUrl(cpf.dataset.url, cpf); return; }   // inline /api/files/ media → re-upload + copy public URL
       const rpf=e.target.closest('.ai-replyfile'); if(rpf){ e.preventDefault(); replyFileUrl(rpf.dataset.url, rpf); return; }
       const ppf=e.target.closest('.ai-postfile'); if(ppf){ e.preventDefault(); postFileUrl(ppf.dataset.url, ppf); return; }     // share generated media → new Nostr post
@@ -14092,14 +14095,73 @@
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
     finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
   }
-  function _fxReplyBtn(b64, mime, ext){
+  function _fxReplyBtn(b64, mime, ext, opts){
     if(!b64) return '';
+    const o=opts||{};
     const mid='fx'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
     _ai.fxMedia[mid]={ b64, mime, ext };
+    // 🎵 Only where there IS an audio track to pull: a song / narration wrapped in the branded MP4.
+    // videogeni output is silent, so offering it there would just fail — the server marks the ones
+    // that carry audio (has_audio) rather than the client guessing from the mp4 container.
+    const mp3=o.hasAudio?`<button class="btn btn-cyan small ai-mp3-fx" data-mid="${mid}">🎵 Convert to MP3</button>`:'';
+    const dl=`<button class="btn btn-ghost small ai-dl-fx" data-mid="${mid}">⬇ Download</button>`;
     const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
+    const save=`<button class="btn btn-ghost small ai-save-fx" data-mid="${mid}">💾 Save to Blossom</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${post}${copy}</div>`;
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${dl}${copy}</div>`;
+  }
+  // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and click an
+  // object URL — NOT an <a href="data:…">, which Chrome blocks past a few MB (a 3-minute song or a
+  // 720p clip is exactly that size). Revoked on the next tick so the tab doesn't hold the buffer.
+  function downloadEffectMedia(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to download'); return; }
+    try{
+      const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
+      const url=URL.createObjectURL(new Blob([bin], { type:m.mime }));
+      const a=document.createElement('a');
+      a.href=url; a.download='posterchan-'+Date.now()+'.'+m.ext;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 10000);
+      if(btn) btn.textContent='✓ downloaded';
+    }catch(e){ toast('download failed: '+((e&&e.message)||e)); }
+  }
+  // 🎵 Pull the song out of the branded MP4 as an MP3. Runs the SAME `extractaudio` command a user
+  // could type with the video attached (chat.py handles that case explicitly), so there is ONE
+  // extraction implementation; the result comes back as a normal generated_audio message, which now
+  // carries its own ⬇ Download button.
+  async function convertEffectToMp3(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to convert'); return; }
+    if(btn){ btn.disabled=true; btn.textContent='converting…'; }
+    try{
+      const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
+      await aiAddFiles([new File([bin], 'song.'+m.ext, { type:m.mime })]);
+      const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
+      aiSend();
+      if(btn){ btn.textContent='🎵 Convert to MP3'; btn.disabled=false; }
+    }catch(e){
+      toast('convert failed: '+((e&&e.message)||e));
+      if(btn){ btn.disabled=false; btn.textContent='🎵 Convert to MP3'; }
+    }
+  }
+  // 💾 Keep a generated image/video. Chat media is a base64 blob in the message — it lives only in
+  // that conversation and is gone if you clear it, so this puts the bytes on your Blossom drive
+  // where Files can see them. Same uploadBlob every other upload uses, so it honours the user's own
+  // media server, the built-in-vs-nostr.build routing and the BUD-01 batch auth.
+  async function saveEffectToBlossom(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to save'); return; }
+    // Already uploaded (Copy link / Post got there first) → don't spend a second upload or signature.
+    if(m.url){ toast('already saved to Blossom'); if(btn) btn.textContent='✓ saved'; return; }
+    if(btn){ btn.disabled=true; btn.textContent='saving…'; }
+    try{
+      const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
+      m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }));
+      toast('saved to Blossom — find it in Files');
+      if(btn){ btn.textContent='✓ saved'; btn.disabled=false; }
+    }catch(e){
+      toast('save failed: '+((e&&e.message)||e));
+      if(btn){ btn.disabled=false; btn.textContent='💾 Save to Blossom'; }
+    }
   }
   // Upload generated media to Blossom and copy its URL — paste the link into any reply yourself.
   async function copyEffectUrl(mid, btn){
@@ -14149,10 +14211,15 @@
         + `<div class="ai-budget-btns"><button class="ai-billadd" data-vendor="${enc(d.vendor||'')}" data-amount="${enc(String(d.amount||0))}">✅ Add to budget</button>`
         + `<button class="ai-billno">✖ Cancel</button></div>`;
     }
-    if(d.type==='generated_image' && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,'image/png','png');
-    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4');
+    // `mime` is sent since the server now compresses generated images to JPEG; older servers (and the
+    // APK meeting one) send no mime, so fall back to the PNG this always used to be.
+    if(d.type==='generated_image' && d.image){ const im=d.mime||'image/png'; const iext=im==='image/jpeg'?'jpg':'png';
+      return head+`<div class="ai-media"><img src="data:${im};base64,${d.image}" alt="generated"></div>`+_fxReplyBtn(d.image,im,iext); }
+    if(d.type==='generated_video' && d.video) return head+`<div class="ai-media"><video controls src="data:video/mp4;base64,${d.video}"></video></div>`+_fxReplyBtn(d.video,'video/mp4','mp4',{hasAudio:!!d.has_audio});
+    // Generated audio had NO buttons at all — a song you could play once and then lose. Same row as
+    // every other generated medium, so it can be downloaded, kept on Blossom, or posted.
     if(d.type==='generated_audio' && d.audio){ const fmt=(d.format||'mp3').toLowerCase(); const mime=({mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',opus:'audio/ogg',aac:'audio/aac'})[fmt]||'audio/mpeg';
-      return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`; }
+      return head+`<div class="ai-media"><audio controls src="data:${mime};base64,${d.audio}"></audio></div>`+_fxReplyBtn(d.audio,mime,fmt); }
     if((d.type==='meme') && d.image) return head+`<div class="ai-media"><img src="data:image/png;base64,${d.image}" alt="meme"></div>`+_fxReplyBtn(d.image,'image/png','png');
     if(d.type==='mail_attachment' && d.data){ const mime=d.mime_type||'application/octet-stream';
       if(mime.startsWith('image/')) return head+`<div class="ai-media"><img src="data:${mime};base64,${d.data}"></div>`;
@@ -14505,7 +14572,7 @@
   }
   // Per-user settings — faithful port of the old web-UI modal (6 tabs). Loads /api/auth/settings,
   // saves text/toggles via PUT, and wires the real connect flows (Telegram link,
-  // Pleroma OAuth, Misskey MiAuth, Nostr key) to their existing endpoints.
+  // Pleroma OAuth, Nostr key) to their existing endpoints.
   let _usMail=[];
   let _nostrPrefsLoaded=false;   // load relay/media prefs from Nostr ONCE per session, not on every re-render
   async function renderUserSettings(){
@@ -14636,13 +14703,6 @@
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Cross-post my posts to the Fediverse<label class="switch"><input type="checkbox" id="us-fedi-crosspost" ${s.fedi_crosspost_enabled?'checked':''}><span class="slider"></span></label></label>
             <div class="muted small">When on, your top-level Nostr notes are also posted to your linked Pleroma account as public posts. Replies stay where you make them.</div>
             <div class="us-stat muted small" id="us-plr-stat"></div>
-          </div>
-          <div class="us-conn"><div class="set-title small">Misskey</div>
-            <label class="fld">Instance URL<input class="input" id="us-mk-url" value="${enc(s.misskey_instance_url||'')}" placeholder="https://misskey.example"></label>
-            ${s.misskey_has_api_token
-              ? `<div class="muted small">✓ Connected to ${enc(s.misskey_instance_url||'')}</div><button class="btn btn-ghost small" id="us-mk-disc" style="color:var(--danger)">Disconnect</button>`
-              : `<button class="btn btn-ghost small" id="us-mk-conn">Connect with MiAuth</button>`}
-            <div class="us-stat muted small" id="us-mk-stat"></div>
           </div>
         </div>
         <div class="us-pane" data-pane="keys">
@@ -14953,12 +15013,6 @@
         if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
         _awaitLink(s=>!!s.pleroma_has_access_token, st, 'pleroma_connected'); }; }
     { const d=$('#us-plr-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Pleroma?'))return; await fetch('/api/pleroma/disconnect',{method:'POST'}); renderUserSettings(); }; }
-    // Misskey MiAuth
-    { const c=$('#us-mk-conn'); if(c) c.onclick=async()=>{ const st=$('#us-mk-stat'); const url=$('#us-mk-url').value.trim(); if(!url){st.textContent='enter the instance URL';return;} st.textContent='starting MiAuth…';
-        const r=await fetch('/api/misskey/miauth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance_url:url})}); const d=await r.json().catch(()=>({}));
-        if(!r.ok){ st.textContent=d.detail||'failed'; return; } window.open(d.auth_url,'_blank'); st.textContent='waiting for authorization…';
-        _awaitLink(s=>!!s.misskey_has_api_token, st, 'misskey_connected'); }; }   // NB: has_api_token, not has_access_token
-    { const d=$('#us-mk-disc'); if(d) d.onclick=async()=>{ if(!await uiConfirm('Disconnect Misskey?'))return; await fetch('/api/misskey/disconnect',{method:'DELETE'}); renderUserSettings(); }; }
     // Finance: remove the stored key
     // API keys
     $('#us-key-new').onclick=async()=>{ const name=$('#us-key-name').value.trim();
@@ -14990,7 +15044,7 @@
                 fedi_bridge_enabled:(($('#us-fedi-bridge')||{}).checked)||false,
         fedi_crosspost_enabled:(($('#us-fedi-crosspost')||{}).checked)||false,
         pleroma_instance_url:$('#us-plr-url').value.trim(),
-        misskey_instance_url:$('#us-mk-url').value.trim(), nitter_feeds:$('#us-nitter').value,
+        nitter_feeds:$('#us-nitter').value,
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
       const st=$('#us-save-status'); if(st) st.textContent='saving…';

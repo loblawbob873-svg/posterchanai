@@ -45,11 +45,9 @@ FEDIBUZZ_ENGLISH_URL = "https://fedi.buzz/in/en"  # English only
 MASTODON_TRENDING_URL = "https://mastodon.social/api/v1/trends/tags"
 
 # Platform Configuration (can be overridden by external config)
-PLATFORM_TYPE = os.getenv("PLATFORM_TYPE", "pleroma")  # "pleroma" or "misskey"
+PLATFORM_TYPE = os.getenv("PLATFORM_TYPE", "pleroma")  # "pleroma"
 PLEROMA_ENDPOINT = os.getenv("PLEROMA_ENDPOINT", "")
 PLEROMA_ACCESS_TOKEN = os.getenv("PLEROMA_ACCESS_TOKEN", "")
-MISSKEY_SERVER = os.getenv("MISSKEY_SERVER", "")
-MISSKEY_ACCESS_TOKEN = os.getenv("MISSKEY_ACCESS_TOKEN", "")
 
 
 def get_config():
@@ -58,7 +56,7 @@ def get_config():
     All settings come from environment variables, set by botctl.py / the
     installer from bots_config.py.
     """
-    if os.getenv("PLATFORM_TYPE") and (os.getenv("MISSKEY_SERVER") or os.getenv("PLEROMA_ENDPOINT")):
+    if os.getenv("PLATFORM_TYPE") and os.getenv("PLEROMA_ENDPOINT"):
         logging.info(f"Using environment variables (PLATFORM_TYPE={PLATFORM_TYPE})")
     else:
         logging.warning("No platform configuration found; set PLATFORM_TYPE and an endpoint")
@@ -256,42 +254,6 @@ def post_to_pleroma(message):
         return False
 
 
-def post_to_misskey(message):
-    """Post a message to Misskey"""
-    if not MISSKEY_SERVER or not MISSKEY_ACCESS_TOKEN:
-        logging.error("Misskey server or access token not configured")
-        return False
-
-    # Prevent sending any message that contains the BLOCK_PHRASE
-    if BLOCK_PHRASE and BLOCK_PHRASE in message:
-        logging.warning("Message contains blocked phrase; not sending to Misskey.")
-        return False
-
-    server = MISSKEY_SERVER.rstrip('/')
-    if not server.startswith(('http://', 'https://')):
-        server = f"https://{server}"
-
-    url = f"{server}/api/notes/create"
-    headers = {"Content-Type": "application/json"}
-    data = {
-        "i": MISSKEY_ACCESS_TOKEN,
-        "text": message,
-        "visibility": "public"
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
-        if response.status_code == 200:
-            logging.info("Successfully posted trending hashtags to Misskey")
-            return True
-        else:
-            logging.error(f"Failed to post to Misskey: {response.status_code} - {response.text[:200]}")
-            return False
-    except Exception as e:
-        logging.error(f"Error posting to Misskey: {e}")
-        return False
-
-
 def post_trending_hashtags(print_only=False):
     """Fetch and post trending hashtags"""
     logging.info("Fetching trending hashtags from Fediverse")
@@ -313,9 +275,7 @@ def post_trending_hashtags(print_only=False):
         return True
     else:
         # Post to configured platform
-        if PLATFORM_TYPE == "misskey" and MISSKEY_SERVER:
-            return post_to_misskey(message)
-        elif PLEROMA_ENDPOINT:
+        if PLEROMA_ENDPOINT:
             return post_to_pleroma(message)
         else:
             logging.error("No platform configured for posting")
@@ -373,8 +333,7 @@ if __name__ == "__main__":
         print("Configuration:")
         print("  Set environment variables:")
         print("    PLEROMA_ENDPOINT, PLEROMA_ACCESS_TOKEN  - For Pleroma")
-        print("    MISSKEY_SERVER, MISSKEY_ACCESS_TOKEN    - For Misskey")
-        print("    PLATFORM_TYPE                           - 'pleroma' or 'misskey'")
+        print("    PLATFORM_TYPE                           - 'pleroma'")
         sys.exit(0)
 
     cmd = sys.argv[1]

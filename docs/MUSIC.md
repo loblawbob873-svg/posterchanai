@@ -3,7 +3,7 @@
 Text-to-song generation with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5), generated
 **in-process** — on the app's own venv, torch and GPU lock, exactly like video generation. There is
 no `acestep.service`, no second venv and no HTTP hop. Available in the **web UI** and **Telegram**
-(intentionally *not* the Misskey/Pleroma bots — abuse surface).
+(intentionally *not* the Pleroma bots — abuse surface).
 
 ```
 musicgeni <description>                 # auto-writes lyrics → a song WITH vocals

@@ -16,7 +16,6 @@ import psycopg2
 
 from config import (
     SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE,
-    MISSKEY_SERVER, MISSKEY_ACCESS_TOKEN,
     PLEROMA_ENDPOINT, PLEROMA_ACCESS_TOKEN,
 )
 
@@ -147,21 +146,13 @@ def get_bot_avatar_url(bot_name="BOT"):
     """
     global _avatar_cache
 
-    cache_key = f"{MISSKEY_SERVER or PLEROMA_ENDPOINT}"
+    cache_key = f"{PLEROMA_ENDPOINT}"
     if cache_key in _avatar_cache:
         return _avatar_cache[cache_key]
 
     avatar_url = None
     try:
-        if MISSKEY_SERVER and MISSKEY_ACCESS_TOKEN:
-            response = requests.post(
-                f"{MISSKEY_SERVER}/api/i",
-                json={"i": MISSKEY_ACCESS_TOKEN},
-                timeout=10
-            )
-            if response.status_code == 200:
-                avatar_url = response.json().get("avatarUrl")
-        elif PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
+        if PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
             response = requests.get(
                 f"{PLEROMA_ENDPOINT}/api/v1/accounts/verify_credentials",
                 headers={"Authorization": f"Bearer {PLEROMA_ACCESS_TOKEN}"},
@@ -337,11 +328,9 @@ def get_instance_name():
     """Get the instance domain name from config.
 
     Returns:
-        Domain name string (e.g., 'misskey.io')
+        Domain name string (e.g., 'poster.place')
     """
-    if MISSKEY_SERVER:
-        return MISSKEY_SERVER.replace("https://", "").replace("http://", "").split("/")[0]
-    elif PLEROMA_ENDPOINT:
+    if PLEROMA_ENDPOINT:
         return PLEROMA_ENDPOINT.replace("https://", "").replace("http://", "").split("/")[0]
     return "instance"
 

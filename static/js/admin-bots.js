@@ -149,16 +149,16 @@ function onBotFormChange() {
     const show = (gid, on) => { const e = _g(gid); if (e) e.style.display = on ? '' : 'none'; };
 
     const isNostr = platform === 'nostr';
-    show('bot_grp_fedi', !isNostr);   // server/username/token: Misskey/Pleroma only
+    show('bot_grp_fedi', !isNostr);   // server/username/token: Pleroma only
     show('bot_grp_nostr', isNostr);                // Nostr: secret key + relays + media host
     show('bot_grp_features', !isImage);
 
     // Per-PLATFORM feature applicability — hide (and uncheck, so it's never saved) any feature the
-    // selected platform can't run. Fediverse-only features need the Pleroma/Misskey DB or admin
+    // selected platform can't run. Fediverse-only features need the Pleroma DB or admin
     // token (block / welcome / report / unfollow → don't apply to Nostr); Nostr-only are
     // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse). Cross-platform
     // ones (reply / Nitter / hashtag) always show.
-    const isFedi = platform === 'pleroma' || platform === 'misskey';
+    const isFedi = platform === 'pleroma';
     const showFeat = (f, on) => {
         const c = _g('bot_ft_' + f); if (!c) return;
         const lbl = c.closest('label'); if (lbl) lbl.style.display = on ? '' : 'none';
@@ -174,8 +174,7 @@ function onBotFormChange() {
     // block / welcome / report / unfollow all need the Pleroma DB.
     const needsDb = ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow');
     show('bot_grp_db', !isImage && needsDb);
-    show('bot_grp_oauth', platform === 'pleroma' || platform === 'misskey');  // password connect (fedi)
-    show('bot_grp_oauth_totp', platform === 'misskey');   // Misskey signin can take a 2FA code
+    show('bot_grp_oauth', platform === 'pleroma');  // password connect (fedi)
     show('bot_grp_pleroma_admin', platform === 'pleroma' && !isImage && ck('bot_ft_report'));  // report only
     show('bot_grp_welcome', !isImage && ck('bot_ft_welcome'));
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
@@ -211,7 +210,7 @@ function openBotModal(id) {
     _setVal('bot_f_id', b ? b.id : '');
     _setVal('bot_f_name', b ? b.name : '');
     _setVal('bot_f_type', b ? b.bot_type : 'text');
-    _setVal('bot_f_platform', b ? b.platform : 'misskey');
+    _setVal('bot_f_platform', b ? b.platform : 'pleroma');
     _setVal('bot_f_host', b ? b.host : '');
 
     const cfg = (b && b.config) ? b.config : {};
@@ -230,7 +229,7 @@ function openBotModal(id) {
     _setVal('bot_f_nitter_feeds', feeds.join('\n'));
 
     // features from modes
-    const plat = b ? b.platform : 'misskey';
+    const plat = b ? b.platform : 'pleroma';
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
     _setChk('bot_ft_reply', modes.includes('--' + plat));               // reply on the bot's own platform
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
@@ -263,7 +262,7 @@ function _buildModes(type, platform) {
     return [...modes].join(',');
 }
 
-// Mint an access token from the bot account's password (Pleroma password grant / Misskey
+// Mint an access token from the bot account's password (Pleroma password grant
 // signin) and drop it into the Access token field. Saves the admin the manual OAuth flow.
 async function botOauthConnect() {
     const statusEl = _g('bot_oauth_status');
@@ -279,13 +278,12 @@ async function botOauthConnect() {
     try {
         const resp = await fetch('/api/admin/bots/oauth/token', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ platform, server, username, password, totp: _val('bot_f_oauth_totp') }),
+            body: JSON.stringify({ platform, server, username, password }),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.detail || resp.statusText);
         _setVal('bot_f_access_token', data.access_token);
         _g('bot_f_oauth_password').value = '';
-        if (_g('bot_f_oauth_totp')) _g('bot_f_oauth_totp').value = '';
         statusEl.textContent = '✅ Token minted and filled in. Click Save to keep it.';
     } catch (err) {
         statusEl.textContent = '❌ ' + err.message;

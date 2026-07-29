@@ -11,15 +11,14 @@ import threading
 import requests
 from config import (
     SQL_USER, SQL_PASS, SQL_HOST, SQL_DATABASE,
-    PLEROMA_ENDPOINT, MISSKEY_SERVER,
+    PLEROMA_ENDPOINT,
     REPORT_PROMPT, OPENAI_ENDPOINT, PLEROMA_ADMIN_TOKEN,
     BOT_BLACKLIST, AUTO_NARRATE,
-    PLEROMA_ACCESS_TOKEN, MISSKEY_ACCESS_TOKEN
+    PLEROMA_ACCESS_TOKEN
 )
 from pleroma import post_to_fediverse as pleroma_post, post_image_to_fediverse as pleroma_post_image
 from ai import generate_reply
 from tts import generate_speech_with_retries, generate_narration_video
-import misskey
 
 # Cache for bot avatar URL
 _bot_avatar_cache = {}
@@ -27,16 +26,12 @@ _bot_avatar_cache = {}
 def get_bot_avatar_url():
     """Fetch the bot's avatar URL from the API"""
     global _bot_avatar_cache
-    cache_key = f"{MISSKEY_SERVER or PLEROMA_ENDPOINT}"
+    cache_key = f"{PLEROMA_ENDPOINT}"
     if cache_key in _bot_avatar_cache:
         return _bot_avatar_cache[cache_key]
     avatar_url = None
     try:
-        if MISSKEY_SERVER and MISSKEY_ACCESS_TOKEN:
-            response = requests.post(f"{MISSKEY_SERVER}/api/i", json={"i": MISSKEY_ACCESS_TOKEN}, timeout=10)
-            if response.status_code == 200:
-                avatar_url = response.json().get("avatarUrl")
-        elif PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
+        if PLEROMA_ENDPOINT and PLEROMA_ACCESS_TOKEN:
             response = requests.get(f"{PLEROMA_ENDPOINT}/api/v1/accounts/verify_credentials", headers={"Authorization": f"Bearer {PLEROMA_ACCESS_TOKEN}"}, timeout=10)
             if response.status_code == 200:
                 avatar_url = response.json().get("avatar")
@@ -48,7 +43,8 @@ def get_bot_avatar_url():
 # State file paths (relative to script location)
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 LAST_PLEROMA_REPORT_ID_FILE = os.path.join(_SCRIPT_DIR, ".last_pleroma_report_id")
-LAST_MISSKEY_REPORT_ID_FILE = os.path.join(_SCRIPT_DIR, ".last_misskey_report_id")
+# Legacy on-disk name kept: renaming resets the cursor and would re-post old reports.
+LAST_REPORT_ID_FILE = os.path.join(_SCRIPT_DIR, ".last_misskey_report_id")
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -182,9 +178,7 @@ def cleanup_processed_file(filepath, max_entries=1000):
 
 def get_instance_name():
     """Get the instance name from configuration"""
-    if MISSKEY_SERVER:
-        return MISSKEY_SERVER.replace('https://', '').replace('http://', '')
-    elif PLEROMA_ENDPOINT:
+    if PLEROMA_ENDPOINT:
         return PLEROMA_ENDPOINT.replace('https://', '').replace('http://', '')
     return "our instance"
 
@@ -384,129 +378,6 @@ def report_pleroma(print_only=False):
             logging.error(f"Failed to process report {report_id}: {e}")
 
 
-def report_misskey(print_only=False):
-    """Check for new Misskey reports and post about them"""
-    last_id = get_last_report_id(LAST_MISSKEY_REPORT_ID_FILE)
-
-    if last_id:
-        query = """
-        SELECT r.id, r.comment,
-               u1.username as reporter_username,
-               u2.username as target_username,
-               r."reporterHost",
-               r."targetUserHost"
-        FROM abuse_user_report r
-        LEFT JOIN "user" u1 ON r."reporterId" = u1.id
-        LEFT JOIN "user" u2 ON r."targetUserId" = u2.id
-        WHERE r.id > %s
-        ORDER BY r.id ASC
-        LIMIT 50;
-        """
-        rows = run_psql(query, (last_id,))
-    else:
-        # First run - get the most recent report to establish baseline
-        query = """
-        SELECT r.id, r.comment,
-               u1.username as reporter_username,
-               u2.username as target_username,
-               r."reporterHost",
-               r."targetUserHost"
-        FROM abuse_user_report r
-        LEFT JOIN "user" u1 ON r."reporterId" = u1.id
-        LEFT JOIN "user" u2 ON r."targetUserId" = u2.id
-        ORDER BY r.id DESC
-        LIMIT 1;
-        """
-        rows = run_psql(query)
-
-    if not rows:
-        logging.debug("No new Misskey reports found")
-        return
-
-    # Update last processed ID
-    latest_report_id = rows[-1][0] if last_id else rows[0][0]
-    save_last_report_id(LAST_MISSKEY_REPORT_ID_FILE, latest_report_id)
-
-    # If first run, don't post anything - just set baseline
-    if not last_id:
-        logging.info(f"Initialized Misskey report tracking. Last report ID: {latest_report_id}")
-        return
-
-    for row in rows:
-        report_id, comment, reporter_username, target_username, reporter_host, target_host = row
-
-        # Format usernames with host for remote users
-        reporter = reporter_username or "Unknown"
-        if reporter_host:
-            reporter = f"{reporter}@{reporter_host}"
-
-        target = target_username or "Unknown"
-        if target_host:
-            target = f"{target}@{target_host}"
-
-        # Skip reports involving bots to prevent bot-to-bot loops
-        reporter_lower = reporter.lower()
-        target_lower = target.lower()
-        if any(bot in reporter_lower or bot in target_lower for bot in BOT_BLACKLIST):
-            logging.debug(f"Skipping Misskey report {report_id} - involves bot user")
-            continue
-
-        reason = comment or "No reason provided"
-        post_url = None
-
-        # Check if comment contains JSON with post URLs (for post reports)
-        if reason and isinstance(reason, str) and reason.strip().startswith('['):
-            try:
-                urls = json.loads(reason)
-                if isinstance(urls, list):
-                    # Find the note/post URL (contains /notes/)
-                    for url in urls:
-                        if isinstance(url, str) and '/notes/' in url:
-                            post_url = url
-                            break
-                    # Use first non-null item as reason if no text
-                    reason = "Reported post"
-            except (json.JSONDecodeError, TypeError):
-                pass  # Keep original reason if not valid JSON
-
-        if post_url:
-            report_details = f"Reporter: @{reporter}, Reported: @{target}, Post: {post_url}, Reason: {reason}"
-        else:
-            report_details = f"Reporter: @{reporter}, Reported: @{target}, Reason: {reason}"
-
-        # Generate AI message
-        message = generate_report_message(report_details)
-
-        logging.info(f"Posting report: {report_id}")
-
-        if print_only:
-            print(f"Would post: {message}")
-        else:
-            # Generate TTS video if auto_narrate is enabled
-            audio_bytes = None
-            video_bytes = None
-            if AUTO_NARRATE:
-                logging.info("[TTS] Generating video for report notification...")
-                avatar_url = get_bot_avatar_url()
-                video_bytes = generate_narration_video(message, avatar_url)
-                if video_bytes:
-                    logging.info(f"[TTS] Generated {len(video_bytes)} bytes of video")
-                else:
-                    logging.warning("[TTS] Video generation failed, trying audio...")
-                    audio_bytes = generate_speech_with_retries(message)
-                    if audio_bytes:
-                        logging.info(f"[TTS] Generated {len(audio_bytes)} bytes of audio")
-
-            try:
-                if video_bytes or audio_bytes:
-                    misskey.post_image_to_fediverse(message, audio_bytes=audio_bytes, video_bytes=video_bytes)
-                else:
-                    misskey.post_to_fediverse(message)
-                logging.info(f"Successfully posted report {report_id}")
-            except Exception as e:
-                logging.error(f"Failed to post report {report_id}: {e}")
-
-
 def waitToStart():
     """Sync to clock minute"""
     while True:
@@ -535,32 +406,13 @@ def background():
         time.sleep(60)
 
 
-def misskey_background():
-    """Misskey report bot daemon loop"""
-    global conn
-    if conn is None:
-        init_db()
-
-    while True:
-        print("Running Report Bot (Misskey)")
-        try:
-            report_misskey()
-        except Exception as e:
-            logging.error(f"Error in report_misskey: {e}")
-            import traceback
-            traceback.print_exc()
-        time.sleep(60)
-
-
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
         print("Usage:")
         print("  daemon          - Run Pleroma report bot daemon")
-        print("  misskey-daemon  - Run Misskey report bot daemon")
         print("  pleroma [print] - Check Pleroma reports")
-        print("  misskey [print] - Check Misskey reports")
         sys.exit(0)
 
     cmd = sys.argv[1]
@@ -571,13 +423,8 @@ if __name__ == "__main__":
     if cmd == "daemon":
         waitToStart()
         background()
-    elif cmd == "misskey-daemon":
-        waitToStart()
-        misskey_background()
     elif cmd == "pleroma":
         report_pleroma(print_only=(arg2 == "print"))
-    elif cmd == "misskey":
-        report_misskey(print_only=(arg2 == "print"))
     else:
         print("Unknown command. Use no arguments to see usage.")
 

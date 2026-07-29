@@ -1,6 +1,6 @@
 """Nostr mention listener — replies to kind-1 notes that p-tag the bot.
 
-Structurally mirrors misskeyListener (recent-mention window + persistent dedup +
+Structurally mirrors pleromaListener (recent-mention window + persistent dedup +
 shared command dispatch), but Nostr-shaped: a note that tags the bot's pubkey IS a
 mention (no @handle parsing needed), media is referenced by URL, posts are public.
 DMs (NIP-04/17) are intentionally out of scope for v1.
@@ -153,7 +153,7 @@ def _save_ids():
 
 
 def _claim(note_id) -> bool:
-    """Atomically claim a note id across processes (file lock), like the misskey listener."""
+    """Atomically claim a note id across processes (file lock), like the pleroma listener."""
     try:
         with open(_LOCK_FILE, "w") as lock_f:
             fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)

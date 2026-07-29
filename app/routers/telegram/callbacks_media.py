@@ -870,6 +870,14 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     await telegram_service.send_message(chat_id, "🌍 Diff'rent Strokes…")
                     _imgs = [a for a in _atts if is_image(a[0], a[2])]
                     await _send_files_result(await cb_command_service.execute_command("differentstroke", "", attachments=_imgs))
+            elif _action == "jerry":
+                # No caption needed — composite Jerry onto the image, render the video and post it.
+                if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                else:
+                    await telegram_service.send_message(chat_id, "🎙️ Jerry…")
+                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                    await _send_files_result(await cb_command_service.execute_command("jerry", "", attachments=_imgs))
             elif _action == "seinfeld":
                 # No caption needed — render the video and post it.
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):

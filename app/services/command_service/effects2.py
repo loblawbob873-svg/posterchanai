@@ -333,6 +333,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _jerry_command(self, attachments: Optional[list]) -> dict:
+        """Composite Jerry onto an attached image, set to the Seinfeld theme: `jerry`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `jerry`."}
+
+        import asyncio
+        from app.services.effects_service import jerry_attachments
+
+        outputs, summary = await asyncio.to_thread(jerry_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _onepiece_command(self, attachments: Optional[list]) -> dict:
         """Turn an attached image into an MP4 set to the One Piece theme clip: `onepiece`."""
         from app.services.media_service import is_image

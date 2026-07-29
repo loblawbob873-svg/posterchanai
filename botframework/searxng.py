@@ -207,7 +207,7 @@ def summarize_search_results(results, query, categories=None):
         return f'No results found for "{query}".'
 
     # Sources block: plain title + bare URL so links auto-render on every
-    # platform (Pleroma/Misskey).
+    # platform (Pleroma).
     sources = "\n\n".join(
         f"{i+1}. {r['title']}\n{r['url']}"
         for i, r in enumerate(results)

@@ -117,6 +117,37 @@ def _backfill_blob_owners():
         logger.warning("[INIT] blossom owner backfill skipped: %s", e)
 
 
+# Columns that were REMOVED from the models. _run_migrations only ever ADDS (it diffs the model
+# against the table, so a column the model no longer declares is invisible to it and would sit in the
+# table forever, holding data nothing reads). Dropping is therefore explicit and listed here.
+# Idempotent: DROP COLUMN IF EXISTS, so it is a no-op on a node that has already run it and on a
+# fresh node that never had the column.
+_DROPPED_COLUMNS = (
+    # Misskey support was removed in full — no code path reads these any more.
+    ("users", "misskey_enabled"),
+    ("users", "misskey_instance_url"),
+    ("users", "misskey_api_token"),
+    ("users", "misskey_notif_since"),
+)
+
+
+def _drop_removed_columns():
+    """Drop columns listed in _DROPPED_COLUMNS. Each in its own transaction so one failure (e.g. a
+    permission problem on one node) can't roll back the others or block startup."""
+    insp = inspect(engine)
+    for table_name, col in _DROPPED_COLUMNS:
+        try:
+            if not insp.has_table(table_name):
+                continue
+            if col not in {c["name"] for c in insp.get_columns(table_name)}:
+                continue
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN IF EXISTS "{col}"'))
+            logger.info(f"[MIGRATE] dropped {table_name}.{col} (feature removed)")
+        except Exception as e:
+            logger.warning(f"[MIGRATE] could not drop {table_name}.{col}: {e}")
+
+
 def _run_migrations():
     """Auto-add any model columns that are missing from an EXISTING table — run on every startup
     after create_all(). create_all only ever creates missing *tables*; it never alters a table that
@@ -187,6 +218,7 @@ def init_db():
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
+    _drop_removed_columns()   # ...and drop the ones whose feature was removed (_run_migrations can't see those)
     _backfill_blob_owners()   # seed blossom_blob_owners from the pre-existing single-owner column
 
 
@@ -212,7 +244,6 @@ def init_db():
             "fedi_bridge_poll_seconds": "90",
             "fedi_bridge_include_replies": "true",
             "fedi_bridge_broadcast": "false",
-            "fedi_bridge_retention_days": "0",
             # Built-in Nostr web-of-trust relay (own thread; serves NIP-01 at /relay on
             # nostr_relay_port). Default OFF; ships a starter WoT seed set so a fresh node has
             # a sane trust graph the moment it's enabled. All other knobs fall back to code
