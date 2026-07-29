@@ -11227,7 +11227,19 @@
     const res=await fetch(server+'/'+sha,{ method:'DELETE', headers:{'Authorization':'Nostr '+btoa(JSON.stringify(auth))} });
     // 404 = the blob is already gone from the server, but a stale entry is still in the Files index → still
     // forget it, so an already-deleted blob can be cleared from the file manager (was stuck as "delete failed").
-    if(res.ok || res.status===404){ FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha]; toast(res.ok?'deleted':'removed'); renderBlossom(); }
+    if(res.ok || res.status===404){
+      FilesIdx.forget(sha); _filesDeleted.add(sha); delete _trackUrls[sha];
+      // Drop the card NOW. renderBlossom() re-fetches the listing and redraws, but that is async and
+      // races: FilesIdx.forget() kicks off an index re-upload on the same connection, and until the
+      // redraw lands the deleted file is still on screen — which is what "not gone until refresh"
+      // was. The bulk path never showed it because it deletes many, then redraws once at the end.
+      // Removing the element is unconditional and instant; the redraw below still reconciles with
+      // the server, so this can only ever be ahead of the truth, never behind it.
+      try{ const card=document.querySelector('.file-card[data-sha="'+sha+'"]'); if(card) card.remove(); }catch(_){}
+      _filesSel.delete(sha);
+      toast(res.ok?'deleted':'removed');
+      renderBlossom();
+    }
     else toast('delete failed');
   }
 
