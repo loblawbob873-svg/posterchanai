@@ -201,6 +201,15 @@ def _draw_speech_bubble(draw, cx, cy, tw, th, toward_left: bool, scale: int):
         draw.rectangle([x1 - outline, ty - tl // 2 + outline, x1 - outline // 2, ty + tl // 2 - outline], fill=(255, 255, 255))
 
 
+def add_nothingeverhappens(data: bytes, caption: str = "NOTHING EVER HAPPENS") -> bytes:
+    """`nothingeverhappens` — the angry teacher pointing at his board (see _add_pointing_meme).
+
+    The caption defaults to the meme's own line, so the effect needs no argument; passing one
+    replaces it, which is the whole joke for anything else you want him to be lecturing about.
+    """
+    return _add_pointing_meme(data, "nothingeverhappens", caption)
+
+
 def add_theraped(data: bytes, caption: str = "The Raped") -> bytes:
     """`theraped` — the imageboard pointing-up format (see _add_pointing_meme)."""
     return _add_pointing_meme(data, "theraped", caption)
@@ -605,6 +614,11 @@ def _pointing_attachments(attachments, key: str, title: str, fn):
 
 def theraped_attachments(attachments):
     return _pointing_attachments(attachments, "theraped", "The Raped", add_theraped)
+
+
+def nothingeverhappens_attachments(attachments):
+    return _pointing_attachments(attachments, "nothingeverhappens", "Nothing Ever Happens",
+                                 add_nothingeverhappens)
 
 
 def would_attachments(attachments):

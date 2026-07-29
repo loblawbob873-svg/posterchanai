@@ -570,6 +570,11 @@ _CHARACTERS = {
     # nothing here should outlive being told so. Their assets are deleted too; adding a name back means
     # adding art back.
     "theraped": "theraped.png", "pointup": "theraped.png", "pointing": "theraped.png",
+    # The angry MS-Paint teacher at his whiteboard. Keyed out of the KnowYourMeme still, so the
+    # WHITEBOARD is deliberately not in the asset — he points at the caption bubble instead,
+    # which is what makes the format work on an arbitrary photo.
+    "nothingeverhappens": "nothingeverhappens.png", "neh": "nothingeverhappens.png",
+    "nothingever": "nothingeverhappens.png", "nothinghappens": "nothingeverhappens.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
     "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
     "shrug": "shrug.png", "rabbi": "shrug.png", "whaddya": "shrug.png",
@@ -589,7 +594,8 @@ _CHARACTERS = {
     "lookingaway": "lookingaway_b.png", "lookaway": "lookingaway_b.png",
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
-CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry"]
+CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry",
+                   "nothingeverhappens"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",
