@@ -357,10 +357,48 @@ async def _fedi_handle_for_pubkey(db, pk_hex: str) -> str | None:
     return handle
 
 
-async def _translate_mentions(db, text: str) -> str:
-    """Rewrite `nostr:npub…`/`nostr:nprofile…` references that point at a fediverse identity into the
-    matching `@user@host` so the cross-posted note actually mentions/notifies them on the fediverse.
-    Unresolvable refs are left for _strip_nostr_refs to remove."""
+# A bare `@name` mention: start-of-line/after-whitespace, and NOT already a full `@user@host` (the
+# trailing lookahead rejects a token followed by more handle characters, so `@alice@example.org`
+# — either typed, or just produced by the nostr: pass below — is left alone rather than re-mangled).
+_BARE_MENTION_RE = _re.compile(r"(?:(?<=^)|(?<=\s))@([a-z0-9_.\-]{2,40})(?![\w.@\-])", _re.I)
+
+
+async def _nostr_names_for(pk_hex: str) -> set:
+    """The bare `@names` a Nostr profile answers to: kind-0 name, display_name and the NIP-05
+    local-part — the same three fields the client matches on when it resolves a typed `@name` to a
+    p-tag (static/js/client/app.js mentionTags), so both ends agree on who `@choom` is."""
+    try:
+        meta = await nostr_service.get_metadata(pk_hex, [f"ws://127.0.0.1:{_port()}"])
+    except Exception:
+        return set()
+    names = set()
+    for v in ((meta or {}).get("name"), (meta or {}).get("display_name")):
+        v = (v or "").strip().lower()
+        if v:
+            names.add(v)
+    local = ((meta or {}).get("nip05") or "").strip().lstrip("@").lower().partition("@")[0]
+    if local and local != "_":
+        names.add(local)
+    return names
+
+
+async def _translate_mentions(db, ev: dict) -> str:
+    """Rewrite Nostr mentions that point at a fediverse identity into the matching `@user@host` so the
+    cross-posted note actually mentions/notifies them on the fediverse. Two forms, because a mention
+    reaches us two ways:
+
+      - `nostr:npub…`/`nostr:nprofile…` inline refs (what every client inserts when you PICK from the
+        mention autocomplete). Unresolvable refs are left for _strip_nostr_refs to remove.
+      - a bare `@name` whose identity lives ONLY in the note's `p` tags. Our client deliberately
+        supports typing `@name` without picking the autocomplete — it p-tags the match but leaves the
+        text as-is — so such a note arrived here with nothing for the pass above to rewrite and went
+        out to Pleroma as the literal string "@choom", which resolves to nobody off-instance: no
+        mention tag, no link, no notification (reported for a cross-post to detroitriotcity.com).
+
+    A bare name is only translated when exactly ONE p-tagged profile answers to it, mirroring the
+    client's own "1 unique hit" rule — an ambiguous @name is better left as plain text than aimed at
+    the wrong person."""
+    text = (ev or {}).get("content", "") or ""
     if not text:
         return text
     out = text
@@ -376,7 +414,34 @@ async def _translate_mentions(db, text: str) -> str:
         handle = await _fedi_handle_for_pubkey(db, pk)
         if handle:
             out = out.replace("nostr:" + m, handle)
-    return out
+
+    # Bare `@name` → p-tag. Gated on the text actually containing one, so the common case costs no
+    # lookups at all; the kind-0 fetch then only runs for p-tagged users who HAVE a fedi handle.
+    wanted = {m.group(1).lower().rstrip(".") for m in _BARE_MENTION_RE.finditer(out)}
+    if not wanted:
+        return out
+    fedi = []
+    for pk in {t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p" and t[1]}:
+        handle = await _fedi_handle_for_pubkey(db, pk)   # cached; None for anyone with no fedi account
+        if handle:
+            fedi.append((pk, handle))
+    # The kind-0 lookups run CONCURRENTLY: a thread reply carries a p-tag per participant, and
+    # get_metadata blocks for its full timeout whenever the local relay is unreachable — sequentially
+    # that would stall the writeback loop for timeout x N on every note with an @ in it.
+    name_sets = await asyncio.gather(*[_nostr_names_for(pk) for pk, _ in fedi])
+    name_map: dict = {}
+    for (_pk, handle), names in zip(fedi, name_sets):
+        for n in names & wanted:
+            # None = two p-tagged people answer to this name → ambiguous, leave it as plain text.
+            name_map[n] = handle if name_map.get(n, handle) == handle else None
+
+    def _sub(m):
+        raw = m.group(1)
+        stem = raw.rstrip(".")                      # keep sentence punctuation outside the handle
+        handle = name_map.get(stem.lower())
+        return (handle + raw[len(stem):]) if handle else m.group(0)
+
+    return _BARE_MENTION_RE.sub(_sub, out)
 
 
 _URL_RE = _re.compile(r"https?://[^\s]+")
@@ -554,7 +619,7 @@ async def _crosspost(db, user, ev: dict) -> None:
             FediBridgeDelivered.nostr_event_id == eid,
             FediBridgeDelivered.nostr_pubkey == ev.get("pubkey", "")).first():
         return
-    text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
+    text = _strip_nostr_refs(await _translate_mentions(db, ev))
     q = await _quote_link(db, ev)
     if q:
         text = (text + "\n\n" + q).strip()   # keep the quoted post's context (else it reads as nonsense)
@@ -825,7 +890,7 @@ async def _handle(db, ev: dict) -> None:
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid,
                                                     FediBridgeDelivered.nostr_pubkey == pk).first():
                 return
-            text = _strip_nostr_refs(await _translate_mentions(db, ev.get("content", "")))
+            text = _strip_nostr_refs(await _translate_mentions(db, ev))
             q = await _quote_link(db, ev)
             if q:
                 text = (text + "\n\n" + q).strip()   # a reply can also quote — keep the quoted context
