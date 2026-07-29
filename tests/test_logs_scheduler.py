@@ -106,14 +106,16 @@ class TestErrorSamples(unittest.TestCase):
 
 
 class TestSelectedNodes(unittest.TestCase):
-    def test_default_includes_local_plus_all_configured(self):
-        with mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas"}), \
+    def test_default_passes_through_every_available_node(self):
+        with mock.patch.object(L.node_service, "all_nodes", return_value={"local": "local", "nas": "u@nas"}), \
              mock.patch.object(L, "get_logs_settings", return_value={"schedule": "1", "nodes": []}):
             nodes = L.selected_nodes(db=object())
+        # `local` comes FROM node_service.all_nodes now, not from here — an empty
+        # `logs_nodes` must simply pass the whole registry through unfiltered.
         self.assertEqual(nodes, {"local": "local", "nas": "u@nas"})
 
     def test_logs_nodes_narrows_selection_and_ignores_unknown(self):
-        with mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas", "srv": "u@srv"}), \
+        with mock.patch.object(L.node_service, "all_nodes", return_value={"nas": "u@nas", "srv": "u@srv"}), \
              mock.patch.object(L, "get_logs_settings", return_value={"schedule": "1", "nodes": ["nas", "ghost"]}):
             nodes = L.selected_nodes(db=object())
         self.assertEqual(nodes, {"nas": "u@nas"})  # "ghost" isn't configured -> dropped
@@ -122,16 +124,16 @@ class TestSelectedNodes(unittest.TestCase):
 class TestBuildHealthReport(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_node_exec_returns_guard_message(self):
         with mock.patch.object(L.node_service, "is_enabled", return_value=False), \
-             mock.patch.object(L.node_service, "get_nodes", return_value={}), \
+             mock.patch.object(L.node_service, "all_nodes", return_value={}), \
              mock.patch.object(L, "get_logs_settings", return_value={"schedule": "1", "nodes": []}):
             text = await L.build_health_report(db=object(), admin=mock.Mock())
-        self.assertIn("Remote Node Management is disabled", text)
+        self.assertIn("Agentic Node Management is disabled", text)
         self.assertIn("🩺 System Health Report", text)
 
     async def test_runs_agent_once_per_node_and_composes_report(self):
         agent = mock.AsyncMock(side_effect=lambda *a, **k: f"🟢 all good on {a[2]}")
         with mock.patch.object(L.node_service, "is_enabled", return_value=True), \
-             mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas"}), \
+             mock.patch.object(L.node_service, "all_nodes", return_value={"local": "local", "nas": "u@nas"}), \
              mock.patch.object(L, "get_logs_settings", return_value={"schedule": "1", "nodes": []}), \
              mock.patch.object(L, "ChatService", return_value=mock.Mock()), \
              mock.patch.object(L.node_service, "run_agent", agent):
@@ -152,7 +154,7 @@ class TestBuildHealthReport(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("ssh down")
             return f"🟢 {node} ok"
         with mock.patch.object(L.node_service, "is_enabled", return_value=True), \
-             mock.patch.object(L.node_service, "get_nodes", return_value={"nas": "u@nas"}), \
+             mock.patch.object(L.node_service, "all_nodes", return_value={"local": "local", "nas": "u@nas"}), \
              mock.patch.object(L, "get_logs_settings", return_value={"schedule": "1", "nodes": []}), \
              mock.patch.object(L, "ChatService", return_value=mock.Mock()), \
              mock.patch.object(L.node_service, "run_agent", side_effect=boom):
@@ -167,13 +169,22 @@ class TestRunLogsForAdmin(unittest.IsolatedAsyncioTestCase):
         fake_db = mock.Mock()
         fake_db.query.return_value.filter.return_value.first.return_value = admin
 
+        # The report is no longer a `Message` row — it goes through chat_history.append as an
+        # ENCRYPTED relay event (the nostr-datastore migration). Asserting on db.add still passed as
+        # "persisted" for a while after that stopped being true, so assert on the call that actually
+        # stores it.
+        from app.services import chat_history, chat_store
+        append = mock.AsyncMock()
         with mock.patch.object(L, "SessionLocal", return_value=fake_db), \
              mock.patch.object(L, "build_health_report", mock.AsyncMock(return_value="REPORT")), \
+             mock.patch.object(chat_history, "append", append), \
+             mock.patch.object(chat_store, "mirror_conversation", mock.AsyncMock()), \
              mock.patch.object(L, "get_or_create_logs_chat", return_value=mock.Mock(id=7)):
             text = await L.run_logs_for_admin(return_text=True)
 
         self.assertEqual(text, "REPORT")
-        self.assertTrue(fake_db.add.called)        # a Message was added
+        self.assertTrue(append.called)             # the report was stored
+        self.assertEqual(append.call_args[0][4], "REPORT")
         self.assertTrue(fake_db.commit.called)
         self.assertTrue(fake_db.close.called)
 
