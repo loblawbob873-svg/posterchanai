@@ -13692,6 +13692,7 @@
       const m3f=e.target.closest('.ai-mp3file'); if(m3f){ e.preventDefault(); mp3FromFileUrl(m3f.dataset.url, m3f); return; }       // branded MP4 → MP3
       const mbf=e.target.closest('.ai-memefile'); if(mbf){ e.preventDefault(); memeBuildFile(mbf.dataset.url, mbf, mbf.dataset.kind); return; }   // keep editing the result in the Meme Builder
       const pfx=e.target.closest('.ai-post-fx'); if(pfx){ e.preventDefault(); postEffectMedia(pfx.dataset.mid, pfx); return; }   // share effect media → new Nostr post
+      const mbx=e.target.closest('.ai-meme-fx'); if(mbx){ e.preventDefault(); memeBuildEffect(mbx.dataset.mid, mbx); return; }   // keep editing a geni/videogeni result in the Meme Builder
       const mag=e.target.closest('.ai-magnet'); if(mag){ const ta=$('#ai-input'); if(ta){ ta.value='torrents add '+mag.dataset.magnet; aiSend(); } return; }
       const fco=e.target.closest('.fc-opt'); if(fco){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fco.dataset.fc]; if(st && st.answered[st.idx]==null){ const i=+fco.dataset.opt; st.answered[st.idx]=i; if(i===(st.cards[st.idx]||{}).correct) st.score++; _fcRedraw(fco.dataset.fc); } return; }   // answer a card → ✓/✗ + explanation
       const fcn=e.target.closest('.fc-next'); if(fcn){ e.preventDefault(); const st=_ai.decks&&_ai.decks[fcn.dataset.fc]; if(st && st.idx<st.cards.length-1){ st.idx++; _fcRedraw(fcn.dataset.fc); } return; }
@@ -13771,7 +13772,13 @@
       if(!msgs.length){ box.innerHTML = _aiWelcomeHtml(); _aiRevealNodeCard(); }   // fresh chat → friendly splash with starter commands
       for(const m of msgs){
         let html = m.role==='user'?enc(m.content):aiFormat(m.content||'');
-        if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`;
+        // A generated image is persisted to the message's own image_path column, NOT as `![](url)`
+        // markdown like generated video/audio — so aiFormat never sees it and it rendered as a bare
+        // <img> with no action row at all. Same artifact URL shape _aiFileActions already takes
+        // (relative + authed), so a reloaded geni result gets the same buttons the live one has.
+        // Assistant only: on a user turn the image is that user's own upload, echoed back.
+        if(m.image_path) html += `<div class="ai-media"><img src="${enc(_absUrl(m.image_path))}" loading="lazy" onerror="window.__aiMediaRetry(this)"></div>`
+                                 + (m.role==='user'?'':_aiFileActions(m.image_path,'image'));
         aiAddMessage(m.role, html);
       }
       aiScroll();
@@ -14660,6 +14667,30 @@
     catch(e){ toast('failed: '+((e&&e.message)||e)); }
     finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
   }
+  // Live base64 media → Meme Builder. memeBuildFile's counterpart for a PAYLOAD instead of an artifact
+  // URL: same reason it can't hand over what it has, though — the builder fetches a layer `src`
+  // SERVER-side at render time, so neither an authed /api/files/ path NOR a data: URI works. Upload to
+  // public Blossom first, reusing the `m.url` the Post button caches so two buttons on one result
+  // upload once.
+  async function memeBuildEffect(mid, btn){
+    const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to add'); return; }
+    const label=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    try{
+      if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'media.'+m.ext, { type:m.mime })); }
+      const isVid=/^video\//i.test(m.mime||'');
+      const from=_ai.replyTo||null;
+      const url=m.url;
+      switchView('meme');
+      // Seed AFTER the view renders, or the builder's own first render wipes the new layer — the same
+      // ordering memeBuildFile/memeBuildPost document.
+      setTimeout(()=>{
+        const ok=window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(url, isVid?'video/mp4':'image/jpeg', from);
+        toast(ok?'🎞️ added to the Meme Builder':'could not add that media');
+      }, 60);
+    }catch(e){ toast('failed: '+((e&&e.message)||e)); }
+    finally{ if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; } }
+  }
   async function postEffectMedia(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to post'); return; }
     if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
@@ -14682,8 +14713,13 @@
     const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
     const save=`<button class="btn btn-ghost small ai-save-fx" data-mid="${mid}">💾 Save to Blossom</button>`;
+    // Same "keep working on the result" button the ARTIFACT row (_aiFileActions) has carried all along.
+    // It was missing here, which is the whole of "no Meme Builder after geni": a generated image arrives
+    // as a base64 PAYLOAD and never becomes an /api/files/ artifact, so it only ever renders this row.
+    // Not for audio — addMedia only seeds image/video layers.
+    const mb=/^audio\//i.test(mime||'')?'':`<button class="btn btn-cyan small ai-meme-fx" data-mid="${mid}">🎞️ Meme Builder</button>`;
     const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
-    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${dl}${copy}</div>`;
+    return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
   }
   // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and click an
   // object URL — NOT an <a href="data:…">, which Chrome blocks past a few MB (a 3-minute song or a
