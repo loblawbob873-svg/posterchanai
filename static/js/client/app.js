@@ -14566,8 +14566,8 @@
     if(!/^\//.test(u)) return '';
     const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
-    const save=`<button class="btn btn-ghost small ai-savefile" data-url="${enc(u)}">💾 Save to Blossom</button>`;
-    const dl=`<button class="btn btn-ghost small ai-dlfile" data-url="${enc(u)}">⬇ Download</button>`;
+    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}">💾 Save to Blossom</button>`;
+    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}">⬇ Download</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
     // carries no payload fields — so the distinction rides in the label the server writes:
     // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
@@ -14709,10 +14709,10 @@
     // videogeni output is silent, so offering it there would just fail — the server marks the ones
     // that carry audio (has_audio) rather than the client guessing from the mp4 container.
     const mp3=o.hasAudio?`<button class="btn btn-cyan small ai-mp3-fx" data-mid="${mid}">🎵 Convert to MP3</button>`:'';
-    const dl=`<button class="btn btn-ghost small ai-dl-fx" data-mid="${mid}">⬇ Download</button>`;
+    const dl=`<button class="btn btn-cyan small ai-dl-fx" data-mid="${mid}">⬇ Download</button>`;
     const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
-    const save=`<button class="btn btn-ghost small ai-save-fx" data-mid="${mid}">💾 Save to Blossom</button>`;
+    const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}">💾 Save to Blossom</button>`;
     // Same "keep working on the result" button the ARTIFACT row (_aiFileActions) has carried all along.
     // It was missing here, which is the whole of "no Meme Builder after geni": a generated image arrives
     // as a base64 PAYLOAD and never becomes an /api/files/ artifact, so it only ever renders this row.
