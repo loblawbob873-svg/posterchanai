@@ -189,10 +189,13 @@ _ALPHA_CHARACTERS = [
     # `lookingaway` is the two-panel monkey-puppet meme, not a pose — it is rendered by
     # render_lookingaway_alpha, so the label promises the turn that the clip actually performs.
     # (`anyways` is the original command name and still resolves; see COMMAND_ALIASES.)
-    ("carl", "🧍 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
+    # No leading emoji on these two: alpha_effect_catalog() prefixes every entry here with 🧍, so one
+    # of its own renders as "🧍 🧍 Carl". (The older entries below double up with a DIFFERENT emoji,
+    # which at least reads as decoration rather than a bug.)
+    ("carl", "Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
     ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
     ("jerry", "🎤 Jerry (stand-up)"), ("nothingeverhappens", "🏫 Nothing ever happens"),
-    ("nodontthinkiwill", "🙅 No, I don't think I will"), ("ruckus", "🎩 Uncle Ruckus"),
+    ("nodontthinkiwill", "🙅 No, I don't think I will"), ("ruckus", "Uncle Ruckus"),
 ]
 
 
