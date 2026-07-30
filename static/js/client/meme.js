@@ -978,7 +978,7 @@
         <b>🎵 Music layer</b>
         <span class="mb-insp-acts">
           <button class="btn btn-cyan small" id="mb-dup" title="Make a second copy of this track">⧉ Duplicate</button>
-          <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+          <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
       </div>
       <div class="muted small mb-dbg">${enc(l.name || srcName(l.src))}</div>
@@ -1001,7 +1001,7 @@
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
         <span class="mb-insp-acts">
           <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
-          <button class="btn btn-danger small" id="mb-del">🗑️ Delete</button>
+          <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
       </div>
       ${isText ? `
