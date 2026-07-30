@@ -16,13 +16,13 @@
   // text glyph floated high in its line box and couldn't be size-matched to the emoji actions.
   const QUOTE_ICON = '<svg class="ic q-ico" aria-hidden="true"><use href="#i-quote"></use></svg>';
   // Web-of-trust shield — SVG so it takes the neon cyan colour + glow (emoji can't be recoloured).
-  const WOT_ICON = '<svg class="wot-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l7 3v6c0 4.7-3.1 8.3-7 11-3.9-2.7-7-6.3-7-11V5l7-3z"/></svg>';
+  const WOT_ICON = '<svg class="ic wot-ico" aria-hidden="true"><use href="#i-wot"></use></svg>';
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
-  const LIVE_ICON = '<svg class="live-ico" viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>';
+  const LIVE_ICON = '<svg class="ic live-ico" aria-hidden="true"><use href="#i-livedot"></use></svg>';
   // "on relay" = raw live socket count connected to the built-in relay right now (broadcast glyph).
-  const RELAY_ICON = '<svg class="relay-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="2.6"/><path d="M6.3 6.3a8 8 0 000 11.4l1.5-1.5a6 6 0 010-8.5L6.3 6.3zm11.4 0l-1.5 1.4a6 6 0 010 8.5l1.5 1.5a8 8 0 000-11.4z"/></svg>';
-  const STREAM_ICON = '<svg class="stream-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M4 5h13a2 2 0 012 2v3l3-2v8l-3-2v3a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2z"/></svg>';
-  const CALL_ICON = '<svg class="call-ico" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z"/></svg>';
+  const RELAY_ICON = '<svg class="ic relay-ico" aria-hidden="true"><use href="#i-relay-dot"></use></svg>';
+  const STREAM_ICON = '<svg class="ic stream-ico" aria-hidden="true"><use href="#i-stream"></use></svg>';
+  const CALL_ICON = '<svg class="ic call-ico" aria-hidden="true"><use href="#i-call"></use></svg>';
   // React (smiley) + Zap (bolt) as monochrome fill:currentColor glyphs so they track the .act muted→accent
   // colour like reply/repost/quote — the coloured 😀/⚡ emoji were the one thing that didn't match the navbar.
   const REACT_ICON = '<svg class="ic react-ico" aria-hidden="true"><use href="#i-smile"></use></svg>';
@@ -668,7 +668,7 @@
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ return qrManualPrompt('Camera needs an HTTPS connection. Paste the link instead:'); }
     const detect=await _qrDetector();
     if(!detect){ return qrManualPrompt('QR scanning isn’t supported in this browser. Paste the link instead:'); }
-    modal(`<h3>📷 Scan QR to log in another device</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR to log in another device</h3>
       <video id="qr-video" class="qr-video" playsinline muted></video>
       <div class="muted small" id="qr-hint">Point at the QR shown on the other device…</div>
       <div class="set-actions"><button class="btn btn-ghost small" id="qr-paste">paste link instead</button>
@@ -1240,7 +1240,7 @@
     }
   }
   function _custodialNotice(j){
-    modal(`<h3>✅ Signed in with ${enc(j.provider === 'google' ? 'Google' : 'your fediverse account')}</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-check"></use></svg>Signed in with ${enc(j.provider === 'google' ? 'Google' : 'your fediverse account')}</h3>
       <div class="muted" style="line-height:1.6">
         <p>Your new Nostr identity was created <b>on this server</b>, so you can sign in again from any
         device with ${enc(j.provider === 'google' ? 'Google' : 'that account')}.</p>
@@ -3778,7 +3778,7 @@
   // one renders in this list exactly like the ones already there.
   function addTorrent(){
     if(GUEST){ _guestPrompt(); return; }
-    modal(`<h3>🧲 Add a torrent</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add a torrent</h3>
       <p class="muted small">Published to Nostr as a NIP-35 torrent (kind 2003), so it shows up here and in any other NIP-35 client.</p>
       <label class="fld">Magnet link<textarea id="tor-mag" rows="3" placeholder="magnet:?xt=urn:btih:…"></textarea></label>
       <label class="fld">Title<input class="input" id="tor-title" maxlength="200" placeholder="Name of the release"></label>
@@ -4056,7 +4056,7 @@
     $$('.qs-copy',root).forEach(b=> b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.cmd); toast('copied'); }catch(_){ await uiPrompt('Copy', {value:b.dataset.cmd}); } });
   }
   function _showRepoQuickStart(clone, repoId, ev){
-    modal(`<h3>🚀 ${enc(repoId)} — get started</h3>${_repoQuickStartHtml(clone, repoId)}
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-send"></use></svg>${enc(repoId)} — get started</h3>${_repoQuickStartHtml(clone, repoId)}
       <div class="set-actions"><button class="btn btn-neon small" id="qs-open">Open repo →</button><button class="btn btn-ghost small" id="qs-done">Done</button></div>`,
       root=>{
         _wireQuickStart(root);
@@ -4069,7 +4069,7 @@
   function createRepo(){
     if(GUEST || !ME){ _guestPrompt(); return; }
     if(!_gitHostBase()){ toast('this node has no git host configured'); return; }
-    modal(`<h3>🌱 Create a repo on ${enc(CFG.name||'this node')}</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>Create a repo on ${enc(CFG.name||'this node')}</h3>
       <p class="muted small">Provisions an empty repo hosted here you can <code>git push</code> to, then announces it (NIP-34).</p>
       <label class="fld">Repo id <span class="muted small">(letters, digits, . _ - — e.g. my-app)</span><input class="input" id="cr-d" placeholder="my-app"></label>
       <label class="fld">Name<input class="input" id="cr-name" placeholder="My App"></label>
@@ -4140,7 +4140,7 @@
   // Nostr git clients (gitworkshop, ngit, …). d-tag = repo id (replaceable per identifier).
   function publishRepo(existing){
     const tag=(e,k)=>(existing&&Array.isArray(existing.tags))?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
-    modal(`<h3>🌱 Announce a git repo</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>Announce a git repo</h3>
       <p class="muted small">Publishes a NIP-34 repo announcement (kind 30617) signed by your key.</p>
       <label class="fld">Repo id <span class="muted small">(short slug, e.g. posterchanai)</span><input class="input" id="rp-d" value="${enc(tag(existing,'d'))}" placeholder="my-app"></label>
       <label class="fld">Name<input class="input" id="rp-name" value="${enc(tag(existing,'name'))}" placeholder="My App"></label>
@@ -4298,7 +4298,7 @@
         <div class="rv-headrow">
           <img class="rv-avatar" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}">
           <div class="rv-headmain">
-            <h1 class="rv-title">🌱 ${enc(name)}</h1>
+            <h1 class="rv-title"><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>${enc(name)}</h1>
             <div class="rv-by"><span class="muted small">maintained by</span> <span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
           </div>
         </div>
@@ -4366,7 +4366,7 @@
         else if(_rv && _rv.cloneUrl){
           // Self-hosted repo with no README — usually a freshly-created EMPTY repo. Show the first-commit
           // quick start right here (like GitHub/Gitea), so the repo tells you how to make the first push.
-          box.innerHTML=`<div class="rv-empty"><h2 class="rv-empty-h">🚀 Quick start</h2>${_repoQuickStartHtml(_rv.cloneUrl, _repoTag(e,'d')||'repo')}</div>`;
+          box.innerHTML=`<div class="rv-empty"><h2 class="rv-empty-h"><svg class="ic h-ic" aria-hidden="true"><use href="#i-send"></use></svg>Quick start</h2>${_repoQuickStartHtml(_rv.cloneUrl, _repoTag(e,'d')||'repo')}</div>`;
           _wireQuickStart(box);
         }
         else box.innerHTML=`<div class="muted small">No README found${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`;
@@ -4496,7 +4496,7 @@
   function newRepoIssue(repo){
     if(GUEST){ _guestPrompt(); return; }
     const addr=_repoAddr(repo);
-    modal(`<h3>🐛 New issue</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-bug"></use></svg>New issue</h3>
       <p class="muted small">Publishes a NIP-34 issue (kind 1621) signed by your key, against <b>${enc(_repoTag(repo,'name')||_repoTag(repo,'d')||'this repo')}</b>.</p>
       <label class="fld">Subject<input class="input" id="ri-subj" placeholder="Short summary"></label>
       <label class="fld">Description<textarea class="input" id="ri-body" rows="5" placeholder="Describe the issue… (markdown)"></textarea></label>
@@ -5208,7 +5208,7 @@
     // non-admin may not have happened yet), so the refusal has to read well on its own.
     if(info && info.error==='no_permission'){
       // Not "streaming is off" — streaming works, this account just isn't allowed yet. Offer the ask.
-      modal(`<h3>🔴 Go Live</h3><p>${enc(info.message||'Live streaming isn’t enabled for your account yet.')}</p>
+      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3><p>${enc(info.message||'Live streaming isn’t enabled for your account yet.')}</p>
         <div class="row" style="margin-top:16px;justify-content:center;gap:10px;flex-wrap:wrap">
           <button class="btn btn-neon" id="sreq"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Request streaming access</button>
           <button class="btn btn-ghost" id="sreqx">Close</button></div>`, root=>{
@@ -5237,7 +5237,7 @@
       const _r=[CFG && CFG.relay_url].filter(Boolean);
       watchUrl=_webLink(NT().nip19.naddrEncode({identifier:info.token, pubkey:ME.pubkey, kind:30311, relays:_r}));
     }catch(_){ }
-    modal(`<h3>🔴 Go Live</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</h3>
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
@@ -5357,7 +5357,7 @@
       .sort((a,b)=>(b.uploaded||0)-(a.uploaded||0));
 
     if(!imgs.length){
-      subModal(`<h3>🌸 Choose a cover</h3>
+      subModal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Choose a cover</h3>
         <p class="muted">There are no images on your Blossom drive yet. Upload one from
         <b>Files</b> (the 📁 group in the sidebar) and it'll show up here.</p>
         <div class="row gl-actions"><button class="btn btn-ghost" id="bp-x">Close</button></div>`,
@@ -5372,7 +5372,7 @@
       FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
     let cur='';
 
-    subModal(`<div class="bp-head"><h3>🌸 Choose a cover</h3>
+    subModal(`<div class="bp-head"><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Choose a cover</h3>
       <p class="muted small" id="bp-count"></p>
       ${folders.length>1?`<div class="bp-folders"><label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-fsel">${
         folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('')}</select></label></div>`:''}</div>
@@ -7589,7 +7589,7 @@
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
     const presets=zapPresets();
-    modal(`<h3>⚡ Zap ${enc(p.name||p.display_name||'')}</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${enc(p.name||p.display_name||'')}</h3>
       <div class="zap-presets">${presets.map(a=>`<button class="zap-amt" data-amt="${a}">${a>=1000?(a/1000)+'k':a} sats</button>`).join('')}</div>
       <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button></div>`,
       root=>{
@@ -7622,7 +7622,7 @@
     }catch(e){ toast('zap failed: '+e.message); }
   }
   function invoiceModal(pr, amt){
-    modal(`<h3>⚡ Zap ${amt} sats</h3><p class="muted small">Pay with your Lightning wallet:</p>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${amt} sats</h3><p class="muted small">Pay with your Lightning wallet:</p>
       <a class="btn btn-neon full" href="lightning:${enc(pr)}">Open in wallet</a>
       <div class="keybox" style="margin-top:10px"><code id="z-inv">${enc(pr)}</code></div>
       <button class="btn btn-cyan full" id="z-copy">Copy invoice</button>`, root=>{
@@ -7648,7 +7648,7 @@
       <div class="xmr-presets" id="xmr-presets">${xmrPresets().map(a=>`<button class="xmr-preset" data-amt="${a}">ɱ ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="xmr-addr">${enc(addr)}</code></div>
-      ${GUEST?'':`<details class="xmr-proof"><summary>🔐 Attach a verifiable tx proof (advanced, optional)</summary>
+      ${GUEST?'':`<details class="xmr-proof"><summary><svg class="ic h-ic" aria-hidden="true"><use href="#i-key"></use></svg>Attach a verifiable tx proof (advanced, optional)</summary>
         <p class="muted small">Optional — makes the tip publicly verifiable. In your wallet run <code>get_tx_proof &lt;txid&gt; ${enc(addr.slice(0,10))}…</code> and paste both below; anyone can then confirm the payment with <code>check_tx_proof</code>.</p>
         <input class="input" id="xmr-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false">
         <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
@@ -7725,7 +7725,7 @@
       <div class="xmr-presets" id="bch-presets">${bchPresets().map(a=>`<button class="xmr-preset bch-preset" data-amt="${a}">🟢 ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="bch-qr"><div class="muted small">generating QR…</div></div>
       <div class="keybox" style="margin-top:8px"><code id="bch-addr">${enc(addr)}</code></div>
-      ${GUEST?'':`<details class="xmr-proof"><summary>🔗 Attach the transaction id (optional)</summary>
+      ${GUEST?'':`<details class="xmr-proof"><summary><svg class="ic h-ic" aria-hidden="true"><use href="#i-link"></use></svg>Attach the transaction id (optional)</summary>
         <p class="muted small">Optional — makes the tip publicly verifiable on any BCH explorer.</p>
         <input class="input" id="bch-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false"></details>`}
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="bch-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="bch-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
@@ -8235,7 +8235,7 @@
     let npub=ev.pubkey; try{ npub = NT().nip19.npubEncode(ev.pubkey); }catch(_){ }
     let nevent=ev.id; try{ nevent = NT().nip19.neventEncode({ id:ev.id, author:ev.pubkey }); }catch(_){ }
     const kindName = _KIND_NAMES[ev.kind] || '';
-    modal(`<h3>🧾 Raw event</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-article"></use></svg>Raw event</h3>
       <div class="rawev-meta">
         <span>kind</span><b>${ev.kind}${kindName?` <i>${enc(kindName)}</i>`:''}</b>
         <span>created</span><b>${enc(when)} <i>${ev.created_at}</i></b>
@@ -8335,7 +8335,7 @@
       toast('📤 uploading…');
       const link=await uploadBlob(file);
       try{ await navigator.clipboard.writeText(link); }catch(_){}
-      modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
+      modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
         `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme">🎞️ Meme Builder</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
@@ -8445,7 +8445,7 @@
   async function summarizePost(id){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
-    modal('<h3>📝 Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
+    modal('<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-article"></use></svg>Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
           '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-neon small" id="sum-post" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post summary</button><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
       root=>{ const c=root.querySelector('#sum-close'); if(c) c.onclick=closeModal; });
     const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||NT().nip19.npubEncode(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
@@ -8495,7 +8495,7 @@
     // gate on AI permission — show a nice modal if the account isn't allowed
     let a={}; try{ a=await ensureAiSession(); }catch(_){}
     if(!a || !a.can_ai){
-      modal('<h3>🎬 Effects</h3><div class="muted" style="line-height:1.5">Effects use the node’s AI features, which aren’t enabled for your account yet. Request access and an admin can approve it.</div>'+
+      modal('<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effects</h3><div class="muted" style="line-height:1.5">Effects use the node’s AI features, which aren’t enabled for your account yet. Request access and an admin can approve it.</div>'+
             '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn btn-ghost small" id="fx-close">Close</button><button class="btn btn-neon small" id="fx-req">Request AI access</button></div>',
         root=>{ const c=root.querySelector('#fx-close'); if(c) c.onclick=closeModal; const q=root.querySelector('#fx-req'); if(q) q.onclick=()=>{ closeModal(); switchView('ai'); }; });
       return;
@@ -8580,7 +8580,7 @@
         <span class="cmds-name">${enc(it.name)}</span><span class="cmds-desc">${enc(it.desc)}</span></button>`;
     modal(`<div class="fxs">
       <div class="fxs-hd">
-        <div class="fxs-title"><div><h3>💡 What can I do?</h3>
+        <div class="fxs-title"><div><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>What can I do?</h3>
           <div class="muted small">${n} commands · tap one to start it${cat.effects_count?` · plus ${cat.effects_count} effects in the Effects studio`:''}</div></div>
           <button type="button" class="fxs-x" id="cmds-close" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
         <input class="input fxs-search" id="cmds-q" placeholder="Search commands…" autocomplete="off">
@@ -8639,7 +8639,7 @@
     try{ if(src && src.type && src.type.startsWith('image/')) thumb=`<img class="fxs-thumb" src="${URL.createObjectURL(src)}" alt="">`; }catch(_){}
     modal(`<div class="fxs">
       <div class="fxs-hd">
-        <div class="fxs-title">${thumb}<div><h3>🎬 Effects studio</h3>
+        <div class="fxs-title">${thumb}<div><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effects studio</h3>
           <div class="muted small">Pick one base effect · motion and caption stack on top.</div></div>
           <button type="button" class="fxs-x" id="fxs-close" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
         <input class="input fxs-search" id="fxs-q" placeholder="Search ${effects.length} effects…" autocomplete="off">
@@ -8920,21 +8920,21 @@
   }
   function filesMenu(){   // mobile Files sub-sheet — mirrors the desktop sidebar's Files group
     const items=[['blossom','flower','Blossom'],['__music','music','Music']];
-    modal(`<h3>${ICO('folder','h-ic')} Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg> Files</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; closeModal(); if(v==='__music') openMusic(); else switchView(v); });
     });
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend (Budget is client-only, so it stays)
-    modal(`<h3>${ICO('compass','h-ic')} Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
     });
   }
   function gamesMenu(){
     const items=[['chess','pawn','Chess'],['ttt','hash','Tic-Tac-Toe'],['hangman','target','Hangman'],['connect4','discs','Connect Four'],['blackjack','cards','Blackjack'],['holdem','spade',"Texas Hold'em"]];
-    modal(`<h3>${ICO('gamepad','h-ic')} Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-gamepad"></use></svg> Games</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span></button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
     });
   }
@@ -10351,7 +10351,7 @@
     try{ navigator.clipboard.writeText(u); toast('URL copied'); }catch(_){ const t=document.createElement('textarea'); t.value=u; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); toast('URL copied');}catch(e){toast('copy failed');} t.remove(); } }
   function gifPicker(ta){
     const bg=document.createElement('div'); bg.className='modal-bg'; bg.style.zIndex='200';
-    bg.innerHTML=`<div class="modal glass neon-border"><h3>🎬 GIFs</h3><input class="input" id="gif-q" placeholder="search GIFs…" autocomplete="off"><div id="gif-grid" class="gif-grid"><div class="spinner"></div></div></div>`;
+    bg.innerHTML=`<div class="modal glass neon-border"><h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIFs</h3><input class="input" id="gif-q" placeholder="search GIFs…" autocomplete="off"><div id="gif-grid" class="gif-grid"><div class="spinner"></div></div></div>`;
     bg.onclick=e=>{ if(e.target===bg) bg.remove(); };
     $('#modal-root').appendChild(bg);
     const grid=bg.querySelector('#gif-grid'), q=bg.querySelector('#gif-q'); let t=null;
@@ -10551,7 +10551,7 @@
     try{
       const r=await fetch(`/api/4chan/summarize?board=${encodeURIComponent(board)}&thread_id=${encodeURIComponent(id)}`, {credentials:'include'});
       const j=await r.json().catch(()=>({}));
-      box.innerHTML = (r.ok && j.summary) ? `<h4>✨ Summary</h4>${linkify(j.summary)}` : `<div class="muted">${enc(j.error||'Summary unavailable (needs AI access).')}</div>`;
+      box.innerHTML = (r.ok && j.summary) ? `<h4><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Summary</h4>${linkify(j.summary)}` : `<div class="muted">${enc(j.error||'Summary unavailable (needs AI access).')}</div>`;
     }catch(_){ box.innerHTML='<div class="muted">Summary failed.</div>'; }
   }
 
@@ -10566,7 +10566,7 @@
     const go=()=>{ const tracks=musicTracks(null);
       if(!tracks.length){   // no music yet → open the Music folder + guide them
         openMusicFolder();
-        modal(`<h3>🎵 Your music library is empty</h3>
+        modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Your music library is empty</h3>
           <p class="muted small">Add some songs to start playing:</p>
           <div class="muted small" style="line-height:1.9;margin:10px 0">
             1. You're now in <b>Files → 🎵 Music</b><br>
@@ -11159,7 +11159,7 @@
   // New-folder dialog: name + Encrypted/Public. An encrypted folder AES-encrypts everything dropped in
   // it (client-side, under your master key) before upload — Blossom only ever sees ciphertext.
   function _newFolderModal(){
-    modal(`<h3>📁 New folder</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>New folder</h3>
       <label class="fld">Name<input class="input" id="nf-name" placeholder="Folder name" maxlength="40"></label>
       <div class="fld">Contents
         <label class="nf-opt"><input type="radio" name="nf-enc" value="0" checked> 🌐 <b>Public</b><span class="muted small"> — files upload as-is, shareable by URL</span></label>
@@ -12456,7 +12456,7 @@
   }
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function newDmModal(){
-    modal(`<h3>✉ New message</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New message</h3>
       <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
@@ -12975,7 +12975,7 @@
   // user aren't local). Open to any user. Tap a report to see it in full (reason + reported post).
   async function showReports(pk){
     const who = (()=>{ const p=profOf(pk); return p.name||p.display_name||(NT().nip19.npubEncode(pk).slice(0,12)+'…'); })();
-    modal(`<h3>🚩 Reports received — ${enc(who)}</h3><div id="rep-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-flag"></use></svg>Reports received — ${enc(who)}</h3><div id="rep-list" class="people-list"><div class="spinner"></div></div>`, async root=>{
       let reports=[];
       try{ const r=await fetch('/client/reports?pubkey='+encodeURIComponent(pk)).then(r=>r.json()); if(r&&r.ok) reports=r.reports||[]; }catch(_){}
       const h3=root.querySelector('h3'); if(h3) h3.textContent='🚩 Reports received — '+who+' ('+reports.length+')';
@@ -12998,7 +12998,7 @@
     const rp=Store.profile(rep.reporter)||{};
     const rn=rp.name||rp.display_name||(NT().nip19.npubEncode(rep.reporter).slice(0,16)+'…');
     const reason=(rep.reason||'').trim();
-    modal(`<h3>🚩 Report</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-flag"></use></svg>Report</h3>
       <div class="report-detail">
         <div class="rd-row"><span class="muted small">Reported by</span> <b class="lnk" data-prof="${rep.reporter}">${enc(rn)}</b></div>
         <div class="rd-row"><span class="muted small">Type</span> <span class="rep-type">${enc(rep.type||'other')}</span> <span class="muted small">· ${timeAgo(rep.created_at)}</span></div>
@@ -13068,7 +13068,7 @@
     const defNip=((_pp.name||_pp.display_name||'')).toLowerCase().replace(/[^a-z0-9_.\-]/g,'').replace(/^[._\-]+|[._\-]+$/g,'').slice(0,30);
     const C=[['can_image','🖼️ Image'],['can_music','🎵 Music'],['can_video','🎬 Video'],['can_torrent','🧲 Torrents']];
     const row=(id,checked,label)=>`<label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" ${id} ${checked?'checked':''}> ${label}</label>`;
-    modal(`<h3>🔑 Additional permissions</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-key"></use></svg>Additional permissions</h3>
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
       ${row('id="perm-stream"', streamOn, '🔴 Live streaming <span class="muted small">(Go Live)</span>')}
@@ -13200,7 +13200,7 @@
   }
   // Show the relays a user publishes to (NIP-65 kind-10002), with read/write markers.
   async function showRelays(pk){
-    modal(`<h3>🖧 Relays</h3><div id="rl-body" class="muted small">Loading…</div>`);
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-relay"></use></svg>Relays</h3><div id="rl-body" class="muted small">Loading…</div>`);
     let evs=[]; try{ evs=await Relay.query([{authors:[pk],kinds:[10002],limit:1}]); }catch(_){}
     const ev=(evs||[]).sort((a,b)=>b.created_at-a.created_at)[0];
     const body=$('#rl-body'); if(!body) return;
@@ -13330,7 +13330,7 @@
     if(a.error){ feed.innerHTML='<div class="empty">Could not start an AI session — try again.</div>'; return; }
     if(a.can_ai){ return aiMount(feed); }
     feed.innerHTML=`<div class="ai-view ai-gate">
-      <h2>🤖 PosterChan AI</h2>
+      <h2><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>PosterChan AI</h2>
       <p class="muted">AI access isn't enabled for your account yet. Request access and an admin will approve it.</p>
       <button class="btn btn-neon" id="ai-request">Request AI access</button>
       <div class="muted small" id="ai-request-status"></div></div>`;
@@ -13418,7 +13418,7 @@
         <span class="nj-acts">${j.status==='running'?`<button class="btn btn-ghost small nj-kill" data-id="${enc(String(j.id))}">⏹ Kill</button>`:''}<button class="btn btn-ghost small nj-log" data-id="${enc(String(j.id))}">📄 Log</button></span>
       </div>`;
     };
-    modal(`<h3>🤖 Agents</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Agents</h3>
       <div class="node-panel">
         <p class="muted small np-intro">${soloSandbox?'Run agentic tasks in your private 🐳 Debian sandbox — ask in plain English and the agent figures out the commands, or run a raw shell command. It runs isolated from the host; output shows up in the chat below.':'Run things on your servers — ask in plain English and the agent figures out the commands, or run a raw shell command. Output shows up in the chat below.'}</p>
         <div class="np-row${oneNode?' hidden':''}">
@@ -13891,7 +13891,7 @@
                  ['circlecrop','Circle-crop an image'],['meme','Add meme text'],
                  ['collage','Make a collage'],['ocr','Read the text in a file'],
                  ['flashcards','Make study flashcards']];
-    modal(`<h3>✨ Make something</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make something</h3>
       <div class="gen-picker">${items.map(([k,label])=>{ const G=_GEN[k];
         return `<button class="gen-pick" data-gen="${k}"><span class="awc-ic">${G.icon}</span>
           <span><b>${enc(label)}</b><span class="muted small">${enc(G.blurb)}</span></span></button>`; }).join('')}</div>`,
@@ -15124,7 +15124,7 @@
     { const sn=$('#set-show-nsec'); if(sn) sn.onclick=async()=>{
         let r; try{ r=await Relay.worker.call('exportNsec', {}); }catch(_){ r=null; }
         const nsec=r&&r.nsec; if(!nsec){ toast('secret key not available on this login'); return; }
-        modal(`<h3>🔓 Your private key (nsec)</h3>
+        modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-key"></use></svg>Your private key (nsec)</h3>
           <p class="muted small" style="color:#ff9b6b">Anyone with this key has FULL control of your account. Never share it. Store it somewhere safe — it's the only way to recover your account.</p>
           <div class="keyrow"><code id="nsec-val">${enc(nsec)}</code></div>
           <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
@@ -18220,7 +18220,7 @@
     if(GUEST){ feed.innerHTML='<div class="empty">Log in to make calls.</div>'; return; }
     const contacts=[...FOLLOWS].slice(0,60);
     feed.innerHTML=`<div class="calls-view">
-      <h2 style="margin:0 0 4px">📞 Calls</h2>
+      <h2 style="margin:0 0 4px"><svg class="ic h-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Calls</h2>
       <p class="muted small">Voice &amp; video over Nostr — peer-to-peer, works across instances. Audio-first; toggle video in-call.</p>
       <div class="call-start">
         <input id="call-npub" class="input" placeholder="type a name, npub1…, or name@domain" autocapitalize="none" autocorrect="off" spellcheck="false">

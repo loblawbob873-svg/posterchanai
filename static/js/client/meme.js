@@ -776,7 +776,7 @@
   // toolbar: each one gets a line saying what it is, which is what those buttons never had room for.
   // Blossom is NOT here — it is one of the two answers to 🖼️ Media, which is where you look for a photo.
   function addMenu(anchor){
-    PC.modal(`<h3>➕ Add to the meme</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add to the meme</h3>
       <button class="btn btn-cyan full mb-addb" id="mba-audio"><b>🎵 Music or a voice-over</b><i>A track under the whole meme, or talk over it</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
@@ -1213,7 +1213,7 @@
         + `<b>${t.label}</b><br><span class="muted small">${enc(t.hint)}`
         + (short ? ` — needs ${t.need} media layer${t.need===1?'':'s'}, you have ${have}` : '') + '</span></button>';
     }).join('');
-    PC.modal(`<h3>📐 Start from a layout</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-layout"></use></svg>Start from a layout</h3>
       <div class="muted small" style="margin-bottom:8px">Everything a template makes is an ordinary layer —
       drag, retime and restyle it afterwards. ↶ undo puts it all back.</div>${rows}`, root=>{
       root.querySelectorAll('.mb-tplrow').forEach(btn=>btn.onclick=()=>{
@@ -1296,7 +1296,7 @@
       + `<b>${enc(f.j.name || 'Untitled')}</b><br><span class="muted small">`
       + `${f.j.layers.length} layer${f.j.layers.length===1?'':'s'} · ${f.j.w}×${f.j.h}`
       + (f.j.savedAt ? ' · ' + new Date(f.j.savedAt*1000).toLocaleString() : '') + '</span></button>';
-    PC.modal('<h3>📂 Open a saved project</h3>' + found.map(row).join(''), root=>{
+    PC.modal('<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Open a saved project</h3>' + found.map(row).join(''), root=>{
       root.querySelectorAll('.mb-projrow').forEach(btn => btn.onclick = async () => {
         const f = found[+btn.dataset.i];
         PC.closeModal();
@@ -1719,7 +1719,7 @@
   // buried in ➕ More next to stickers and templates, which is not where you look for "a photo"; and
   // "one that doesn't exist yet" belongs on the same sheet for the same reason.
   function pickMedia(){
-    PC.modal(`<h3>🖼️ Add media</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Add media</h3>
       <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo or video off your phone or computer</i></button>
       <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>
       <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>`, root=>{
@@ -1841,7 +1841,7 @@
   // add-button in a bar that is already full on a phone.
   async function pickAudio(){
     const st=document.getElementById('mb-status');
-    PC.modal(`<h3>🎵 Add audio</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Add audio</h3>
       <button class="btn btn-neon full" id="mba-file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Upload a file from this device</button>
       <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>
       <button class="btn btn-cyan full" id="mba-rec">🎙️ Record a voice-over</button>`, root=>{
@@ -2081,7 +2081,7 @@
     // selected layer is what you want when you're dressing up a photo, and a bare "it appeared
     // somewhere" is the thing that makes an overlay feel broken.
     const base = P.layers.find(x=>x.id===sel && _isVisual(x));
-    PC.modal(`<h3>✨ Add an effect layer</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Add an effect layer</h3>
       <div class="muted small" style="margin-bottom:8px">Rendered on a transparent background, so it sits over
       whatever is beneath it. ${base ? 'It will be placed over the selected layer' : 'It will start at the beginning of the build'} —
       then drag, resize and re-time it like any other layer.</div>
@@ -2640,7 +2640,7 @@
   // Save / Open / Rename / New / Clear behind one button. They were five buttons in a bar that already had
   // eleven, which on a phone wrapped into a wall where "Clear all" sat one thumb-width from "Add text".
   function projectMenu(){
-    PC.modal(`<h3>📂 ${enc(P.name || 'Untitled')}</h3>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>${enc(P.name || 'Untitled')}</h3>
       <div class="muted small" style="margin-bottom:10px">${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
       <button class="btn btn-neon full" id="mbp-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to my Blossom drive</button>
       <button class="btn btn-cyan full" id="mbp-open">📂 Open a saved project…</button>

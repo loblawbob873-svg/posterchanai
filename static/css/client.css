@@ -1401,6 +1401,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    svg.ic (20px, fill:none, stroke:currentColor) and match every other icon on the card — they used to
    be visibly heavier than their neighbours. These rules keep only what is genuinely per-icon: the sizes
    the old constants set inline, which svg.ic would otherwise flatten to a uniform 20px. */
+/* The five sidebar status glyphs come from the sprite now, but render FILLED: at 11-13px a stroke
+   icon is under a pixel wide and disappears. Single source, two rendering modes. */
+.wot-ico,.live-ico,.relay-ico,.stream-ico,.call-ico{fill:currentColor;stroke:none}
+.wot-ico,.relay-ico,.stream-ico{width:13px;height:13px}
+.live-ico{width:11px;height:11px}
+.call-ico{width:12px;height:12px}
 .rt-ico{vertical-align:-3px;flex:none}
 .react-ico,.zap-ico{flex:none}
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
@@ -1508,7 +1514,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* inline-flex, not the default block: the Preview tab carries a label icon, and the icon-gap rule is a
    flex `gap` — which does nothing on a block box, so the glyph sat flush against the P. Same fix as the
    composer's Draft button. The tabs sit in a flex row either way, so this changes no layout. */
-.cmp-tab{display:inline-flex;align-items:center;gap:var(--sp-2);background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:9px 9px 0 0;padding:7px 15px;cursor:pointer;font-weight:600;font-size:15px}
+.cmp-tab{display:inline-flex;align-items:center;gap:var(--sp-2);background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:9px 9px 0 0;padding:var(--sp-2) var(--sp-4);cursor:pointer;font-weight:600;font-size:var(--fs-2)}
 .cmp-tab.active{color:#fff;border-color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .note-preview{min-height:120px;border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin:6px 0;background:rgba(8,5,18,.5)}
 .note-preview .txt{line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
@@ -1517,8 +1523,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note-preview a.mention{color:var(--cyan)}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
-.cmp-tools{flex-wrap:wrap;gap:8px;margin-bottom:8px;justify-content:center}   /* center the tool-button row to match the Draft/Post row below (was space-between → left-stuck the lone .cmp-left) */
-.cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center}
+.cmp-tools{flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-2);justify-content:center}   /* center the tool-button row to match the Draft/Post row below (was space-between → left-stuck the lone .cmp-left) */
+.cmp-left,.cmp-right{display:flex;gap:var(--sp-2);flex-wrap:wrap;align-items:center;justify-content:center}
 .cmp-right{margin-left:auto}
 /* Draft + Post on their own centered row beneath the tool buttons */
 /* Draft/Post row. The centering USED to be duplicated as inline styles on the markup, for cache-
@@ -1944,7 +1950,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   /* Density on mobile (no global zoom — Firefox's zoom leaves a black border). Scale down the main
      content via font-size so the app reads denser without breaking the viewport. */
   .note .txt{font-size:15px;line-height:1.5} .note .name{font-size:14.5px}
-  .note .handle,.note .time{font-size:13px} .act{font-size:16px;padding:8px 8px} .act.actq{font-size:21px}   /* 8px sides: six actions must still fit a 320px phone */
+  .note .handle,.note .time{font-size:13px} .act{font-size:var(--fs-3);padding:var(--sp-2)} .act.actq{font-size:21px}   /* 8px sides: six actions must still fit a 320px phone */
   .bubble{font-size:14.5px;padding:9px 12px}
   .dm-peer b{font-size:15px} .dm-peer .muted.small{font-size:13px}
   .prof .pbody h2{font-size:20px}
@@ -2541,7 +2547,7 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
 /* Topics: a 2-column GRID rather than a wrap. Variable-width pills wrapped raggedly — one long tag
    claimed a whole row while two short ones shared the next, so a third of the block was dead space.
    Equal cells fill every row; the label ellipsizes and `title` carries the full tag. */
-#rb-topics .tag-cloud{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:2px 0}
+#rb-topics .tag-cloud{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-1);padding:2px 0}
 #rb-topics .tag-chip{min-width:0;gap:var(--sp-1);justify-content:space-between;
   padding:var(--sp-2) var(--sp-2);font-size:var(--fs-1);letter-spacing:0;
   clip-path:polygon(5px 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%,0 5px)}
