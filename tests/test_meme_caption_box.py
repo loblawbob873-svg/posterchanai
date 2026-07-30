@@ -92,7 +92,8 @@ class TestWrappedCaptionRenders(unittest.TestCase):
                      "box": True, "boxColor": "#ff0000", "boxAlpha": 0.6, "shadow": True},
                 ],
             }
-            data = mb.render(edit, {"S": src})
+            data, ctype = mb.render(edit, {"S": src})
+            self.assertEqual(ctype, "video/mp4")
             self.assertGreater(len(data), 1000)
             out = os.path.join(tmp, "out.mp4")
             with open(out, "wb") as fh:

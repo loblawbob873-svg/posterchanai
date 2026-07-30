@@ -17906,6 +17906,11 @@
     // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it
     // rather than listing /list/<pubkey> into a grid of their own.
     mediaServer, modal, closeModal, blossomPicker,
+    // The app's own emoji picker (recents, the unicode set, and every instance pack) + the shortcode →
+    // image-URL map behind it, so the Meme Builder can offer stickers WITHOUT a second picker that
+    // would know nothing about this instance's custom emoji. onPick gets (value, close) where value is
+    // either a unicode emoji or ":shortcode:"; instEmojiUrl resolves the latter to its image.
+    openEmojiPopover, instEmojiUrl: (sc) => InstEmoji.map[String(sc||'').replace(/:/g,'')] || '',
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 

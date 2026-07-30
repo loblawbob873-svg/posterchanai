@@ -40,6 +40,12 @@ _RENDER_TIMEOUT_S = 150
 # bandwidth. Tuned by measuring (20/24/26/28) rather than assuming the scales match.
 _VAAPI_QP = 26
 DEFAULT_W, DEFAULT_H, DEFAULT_FPS = 720, 1280, 30
+# GIF bounds. Paletted frames do not compress like h264 — size is roughly linear in duration x pixels, so
+# these are what keep "export a GIF" from producing a file nobody can upload. 12 fps and a 480px long edge
+# is the usual reaction-GIF trade-off; the duration is a hard refusal (see render).
+MAX_GIF_DURATION = 20.0
+GIF_FPS = 12
+GIF_MAX_EDGE = 480
 
 # Per-layer effects expressed directly in the filtergraph. Each entry is a callable taking the layer's
 # resolved geometry/timing and returning ffmpeg filter chain text (applied to that layer's own stream,
@@ -367,16 +373,83 @@ def _has_audio(path: str) -> bool:
         return False
 
 
-def render(edit: dict, sources: dict) -> bytes:
+def _mp4_to_gif(mp4: bytes, w: int, h: int) -> bytes:
+    """MP4 bytes -> looping GIF bytes, via the two-pass palette (palettegen to a PNG, then paletteuse
+    against it).
+
+    NEVER `palettegen=stats_mode=diff` here. That option weights pixels that CHANGE between frames, and on
+    a meme — a cut between two mostly-flat shots — it dropped whole colours from the palette outright:
+    measured on a red-then-blue two-clip project, the generated palette held two reds and NO BLUE, so
+    paletteuse mapped every frame of the second clip to red. The result was a GIF with the correct
+    container, the correct frame count and the correct duration in which nothing ever changed — which is
+    why test_gif_actually_animates compares pixels at both ends rather than trusting any of those three.
+    The default (full) stats mode is correct and costs one pass over an already-capped clip.
+
+    Two passes rather than the one-pass split/palettegen/paletteuse form because it reuses the PROVEN video
+    path byte-for-byte: whatever the encoder ladder produced is what gets converted, so a GIF can never
+    disagree with the MP4 of the same project.
+
+    The long edge is capped at GIF_MAX_EDGE and the rate at GIF_FPS — a GIF is paletted frames with no
+    inter-frame compression worth the name, so those two caps are the difference between a file that can
+    be posted and one that cannot."""
+    ffmpeg = media_service.resolve_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is not available on this node")
+    # Cap the LONG edge, whichever it is, and let the other side follow (-2 keeps it even).
+    scale = (f"scale={min(w, GIF_MAX_EDGE)}:-2" if w >= h else f"scale=-2:{min(h, GIF_MAX_EDGE)}")
+    pre = f"fps={GIF_FPS},{scale}:flags=lanczos"
+    tmp = tempfile.mkdtemp(prefix="pcmemegif-")
+    try:
+        src = os.path.join(tmp, "in.mp4")
+        pal = os.path.join(tmp, "pal.png")
+        out = os.path.join(tmp, "out.gif")
+        with open(src, "wb") as fh:
+            fh.write(mp4)
+        p1 = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", src,
+                             "-vf", f"{pre},palettegen", pal],
+                            capture_output=True, timeout=_RENDER_TIMEOUT_S)
+        if p1.returncode != 0 or not os.path.exists(pal):
+            raise RuntimeError("gif palette failed: " + (p1.stderr or b"").decode("utf-8", "replace")[-300:])
+        p2 = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", src, "-i", pal,
+                             "-filter_complex", f"[0:v]{pre}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3",
+                             "-loop", "0", "-an", out],
+                            capture_output=True, timeout=_RENDER_TIMEOUT_S)
+        if p2.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+            raise RuntimeError("gif encode failed: " + (p2.stderr or b"").decode("utf-8", "replace")[-300:])
+        with open(out, "rb") as fh:
+            data = fh.read()
+        logger.info("[meme] gif %s (from %s of mp4)",
+                    media_service._human_size(len(data)), media_service._human_size(len(mp4)))
+        return data
+    finally:
+        try:
+            for f in os.listdir(tmp):
+                os.unlink(os.path.join(tmp, f))
+            os.rmdir(tmp)
+        except Exception:
+            pass
+
+
+def render(edit: dict, sources: dict) -> tuple:
     """Render the edit list. `sources` maps a layer's `src` key -> local file path (the caller resolves
     and fetches URLs/Blossom hashes, so this stays a pure renderer with no network of its own).
 
-    Returns MP4 bytes. Raises ValueError on an edit list we refuse, RuntimeError if ffmpeg fails.
+    Returns (bytes, content_type). `edit["fmt"]` picks the container:
+      "mp4"  (default) — the branded short clip, encoded on the shared encoder ladder
+      "gif"  — a looping GIF, for the places that still only take one (and for a reaction image)
+      "png"  — ONE frame, at `edit["still"]` seconds: a meme is very often a picture, and exporting a
+               still used to mean rendering the video and screenshotting it
+    GIF and PNG carry no audio at all, so a sound-only difference is invisible in them by design.
+
+    Raises ValueError on an edit list we refuse, RuntimeError if ffmpeg fails.
     """
     ffmpeg = media_service.resolve_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not available on this node")
 
+    fmt = str(edit.get("fmt") or "mp4").strip().lower()
+    if fmt not in ("mp4", "gif", "png"):
+        raise ValueError(f"unknown export format: {fmt}")
     w = int(_num(edit.get("w"), 16, MAX_DIM, DEFAULT_W)) // 2 * 2      # even dims — h264 requires it
     h = int(_num(edit.get("h"), 16, MAX_DIM, DEFAULT_H)) // 2 * 2
     fps = int(_num(edit.get("fps"), 5, 60, DEFAULT_FPS))
@@ -394,6 +467,18 @@ def render(edit: dict, sources: dict) -> bytes:
     ends = [_num(l.get("start"), 0, MAX_DURATION, 0) + _num(l.get("dur"), 0.05, MAX_DURATION, 3)
             for l in layers if (l.get("type") or "").lower() != "audio"]
     duration = _num(edit.get("duration"), 0.1, MAX_DURATION, max(ends) if ends else 3.0)
+    # A GIF is uncompressed-ish paletted frames, so its size grows linearly and fast: a 60s project at
+    # 480px/12fps is tens of megabytes and would very likely hit _RENDER_TIMEOUT_S having produced
+    # something nobody can post. Refuse with the fix rather than silently truncating the meme.
+    if fmt == "gif" and duration > MAX_GIF_DURATION:
+        raise ValueError(f"a GIF has to be short — this project is {duration:.0f}s and the limit is "
+                         f"{MAX_GIF_DURATION:.0f}s. Trim it, or export MP4.")
+
+    # A GIF is the MP4 render, converted — see _mp4_to_gif for why, and for the palette option that must
+    # never come back. Capped at MAX_GIF_DURATION above, so the extra pass is cheap.
+    if fmt == "gif":
+        mp4, _ = render({**edit, "fmt": "mp4"}, sources)
+        return _mp4_to_gif(mp4, w, h), "image/gif"
 
     tmp = tempfile.mkdtemp(prefix="pcmeme-")
     try:
@@ -535,6 +620,14 @@ def render(edit: dict, sources: dict) -> bytes:
             trim = _num(layer.get("trim"), 0, MAX_DURATION, 0)
             opacity = _num(layer.get("opacity"), 0.05, 1.0, 1.0)
             effect = (layer.get("effect") or "none").lower()
+            # Playback speed for a VIDEO layer. 1 = untouched, 2 = twice as fast, 0.5 = half speed. `dur` is
+            # always the length of the layer's SLOT on the timeline, so a faster clip has to be fed MORE
+            # source to fill it — hence src_dur below — and then compressed back with setpts. Getting that
+            # backwards gives a clip that ends early and freezes on its last frame for the rest of the slot.
+            speed = _num(layer.get("speed"), 0.25, 4.0, 1.0)
+            if kind != "video" or abs(speed - 1.0) < 0.01:
+                speed = 1.0
+            src_dur = min(MAX_DURATION, dur * speed)
 
             if kind == "image":
                 # An AVIF/HEIC layer is ISOBMFF, whose demuxer has no `loop` either — same abort as
@@ -557,7 +650,7 @@ def render(edit: dict, sources: dict) -> bytes:
                 # composite fully opaque (a black box over everything beneath it). Decoder is an INPUT
                 # option, so it goes before -i.
                 _dec = ["-c:v", "libvpx-vp9"] if str(path).lower().endswith(".webm") else []
-                cmd += _dec + ["-ss", f"{trim:.3f}", "-t", f"{dur:.3f}", "-i", path]
+                cmd += _dec + ["-ss", f"{trim:.3f}", "-t", f"{src_dur:.3f}", "-i", path]
 
             # "contain" (default) letterboxes the source inside the layer box; "cover" scales UP until the box
             # is filled and crops the overflow — what you actually want from a "fill the canvas" background,
@@ -570,6 +663,12 @@ def render(edit: dict, sources: dict) -> bytes:
                 chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
                          f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
                          "setsar=1", f"fps={fps}", "format=rgba"]
+            # Speed goes FIRST, before `fps` resamples: restretching the timestamps after the frame rate has
+            # been fixed leaves a stream running at fps*speed, which every downstream filter built for `fps`
+            # (zoompan's d=frames, the fade ramps) then measures wrongly. Ahead of it, `fps` does the
+            # frame-dropping/duplicating and everything after sees a normal stream at the project rate.
+            if speed != 1.0:
+                chain.insert(0, f"setpts=PTS/{speed:.4f}")
             # MIRROR before the effect (hflip/vflip preserve the frame size, so the effect chain still
             # sees the lw x lh box it was built for) and ROTATE after it — so a spin/zoom animates the
             # upright artwork and the whole result is then turned, rather than the effect's own geometry
@@ -581,6 +680,18 @@ def render(edit: dict, sources: dict) -> bytes:
             fx = _fx_chain(effect, lw, lh, dur, fps)
             if fx:
                 chain.append(fx)
+            # TRANSITION ramps — the crossfade. These are alpha fades on the layer's OWN stream, in its own
+            # local time (the shift onto the project timeline happens further down), so a clip whose slot
+            # overlaps the previous one fades up while that one fades out: a real dissolve, with no xfade
+            # filter and no change to the one-pass overlay composite. Kept separate from the `fade` EFFECT
+            # because `effect` is a single choice — a clip should be able to dissolve AND be black-and-white.
+            xin = _num(layer.get("xin"), 0, 5, 0)
+            xout = _num(layer.get("xout"), 0, 5, 0)
+            if xin > 0.01:
+                chain.append(f"fade=t=in:st=0:d={min(xin, dur):.2f}:alpha=1")
+            if xout > 0.01:
+                _d = min(xout, dur)
+                chain.append(f"fade=t=out:st={max(0.0, dur - _d):.2f}:d={_d:.2f}:alpha=1")
             # Free rotation about the layer's CENTRE. `ow=rotw(a)/oh=roth(a)` grows the frame to hold the
             # whole rotated image so the corners aren't sliced off; that growth is symmetric, so the
             # overlay origin has to move back by half of it or the layer would visibly drift down-right as
@@ -608,7 +719,19 @@ def render(edit: dict, sources: dict) -> bytes:
 
             if kind == "video" and layer.get("mute") is not True and _has_audio(path):
                 vol = _num(layer.get("volume"), 0, 4, 1.0)
-                audio_parts.append(f"[{idx}:a]adelay={int(start*1000)}|{int(start*1000)},"
+                # A sped-up clip's sound has to be sped up with it or it runs past the picture. atempo only
+                # accepts 0.5-2.0 per instance, so anything outside that is CHAINED — a single
+                # atempo=4 is silently rejected by the filter and the audio stays at 1x against a 4x picture.
+                _tempo = []
+                _s = speed
+                while _s > 2.0 + 1e-6:
+                    _tempo.append("atempo=2.0"); _s /= 2.0
+                while _s < 0.5 - 1e-6:
+                    _tempo.append("atempo=0.5"); _s /= 0.5
+                if abs(_s - 1.0) > 0.01:
+                    _tempo.append(f"atempo={_s:.4f}")
+                audio_parts.append(f"[{idx}:a]" + "".join(t + "," for t in _tempo)
+                                   + f"adelay={int(start*1000)}|{int(start*1000)},"
                                    f"volume={vol:.2f}[a{n}]")
             idx += 1
 
@@ -632,6 +755,32 @@ def render(edit: dict, sources: dict) -> bytes:
         for tag, filt in textfiles:
             chains.append(f"{cur}{filt}{tag}")
             cur = tag
+
+        # ---- A STILL leaves here: no h264 ladder, no audio ----
+        if fmt == "png":
+            # ONE frame, taken at the client's playhead. Done with `trim` on the finished composite rather
+            # than an output `-ss`: the overlays are gated on ABSOLUTE t, so the frame has to be selected
+            # after compositing, and trim is frame-exact where a seek's semantics depend on which side of
+            # -i it lands. Clamped inside the project or there is no frame to take.
+            at = _num(edit.get("still"), 0, MAX_DURATION, 0)
+            at = max(0.0, min(at, max(0.0, duration - 1.0 / fps)))
+            chains.append(f"{cur}trim=start={at:.3f}:duration={1.0/fps:.4f},setpts=PTS-STARTPTS,"
+                          f"format=rgb24[vout]")
+            out = os.path.join(tmp, "out.png")
+            full = cmd + ["-filter_complex", ";".join(chains), "-map", "[vout]", "-an",
+                          "-frames:v", "1", out]
+            try:
+                p = subprocess.run(full, capture_output=True, timeout=_RENDER_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(f"render timed out after {_RENDER_TIMEOUT_S}s — try fewer layers")
+            if p.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+                err = (p.stderr or b"").decode("utf-8", "replace")[-500:]
+                raise RuntimeError(f"ffmpeg failed: {err}")
+            with open(out, "rb") as fh:
+                data = fh.read()
+            logger.info("[meme] rendered still %dx%d @%.2fs, %d layers -> %s",
+                        w, h, at, len(layers), media_service._human_size(len(data)))
+            return data, "image/png"
 
         # Keep the video tail addressable: the GPU encoder needs a DIFFERENT one (see the loop below),
         # and this exact string — label included — is what gets swapped, so there is nothing else in the
@@ -699,7 +848,7 @@ def render(edit: dict, sources: dict) -> bytes:
                     data = fh.read()
                 logger.info("[meme] rendered %dx%d %.1fs, %d layers, %s -> %s",
                             w, h, duration, len(layers), enc, media_service._human_size(len(data)))
-                return data
+                return data, "video/mp4"
             last_err = (p.stderr or b"").decode("utf-8", "replace")[-1200:]
             logger.warning("[meme] encoder %s failed: %s", enc, last_err[-300:])
         raise RuntimeError(f"ffmpeg failed: {last_err[-500:]}")

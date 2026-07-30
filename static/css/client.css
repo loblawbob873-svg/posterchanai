@@ -3965,7 +3965,10 @@ body.modal-open .mobilenav{display:none}
 .mb-ab:hover{color:var(--fg);border-color:var(--neon)}
 /* The timeline is the scroll PORT; .mb-tlinner is the content, and the ruler and playhead are inside it so
    they stay glued to the lanes when a phone scrolls the timeline sideways. */
-.mb-timeline{padding:10px;border:1px solid var(--line);border-radius:var(--r)}
+/* overflow-x at EVERY width, not just on a phone: the timeline zoom makes the content wider than the port
+   on a desktop too, and without this a zoomed timeline would simply overflow the panel. */
+.mb-timeline{padding:10px;border:1px solid var(--line);border-radius:var(--r);
+  overflow-x:auto;-webkit-overflow-scrolling:touch}
 .mb-tlinner{position:relative;display:flex;flex-direction:column;gap:6px}
 /* Seconds ruler — same .mb-track/.mb-lane geometry as a clip row, which is what makes a tick line up with
    the clip below it without measuring anything. */
@@ -3988,7 +3991,28 @@ body.modal-open .mobilenav{display:none}
 .mb-ph b{position:absolute;left:-7px;top:-9px;width:16px;height:16px;border-radius:3px;background:var(--danger);
   pointer-events:auto;cursor:ew-resize;touch-action:none}
 .mb-empty{padding:6px 2px}
-.mb-tlhint{margin:8px 2px 4px}
+.mb-tlhint{margin:0}
+/* The timeline's own toolbar: the hint, the crossfade length and the zoom stepper. Sits directly above the
+   lanes because all three are about the lanes — putting zoom in the main bar would separate it from the
+   thing it zooms. */
+.mb-tlbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 2px 4px}
+.mb-tlf{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--muted)}
+.mb-tlf .input{width:auto;min-width:74px;margin:0;padding:5px 8px}
+.mb-zoom{display:inline-flex;align-items:center;gap:6px}
+.mb-zoom b{min-width:30px;text-align:center;font-size:12px;color:var(--cyan)}
+.mb-zb{width:30px;height:28px;line-height:1;padding:0;font-size:15px;cursor:pointer;color:var(--muted);
+  background:var(--panel2);border:1px solid var(--line);border-radius:7px}
+.mb-zb:hover{color:var(--fg);border-color:var(--neon)}
+/* Export format, beside the Render button it changes the output of. */
+.mb-fmt{width:auto;min-width:74px;margin:0;padding:7px 8px}
+/* Voice-over recorder: a big elapsed clock and a pulsing dot, so it is obvious the mic is live. */
+/* The "what the speed did to this clip's slot" note, inside the Speed label. */
+.mb-slot{font-style:normal;font-size:11.5px}
+.mb-rec{display:flex;align-items:center;justify-content:center;gap:10px;margin:4px 0 12px}
+.mb-rec b{font-size:26px;color:var(--cyan)}
+.mb-recdot{width:13px;height:13px;border-radius:50%;background:var(--line)}
+.mb-recdot.on{background:var(--danger);animation:mbrec 1s ease-in-out infinite}
+@keyframes mbrec{0%,100%{opacity:1}50%{opacity:.25}}
 .mb-track{display:flex;align-items:center;gap:10px;min-width:0}
 .mb-track.sel .mb-clip{box-shadow:inset 0 0 0 2px var(--neon)}
 .mb-trackname{flex:0 0 132px;font-size:12.5px;color:var(--muted);overflow:hidden;
@@ -4039,9 +4063,12 @@ body.modal-open .mobilenav{display:none}
   .mb-stage{height:42vh}                          /* leave room for the timeline without scrolling */
   /* The lane keeps a usable width and the CONTENT scrolls, instead of clip bars collapsing to slivers.
      min-width goes on .mb-tlinner (the scroll content), not on each row: the playhead is positioned
-     against the inner element, so it has to be the thing that is 520px wide. */
-  .mb-timeline{overflow-x:auto;-webkit-overflow-scrolling:touch}
+     against the inner element, so it has to be the thing that is 520px wide. (overflow-x is now set at
+     every width — the timeline zoom needs it on a desktop too.) */
   .mb-tlinner{min-width:520px}
+  .mb-tlbar{gap:8px}
+  .mb-tlhint{flex:1 1 100%}                       /* the hint takes its own line; controls stay reachable */
+  .mb-zb{width:38px;height:34px}                  /* thumb-sized zoom stepper */
   .mb-rname{flex-basis:104px}                     /* match .mb-trackname at this breakpoint */
   /* Icon-only buttons must NOT stretch with the rest of the bar — a full-width ↶ next to a full-width ↷
      eats the row a phone needs for Templates and Project. */

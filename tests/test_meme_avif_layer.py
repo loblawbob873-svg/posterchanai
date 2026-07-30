@@ -92,8 +92,10 @@ class TestMemeRenderWithAvifLayer(unittest.TestCase):
                 "layers": [{"type": "image", "src": "u1", "x": 0, "y": 0, "w": 640, "h": 480,
                             "start": 0, "dur": dur, "fit": "cover"}]}
         mp4 = os.path.join(self.tmp, "out.mp4")
+        data, ctype = meme_builder_service.render(edit, {"u1": src})
+        self.assertEqual(ctype, "video/mp4")
         with open(mp4, "wb") as fh:
-            fh.write(meme_builder_service.render(edit, {"u1": src}))
+            fh.write(data)
 
         # Whole slot covered: the layer is still there on the LAST frame, not just the first.
         for t in (0.05, dur - 0.1):

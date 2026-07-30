@@ -278,7 +278,29 @@
   // is an overlay pinned ON the footage, so it keeps its own free start/duration.
   const mediaSeq = () => P.layers.filter(_isVisual)
     .sort((a,b)=>((+a.start||0)-(+b.start||0)) || (P.layers.indexOf(a)-P.layers.indexOf(b)));
-  function resequence(seq){ let t=0; (seq||mediaSeq()).forEach(l=>{ l.start=+t.toFixed(2); t+=(+l.dur||0); }); }
+  // Crossfade length, in seconds, between consecutive clips. 0 = hard cuts (the default and what every
+  // existing project has). This is a PROJECT setting rather than per-layer because a transition belongs to
+  // the JOIN between two clips, and the timeline only has one join between any two neighbours.
+  const _xfade = () => clamp(P.xfade == null ? 0 : P.xfade, 0, 2);
+  // Lay the clips out back-to-back — or OVERLAPPING by the crossfade length, which is what makes the
+  // dissolve possible at all: the renderer blends with alpha ramps on each clip's own stream, so the two
+  // clips have to be on screen at the same time for there to be anything to blend. `xin`/`xout` are the
+  // ramps, stamped here (and cleared when the crossfade is off) so the render never has to guess which
+  // joins are transitions.
+  function resequence(seq){
+    const xf = _xfade();
+    const list = seq || mediaSeq();
+    let t = 0;
+    list.forEach((l, i)=>{
+      l.start = +t.toFixed(2);
+      const d = +l.dur || 0;
+      // Never advance by less than a token amount, or a clip shorter than the crossfade would put the
+      // next one at (or before) its own start and the sequence would stop moving forward.
+      t += (i < list.length - 1) ? Math.max(0.1, d - xf) : d;
+      l.xin  = (xf > 0 && i > 0) ? xf : 0;
+      l.xout = (xf > 0 && i < list.length - 1) ? xf : 0;
+    });
+  }
   // Where a clip dragged to `center` (seconds, its midpoint) belongs in the sequence of the OTHERS.
   function dropIndex(others, center){
     let idx=0, acc=0;
@@ -334,6 +356,21 @@
   }
 
   const _alignOf = (l) => (l.align || '');   // '' = obey the x you dragged it to; 'center' = let ffmpeg centre it
+  // Playback speed of a VIDEO layer. `dur` is ALWAYS the layer's slot on the timeline, and the renderer
+  // feeds it `dur x speed` seconds of source — so at any speed but 1, slot seconds and source seconds are
+  // different units, and everything that converts between them (the trim handles, _setSpeed) has to say so.
+  // Changing the speed in the editor rescales the slot to keep the trimmed FOOTAGE (see _setSpeed).
+  const _speedOf = (l) => clamp(l.speed == null ? 1 : l.speed, 0.25, 4);
+  // What the speed did to the clip's slot, in words. Speed is the one control here that changes a layer's
+  // LENGTH as a side effect, so it has to say so — otherwise the clip bar shrinking on the timeline looks
+  // like something else moved it.
+  const _slotNote = (l) => {
+    const sp = _speedOf(l);
+    if(sp === 1) return '';
+    return ` · ${(+l.dur||0).toFixed(1)}s slot for ${(((+l.dur||0)*sp)).toFixed(1)}s of footage`;
+  };
+  // Export format. Kept on the project so it survives a reload like every other choice here.
+  const _fmt = () => (['mp4','gif','png'].indexOf(P.fmt) >= 0 ? P.fmt : 'mp4');
 
   // ---------- caption word-wrap ----------
   // drawtext NEVER wraps, so a caption longer than the frame used to run straight off the edge of the
@@ -431,8 +468,11 @@
     }, extra||{});
     if(type==='audio'){
       l.x=0; l.y=0; l.w=0; l.h=0;
-      l.volume = 0.6;      // sit UNDER the clips' own sound — amix here runs normalize=0, so 1.0 competes with it
-      l.fade = true;       // truncation at the end of the timeline is a hard cut otherwise
+      // DEFAULTS ONLY — these run after `extra` is merged, so writing them unconditionally silently threw
+      // away a caller's explicit choice. That is what happened to the voice-over: it asks for volume 1 and
+      // no fade (a voice under a music bed at 0.6 is the thing you cannot make out) and got 0.6 + a fade.
+      if(!extra || extra.volume == null) l.volume = 0.6;   // sit UNDER the clips' own sound — amix runs normalize=0
+      if(!extra || extra.fade == null) l.fade = true;      // truncation at the end of the timeline is a hard cut otherwise
     }
     else if(type!=='text'){ l.y = Math.round((P.h - l.h)/2); }
     else { l.x = Math.round(P.w*0.08); l.y = Math.round(P.h*0.08); }
@@ -455,6 +495,27 @@
       P.layers.forEach(a=>{ if(a.type==='audio' && !(+a.start||0) && Math.abs((+a.dur||0) - wasEnd) < 0.06)
         a.dur = +end.toFixed(2); });
     }
+    save(); return l;
+  }
+
+  // An OVERLAY layer, as opposed to a CLIP in the master sequence. addLayer() is wrong for this: it appends
+  // media at the END of the timeline and then resequences, so a sticker added to a 2-clip build landed after
+  // both of them — on screen over nothing, which reads as "the sticker never arrived". An overlay starts at 0
+  // and spans the build instead, and goes in BELOW the captions so it cannot bury one.
+  function addOverlay(extra){
+    if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
+    snap();
+    const l = Object.assign({
+      id: nid(), type:'image', src:'', name:'',
+      start: 0, dur: +Math.max(projEnd(), 1).toFixed(2), trim: 0,
+      x: 0, y: 0, w: P.w, h: Math.round(P.h/2),
+      opacity: 1, effect: 'none', volume: 1, mute: false, fit: 'contain',
+      flipH: false, flipV: false, rotate: 0, sound: '', soundVolume: 1,
+      text: '', size: 64, color: '#ffffff', stroke: '#000000', align: '',
+    }, extra || {});
+    const firstText = P.layers.findIndex(x => x.type === 'text');
+    P.layers.splice(firstText < 0 ? P.layers.length : firstText, 0, l);
+    sel = l.id;
     save(); return l;
   }
 
@@ -499,7 +560,8 @@
       <div class="mb-bar">
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
-        <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
+        <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme, or record a voice-over">🎵 Add audio</button>
+        <button class="btn btn-cyan small" id="mb-add-sticker" title="Drop an emoji or a custom instance emoji on the meme as its own draggable layer">😀 Sticker</button>
         <button class="btn btn-cyan small" id="mb-add-effect" title="Add an effect (dancing man, shrug, a character) as its own layer you can drag, resize and time">✨ Add effect</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
         <button class="btn btn-cyan small" id="mb-tpl" title="Start from a ready-made layout — classic top/bottom captions, a two-panel split, a caption bar">📐 Templates</button>
@@ -519,7 +581,14 @@
         </label>
         <span class="mb-spacer"></span>
         <span class="muted small" id="mb-status"></span>
-        <button class="btn btn-neon small" id="mb-render">🎬 Render</button>
+        <!-- A meme is very often a PICTURE, and plenty of places still only take a GIF. The format sits on
+             the Render button rather than in a settings panel because it changes what the button produces. -->
+        <select class="input mb-fmt" id="mb-fmt" aria-label="Export format" title="MP4 keeps the sound; GIF loops silently; Still is one frame at the playhead">
+          <option value="mp4" ${_fmt()==='mp4'?'selected':''}>MP4</option>
+          <option value="gif" ${_fmt()==='gif'?'selected':''}>GIF</option>
+          <option value="png" ${_fmt()==='png'?'selected':''}>Still</option>
+        </select>
+        <button class="btn btn-neon small" id="mb-render">${_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render')}</button>
       </div>
 
       <div class="mb-main">
@@ -548,7 +617,20 @@
         </div>
       </div>
 
-      ${P.layers.some(_isVisual) ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to move it, or its edges to trim. Tap the ruler to move the playhead.</div>' : ''}
+      ${P.layers.some(_isVisual) ? `<div class="mb-tlbar">
+        <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead.</span>
+        <span class="mb-spacer"></span>
+        <label class="mb-tlf" title="Dissolve between consecutive clips. ⇄ Arrange overlaps them by this much so there is something to blend.">⇄
+          <select class="input" id="mb-xfade">
+            ${[0,0.25,0.5,0.75,1,1.5].map(v=>`<option value="${v}" ${Math.abs(_xfade()-v)<0.01?'selected':''}>${v?v+'s':'cut'}</option>`).join('')}
+          </select>
+        </label>
+        <span class="mb-zoom">
+          <button class="mb-zb" id="mb-zoomout" title="Zoom out" aria-label="Zoom the timeline out">−</button>
+          <b id="mb-zoomlbl">${_zoom()%1?_zoom().toFixed(1):_zoom()}×</b>
+          <button class="mb-zb" id="mb-zoomin" title="Zoom in — a long build is unreadable at 1×" aria-label="Zoom the timeline in">+</button>
+        </span>
+      </div>` : ''}
       <div class="mb-timeline" id="mb-timeline">${timelineInner()}</div>
       <div id="mb-result"></div>
     </div>`;
@@ -558,9 +640,36 @@
   // playhead — lives in here rather than over the .mb-timeline box, because on a phone the box scrolls
   // horizontally: a playhead positioned against the outer element would slide away from the lanes it is
   // supposed to be marking the moment you scrolled.
+  // Timeline ZOOM. 1 = the whole project across the lane, which is all there was: a 60-second build put
+  // every clip into a sliver you could neither read nor grab, and trimming by half a second was guesswork.
+  // Implemented as the WIDTH of the scrolling content — every clip bar and ruler tick is positioned in %,
+  // and the playhead measures a real lane, so they all scale from this one number with no other maths.
+  // A LADDER rather than a multiplier, so the label is always a round number you can aim back at.
+  const _ZOOMS = [1, 2, 3, 4, 6, 8, 12];
+  const _zoom = () => clamp(P.zoom == null ? 1 : P.zoom, 1, 12);
+  function setZoom(z){
+    const prev = _zoom();
+    P.zoom = clamp(z, 1, 12);
+    if(P.zoom === prev) return;
+    save();
+    const port = document.getElementById('mb-timeline');
+    const s = document.getElementById('mb-scrub');
+    repaint('timeline');          // rebuilds the lanes; the toolbar (and its listeners) survives
+    const lbl = document.getElementById('mb-zoomlbl');
+    if(lbl) lbl.textContent = (P.zoom % 1 ? P.zoom.toFixed(1) : P.zoom) + '×';
+    // Keep the playhead on screen. Zooming in on a timeline and being left looking at second 0 while the
+    // playhead is off to the right is the thing that makes editor zoom feel broken.
+    if(port){
+      const ph = document.getElementById('mb-ph');
+      const x = ph ? parseFloat(ph.style.left || '0') : 0;
+      port.scrollLeft = Math.max(0, x - port.clientWidth / 2);
+    }
+    if(s) syncScrub();
+  }
+
   function timelineInner(){
     if(!P.layers.length) return '<div class="mb-tlinner"><div class="muted small mb-empty">No layers yet — add media or text to start.</div></div>';
-    return `<div class="mb-tlinner" id="mb-tlinner">
+    return `<div class="mb-tlinner" id="mb-tlinner" style="width:${(_zoom()*100).toFixed(2)}%">
       ${rulerEl()}
       ${_rowOrder().map(trackEl).join('')}
       <i class="mb-ph" id="mb-ph"><b></b></i>
@@ -573,7 +682,11 @@
   // collide: 1s up to 12s, then 2s, then 5s.
   function rulerEl(){
     const total = Math.max(projEnd(), 1);
-    const step = total <= 12 ? 1 : (total <= 30 ? 2 : 5);
+    // Pick the spacing from what is actually VISIBLE, not from the project length: zoomed in 8x, a 60s
+    // project shows ~7 seconds at a time and deserves 1s ticks, while the unzoomed view of the same
+    // project would be unreadable with them.
+    const span = total / Math.max(1, _zoom());
+    const step = span <= 5 ? 0.5 : (span <= 12 ? 1 : (span <= 30 ? 2 : 5));
     const ticks = [];
     for(let t = 0; t <= total + 0.001; t += step){
       const pct = t/total*100;
@@ -755,6 +868,9 @@
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>
+        <label class="mb-f"><span>Speed <b id="mb-spd-val">${_speedOf(l)}×</b><i class="mb-slot" id="mb-spd-slot">${_slotNote(l)}</i></span>
+          <input type="range" id="mb-f-speed" min="0.25" max="4" step="0.05" value="${_speedOf(l)}"></label>
+        <div class="mb-frow">${[0.5,1,2].map(v=>`<button class="btn btn-cyan small${_speedOf(l)===v?' on':''}" data-spd="${v}">${v}×</button>`).join('')}</div>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
       ${l.type==='video'
         ? `<div class="muted small mb-dbg">Drag the clip on the timeline below to set when it appears in the meme.</div>`
@@ -1228,13 +1344,37 @@
       const el=document.querySelector('.mb-item[data-id="'+l.id+'"]'); if(!el) return;
       const on = t>=l.start && t<=l.start+l.dur;
       el.style.display = on ? '' : 'none';
+      // CROSSFADE in the preview. The renderer blends with alpha ramps on each clip's own stream; without
+      // the same ramp here, an overlapping pair previews as the top clip simply covering the one beneath
+      // (a hard cut) and the dissolve only appears in the export.
+      if(on) el.style.opacity = (l.opacity==null?1:+l.opacity) * _rampAt(l, t - l.start);
       const v=el.querySelector('video');
-      if(v && on){ const local=(l.trim||0)+(t-l.start); if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } } }
+      if(v && on){
+        // Local time runs at the clip's SPEED — the renderer feeds `speed x slot` seconds of source into
+        // the slot, so the preview has to walk the source at the same rate or scrubbing shows a different
+        // frame than the export.
+        const sp=_speedOf(l);
+        const local=(+l.trim||0)+(t-l.start)*sp;
+        try{ if(v.playbackRate!==sp) v.playbackRate=sp; }catch(_){ }
+        if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } }
+      }
     });
     seekAudio(t);
     paintPlayhead(t);
     const time=document.getElementById('mb-time');
     if(time) time.textContent=t.toFixed(1)+'s / '+projEnd().toFixed(1)+'s';
+  }
+
+  // The crossfade ramp for a layer at `lt` seconds INTO its own slot: 0..1, mirroring the renderer's
+  // `fade=t=in:alpha=1` / `fade=t=out:alpha=1` pair. Anything without ramps returns 1, so a project with no
+  // crossfade is untouched.
+  function _rampAt(l, lt){
+    const dur = +l.dur || 0;
+    let k = 1;
+    const xi = +l.xin || 0, xo = +l.xout || 0;
+    if(xi > 0.01 && lt < xi) k = Math.max(0, lt / xi);
+    if(xo > 0.01 && lt > dur - xo) k = Math.min(k, Math.max(0, (dur - lt) / xo));
+    return k;
   }
 
   // LIVE REFERENCES to the preview <audio> elements, not a DOM query. Replacing #feed's innerHTML detaches
@@ -1404,9 +1544,11 @@
   // add-button in a bar that is already full on a phone.
   async function pickAudio(){
     const st=document.getElementById('mb-status');
-    PC.modal(`<h3>🎵 Add music</h3>
+    PC.modal(`<h3>🎵 Add audio</h3>
       <button class="btn btn-neon full" id="mba-file">📁 Upload a file from this device</button>
-      <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>`, root=>{
+      <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>
+      <button class="btn btn-cyan full" id="mba-rec">🎙️ Record a voice-over</button>`, root=>{
+      root.querySelector('#mba-rec').onclick=()=>{ PC.closeModal(); recordVoice(); };
       root.querySelector('#mba-blossom').onclick=()=>{
         PC.closeModal();
         PC.blossomPicker(null, ({url})=>{ addLayer('audio', url); render(); }, {
@@ -1430,6 +1572,144 @@
         };
         inp.click();
       };
+    });
+  }
+
+  // ---------- stickers ----------
+  // An emoji as a LAYER. Not as a text layer: the caption font is Liberation Sans (that is deliberate —
+  // it is the font ffmpeg draws with), which has no emoji glyphs at all, so a 🔥 in a caption renders as a
+  // tofu box in the export. Colour emoji through drawtext needs an emoji font AND a freetype built with
+  // colour support, which is not something to depend on across three nodes.
+  //
+  // So the BROWSER draws it — it already has the system emoji font — onto a transparent canvas, and the PNG
+  // goes to Blossom and onto the timeline as an ordinary image layer. A CUSTOM instance emoji is already an
+  // image on our own host, so that one skips the canvas entirely and is used by URL.
+  const STICKER_PX = 320;         // plenty for a 720-1080 canvas; a sticker is rarely more than a third wide
+  function emojiToPngFile(ch){
+    return new Promise((resolve, reject)=>{
+      try{
+        const c=document.createElement('canvas'); c.width=c.height=STICKER_PX;
+        const g=c.getContext('2d');
+        // No background fill — the transparency is the point, so it composites over whatever is beneath.
+        g.textAlign='center'; g.textBaseline='middle';
+        // A little headroom (0.8) so the taller emoji are not clipped by their own em box.
+        g.font=Math.round(STICKER_PX*0.8)+'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+        g.fillText(ch, STICKER_PX/2, STICKER_PX/2);
+        c.toBlob(b=>{
+          if(!b) return reject(new Error('could not draw that emoji'));
+          resolve(new File([b], 'sticker.png', { type:'image/png' }));
+        }, 'image/png');
+      }catch(err){ reject(err); }
+    });
+  }
+  function pickSticker(btn){
+    if(!PC.openEmojiPopover){ toast('the emoji picker is unavailable'); return; }
+    PC.openEmojiPopover(btn, async (val, close)=>{
+      if(close) close();
+      const st=document.getElementById('mb-status');
+      try{
+        if(st) st.textContent='adding the sticker…';
+        let url='';
+        const custom = /^:.+:$/.test(val) ? (PC.instEmojiUrl ? PC.instEmojiUrl(val) : '') : '';
+        // A custom emoji is ALREADY a hosted image, on the absolute base this very client was served from
+        // (see _emoji_base), so it goes on the timeline by URL — uploading a canvas copy would be a second
+        // blob of the same picture. On a LAN-only deployment whose emoji host is not also its Blossom host,
+        // the render's SSRF guard needs that name in Admin → Blossom → "Own media hosts" (media_own_hosts),
+        // which is the same exemption every other own-host media source needs.
+        if(custom) url = custom;
+        else url = await uploadBlob(await emojiToPngFile(val));
+        // A square box a third of the frame, in the middle, selected — so the very next gesture is dragging
+        // it where you want it. addOverlay (not addLayer): a sticker decorates the meme, it is not another
+        // clip in the sequence.
+        const side=Math.round(Math.min(P.w, P.h)/3);
+        const l=addOverlay({ src:url, name:String(val).slice(0,12), fit:'contain',
+          w:side, h:side, x:Math.round((P.w-side)/2), y:Math.round((P.h-side)/2) });
+        if(l){ save(); render(); toast('sticker added — drag or resize it'); }
+        if(st) st.textContent='';
+      }catch(err){ if(st) st.textContent=''; toast('could not add that sticker: '+((err&&err.message)||err)); }
+    });
+  }
+
+  // ---------- voice-over ----------
+  // Talk over the meme. Recording PLAYS THE PREVIEW at the same time (from the top), because the whole
+  // point of a voice-over is to land your words on the pictures — recording in silence and then dragging
+  // the clip around until it lines up is the workflow this replaces.
+  //
+  // The existing music beds are muted for the take: they come out of the same speakers the microphone is
+  // pointed at, so leaving them up records the soundtrack a second time, quieter and slightly late.
+  // MediaRecorder gives webm/opus, which ffmpeg reads like any other audio layer — the render path needs
+  // nothing new. Never uses window.prompt/confirm (see uiConfirm).
+  async function recordVoice(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder==='undefined'){
+      toast('this browser can’t record audio — upload a file instead'); return;
+    }
+    let stream=null;
+    try{ stream = await navigator.mediaDevices.getUserMedia({ audio:true }); }
+    catch(err){ toast('microphone not available: '+((err&&err.message)||err)); return; }
+    const mimes=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'];
+    const mime=mimes.find(m=>{ try{ return MediaRecorder.isTypeSupported(m); }catch(_){ return false; } }) || '';
+    let rec=null, chunks=[], t0=0, timer=null, done=false;
+    const stopTracks=()=>{ try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){ } };
+    // Remember and restore the preview volumes rather than assuming they were all at the default.
+    const wasVol=_audioEls.map(a=>({ a, v:a.volume }));
+    PC.modal(`<h3>🎙️ Record a voice-over</h3>
+      <div class="muted small" style="margin-bottom:10px">The meme plays from the start while you record, and
+      the music is muted for the take so it isn’t recorded twice. Stop when you’re done — the take is added
+      as its own audio track you can slide and trim like any other.</div>
+      <div class="mb-rec"><b id="mbr-time">0.0s</b><span class="mb-recdot" id="mbr-dot"></span></div>
+      <button class="btn btn-neon full" id="mbr-go">● Start recording</button>
+      <button class="btn btn-cyan full" id="mbr-stop" disabled>■ Stop &amp; add</button>
+      <button class="btn btn-ghost full" id="mbr-cancel">Cancel</button>`, root=>{
+      const go=root.querySelector('#mbr-go'), stop=root.querySelector('#mbr-stop');
+      const tEl=root.querySelector('#mbr-time'), dot=root.querySelector('#mbr-dot');
+      const cleanup=()=>{ if(timer){ clearInterval(timer); timer=null; } stopTracks();
+        wasVol.forEach(x=>{ try{ x.a.volume=x.v; }catch(_){ } }); };
+      root.querySelector('#mbr-cancel').onclick=()=>{
+        done=true;
+        try{ if(rec && rec.state!=='inactive') rec.stop(); }catch(_){ }
+        try{ stopPlay(true); }catch(_){ }
+        cleanup(); PC.closeModal();
+      };
+      go.onclick=()=>{
+        if(rec) return;
+        try{ rec = mime ? new MediaRecorder(stream, { mimeType:mime }) : new MediaRecorder(stream); }
+        catch(err){ toast('could not start recording: '+((err&&err.message)||err)); return; }
+        rec.ondataavailable=(e)=>{ if(e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop=async()=>{
+          cleanup();
+          try{ stopPlay(true); }catch(_){ }
+          if(done || !chunks.length){ PC.closeModal(); return; }
+          const blob=new Blob(chunks, { type: chunks[0].type || mime || 'audio/webm' });
+          const secs=(Date.now()-t0)/1000;
+          PC.closeModal();
+          const s2=document.getElementById('mb-status');
+          if(s2) s2.textContent='uploading the voice-over…';
+          try{
+            const ext=/ogg/.test(blob.type)?'ogg':(/mp4/.test(blob.type)?'m4a':'webm');
+            const url=await uploadBlob(new File([blob], 'voiceover.'+ext, { type:blob.type }));
+            // Starts at 0 and lasts exactly as long as the take — a voice-over is timed to the picture,
+            // so the default must NOT be addLayer's "span the whole meme" (that is right for music).
+            // volume 1, not 0.6: a voice competing with the bed at 0.6 is the thing you can't hear.
+            const l=addLayer('audio', url, { name:'voice-over', start:0,
+              dur:+Math.max(0.3, Math.min(secs, 120)).toFixed(2), volume:1, fade:false });
+            if(s2) s2.textContent='';
+            if(l){ save(); render(); toast('voice-over added — slide or trim it like any track'); }
+          }catch(err){ if(s2) s2.textContent=''; toast('upload failed: '+((err&&err.message)||err)); }
+        };
+        chunks=[]; t0=Date.now();
+        try{ rec.start(); }catch(err){ toast('could not start recording: '+((err&&err.message)||err)); return; }
+        // Silence the beds, then play from the top so the take lines up with the pictures.
+        _audioEls.forEach(a=>{ try{ a.volume=0; }catch(_){ } });
+        try{ stopPlay(true); togglePlay(); }catch(_){ }
+        go.disabled=true; stop.disabled=false; if(dot) dot.classList.add('on');
+        timer=setInterval(()=>{
+          const s=(Date.now()-t0)/1000;
+          if(tEl) tEl.textContent=s.toFixed(1)+'s';
+          // Hard stop at the layer cap so a forgotten recording cannot become a 20-minute upload.
+          if(s>=120){ try{ rec.stop(); }catch(_){ } }
+        }, 100);
+      };
+      stop.onclick=()=>{ stop.disabled=true; try{ if(rec && rec.state!=='inactive') rec.stop(); }catch(_){ } };
     });
   }
 
@@ -1585,13 +1865,18 @@
     }, 1000);
     _renderAbort = (typeof AbortController!=='undefined') ? new AbortController() : null;
     try{
+      const _scrub=document.getElementById('mb-scrub');
       const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
+        fmt:_fmt(),
+        // A still is taken AT THE PLAYHEAD — the frame you are looking at is the frame you meant.
+        still:(_fmt()==='png' ? +(_scrub?_scrub.value:0)||0 : 0),
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
           x:Math.round(l.x), y:Math.round(l.y), w:Math.round(l.w), h:Math.round(l.h),
           opacity:+l.opacity, effect:l.effect, sound:l.sound||'', soundVolume:(l.soundVolume==null?1:+l.soundVolume), mute:!!l.mute,
           flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
           // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
           volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
+          speed:_speedOf(l), xin:+l.xin||0, xout:+l.xout||0,
           // The WRAPPED text, not the raw text: the renderer draws one line per newline it is given, and
           // wrapText is the same function the preview lays out, so what you saw is what gets drawn.
           text:(l.type==='text' ? wrapText(l) : l.text), size:+l.size, color:l.color, stroke:l.stroke,
@@ -1616,7 +1901,8 @@
     }finally{
       _rendering=false; _renderAbort=null; _stopRenderClock();
       const b=document.getElementById('mb-render');
-      if(b){ b.textContent='🎬 Render'; b.classList.remove('btn-danger'); b.disabled=false; }
+      if(b){ b.textContent=(_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render'));
+        b.classList.remove('btn-danger'); b.disabled=false; }
     }
   }
 
@@ -1668,23 +1954,35 @@
   }
 
   function showResult(blob, out){
+    // Re-look-up the panel. `out` was captured before the render started, and ANY edit made while it ran
+    // rebuilds the view — which detaches that element, so a finished meme would be written into a node
+    // that is no longer on the page and silently vanish.
+    out = document.getElementById('mb-result') || out;
+    if(!out) return;
     const url=URL.createObjectURL(blob);
+    // Trust the BLOB's own type, not the format we asked for. A render can be forwarded to a peer node
+    // (see _meme_lb_forward), and a peer still running older code answers with an MP4 whatever `fmt`
+    // said — labelling that .gif would hand the user a file that will not open.
+    const mime=String(blob.type||'video/mp4');
+    const isImg=/^image\//.test(mime);
+    const ext=mime.indexOf('gif')>=0 ? 'gif' : (mime.indexOf('png')>=0 ? 'png' : 'mp4');
     // Opened from a post (🎞️ Meme Builder on a note) → offer the reply right here, the way the Effects
     // studio does. Without it the only route back to the thread is copy-link, find the post, paste.
     const to=_replyTarget();
     const replyBtn = to ? `<button class="btn btn-neon small" id="mb-reply">↩️ Reply${to.name?' to '+enc(to.name):' to the post'}</button>` : '';
     out.innerHTML=`<div class="mb-result">
-      <video src="${url}" controls playsinline class="mb-resvid"></video>
+      ${isImg ? `<img src="${url}" alt="" class="mb-resvid">`
+              : `<video src="${url}" controls playsinline class="mb-resvid"></video>`}
       <div class="mb-resacts">
         ${replyBtn}
         <button class="btn btn-neon small" id="mb-post">📤 Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy">🔗 Upload &amp; copy link</button>
-        <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a clip, so you can build on top of it">🎞️ Use as a layer</button>
-        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.mp4">⬇️ Download</a>
+        <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a layer, so you can build on top of it">🎞️ Use as a layer</button>
+        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.${ext}">⬇️ Download</a>
       </div>
       <div class="muted small" id="mb-reslink"></div>
     </div>`;
-    const file=new File([blob], 'meme.mp4', { type:'video/mp4' });
+    const file=new File([blob], 'meme.'+ext, { type:mime });
     const linkEl=()=>document.getElementById('mb-reslink');
     const up=async()=>{
       const el=linkEl(); if(el) el.textContent='uploading to Blossom…';
@@ -1722,9 +2020,11 @@
       ag.disabled=true; const was=ag.textContent; ag.textContent='uploading…';
       try{
         const u=await up();
-        addLayer('video', u, { name:(P.name||'meme').slice(0,24) });
+        // A GIF/still comes back as an IMAGE layer — feeding a .png in as type 'video' would make the
+        // renderer decode it with -ss/-t instead of -loop 1, and the layer would be one frame long.
+        addLayer(isImg ? 'image' : 'video', u, { name:(P.name||'meme').slice(0,24) });
         save(); render();
-        toast('added as a new clip at the end of the timeline');
+        toast('added as a new layer at the end of the timeline');
       }catch(err){ ag.disabled=false; ag.textContent=was;
         const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); }
     };
@@ -1815,6 +2115,31 @@
     on('mb-f-meme','change',(e)=>{ const nm=e.target.value; e.target.value=''; if(nm) applyMemeEffect(l, nm); });
     on('mb-f-sndvol','input',(e)=>{ snapBurst('sndvol:'+l.id); l.soundVolume=clamp(e.target.value,0,3); save(); });
     on('mb-f-mute','change',(e)=>{ snap(); l.mute=e.target.checked; save(); });
+    // Speed. The preview mirrors it with playbackRate + a scaled local time (see seek), so slow-mo and 2×
+    // are visible without rendering — the whole reason to have a slider rather than a number.
+    // Changing the speed keeps the TRIMMED REGION and moves the slot, not the other way round: the footage
+    // you picked with the handles is what you meant to show, so a 4s region at 2x becomes a 2s slot. Scaling
+    // dur by the speed RATIO is what preserves that (trim stays put, out-point stays put).
+    const _setSpeed=(v)=>{
+      const prev=_speedOf(l);
+      l.speed=clamp(v,0.25,4);
+      const now=_speedOf(l);
+      if(now!==prev && +l.dur>0) l.dur=+Math.max(0.1, Math.min(120, l.dur*prev/now)).toFixed(2);
+      save();
+      const sv=root.querySelector('#mb-spd-val'); if(sv) sv.textContent=_speedOf(l)+'×';
+      const sn=root.querySelector('#mb-spd-slot'); if(sn) sn.textContent=_slotNote(l);
+      root.querySelectorAll('[data-spd]').forEach(b=>b.classList.toggle('on', +b.dataset.spd===_speedOf(l)));
+      const it=root.querySelector('.mb-item[data-id="'+l.id+'"] video');
+      if(it){ try{ it.playbackRate=_speedOf(l); }catch(_){ } }
+      // The SLOT changed length, so the clip bar and the project end did too. The trim handles do NOT move:
+      // dur was scaled by the speed ratio, so trim + dur*speed — the out-point — is exactly where it was.
+      repaint('timeline'); syncScrub();
+    };
+    on('mb-f-speed','input',(e)=>{ snapBurst('speed:'+l.id); _setSpeed(e.target.value); });
+    root.querySelectorAll('[data-spd]').forEach(b=>b.addEventListener('click',()=>{
+      snap(); _setSpeed(+b.dataset.spd);
+      const sl=root.querySelector('#mb-f-speed'); if(sl) sl.value=_speedOf(l);
+    }));
     on('mb-f-op','input',(e)=>{ snapBurst('op:'+l.id); l.opacity=clamp(e.target.value,0.05,1); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });
     // Flip/rotate repaint the layer's transform IN PLACE rather than re-rendering the board: a full
@@ -1853,10 +2178,16 @@
     const dimL=wrap.querySelector('.mb-trim-dim-l'), dimR=wrap.querySelector('.mb-trim-dim-r');
     const tin=root.querySelector('.mb-trim-tin'), tout=root.querySelector('.mb-trim-tout'), tlen=root.querySelector('.mb-trim-len');
     let D=0;   // natural duration of the source, once metadata loads
+    // The handles pick IN and OUT points in the SOURCE, but `dur` is the length of the layer's SLOT on the
+    // timeline — and at any speed but 1 those are different numbers (a 4s region at 2x occupies a 2s slot).
+    // So every conversion between the two goes through the speed. Without this, setting a speed made the
+    // trim handles point somewhere other than the footage that actually played.
+    const sp=()=>_speedOf(l);
+    const outAt=()=>(+l.trim||0)+(+l.dur||0)*sp();     // source time of the out-point
     const fmt=(s)=>{ s=Math.max(0,s||0); const m=Math.floor(s/60), ss=Math.floor(s%60); return m+':'+String(ss).padStart(2,'0'); };
     function paint(){
       if(!D) return;
-      const inT=clamp(l.trim,0,D), outT=clamp((+l.trim||0)+(+l.dur||0),0,D);
+      const inT=clamp(l.trim,0,D), outT=clamp(outAt(),0,D);
       const a=inT/D*100, b=outT/D*100;
       inH.style.left=a+'%'; outH.style.left=b+'%';
       selEl.style.left=a+'%'; selEl.style.width=Math.max(0,b-a)+'%';
@@ -1871,7 +2202,7 @@
       // A trim/length carried over from a different (or mis-measured) source can point past the end — pull it
       // back into range so the handles are always on the bar and the render can't ask ffmpeg for empty frames.
       if((+l.trim||0)>=D){ l.trim=0; }
-      if((+l.trim||0)+(+l.dur||0)>D || !(+l.dur>0)){ l.dur=+(D-(+l.trim||0)).toFixed(2); save(); }
+      if(outAt()>D || !(+l.dur>0)){ l.dur=+((D-(+l.trim||0))/sp()).toFixed(2); save(); }
       paint();
     }
     if(vid.readyState>=1 && vid.duration) ready();
@@ -1886,12 +2217,12 @@
         const move=(ev)=>{
           let t=clamp((ev.clientX-rect.left)/rect.width,0,1)*D;
           if(isIn){
-            const out=(+l.trim||0)+(+l.dur||0);
+            const out=outAt();
             t=Math.max(0, Math.min(t, out-0.1));   // in-point stays left of the out-point
-            l.trim=+t.toFixed(2); l.dur=+(out-t).toFixed(2);
+            l.trim=+t.toFixed(2); l.dur=+((out-t)/sp()).toFixed(2);
           } else {
             t=Math.min(D, Math.max(t, (+l.trim||0)+0.1)); // out-point stays right of the in-point
-            l.dur=+(t-(+l.trim||0)).toFixed(2);
+            l.dur=+((t-(+l.trim||0))/sp()).toFixed(2);
           }
           try{ vid.currentTime=t; }catch(_){}   // show the frame under the handle
           paint();
@@ -1928,6 +2259,8 @@
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
     on('mb-add-audio','click',pickAudio);
+    // The picker anchors to the BUTTON (it is a popover, not a modal), so it needs the event's target.
+    on('mb-add-sticker','click',(e)=>pickSticker(e.currentTarget));
     on('mb-add-effect','click',pickEffect);
     on('mb-add-blossom','click',pickBlossom);
     on('mb-tpl','click',pickTemplate);
@@ -1936,11 +2269,23 @@
     on('mb-proj','click',projectMenu);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
     // automatically on every drop, which made adjusting one clip rewrite the whole timeline.
-    on('mb-arrange','click',()=>{ snap(); resequence(); unsnapIfUnchanged(); save(); render(); toast('clips laid back-to-back'); });
+    on('mb-arrange','click',()=>{ snap(); resequence(); unsnapIfUnchanged(); save(); render();
+      toast(_xfade() ? `clips laid out with a ${_xfade()}s crossfade` : 'clips laid back-to-back'); });
+    // Changing the crossfade RE-LAYS the clips, because the dissolve only exists if consecutive clips
+    // overlap in time — setting a number that changed nothing on screen would read as a dead control.
+    on('mb-xfade','change',(e)=>{
+      groupEdit(()=>{ P.xfade = clamp(e.target.value, 0, 2); resequence(); });
+      save(); render();
+      toast(_xfade() ? `${_xfade()}s crossfade — clips now overlap` : 'hard cuts — clips laid back-to-back');
+    });
+    on('mb-zoomin','click',()=>setZoom(_ZOOMS[Math.min(_ZOOMS.length-1, _ZOOMS.indexOf(_zoom())+1)] || _zoom()*2));
+    on('mb-zoomout','click',()=>{ const i=_ZOOMS.indexOf(_zoom()); setZoom(i>0 ? _ZOOMS[i-1] : 1); });
     on('mb-render','click',doRender);
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
     on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); _resizeCanvas(w,h); });
+    // Re-render the bar so the button says what it will now produce (📷 Still / 🎞️ GIF / 🎬 Render).
+    on('mb-fmt','change',(e)=>{ P.fmt=e.target.value; save(); render(); });
     // Repaint the stage directly rather than re-rendering the view: a full render() would replace the
     // colour input mid-drag and drop the picker.
     on('mb-bg','input',(e)=>{ snapBurst('bg'); P.bg=e.target.value||'#000000';
