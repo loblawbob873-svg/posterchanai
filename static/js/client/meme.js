@@ -930,7 +930,13 @@
           ? `<video class="mb-tthumb" src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
           : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
     return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
-      <div class="mb-trackname" title="${enc(label)}">${thumb}
+      <div class="mb-trackname" title="${enc(label)}">${l.type==='audio' ? '' :
+        // Its OWN handle, not the whole row: the drag surface needs touch-action:none to be a drag at all
+        // on a phone, and putting that on the thumbnail would eat vertical PAGE scrolling every time a
+        // finger happened to start there — an accidental restack instead of a scroll. A narrow grip is the
+        // affordance every reorderable list uses, and it costs less width than the ⬆︎/⬇︎ pair it stands in
+        // for on mobile. Audio has no stacking order, so it gets no grip.
+        `<i class="mb-rgrip" title="Drag to restack — what is drawn on top of what" aria-hidden="true">⇅</i>`}${thumb}
         ${l.type==='audio' ? '' : `<span class="mb-zbtns">
           <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front">⬆︎</button>
           <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back">⬇︎</button>
@@ -1011,6 +1017,16 @@
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below.">🪄 Remove the background</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
 
+      <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
+           them, not buried at the bottom of a collapsed group. On a phone it was the only way to reorder
+           at all — the row's ⬆︎/⬇︎ buttons come off the track there so the lane gets the width (see the
+           ≤820px rules) — and "in the layer panel" meant: select the layer, open Look & sound, scroll to
+           the end. Which is indistinguishable from not being there. -->
+      <div class="mb-order">
+        <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
+        <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
+      </div>
+
       ${_sect('place', '📐 Position &amp; size', (isText
         ? `<button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
            ${alignGrid()}
@@ -1059,11 +1075,7 @@
         ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
         <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
         <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right">⇄ Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom">⇅ Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright">⌾ 0°</button></div>
-        <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>
-        <div class="mb-order">
-          <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
-          <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
-        </div>`)}`;
+        <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>`)}`;
   }
 
   // A collapsible inspector group. The title is already escaped by its caller (it carries &amp;), so it is
@@ -1420,6 +1432,27 @@
     else { el.style.width=(l.w/P.w*100).toFixed(3)+'%'; el.style.height=(l.h/P.h*100).toFixed(3)+'%'; }
   }
 
+  // Move a layer ONE place within its own stacking group, in the direction the ROW list reads
+  // ('up' = towards the top of the list = later in draw order = drawn on top).
+  //
+  // Group, not raw P.layers order: _stageOrder draws every visual first and every caption after, because
+  // the renderer composites drawtext last no matter what the array says. So a caption can only be
+  // restacked among captions and a clip among clips — and a raw `P.layers[i] <-> P.layers[i±1]` swap
+  // (what the ⬆︎/⬇︎ buttons used to do) was a silent NO-OP whenever the neighbour it grabbed was of the
+  // other kind: the array changed, the filtered draw order didn't, and the button looked broken.
+  // Audio isn't drawn at all, so it has no stacking to change.
+  function restackOne(l, dir){
+    if(!l || l.type==='audio') return false;
+    const same = _isVisual(l) ? _isVisual : (x)=>x.type==='text';
+    const group = P.layers.filter(same);
+    const gi = group.indexOf(l);
+    const other = group[dir==='up' ? gi+1 : gi-1];
+    if(gi<0 || !other) return false;                        // already at the top/bottom of its group
+    const a = P.layers.indexOf(l), b = P.layers.indexOf(other);
+    P.layers[a]=other; P.layers[b]=l;
+    return true;
+  }
+
   function bindTimeline(root){
     const tl = root.querySelector('#mb-timeline'); if(!tl) return;
     // z-order right on the layer row, next to its thumbnail — that's where you're already looking when you
@@ -1438,18 +1471,60 @@
       }
       e.preventDefault(); e.stopPropagation();
       const l = P.layers.find(x=>x.id===zb.dataset.id); if(!l) return;
-      const i = P.layers.indexOf(l); if(i<0) return;
       // ONE step, not all the way to the extreme. Jumping straight to front/back meant putting a layer
       // just under the one above it took two moves (down to the very bottom, then back up) — swap with the
       // neighbour instead, which is what "move it under that one" actually means.
-      const j = zb.dataset.z==='front' ? i+1 : i-1;
-      if(j<0 || j>=P.layers.length) return;                 // already at the top/bottom
       snap();
-      P.layers[i]=P.layers[j]; P.layers[j]=l;
+      if(!restackOne(l, zb.dataset.z==='front' ? 'up' : 'down')){ unsnapIfUnchanged(); return; }
       save(); render();
     });
     tl.addEventListener('pointerdown', (e)=>{
       if(e.target.closest('.mb-z')) return;   // a z-order tap is not the start of a drag
+      // Drag a row by its ⇅ grip to restack it. Reordering by dragging the layer list is what everyone
+      // tries first, and nothing listened for it — on a phone that mattered most, because the row's ⬆︎/⬇︎
+      // buttons are hidden there (the lane needs the width) and the panel's pair lives in a DIFFERENT TAB,
+      // so the timeline had no restack affordance at all. Pointer events → one implementation for mouse
+      // and touch. The lane is left alone: that is the horizontal time-drag, a different gesture entirely.
+      const gripEl = e.target.closest('.mb-rgrip');
+      if(gripEl){
+        const row = gripEl.closest('.mb-track[data-id]'); if(!row) return;
+        const l = P.layers.find(x=>x.id===row.dataset.id); if(!l || l.type==='audio') return;
+        e.preventDefault();
+        selectLayer(l.id, 'timeline');
+        // Step per ROW crossed, committed live: the rows genuinely reorder under your finger, which is the
+        // feedback. Safe mid-drag because the pointer capture is on #mb-timeline itself, which survives
+        // repaint('timeline') replacing its children (see the delegation note above).
+        const rowH = Math.max(24, row.getBoundingClientRect().height + 6);   // + the .mb-tlinner gap
+        let startY = e.clientY, steps = 0, moved = false;
+        snap();                                             // one snapshot per gesture
+        row.classList.add('mb-dragging');
+        drag(e, (ev)=>{
+          // Steps are derived from the ABSOLUTE travel, never accumulated per event: the row then tracks
+          // the finger exactly and reversing is symmetric. Accumulating (anchor += rowH per step) leaves
+          // the finger a fraction of a row past the anchor, so a few px of tremor in the other direction
+          // undid the move you just made.
+          const want = Math.round((ev.clientY - startY)/rowH);
+          let changed = false;
+          while(steps !== want){
+            const up = want < steps;
+            // At the end of its group, re-base so the overshoot isn't banked — otherwise dragging well
+            // past the top and coming back does nothing until you have retraced every wasted row.
+            if(!restackOne(l, up ? 'up' : 'down')){ startY = ev.clientY - steps*rowH; break; }
+            steps += up ? -1 : 1; changed = true;
+          }
+          if(!changed) return;
+          moved = true;
+          repaint('timeline');
+          const again = tl.querySelector('.mb-track[data-id="'+l.id+'"]');
+          if(again) again.classList.add('mb-dragging');
+        }, ()=>{
+          const el = tl.querySelector('.mb-track[data-id="'+l.id+'"]');
+          if(el) el.classList.remove('mb-dragging');
+          if(moved){ save(); render(); }                    // render(): the PREVIEW stacking changed too
+          else unsnapIfUnchanged();                         // a plain tap → selection only, no undo entry
+        });
+        return;
+      }
       if(e.target.closest('.mb-rlane') || e.target.closest('.mb-ph')){
         e.preventDefault();
         if(_playT) stopPlay(false);           // scrubbing during playback would fight the ticker
