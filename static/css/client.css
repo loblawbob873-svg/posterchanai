@@ -644,13 +644,26 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .notif-ctx{margin:14px 0 2px}
 .notif-ctx .quoted{margin:0}
 .notif-ctx .quoted .txt{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
+/* A notification is a ROW, so its context preview is capped hard. The `:only-child` selectors are here
+   because without them this cap silently LOST: `.notif-ctx .media-row video` and
+   `.media-row video:only-child` are both specificity (0,2,1), and the :only-child rule (which lifts a
+   lone attachment to 720px so a single photo can fill the feed column) comes later in the file — so it
+   won the tie, and a lone video in a notification was allowed to be 720px tall. Measured at 400x640 in a
+   390px-wide notification row before this. That was true of the old max-height cascade too; --mh just
+   inherited it. Adding the :only-child variants takes this rule to (0,3,1) so the intended cap applies. */
 .notif-ctx .media-row img,.notif-ctx .media-row video,
+.notif-ctx .media-row img:only-child,.notif-ctx .media-row video:only-child,
 .notif-ctx .mc-item img,.notif-ctx .mc-item video{--mh:220px;max-height:220px}
 @media(max-width:820px){
   .notif-ctx .quoted .txt{-webkit-line-clamp:5}
   .notif-ctx .media-row img,.notif-ctx .media-row video,
+  .notif-ctx .media-row img:only-child,.notif-ctx .media-row video:only-child,
   .notif-ctx .mc-item img,.notif-ctx .mc-item video{--mh:170px;max-height:170px}
 }
+/* The context card is a "…" one-liner until the referenced post arrives from the relay, and patchLoaded
+   then swaps in the real card — author row, text and media. Reserving the header + two text lines turns
+   that from a 20px-to-300px lurch into a small settle; the media on top of it is capped just above. */
+.notif-ctx[data-nctx]{min-height:74px}
 .me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:7px;margin:auto auto 0;padding:8px 6px;cursor:pointer}
 .me:hover img{box-shadow:0 0 16px rgba(var(--accent-rgb),.4)}
 .me img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);transition:.15s}
@@ -1744,7 +1757,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .upd-notif:hover{background:rgba(var(--accent-rgb),.14)}
 .notif .muted.small{font-size:13px}
 .notif.like .ic{color:var(--neon)} .notif.rt .ic{color:var(--green)} .notif.reply .ic{color:var(--cyan)} .notif.mention .ic{color:var(--amber)} .notif.zap .ic{color:var(--amber)}
-.notif img{width:34px;height:34px;border-radius:50%;border:1px solid var(--line)}
+/* The AVATAR, not every image in the row. As `.notif img` this was specificity (0,1,1) — a tie with
+   `.media-row img` / `.note .txt img`, declared later, so it won: every image in a notification's context
+   preview was forced to a 34px CIRCLE, and so was any inline NIP-30 custom emoji in the sender's name.
+   Videos were never matched by it, which is why notification media looked broken for photos and merely
+   oversized for video. Avatars all carry .notif-av (see notifHtml), so scope it to them. */
+.notif .notif-av{width:34px;height:34px;border-radius:50%;border:1px solid var(--line)}
 /* infinite scroll-back loading sentinel (appended to the feed/profile while a page loads) */
 .load-sentinel{display:flex;justify-content:center;padding:18px 0}
 
