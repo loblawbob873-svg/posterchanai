@@ -1495,7 +1495,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:21px}
 .modal textarea{min-height:220px;resize:vertical;font-size:15px}
 .cmp-tabs{display:flex;gap:6px;margin-bottom:6px}
-.cmp-tab{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:9px 9px 0 0;padding:7px 15px;cursor:pointer;font-weight:600;font-size:15px}
+/* inline-flex, not the default block: the Preview tab carries a label icon, and the icon-gap rule is a
+   flex `gap` — which does nothing on a block box, so the glyph sat flush against the P. Same fix as the
+   composer's Draft button. The tabs sit in a flex row either way, so this changes no layout. */
+.cmp-tab{display:inline-flex;align-items:center;gap:var(--sp-2);background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:9px 9px 0 0;padding:7px 15px;cursor:pointer;font-weight:600;font-size:15px}
 .cmp-tab.active{color:#fff;border-color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .note-preview{min-height:120px;border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin:6px 0;background:rgba(8,5,18,.5)}
 .note-preview .txt{line-height:1.5;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
