@@ -645,11 +645,11 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .notif-ctx .quoted{margin:0}
 .notif-ctx .quoted .txt{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden}
 .notif-ctx .media-row img,.notif-ctx .media-row video,
-.notif-ctx .mc-item img,.notif-ctx .mc-item video{max-height:220px}
+.notif-ctx .mc-item img,.notif-ctx .mc-item video{--mh:220px;max-height:220px}
 @media(max-width:820px){
   .notif-ctx .quoted .txt{-webkit-line-clamp:5}
   .notif-ctx .media-row img,.notif-ctx .media-row video,
-  .notif-ctx .mc-item img,.notif-ctx .mc-item video{max-height:170px}
+  .notif-ctx .mc-item img,.notif-ctx .mc-item video{--mh:170px;max-height:170px}
 }
 .me{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:7px;margin:auto auto 0;padding:8px 6px;cursor:pointer}
 .me:hover img{box-shadow:0 0 16px rgba(var(--accent-rgb),.4)}
@@ -789,8 +789,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   border-radius:0;background:transparent;box-shadow:none}
 .rightbar .notif .notif-ctx .hd .handle,
 .rightbar .notif .notif-ctx .hd .time{display:none}   /* the name + a 2-line snippet is the whole job here */
+/* width:auto OPTS OUT of the --arn/--nw reservation (see the layout-stable media block): this is a
+   deliberately cover-CROPPED 74px thumbnail, not a scaled copy of the post's media, so a ratio-derived
+   width is the wrong shape for it. Without the opt-out it inherits --mh:220px from .notif-ctx above,
+   reserves a 220px-tall box and then clamps to 74 — a shift, in the one place there wasn't one. */
 .rightbar .notif .notif-ctx img,
-.rightbar .notif .notif-ctx video{max-height:74px;object-fit:cover}
+.rightbar .notif .notif-ctx video{width:auto;max-height:74px;object-fit:cover}
 .rightbar .notif .notif-ctx .qav{max-height:none;width:18px;height:18px}   /* the avatar is not "media" */
 /* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
    takes the margin-top:auto now, so the pair sits together at the foot of the column). */
@@ -1240,7 +1244,40 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-cw-row.hidden{display:none}
 /* ALL post-content media flows horizontally (inline-block) and is height-capped, so multiple
  * attachments form a wrapping gallery row instead of a giant vertical stack. */
-.note .txt img,.note .txt video,.note .media img,.note .media video{width:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
+/* ===== Layout-stable feed media =================================================================
+   Media in a note carries its aspect RATIO and natural WIDTH as inline custom properties (--arn / --nw,
+   emitted by app.js _dimAttrs from NIP-92 imeta or a remembered measurement), and each context declares
+   its own height cap as --mh. The shared rule below turns those into
+
+       width: min(100%, natural, cap x ratio)
+
+   which is resolvable with NO image loaded — so the browser reserves the final box in the very first
+   layout pass. And because that width can never make height exceed the cap, the cap is never reached by
+   clamping, so the ratio is never violated.
+
+   What this replaced: `width:auto` + `max-height`, which reserves NOTHING. A note laid out with a 2px-tall
+   image and then jumped to full height on decode, shoving everything below it down — 100-700px of shift
+   per image, on every image, at every breakpoint. That was most of why the timeline looked like a jumpy
+   mess, and worst on a phone, where the short viewport means nearly every image is loading="lazy" and so
+   pops in one at a time as you scroll. Measured in tests/client/test_media_reserve.py.
+
+   Two deliberate safety properties, both load-bearing:
+   1. NO HINT → the var() is invalid, `width` falls back to `auto`, and the element renders exactly as it
+      did before. Every surface not converted here keeps working untouched.
+   2. NO --mh in some context → `calc(var(--mh) * var(--arn))` is invalid, so again width falls back to
+      `auto`. A cap I missed degrades to the old behaviour rather than to a stretched image.
+   max-height is kept alongside as a backstop, with object-fit:contain so that if one ever does clamp, the
+   image letterboxes instead of distorting. Do not remove either.
+   ================================================================================================ */
+.media-row img,.media-row video,
+.mc-item img,.mc-item video,
+.note .txt img,.note .txt video,.note .media img,.note .media video,
+.quoted .txt img,.quoted .txt video{
+  aspect-ratio:var(--arn);
+  width:min(100%, calc(var(--nw) * 1px), calc(var(--mh) * var(--arn)));
+  height:auto; object-fit:contain;
+}
+.note .txt img,.note .txt video,.note .media img,.note .media video{--mh:300px;height:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
 /* media gallery (pulled out of the text so newlines can't stack them) — capped height */
 /* ===== multi-attachment carousel (2+ media) =====
    Horizontal scroll-snap does the paging, so touch swipe / trackpad / shift-wheel all work natively and
@@ -1251,7 +1288,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .mc-track::-webkit-scrollbar{display:none}
 .mc-item{flex:0 0 100%;min-width:100%;scroll-snap-align:center;display:flex;align-items:center;justify-content:center}
-.mc-item img,.mc-item video{max-height:420px;max-width:100%;width:auto;display:block;cursor:pointer;
+.mc-item img,.mc-item video{--mh:420px;max-height:420px;max-width:100%;height:auto;display:block;cursor:pointer;
   border:0;border-radius:0;background:transparent}
 .mc-nav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;
   width:34px;height:34px;padding:0;border-radius:50%;border:1px solid var(--line);
@@ -1267,20 +1304,20 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mc-dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.45);cursor:pointer;transition:.15s}
 .mc-dots i.on{background:var(--neon);box-shadow:0 0 6px var(--neon)}
 /* A carousel inside a quoted/embedded note is secondary content — keep it from dominating the card. */
-.quoted .mc-item img,.quoted .mc-item video{max-height:240px}
+.quoted .mc-item img,.quoted .mc-item video{--mh:240px;max-height:240px}
 @media(max-width:820px){
   .mc-nav{opacity:1;width:30px;height:30px;font-size:18px}   /* no hover on touch — always show the arrows */
-  .mc-item img,.mc-item video{max-height:340px}
+  .mc-item img,.mc-item video{--mh:340px;max-height:340px}
 }
 .media-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.media-row img,.media-row video{max-height:300px;max-width:100%;width:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
-.thread-hl .media-row img,.thread-hl .media-row video{max-height:420px}
+.media-row img,.media-row video{--mh:300px;max-height:300px;max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;flex:0 1 auto}
+.thread-hl .media-row img,.thread-hl .media-row video{--mh:420px;max-height:420px}
 /* A LONE image gets far more room than the 300px thumbnail cap. That cap is sized for a row of several
    attachments; applied to a single image it was the binding constraint on how big anything could ever
    appear — a text card was scaled down until its type was ~8px. With one attachment there is nothing to
    sit beside it, so let it take the column: width is bound by max-width:100%, height follows the aspect.
    Multi-image rows and carousels keep the compact size. */
-.media-row img:only-child,.media-row video:only-child{max-height:720px}
+.media-row img:only-child,.media-row video:only-child{--mh:720px;max-height:720px}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 .media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
@@ -1295,7 +1332,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .link-card{display:block;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:8px;background:rgba(8,5,18,.45);cursor:pointer;max-width:520px;transition:.15s}
 .link-card:hover{border-color:var(--cyan)}
 .link-card:empty{display:none}
-.link-card .lc-img{width:100%;max-height:260px;object-fit:cover;display:block;border:0;border-radius:0;margin:0}
+/* aspect-ratio, NOT max-height: the preview image's real shape is unknown until it decodes, so a
+   max-height box grew from 0 to up to 260px underneath whatever the user was reading. A fixed 16:9
+   banner is reserved the instant the card exists and never moves again — and cover-cropping an OG
+   image is what it is designed for (they are banners, not photographs). */
+.link-card .lc-img{width:100%;aspect-ratio:16/9;height:auto;object-fit:cover;display:block;border:0;border-radius:0;margin:0;background:rgba(0,0,0,.25)}
 .link-card .lc-body{padding:9px 12px}
 .link-card .lc-site{color:var(--cyan);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
 .link-card .lc-title{font-weight:700;font-size:15.5px;margin:2px 0;line-height:1.3}
@@ -1305,7 +1346,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .quoted .hd .name{font-weight:700;color:var(--text)}
 .quoted .hd .handle,.quoted .hd .time{color:var(--muted);font-size:13px}
 .quoted .txt{font-size:16px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:clip;overflow-clip-margin:.5em}   /* was missing both: newlines collapsed and a long npub/URL blew out the card; overflow:clip = zalgo guard (see .note .txt) */
-.quoted .txt img,.quoted .txt video{max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
+.quoted .txt img,.quoted .txt video{--mh:280px;max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}
 .modal .quoted{max-height:46vh;overflow:auto}
 /* profile Replies tab: show the parent post as "↩ replying to" context above each reply */

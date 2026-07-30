@@ -2564,15 +2564,28 @@
   // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
   // Falls back to #feed for the views that render into it without a timeline header.
   function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
+  // The identity of a timeline CARD. A repost renders the ORIGINAL's content and carries the original's
+  // data-id, so two reposts of one note are one card — which is why dedupe and reconcile both key on
+  // this rather than on ev.id.
+  function _noteKey(ev){ return ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id; }
+  // Build ONE timeline card, stamped with its key. Every path that puts a card in the timeline goes
+  // through here (first draw, EOSE reconcile, live prepend, scroll-back append) — _drawTimeline's
+  // reconcile matches on data-key, so a card inserted without one would be treated as foreign and
+  // destroyed + rebuilt on the next redraw, which is the flash the reconcile exists to remove.
+  function _noteNode(ev){
+    const d=document.createElement('div'); d.innerHTML=feedNoteHtml(ev);
+    const node=d.firstElementChild; if(node) node.dataset.key=_noteKey(ev);
+    return node;
+  }
   function _prependLive(evs, feed){
     const box=_tlNotes(feed);
     const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
     evs.sort((a,b)=>b.created_at-a.created_at);
     const frag=document.createDocumentFragment();
     for(const ev of evs){ if(isMutedView(ev))continue; if(_liveFn&&!_liveFn(ev))continue;
-      const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
+      const dispId = _noteKey(ev);
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // don't double-insert
-      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
+      const node=_noteNode(ev); if(node) frag.appendChild(node); }
     if(!frag.childElementCount) return;
     const atTop=feed.scrollTop<100, beforeH=feed.scrollHeight;
     box.insertBefore(frag, box.firstChild);
@@ -3039,9 +3052,49 @@
       if(preserveScroll) feed.scrollTop=top;
       return;
     }
-    if(_profObs) _profObs.disconnect();   // drop observations on the notes we're about to replace (hydrate re-observes)
-    notesEl.innerHTML = notes.length ? notes.map(feedNoteHtml).join('') : `<div class="empty">No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}</div>`;
+    if(_profObs) _profObs.disconnect();   // drop observations on the notes we may replace (hydrate re-observes)
+    _reconcileNotes(notesEl, notes, `No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}`);
     hydrate(notesEl); if(preserveScroll) feed.scrollTop=top;
+  }
+  // Bring `box`'s cards in line with `notes` by KEY, reusing every card that is already there.
+  //
+  // This used to be `box.innerHTML = notes.map(feedNoteHtml).join('')`, and that one line is most of why
+  // the timeline looked unstable. Entering home/global draws twice — once from the Store cache, then again
+  // on EOSE (renderTimeline → _drawTimeline, then markEosed → _drawTimeline) — so every card the user was
+  // already looking at was destroyed and rebuilt a moment later. Rebuilt <img>s go back to being unloaded,
+  // so all the media re-reserves and re-decodes, `.note{animation:fade}` re-runs on all 200 cards at once
+  // (the "flash"), and any expanded/quoted/poll state is lost. Reconciling instead means the second draw
+  // is usually a no-op, and a draw that DOES have new posts touches only those.
+  //
+  // Deliberately not a virtual DOM: the list is keyed and monotonic (newest first), so one ordered walk
+  // with a moving insertion point is O(n) and about fifteen lines.
+  function _reconcileNotes(box, notes, emptyMsg){
+    // Index what's already rendered. Anything unkeyed is scaffolding (.empty, .load-sentinel) or a card
+    // from before this function existed — drop it so the walk below starts from a known state.
+    const have=new Map();
+    for(const el of [...box.children]){
+      const k=el.dataset && el.dataset.key;
+      if(k && !have.has(k)) have.set(k, el); else el.remove();
+    }
+    // One card per KEY: two reposts of the same note collapse to one (they render identical content),
+    // and the walk below assumes it never revisits a key.
+    const seen=new Set(), want=[];
+    for(const ev of notes){ const k=_noteKey(ev); if(seen.has(k)) continue; seen.add(k); want.push([k,ev]); }
+    if(!want.length){
+      for(const el of have.values()) el.remove();
+      box.innerHTML = `<div class="empty">${emptyMsg}</div>`;
+      return;
+    }
+    // `ref` is the next already-correct child. Insert or move each wanted card in front of it; when the
+    // card IS ref, the order already holds and ref advances. Untouched runs cost one comparison each.
+    let ref=box.firstElementChild;
+    for(const [k,ev] of want){
+      const node=have.get(k);
+      if(node===ref){ ref=ref.nextElementSibling; continue; }
+      const el = node || _noteNode(ev);
+      if(el) box.insertBefore(el, ref);
+    }
+    for(const [k,el] of have) if(!seen.has(k)) el.remove();
   }
   // ---------- infinite scroll-back ----------
   let _lastRevive=0;
@@ -3161,9 +3214,9 @@
       // a repost (kind 6) renders with the ORIGINAL's data-id, so dedupe against that, not the
       // repost's own id — otherwise a repost of an already-shown note appends a duplicate card.
       if(_tlMedia) continue;   // media grid redraws from Store below — skip building list nodes
-      const dispId = ev.kind===6 ? ((ev.tags.find(t=>t[0]==='e')||[])[1]||ev.id) : ev.id;
+      const dispId = _noteKey(ev);
       if(feed.querySelector('.note[data-id="'+dispId+'"]')) continue;   // already on screen
-      const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
+      const node=_noteNode(ev); if(node) frag.appendChild(node);
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
@@ -3189,7 +3242,7 @@
     if (isMutedView(ev)) return;
     if (fn && !fn(ev)) return;
     const feed=$('#feed'); const sp=feed.querySelector('.spinner'); if(sp)sp.remove(); const em=feed.querySelector('.empty'); if(em)em.remove();
-    const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild;
+    const node=_noteNode(ev);
     if(node){ const box=_tlNotes(feed); box.insertBefore(node, box.firstChild); hydrate(node.parentElement); }
   }
 
@@ -3369,7 +3422,7 @@
     const p=profOf(c.pubkey); needProfile(c.pubkey);
     const name=p.name||p.display_name||(NT().nip19.npubEncode(c.pubkey).slice(0,12)+'…');
     const handle=niceNip05(p.nip05)||('@'+NT().nip19.npubEncode(c.pubkey).slice(4,12));
-    const mp=mediaParts(c.content);
+    const mp=mediaParts(c.content, c);
     const kids=(c._kids||[]).map(k=>_acCard(k, depth+1)).join('');
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
       <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
@@ -6694,6 +6747,125 @@
   // video, so fall back. Extension-typed images (.jpg/.png) get NO onerror (matches the pre-data-saver
   // default; adding blobFallback there degraded broken links to a raw-URL/video for everyone).
   const BLOBF = 'this.onerror=null;window.__blobFallback(this);';
+  // ---- Media dimensions: the feed's layout stability ---------------------------------------------
+  // Every <img>/<video> in a note carries a SIZE HINT so the browser can reserve its box before a byte
+  // arrives. Without one, a media post is 2px tall until it decodes and then snaps to its cap (300px in
+  // .media-row, 420 in a carousel, 720 for a lone image), shoving everything below it down — the "jumpy
+  // mess". It is worst on a phone, where the short viewport means nearly every image is loading="lazy"
+  // and so pops in one after another as you scroll.
+  //
+  // The hint is the aspect RATIO and the natural WIDTH, as inline custom properties (--arn / --nw), which
+  // client.css turns into `width: min(100%, natural, cap x ratio)` — see the layout-stable media block
+  // there for why that particular expression, and _dimAttrs below for why width/height ATTRIBUTES (the
+  // obvious answer) reserve nothing at all.
+  //
+  // Three sources, best first:
+  //   1. NIP-92 `imeta dim=WxH` on the note (this app writes it — see imetaTagsFor — and so do most
+  //      clients that upload via Blossom/nip96).
+  //   2. A measurement of any image we have ALREADY loaded once, persisted per-device.
+  //   3. Nothing → a provisional 16:10 box, corrected the moment it loads (and cached, so the second
+  //      sighting is exact). One settle on first sight beats a pop on every sight.
+  const MediaDims = (()=>{
+    const K='pc-mdim-v1', MAX=2400;
+    let map=new Map(), dirty=false;
+    try{ const raw=localStorage.getItem(K); if(raw) map=new Map(Object.entries(JSON.parse(raw))); }catch(_){}
+    // Persist lazily: a busy feed measures dozens of images in a burst, and a localStorage write per
+    // image is a synchronous main-thread stall on exactly the frames we are trying to keep smooth.
+    let flushT=null;
+    function flush(){
+      flushT=null; if(!dirty) return; dirty=false;
+      try{
+        // Bounded, newest-kept: Map preserves insertion order, and `set` on an existing key does NOT
+        // move it, so re-seeing an old image doesn't refresh it. Good enough — this is a size hint
+        // cache, and dropping one costs a single first-sight settle.
+        if(map.size>MAX) map=new Map([...map].slice(-MAX));
+        localStorage.setItem(K, JSON.stringify(Object.fromEntries(map)));
+      }catch(_){}   // quota / private mode: the in-memory map still works for this session
+    }
+    function keyOf(url){
+      // Strip the query/fragment: the same blob is served with #t=0.1 appended for video posters and
+      // with cache-busting queries, and all of those share one intrinsic size.
+      const u=String(url||''); const i=u.search(/[?#]/); return i<0?u:u.slice(0,i);
+    }
+    // Both ends validate. `set` is fed by imeta tags off untrusted notes, and `get` reads back JSON that
+    // some earlier version (or a poisoned localStorage) wrote — and both numbers land in an HTML attribute
+    // and a CSS value, so a string that isn't a number has no business getting that far. 20000 is well
+    // past any real photo and keeps the ratio out of the range where toFixed(6) rounds it to 0.
+    const sane=(n)=>Number.isFinite(n) && n>0 && n<=20000;
+    return {
+      get(url){
+        const d=map.get(keyOf(url));
+        return (Array.isArray(d) && sane(+d[0]) && sane(+d[1])) ? [+d[0], +d[1]] : null;
+      },
+      set(url, w, h){
+        w=+w; h=+h;
+        if(!sane(w) || !sane(h)) return;
+        const k=keyOf(url); if(!k || map.get(k)) return;
+        map.set(k, [w,h]); dirty=true;
+        if(!flushT) flushT=setTimeout(flush, 2000);
+      },
+      // NIP-92 imeta → {url: [w,h]} for one event. Tags are ["imeta","url <u>","dim WxH",…].
+      seed(ev){
+        for(const t of ((ev&&ev.tags)||[])){
+          if(t[0]!=='imeta') continue;
+          let u='', d='';
+          for(const part of t.slice(1)){
+            const s=String(part||'');
+            if(s.startsWith('url ')) u=s.slice(4).trim();
+            else if(s.startsWith('dim ')) d=s.slice(4).trim();
+          }
+          const m=/^(\d+)x(\d+)$/.exec(d);
+          if(u && m) this.set(u, +m[1], +m[2]);
+        }
+      },
+    };
+  })();
+  // The size hint an <img>/<video> carries so CSS can reserve its box: the aspect RATIO and the natural
+  // WIDTH, as inline custom properties. client.css turns those into
+  //   width: min(100%, natural, cap x ratio)
+  // which is resolvable with no image loaded, so the first layout pass already has the final box.
+  //
+  // width/height ATTRIBUTES do not work here and were the first thing I tried: they are presentational
+  // HINTS, and the author rule `.media-row img{width:auto}` beats them, so the reserved box measured
+  // 2x2 — see tests/client/test_media_reserve.py, which still asserts the attribute-only form fails.
+  //
+  // No hint at all → CSS gets an invalid var(), width falls back to `auto`, and the element renders
+  // exactly as it did before any of this. That is deliberate: every surface I have not converted, and
+  // any image built by some other path, keeps working untouched.
+  const _DIM_GUESS=[1600,1000];   // 16:10 — near the median shape of what people post, so the one
+                                  // first-sight correction is as small as it can be in either direction.
+  function _dimAttrs(url){
+    const d=MediaDims.get(url), g=!d, [w,h]=d||_DIM_GUESS;
+    return ` width="${w}" height="${h}" style="--arn:${(w/h).toFixed(6)};--nw:${w}"${g?' data-dim="guess"':''}`;
+  }
+  // Rewrite a provisional hint from the real decoded size, once, and remember it for next time.
+  //
+  // Gated on data-dim="guess", which is narrower than it looks and deliberately so. The listener below is
+  // document-wide, so it also sees every avatar, every inline custom emoji and every UI icon — learning
+  // from those would fill the cache with 48x48 entries nothing ever reserves and schedule a localStorage
+  // write for each. "guess" is exactly the set that (a) needs correcting and (b) is worth remembering:
+  // media we sized from imeta is already right, and media with no hint at all is on the fallback path.
+  function _dimLearn(el, w, h){
+    if(!(w>0&&h>0)) return;
+    if(!el.dataset || el.dataset.dim!=='guess') return;
+    delete el.dataset.dim;
+    MediaDims.set(el.currentSrc||el.src, w, h);
+    el.setAttribute('width', w); el.setAttribute('height', h);
+    el.style.setProperty('--arn', (w/h).toFixed(6));
+    el.style.setProperty('--nw', String(w));
+  }
+  // `load` does not bubble, so this listens in the CAPTURE phase — one document-level listener covers the
+  // timeline, threads, profiles, search and every other surface that renders a note, including cards
+  // inserted long after load.
+  document.addEventListener('load', e=>{
+    const el=e.target; if(!el || !el.tagName) return;
+    if(el.tagName==='IMG') _dimLearn(el, el.naturalWidth, el.naturalHeight);
+  }, true);
+  // A <video>'s intrinsic size arrives with its metadata, not a `load` event.
+  document.addEventListener('loadedmetadata', e=>{
+    const el=e.target; if(!el || el.tagName!=='VIDEO') return;
+    _dimLearn(el, el.videoWidth, el.videoHeight);
+  }, true);
   function _phold(encUrl, kind, cls, onerr){   // the placeholder itself
     const v = kind==='video';
     return `<span class="img-hold${v?' vid-hold':''}" data-src="${encUrl}" data-kind="${v?'video':'image'}"${cls?` data-cls="${cls}"`:''}${onerr?` data-onerr="${enc(onerr)}"`:''} role="button" tabindex="0">${v?'▶️ tap to load video':'🖼️ tap to load image'}</span>`;
@@ -6708,11 +6880,14 @@
     // the #t=0.1 fragment makes the browser seek to that frame and paint it, which is what actually
     // produces the poster (metadata alone still renders black in several browsers). Skipped when the URL
     // already carries a fragment, so we never rewrite someone else's. Data saver never gets here (_phold).
+    // width/height reserve the box before the bytes land — see MediaDims. `decoding="async"` keeps a
+    // big image's decode off the main thread so it can't drop a frame mid-scroll on a phone.
+    const dim = _dimAttrs(encUrl);
     if(kind==='video'){
       const poster = encUrl.includes('#') ? encUrl : encUrl + '#t=0.1';
-      return `<video${c} src="${poster}" controls preload="metadata" playsinline></video>`;
+      return `<video${c} src="${poster}"${dim} controls preload="metadata" playsinline></video>`;
     }
-    return `<img${c} src="${encUrl}" loading="lazy"${oe}>`;
+    return `<img${c} src="${encUrl}"${dim} loading="lazy" decoding="async"${oe}>`;
   }
   // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
   // placeholder in data saver, else the original html untouched. `cls` = layout class to restore on tap.
@@ -6725,7 +6900,11 @@
   function _hold(html, url, kind, cls){ return NO_IMAGES ? _phold(enc(url), kind, cls, _holdOnerr(html)) : html; }
   const _isMediaUrl=(u)=>/\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i.test(u)
     || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/[0-9a-f]{64}(\?|#|$)/i.test(u);
-  function mediaParts(raw){
+  // `ev`, when given, is the note the text came from: its NIP-92 imeta tags carry each attachment's real
+  // dimensions, so seeding them HERE — before any _media() call below — is what lets the very first paint
+  // reserve the true box instead of a guess. Callers that only want `.text` can keep omitting it.
+  function mediaParts(raw, ev){
+    if(ev) MediaDims.seed(ev);
     const media=[];
     // Media is LIFTED OUT of the text and rendered as its own row, so whatever text remains would always
     // sit above it — a card post ("<image>\n\n<link>") showed its link ABOVE the picture. When the content
@@ -6929,7 +7108,7 @@
   function noteCard(ev, prefix=''){
    try{
     const p = profOf(ev.pubkey); if(!NO_IMAGES) needProfile(ev.pubkey);   // data saver: observeProfiles fetches lazily as the card nears view
-    const mp = mediaParts(ev.content);
+    const mp = mediaParts(ev.content, ev);
     // Wall-of-text guard: clamp very long posts with a "Show more" toggle so the feed stays scannable.
     const bodyTxt = stripQuoteRef(mp.text, ev);
     const longTxt = !!bodyTxt && (bodyTxt.length > 480 || (bodyTxt.match(/\n/g)||[]).length > 10);
@@ -7019,7 +7198,7 @@
     const name = p.name||p.display_name||(NT().nip19.npubEncode(o.pubkey).slice(0,12)+'…');
     const av = NO_IMAGES ? LOGO : (p.picture || LOGO);   // data saver: hold quoted/reply-context avatars too
     const handle = niceNip05(p.nip05) || ('@'+NT().nip19.npubEncode(o.pubkey).slice(4,12));
-    const mp = mediaParts(o.content);
+    const mp = mediaParts(o.content, o);
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
       ${mp.mediaFirst?mp.gallery:''}
@@ -15909,25 +16088,73 @@
   }
   function timeAgo(ts){ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return s+'s'; if(s<3600)return (s/60|0)+'m'; if(s<86400)return (s/3600|0)+'h'; return (s/86400|0)+'d'; }
   // ---------- link preview cards (OpenGraph via /client/preview, lazy on scroll) ----------
-  const _pv=new Map();
+  // Persisted across reloads, because an UNKNOWN preview is a layout shift and a KNOWN one is not: the
+  // card is rendered empty (`.link-card:empty{display:none}`) and then async-filled with an image and up
+  // to three text rows, which shoves the rest of the feed down at a random moment. Once the answer is on
+  // disk, linkCardHtml can emit the finished card inline on the very first paint, so a link you have seen
+  // before never moves anything again. The remaining shift is a genuinely new URL, once.
+  const _pv=(()=>{
+    const K='pc-lpv-v1', MAX=600;
+    let m=new Map(), dirty=false, t=null;
+    try{ const raw=localStorage.getItem(K); if(raw) m=new Map(Object.entries(JSON.parse(raw))); }catch(_){}
+    function flush(){ t=null; if(!dirty) return; dirty=false;
+      try{
+        if(m.size>MAX) m=new Map([...m].slice(-MAX));
+        localStorage.setItem(K, JSON.stringify(Object.fromEntries(m)));
+      }catch(_){}   // quota / private mode: the in-memory map still serves this session
+    }
+    return {
+      has:(k)=>m.has(k), get:(k)=>m.get(k),
+      set(k,v){ m.set(k,v); dirty=true; if(!t) t=setTimeout(flush, 2000); return this; },
+    };
+  })();
   function firstLink(text){
     const m=(text||'').match(/https?:\/\/[^\s<]+/g); if(!m) return null;
     for(let u of m){ u=u.replace(/[)\].,!?]+$/,''); if(ytId(u)) continue;  // YouTube is embedded inline, not carded
       if(!/\.(jpe?g|png|gif|webp|avif|mp4|webm|mov|m4v|mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) return u; }
     return null;
   }
-  function linkCardHtml(content){ if(NO_IMAGES) return ''; const u=firstLink(content); return u?`<div class="link-card" data-url="${enc(u)}"></div>`:''; }   // data saver: no preview fetch/image, link stays clickable
+  function _pvUseful(d){ return !!(d && (d.title || d.image || d.description)); }
+  function _lcHost(url){ try{ return new URL(url).hostname.replace(/^www\./,''); }catch(_){ return url; } }
+  // The card's inner markup. ONE implementation, used both by the synchronous cached path below and by
+  // the async first-sight fill, so the two can never render a different shape for the same preview.
+  function _lcInner(url, d){
+    return `${d.image?_hold(`<img class="lc-img" src="${enc(d.image)}" loading="lazy" decoding="async" onerror="this.remove()">`, d.image, 'image', 'lc-img'):''}`
+      + `<div class="lc-body"><div class="lc-site">${enc(d.site||_lcHost(url))}</div>`
+      + `${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}`
+      + `${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
+  }
+  function linkCardHtml(content){
+    if(NO_IMAGES) return '';   // data saver: no preview fetch/image, link stays clickable
+    const u=firstLink(content); if(!u) return '';
+    // Already know this link? Render it FINISHED, at its final size, in the first paint — no empty box, no
+    // async swap, nothing below it moves. `data-done` keeps hydrateLinkCards from re-filling it.
+    if(_pv.has(u)){
+      const d=_pv.get(u);
+      if(!_pvUseful(d)) return '';                       // known to have no preview → don't emit a card that would vanish
+      return `<div class="link-card" data-url="${enc(u)}" data-done="1">${_lcInner(u, d)}</div>`;
+    }
+    return `<div class="link-card" data-url="${enc(u)}"></div>`;
+  }
   // Fill directly on render (the empty placeholder is display:none via CSS until filled; an
   // IntersectionObserver never fires on a zero-height hidden element, which broke lazy loading).
   function hydrateLinkCards(scope){ $$('.link-card[data-url]:not([data-done])', scope||document).forEach(el=>{ el.setAttribute('data-done','1'); fillLinkCard(el); }); }
-  async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); if(_pv.size>600) _pv.delete(_pv.keys().next().value); return d; }
+  async function fetchPreview(url){ if(_pv.has(url)) return _pv.get(url); let d=null; try{ d=await fetch('/client/preview?url='+encodeURIComponent(url)).then(r=>r.json()); }catch(_){} _pv.set(url,d); return d; }
   async function fillLinkCard(el){
     const url=el.dataset.url; const d=await fetchPreview(url);
-    if(!d || (!d.title && !d.image && !d.description)){ el.remove(); return; }
-    const host=(()=>{ try{ return new URL(url).hostname.replace(/^www\./,''); }catch(_){ return url; } })();
-    el.innerHTML=`${d.image?_hold(`<img class="lc-img" src="${enc(d.image)}" loading="lazy" onerror="this.remove()">`, d.image, 'image', 'lc-img'):''}<div class="lc-body"><div class="lc-site">${enc(d.site||host)}</div>${d.title?`<div class="lc-title">${enc(d.title)}</div>`:''}${d.description?`<div class="lc-desc">${enc(d.description.slice(0,160))}</div>`:''}</div>`;
-    el.onclick=(ev)=>{ ev.stopPropagation(); window.open(url,'_blank','noopener'); };
+    if(!_pvUseful(d)){ el.remove(); return; }
+    el.innerHTML=_lcInner(url, d);
   }
+  // Opening a card is DELEGATED, not an onclick assigned during the fill: cards rendered straight from the
+  // preview cache never pass through fillLinkCard, so a per-element handler would leave exactly the cards
+  // that paint fastest unclickable. Capture phase so the click can't also reach the open-thread handler
+  // under it — the same reason the carousel's nav uses capture.
+  document.addEventListener('click', e=>{
+    if(!e.target.closest) return;
+    const card=e.target.closest('.link-card[data-url]'); if(!card) return;
+    e.preventDefault(); e.stopPropagation();
+    window.open(card.dataset.url, '_blank', 'noopener');
+  }, true);
   // YouTube video id from watch / youtu.be / shorts / embed / live URLs (else null).
   function ytId(u){
     const m=u.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([\w-]{11})/i);
