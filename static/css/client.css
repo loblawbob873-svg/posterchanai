@@ -504,6 +504,12 @@ a.btn.full{display:block}
 .btn-ghost{background:var(--panel2);color:var(--neon)}
 .btn-ghost{background:color-mix(in srgb, var(--neon) 15%, var(--panel2));border-color:var(--neon);color:var(--neon)}
 .btn-ghost:hover{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon);color:var(--neon)}
+/* Sprite icon INSIDE a button label. Sized in em so it tracks the button's own font-size (a .btn.small
+   gets a smaller icon for free) and sits on the text baseline rather than floating above it. The button
+   becomes an inline-flex row so the icon and label centre against each other at any label length. */
+.btn:has(.b-ic){display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.btn.full:has(.b-ic){display:flex}
+svg.ic.b-ic{width:1.05em;height:1.05em;stroke-width:1.9;opacity:.95}
 /* One keyboard-focus treatment for everything interactive, declared after the button variants so it
    wins over their resting shadow. :where() keeps it at zero specificity, so any control with its own
    focus styling still overrides it. Most controls had none at all, which made tabbing invisible. */

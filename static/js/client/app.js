@@ -14564,34 +14564,43 @@
   // so the link works in a Nostr reply. Only for local (/) URLs; external media is already public.
   function _aiFileActions(u, kind, label){
     if(!/^\//.test(u)) return '';
-    const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">📋 Copy link</button>`;
-    const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">🚀 Post</button>`;
-    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}">💾 Save to Blossom</button>`;
-    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}">⬇ Download</button>`;
+    const copy=`<button class="btn btn-cyan small ai-copyfile" data-url="${enc(u)}">${ICO('link','b-ic')}Copy link</button>`;
+    const post=`<button class="btn btn-neon small ai-postfile" data-url="${enc(u)}">${ICO('send','b-ic')}Post</button>`;
+    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}">${ICO('cloud','b-ic')}Save to Blossom</button>`;
+    const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}">${ICO('download','b-ic')}Download</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
     // carries no payload fields — so the distinction rides in the label the server writes:
     // `!video[song]` for musicgeni/narrate, `!video[video]` for a silent videogeni clip.
     const mp3=(kind==='video' && /song|music|narrat/i.test(label||''))
-      ? `<button class="btn btn-cyan small ai-mp3file" data-url="${enc(u)}">🎵 Convert to MP3</button>` : '';
-    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">↩ Send the Reply</button>`:'';
+      ? `<button class="btn btn-cyan small ai-mp3file" data-url="${enc(u)}">${ICO('music','b-ic')}Convert to MP3</button>` : '';
+    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-replyfile" data-url="${enc(u)}">${ICO('reply','b-ic')}Send the Reply</button>`:'';
     // Keep working on a result instead of it being a dead end: an effect output was final here, so
     // refining one meant downloading the file and adding it back by hand. The builder takes VIDEO
     // layers as well as images, which is what makes this worth having for effects at all.
     // Not offered for audio — addMedia only seeds image/video layers.
-    const mb=(kind==='audio')?'':`<button class="btn btn-cyan small ai-memefile" data-url="${enc(u)}" data-kind="${enc(kind||'image')}">🎞️ Meme Builder</button>`;
+    const mb=(kind==='audio')?'':`<button class="btn btn-cyan small ai-memefile" data-url="${enc(u)}" data-kind="${enc(kind||'image')}">${ICO('film','b-ic')}Meme Builder</button>`;
     return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
+  }
+  // Set an action button's LABEL without eating its sprite icon. These buttons show progress
+  // ('saving…', '✓ copied') and then restore themselves, and every one of them did it with
+  // `btn.textContent=…` — which replaces ALL children, so the first time a button reported progress it
+  // dropped the <svg> and never got it back. Only the text node moves; the icon stays put.
+  function _btnText(btn, text){
+    if(!btn) return;
+    const t=[...btn.childNodes].find(n=>n.nodeType===3 && n.nodeValue.trim()!=='');
+    if(t) t.nodeValue=text; else btn.appendChild(document.createTextNode(text));
   }
   // Save an /api/files/ artifact to Blossom (the same re-upload Copy link does, minus the clipboard).
   async function saveFileToBlossom(u, btn){
-    if(btn){ btn.disabled=true; btn.textContent='saving…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
     try{ await _fileToPublicUrl(u); toast('saved to Blossom — find it in Files');
-      if(btn){ btn.textContent='✓ saved'; btn.disabled=false; } }
-    catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='💾 Save to Blossom'; } }
+      if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; } }
+    catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); } }
   }
   // Download an artifact to the device. The URL is AUTHED, so an <a download> pointing at it would
   // 401 — fetch with credentials, then click an object URL of the bytes.
   async function downloadFileUrl(u, btn){
-    if(btn){ btn.disabled=true; btn.textContent='downloading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'downloading…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       const ext=((u.split(/[?#]/)[0].split('.').pop())||'bin').toLowerCase();
@@ -14599,19 +14608,19 @@
       a.href=o; a.download='posterchan-'+Date.now()+'.'+ext;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(o), 10000);
-      if(btn){ btn.textContent='✓ downloaded'; btn.disabled=false; }
-    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='⬇ Download'; } }
+      if(btn){ _btnText(btn,'✓ downloaded'); btn.disabled=false; }
+    }catch(e){ toast('download failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Download'); } }
   }
   // Branded MP4 artifact → MP3, via the same `extractaudio` command a user could type.
   async function mp3FromFileUrl(u, btn){
-    if(btn){ btn.disabled=true; btn.textContent='converting…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'converting…'); }
     try{
       const blob=await fetch(u, { credentials:'include' }).then(r=>{ if(!r.ok) throw new Error('fetch '+r.status); return r.blob(); });
       await aiAddFiles([new File([blob], 'song.mp4', { type:blob.type||'video/mp4' })]);
       const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
       aiSend();
-      if(btn){ btn.textContent='🎵 Convert to MP3'; btn.disabled=false; }
-    }catch(e){ toast('convert failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='🎵 Convert to MP3'; } }
+      if(btn){ _btnText(btn,'Convert to MP3'); btn.disabled=false; }
+    }catch(e){ toast('convert failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Convert to MP3'); } }
   }
   // Effect result → Meme Builder. The media has to be uploaded to Blossom FIRST: a layer `src` is
   // fetched SERVER-side at render time, and /api/files/… is behind get_current_user, so handing the
@@ -14620,7 +14629,7 @@
   // result uploads once.
   async function memeBuildFile(u, btn, kind){
     const label=btn?btn.textContent:'';
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{
       const pub=await _fileToPublicUrl(u);
       const isVid=(kind==='video')||/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(pub);
@@ -14632,10 +14641,10 @@
         const ok=window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(pub, isVid?'video/mp4':'image/jpeg', from);
         toast(ok?'🎞️ added to the Meme Builder':'could not add that media');
       }, 60);
-      if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; }
+      if(btn){ btn.disabled=false; _btnText(btn,label||'Meme Builder'); }
     }catch(e){
       toast('failed: '+((e&&e.message)||e));
-      if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; }
+      if(btn){ btn.disabled=false; _btnText(btn,label||'Meme Builder'); }
     }
   }
   async function _fileToPublicUrl(u){
@@ -14647,25 +14656,25 @@
     _ai.pubUrl[u]=pub; return pub;
   }
   async function copyFileUrl(u, btn){
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
-    try{ const pub=await _fileToPublicUrl(u); try{ await navigator.clipboard.writeText(pub); toast('link copied'); }catch(_){ toast(pub); } if(btn){ btn.textContent='✓ copied'; btn.disabled=false; } }
-    catch(e){ toast('failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='📋 Copy link'; } }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
+    try{ const pub=await _fileToPublicUrl(u); try{ await navigator.clipboard.writeText(pub); toast('link copied'); }catch(_){ toast(pub); } if(btn){ _btnText(btn,'✓ copied'); btn.disabled=false; } }
+    catch(e){ toast('failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Copy link'); } }
   }
   async function replyFileUrl(u, btn){
     const to=_ai.replyTo; if(!to){ toast('no post to reply to'); return; }
-    if(btn){ btn.disabled=true; btn.textContent='posting…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'posting…'); }
     try{ const pub=await _fileToPublicUrl(u); const r=await publish(1, pub, eTags(to.id, to.pk));   // failure toast by publish()
-      if(r && r.ok){ toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; } }
-      else if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
-    catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
+      if(r && r.ok){ toast('✓ reply posted'); if(btn){ _btnText(btn,'✓ replied'); } }
+      else if(btn){ btn.disabled=false; _btnText(btn,'Send the Reply'); } }
+    catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Send the Reply'); } }
   }
   // Share generated media as a NEW Nostr post: re-upload the (authed/local) artifact to public Blossom,
   // then open the composer pre-filled with the public link (add a caption, then post).
   async function postFileUrl(u, btn){
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{ const pub=await _fileToPublicUrl(u); compose({text: pub}); }
     catch(e){ toast('failed: '+((e&&e.message)||e)); }
-    finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
+    finally{ if(btn){ btn.disabled=false; _btnText(btn,'Post'); } }
   }
   // Live base64 media → Meme Builder. memeBuildFile's counterpart for a PAYLOAD instead of an artifact
   // URL: same reason it can't hand over what it has, though — the builder fetches a layer `src`
@@ -14675,7 +14684,7 @@
   async function memeBuildEffect(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to add'); return; }
     const label=btn?btn.textContent:'';
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'media.'+m.ext, { type:m.mime })); }
       const isVid=/^video\//i.test(m.mime||'');
@@ -14689,16 +14698,16 @@
         toast(ok?'🎞️ added to the Meme Builder':'could not add that media');
       }, 60);
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
-    finally{ if(btn){ btn.disabled=false; btn.textContent=label||'🎞️ Meme Builder'; } }
+    finally{ if(btn){ btn.disabled=false; _btnText(btn,label||'Meme Builder'); } }
   }
   async function postEffectMedia(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to post'); return; }
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'media.'+m.ext, { type:m.mime })); }
       compose({text: m.url});
     }catch(e){ toast('failed: '+((e&&e.message)||e)); }
-    finally{ if(btn){ btn.disabled=false; btn.textContent='🚀 Post'; } }
+    finally{ if(btn){ btn.disabled=false; _btnText(btn,'Post'); } }
   }
   function _fxReplyBtn(b64, mime, ext, opts){
     if(!b64) return '';
@@ -14708,17 +14717,17 @@
     // 🎵 Only where there IS an audio track to pull: a song / narration wrapped in the branded MP4.
     // videogeni output is silent, so offering it there would just fail — the server marks the ones
     // that carry audio (has_audio) rather than the client guessing from the mp4 container.
-    const mp3=o.hasAudio?`<button class="btn btn-cyan small ai-mp3-fx" data-mid="${mid}">🎵 Convert to MP3</button>`:'';
-    const dl=`<button class="btn btn-cyan small ai-dl-fx" data-mid="${mid}">⬇ Download</button>`;
-    const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">📋 Copy link</button>`;
-    const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">🚀 Post</button>`;
-    const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}">💾 Save to Blossom</button>`;
+    const mp3=o.hasAudio?`<button class="btn btn-cyan small ai-mp3-fx" data-mid="${mid}">${ICO('music','b-ic')}Convert to MP3</button>`:'';
+    const dl=`<button class="btn btn-cyan small ai-dl-fx" data-mid="${mid}">${ICO('download','b-ic')}Download</button>`;
+    const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}">${ICO('link','b-ic')}Copy link</button>`;
+    const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}">${ICO('send','b-ic')}Post</button>`;
+    const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}">${ICO('cloud','b-ic')}Save to Blossom</button>`;
     // Same "keep working on the result" button the ARTIFACT row (_aiFileActions) has carried all along.
     // It was missing here, which is the whole of "no Meme Builder after geni": a generated image arrives
     // as a base64 PAYLOAD and never becomes an /api/files/ artifact, so it only ever renders this row.
     // Not for audio — addMedia only seeds image/video layers.
-    const mb=/^audio\//i.test(mime||'')?'':`<button class="btn btn-cyan small ai-meme-fx" data-mid="${mid}">🎞️ Meme Builder</button>`;
-    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">↩ Send the Reply</button>`:'';
+    const mb=/^audio\//i.test(mime||'')?'':`<button class="btn btn-cyan small ai-meme-fx" data-mid="${mid}">${ICO('film','b-ic')}Meme Builder</button>`;
+    const reply=_ai.replyTo?`<button class="btn btn-cyan small ai-reply-fx" data-mid="${mid}">${ICO('reply','b-ic')}Send the Reply</button>`:'';
     return `<div class="fx-reply-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">${reply}${mp3}${post}${save}${mb}${dl}${copy}</div>`;
   }
   // ⬇ Save the bytes to the device. Chat media is base64 in the message, so build a Blob and click an
@@ -14733,7 +14742,7 @@
       a.href=url; a.download='posterchan-'+Date.now()+'.'+m.ext;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url), 10000);
-      if(btn) btn.textContent='✓ downloaded';
+      if(btn) _btnText(btn,'✓ downloaded');
     }catch(e){ toast('download failed: '+((e&&e.message)||e)); }
   }
   // 🎵 Pull the song out of the branded MP4 as an MP3. Runs the SAME `extractaudio` command a user
@@ -14742,16 +14751,16 @@
   // carries its own ⬇ Download button.
   async function convertEffectToMp3(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to convert'); return; }
-    if(btn){ btn.disabled=true; btn.textContent='converting…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'converting…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
       await aiAddFiles([new File([bin], 'song.'+m.ext, { type:m.mime })]);
       const ta=$('#ai-input'); if(ta) ta.value='extractaudio';
       aiSend();
-      if(btn){ btn.textContent='🎵 Convert to MP3'; btn.disabled=false; }
+      if(btn){ _btnText(btn,'Convert to MP3'); btn.disabled=false; }
     }catch(e){
       toast('convert failed: '+((e&&e.message)||e));
-      if(btn){ btn.disabled=false; btn.textContent='🎵 Convert to MP3'; }
+      if(btn){ btn.disabled=false; _btnText(btn,'Convert to MP3'); }
     }
   }
   // 💾 Keep a generated image/video. Chat media is a base64 blob in the message — it lives only in
@@ -14761,27 +14770,27 @@
   async function saveEffectToBlossom(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to save'); return; }
     // Already uploaded (Copy link / Post got there first) → don't spend a second upload or signature.
-    if(m.url){ toast('already saved to Blossom'); if(btn) btn.textContent='✓ saved'; return; }
-    if(btn){ btn.disabled=true; btn.textContent='saving…'; }
+    if(m.url){ toast('already saved to Blossom'); if(btn) _btnText(btn,'✓ saved'); return; }
+    if(btn){ btn.disabled=true; _btnText(btn,'saving…'); }
     try{
       const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0));
       m.url=await uploadBlob(new File([bin], 'generated.'+m.ext, { type:m.mime }));
       toast('saved to Blossom — find it in Files');
-      if(btn){ btn.textContent='✓ saved'; btn.disabled=false; }
+      if(btn){ _btnText(btn,'✓ saved'); btn.disabled=false; }
     }catch(e){
       toast('save failed: '+((e&&e.message)||e));
-      if(btn){ btn.disabled=false; btn.textContent='💾 Save to Blossom'; }
+      if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); }
     }
   }
   // Upload generated media to Blossom and copy its URL — paste the link into any reply yourself.
   async function copyEffectUrl(mid, btn){
     const m=_ai.fxMedia[mid]; if(!m){ toast('nothing to copy'); return; }
-    if(btn){ btn.disabled=true; btn.textContent='uploading…'; }
+    if(btn){ btn.disabled=true; _btnText(btn,'uploading…'); }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
       try{ await navigator.clipboard.writeText(m.url); toast('link copied'); }catch(_){ toast(m.url); }
-      if(btn){ btn.textContent='✓ copied'; btn.disabled=false; }
-    }catch(e){ toast('upload failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='📋 Copy link'; } }
+      if(btn){ _btnText(btn,'✓ copied'); btn.disabled=false; }
+    }catch(e){ toast('upload failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Copy link'); } }
   }
   // --- Interactive multiple-choice flashcards (study quiz) ---------------------------------------
   // Self-contained port of the old web UI deck: state lives in _ai.decks[id]; taps re-render via the

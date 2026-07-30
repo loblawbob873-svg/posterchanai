@@ -82,6 +82,20 @@
   <symbol id="i-windows" viewBox="0 0 24 24"><path d="M3.6 6.3l7-1v6.2h-7zM12.2 5.1l8.2-1.2v7.6h-8.2zM3.6 12.6h7v6.2l-7-1zM12.2 12.6h8.2v7.6l-8.2-1.2z"/></symbol>
   <symbol id="i-apple" viewBox="0 0 24 24"><path d="M15.9 12.5c0-2 1.6-3 1.7-3.1-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.3 2-1.4 2.4-.4 6 1 8 .7 1 1.5 2.1 2.5 2 1-.04 1.4-.65 2.6-.65s1.5.65 2.6.63c1.1-.02 1.8-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.3-.02 0-2.1-.8-2.1-3z"/><path d="M13.9 6.2c.5-.6.9-1.5.8-2.4-.8.03-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.4.9.07 1.8-.4 2.3-1.2z"/></symbol>
   <symbol id="i-linux" viewBox="0 0 24 24"><path d="M12 3.2c-2.1 0-3.5 1.7-3.5 3.9 0 1.2-.3 2-1 3-1 1.5-1.9 3.2-1.9 5.2 0 2.9 2.9 5.4 6.4 5.4s6.4-2.5 6.4-5.4c0-2-.9-3.7-1.9-5.2-.7-1-1-1.8-1-3 0-2.2-1.4-3.9-3.5-3.9z"/><circle cx="10.5" cy="7.4" r=".8" fill="currentColor" stroke="none"/><circle cx="13.5" cy="7.4" r=".8" fill="currentColor" stroke="none"/><path d="M12 8.7l-1.1 1.5h2.2z"/></symbol>
+  <!-- ACTION VERBS. The nav has been on this sprite for a while; the buttons never were, so every
+       action in the app labelled itself with an emoji (🚀 Post, 💾 Save, ⬇ Download, 📋 Copy link…).
+       Emoji are the wrong weight beside the UI type, render differently on every platform, and cannot
+       inherit colour or state — which is why they read as unstyled. Same 24-grid + currentColor stroke
+       as the rest of the sprite, so they take the theme for free. -->
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3.8L10.6 14.2"/><path d="M21 3.8l-6.6 17.4-3.8-7-7-3.8z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.6v11.2"/><path d="M7.8 10.8L12 15l4.2-4.2"/><path d="M4.4 19.4h15.2"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7.2 19.2a4.2 4.2 0 01-.4-8.38 5.6 5.6 0 0110.83-1.35A3.9 3.9 0 0117.6 19.2z"/><path d="M12 11.4v5.2"/><path d="M9.9 14.5L12 16.6l2.1-2.1"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.2 13.8a3.8 3.8 0 005.7.4l2.6-2.6a3.8 3.8 0 00-5.37-5.37l-1.5 1.48"/><path d="M13.8 10.2a3.8 3.8 0 00-5.7-.4l-2.6 2.6a3.8 3.8 0 005.37 5.37l1.48-1.48"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="14.8" rx="2.2"/><path d="M7.4 4.6v14.8M16.6 4.6v14.8M3 12h18M3 8.3h4.4M3 15.7h4.4M16.6 8.3H21M16.6 15.7H21"/></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.4 6.6L4 12l5.4 5.4"/><path d="M4 12h9.6a6 6 0 016 6v1.4"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.2" y="4.8" width="17.6" height="14.4" rx="2.4"/><circle cx="8.8" cy="10" r="1.7"/><path d="M3.6 16.6l4.6-4.2 3.6 3.2 3.2-2.8 5.4 4.6"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6.4V4.8h14v1.6"/><path d="M12 4.8v14.4"/><path d="M9 19.2h6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.4 5.6l10 6.4-10 6.4z"/></symbol>
 </defs></svg>
 <script>
 // ICO(name) → the same sprite reference the static markup uses, for JS-rendered rows (More sheet,
