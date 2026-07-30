@@ -259,8 +259,9 @@ async def client_emoji_file(pack: str, name: str, t: int = 0):
         if thumb:
             path, media = thumb, "image/webp"
     if not media:
-        import mimetypes
-        media = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        # By HEADER, not by filename — a pack.json entry need not have an extension, and a generic
+        # type plus the nosniff below is a picture a strict browser will not draw. See media_type().
+        media = emoji_service.media_type(path)
     return FileResponse(path, media_type=media, headers={
         # A thumbnail is a DERIVED file at a stable URL, so it gets a day — long enough to make the
         # grid free on re-open, short enough that replacing an emoji in Admin doesn't leave the old

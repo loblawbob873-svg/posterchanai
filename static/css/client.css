@@ -4111,7 +4111,13 @@ body.modal-open .mobilenav{display:none}
 .mb-grip-r{right:0;border-radius:0 7px 7px 0}
 .mb-result{display:flex;flex-direction:column;gap:10px;margin-top:12px;padding:12px;
   border:1px solid var(--line);border-radius:var(--r)}
-.mb-resvid{width:100%;max-height:52vh;border-radius:10px;background:#000}
+.mb-resvid{width:100%;max-height:52vh;object-fit:contain;border-radius:10px;background:#000}
+/* An <img> defaults to object-fit:FILL, and `width:100%` + `max-height` is exactly the pair that makes
+   that visible: the width stretches to the panel, then the height is clamped independently, so a GIF or
+   a still came out squashed and blown up — while the same file posted to the timeline looked right,
+   because nothing there forces its width. Let a picture size itself inside the panel instead: never
+   wider or taller than the box, never upscaled past its own pixels, never distorted. */
+img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;background:none}
 .mb-resacts{display:flex;gap:8px;flex-wrap:wrap}
 .mb-resacts .btn{margin:0}
 .mb-err{margin-top:10px;padding:10px 12px;border:1px solid var(--danger);border-radius:var(--r);

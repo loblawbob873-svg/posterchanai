@@ -172,6 +172,53 @@ def index(force: bool = False) -> List[dict]:
     return entries
 
 
+# Magic bytes → media type, for the files whose NAME does not say what they are.
+# A pack.json maps a shortcode to any filename it likes, and the akkoma packs include entries with no
+# extension at all (11 of the 3336 in the pack this was built against). mimetypes.guess_type then
+# returns nothing, those were served as `application/octet-stream`, and because this route also sends
+# `X-Content-Type-Options: nosniff` — which it should, these are operator-uploaded files on a public
+# path — a strict browser REFUSES to render them. Firefox is strict; Chrome sniffs images anyway, so
+# it only ever failed for some people, on some emoji. It also failed only in the BROWSER: the meme
+# renderer reads the bytes server-side, so the sticker came out fine in the export and showed as an
+# empty box in the preview. Read the header instead of trusting the filename.
+_MAGIC: List[Tuple[bytes, str]] = [
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"BM", "image/bmp"),
+]
+
+
+def media_type(path: str) -> str:
+    """The Content-Type to serve this emoji as. Extension first (cheap and right almost always), then
+    the file's own header, and only then a generic type — which a browser will not draw."""
+    import mimetypes
+    guess = mimetypes.guess_type(path)[0]
+    if guess and guess.startswith("image/"):
+        return guess
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(32)
+    except OSError:
+        return guess or "application/octet-stream"
+    for sig, mime in _MAGIC:
+        if head.startswith(sig):
+            return mime
+    # Container formats carry their tag at a fixed offset rather than at byte 0.
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"avif", b"avis"):
+            return "image/avif"
+        if brand in (b"heic", b"heix", b"mif1", b"msf1"):
+            return "image/heic"
+    if head.lstrip()[:5] in (b"<svg ", b"<svg>") or head.lstrip()[:5] == b"<?xml":
+        return "image/svg+xml"
+    return guess or "application/octet-stream"
+
+
 def lookup(pack: str, shortcode: str) -> Optional[dict]:
     """One entry by (pack, shortcode) — the index is the ONLY path from a URL to a file on disk, so
     a request can never name a path of its own."""
