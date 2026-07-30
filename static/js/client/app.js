@@ -4913,10 +4913,40 @@
         if(!playUrl){ if(n2) n2.textContent='This stream ended — no recording available.'; return; }
         if(n2) n2.textContent = vurl ? '▶ Recorded stream' : '';
         attachStream(playUrl);
+        if(vurl) _backfillRecordingTag(e, vurl);
       })();
     } else if(url){ attachStream(url); }
     { const pb=$('#st-pop'); if(pb) pb.onclick=()=>popOutStream(e); }
     if(!ClientSettings.get('streamChatHidden',false)) _streamChat(saddr);   // don't start the sub if chat is hidden
+  }
+
+  // NIP-53 `recording`: republish YOUR OWN ended kind-30311 with the VOD url on it, once the VOD exists.
+  //
+  // Why it has to happen here in the browser and not on the server: the 30311 is signed by the streamer's
+  // key, which the server never has (nip07/nip46/nip55 all keep it out of reach — see stream_end_service),
+  // and the VOD's sha256 does not exist until after the stream has ended and uploaded, so it cannot be
+  // baked into the pre-signed "ended" event either. That left our replays invisible to every other client:
+  // WE resolve them by publish token through our own API, but a `recording` tag is the only cross-client
+  // way to say "the replay is here", so shosho (and zap.stream, and anything else) had nothing to show.
+  //
+  // Runs when the owner opens their own ended stream — the moment we are certain both halves exist (a
+  // signed event we may republish, and a VOD url) without polling anything. Once stamped it never runs
+  // again, because the tag is then present on the event we just read.
+  async function _backfillRecordingTag(ev, vurl){
+    try{
+      if(!ME || !ev || ev.pubkey !== ME.pubkey) return;        // only the author can re-sign their own event
+      if((ev.tags||[]).some(t => t[0] === 'recording' && t[1])) return;   // already tagged
+      // Rebuild the SAME addressable event (same `d`), tags carried over verbatim so nothing else about the
+      // stream changes — title, image, participants, status:ended all stay exactly as published.
+      const tags = (ev.tags||[]).filter(t => t[0] !== 'recording').map(t => t.slice());
+      tags.push(['recording', vurl]);
+      const r = await publish(30311, ev.content || '', tags, { quiet: true });
+      if(r && r.ok){
+        toast('replay linked on your stream — other clients can find it now');
+        // Reflect it locally so reopening the view does not try again before the relay read catches up.
+        try{ ev.tags = tags; }catch(_){ }
+      }
+    }catch(err){ /* never block playback on this — the replay already plays for us */ }
   }
   // Delete YOUR OWN stream: NIP-09 kind-5 addressed to the 30311's `a` (removes all versions) + its event id.
   async function _deleteStream(e){
