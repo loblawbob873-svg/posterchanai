@@ -76,7 +76,7 @@
     const bar=document.createElement('div'); bar.id='ios-install-hint'; bar.className='ios-install-hint';
     // Inline SVG of the iOS share glyph (box + up arrow) — reliable, unlike the SF-Symbol PUA codepoint.
     const share='<svg class="iih-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8.5 6.5L12 3l3.5 3.5M6 11v8a1 1 0 001 1h10a1 1 0 001-1v-8"/></svg>';
-    bar.innerHTML=`<span class="iih-txt">Install PosterChan: tap <b>Share</b> ${share} then <b>Add to Home Screen</b></span><button class="iih-x" aria-label="Dismiss">✕</button>`;
+    bar.innerHTML=`<span class="iih-txt">Install PosterChan: tap <b>Share</b> ${share} then <b>Add to Home Screen</b></span><button class="iih-x" aria-label="Dismiss"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
     bar.querySelector('.iih-x').onclick=()=>{ try{ localStorage.setItem('pc_ios_install_dismissed','1'); }catch(_){} bar.remove(); };
     document.body.appendChild(bar);
   }
@@ -1072,7 +1072,7 @@
     const div=document.createElement('div'); div.id='instance-row'; div.style.marginTop='10px';
     div.innerHTML='<div class="divider"><span>instance</span></div>'
       +'<input id="instance-input" class="input" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance">'
-      +'<button id="instance-save" class="btn btn-ghost full" style="margin-top:6px">🔗 Connect to this instance</button>'
+      +'<button id="instance-save" class="btn btn-ghost full" style="margin-top:6px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Connect to this instance</button>'
       +'<div class="muted small" id="instance-cur" style="margin-top:4px"></div>';
     pane.appendChild(div);
     const inp=document.getElementById('instance-input'); inp.value=cur;
@@ -2759,10 +2759,10 @@
         <div class="tl-cmp-body">
           <textarea class="tl-cmp-ta" id="tl-cmp-ta" rows="1" placeholder="How was your weekend?"></textarea>
           <div class="tl-cmp-tools">
-            <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file">📎</button>
-            <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF">😀</button>
+            <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
+            <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>
             <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll">📊</button>
-            <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools">🤖</button>
+            <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
             <!-- Background / Schedule / Sensitive live behind ⋯ deliberately. Five icons + Post is
                  exactly what fits one row at 360px (~269px of 279px); a sixth wraps Post onto its
                  own line, which is the regression the .tl-cmp-tools comment already records. -->
@@ -3346,7 +3346,7 @@
       db.innerHTML = dd.length ? '<div class="search-section-title">📝 Drafts</div>'+dd.map(d=>{
         const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
         const slug=(d.tags.find(x=>x[0]==='d')||[])[1]||'';
-        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc(slug)}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)">✕</button></div>`;
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc(slug)}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`;
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderArticleEditor(e); };
@@ -3391,21 +3391,21 @@
     const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
     const mine=e.pubkey===ME.pubkey;
     feed.innerHTML=`<div class="article-view">
-      <button class="btn btn-ghost small" id="art-back">← Articles</button>
+      <button class="btn btn-ghost small" id="art-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Articles</button>
       ${img?_hold(`<img class="av-banner" src="${enc(img)}" onerror="this.remove()">`, img, 'image', 'av-banner'):''}
       <h1 class="av-title">${enc(title)}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
       <div class="av-actions">
-        <button class="act actb ${BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark">🔖</button>
+        <button class="act actb ${BOOKMARKS.has(e.id)?'on':''}" id="av-bm" title="bookmark"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bookmark"></use></svg></button>
         <button class="act actz" id="av-zap" title="zap">${ZAP_ICON}</button>
-        ${mine?`<button class="act" id="av-edit" title="edit">✏</button>`:''}
-        ${mine?`<button class="act" id="av-del" title="delete" style="color:var(--danger)">🗑</button>`:''}
-        <button class="act" id="av-copy" title="copy link">🔗</button>
+        ${mine?`<button class="act" id="av-edit" title="edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`:''}
+        ${mine?`<button class="act" id="av-del" title="delete" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`:''}
+        <button class="act" id="av-copy" title="copy link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg></button>
       </div>
       <div class="markdown av-body">${mdToHtml(e.content)}</div>
       <div class="av-comments">
         <div class="av-comments-hd"><span class="search-section-title">Comments</span>
-          <button class="btn btn-neon small" id="av-comment">💬 Write a comment</button></div>
+          <button class="btn btn-neon small" id="av-comment"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Write a comment</button></div>
         <div id="av-comment-list"><div class="spinner"></div></div>
       </div>
     </div>`;
@@ -3435,7 +3435,7 @@
     return `<div class="ac-item"${depth?` style="margin-left:${Math.min(depth,5)*14}px"`:''}>
       <div class="ac-hd"><img class="ac-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${c.pubkey}">${emojiName(c.pubkey,name)}</span><span class="vchk" data-pk="${c.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(c.created_at)}</span></div>
       ${mp.mediaFirst?mp.gallery:''}<div class="ac-body">${applyEmojis(linkify(mp.text), c)}</div>${mp.mediaFirst?'':mp.gallery}
-      <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}">↩ Reply</button></div>
+      <div class="ac-act"><button class="btn btn-ghost small ac-reply" data-id="${c.id}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply</button></div>
       ${kids}</div>`;
   }
   async function loadArticleComments(e){
@@ -3495,14 +3495,14 @@
     VIEW='article'; _clearNav(); $('#view-title').textContent=existing?'Edit article':'Write article';
     const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
     feed.innerHTML=`<div class="article-editor">
-      <button class="btn btn-ghost small" id="ae-back">← Cancel</button>
+      <button class="btn btn-ghost small" id="ae-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Cancel</button>
       <label class="fld">Title<input class="input" id="ae-title" placeholder="Article title" value="${enc(g('title'))}"></label>
       <label class="fld">Summary<input class="input" id="ae-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
       <label class="fld">Header image<input class="input" id="ae-img" placeholder="https://… (optional)" value="${enc(g('image'))}"></label>
-      <div class="row" style="margin:-6px 0 2px"><button type="button" class="btn btn-ghost small" id="ae-img-up">🖼 Upload header image</button></div>
+      <div class="row" style="margin:-6px 0 2px"><button type="button" class="btn btn-ghost small" id="ae-img-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload header image</button></div>
       <input type="file" id="ae-img-file" accept="image/*" hidden>
-      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
-      <div class="row cmp-tools"><button class="btn btn-ghost small" id="ae-insert">📎 Insert image</button><input type="file" id="ae-body-file" accept="image/*" multiple hidden><span class="spacer"></span><span class="muted small">Markdown</span></div>
+      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Preview</button></div>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="ae-insert"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Insert image</button><input type="file" id="ae-body-file" accept="image/*" multiple hidden><span class="spacer"></span><span class="muted small">Markdown</span></div>
       <textarea id="ae-body" class="article-body" placeholder="Write your article in markdown…">${enc(existing?existing.content:'')}</textarea>
       <div id="ae-preview" class="markdown article-preview hidden"></div>
       <div class="row"><span class="muted small" id="ae-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="ae-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save draft</button><button class="btn btn-neon" id="ae-pub">Publish ▶</button></div>
@@ -3592,7 +3592,7 @@
       const dd=_dedupAddr(drafts).sort((a,b)=>(b.created_at||0)-(a.created_at||0));
       db.innerHTML = dd.length ? '<div class="search-section-title">📝 Draft listings</div>'+dd.map(d=>{
         const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
-        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)">✕</button></div>`;
+        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`;
       }).join('') : '';
       $$('.draft-art',db).forEach(c=>{
         c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderListingEditor(e); };
@@ -3645,7 +3645,7 @@
     const cats=mktCats(e); const sold=mktStatus(e)==='sold';
     const mine=e.pubkey===ME.pubkey;
     feed.innerHTML=`<div class="listing-view">
-      <button class="btn btn-ghost small" id="li-back">← Shopping</button>
+      <button class="btn btn-ghost small" id="li-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Shopping</button>
       ${imgs.length?`<div class="li-gallery"><img class="li-main" id="li-main" src="${enc(imgs[0])}" onerror="this.style.display='none'">
         ${imgs.length>1?`<div class="li-thumbs">${imgs.map((u,i)=>`<img class="li-th ${i===0?'on':''}" data-u="${enc(u)}" src="${enc(u)}" onerror="this.remove()">`).join('')}</div>`:''}</div>`:''}
       <div class="li-head">
@@ -3657,9 +3657,9 @@
       <div class="li-by" data-prof="${e.pubkey}"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
       <div class="li-actions">
         ${!mine?`<button class="btn btn-neon" id="li-msg">✉️ Contact seller</button>`:''}
-        ${!mine?`<button class="btn btn-ghost" id="li-zap">⚡ Pay / Zap</button>`:''}
+        ${!mine?`<button class="btn btn-ghost" id="li-zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Pay / Zap</button>`:''}
         ${mine?`<button class="btn btn-ghost" id="li-sold">${sold?'↩ Mark available':'✅ Mark sold'}</button>`:''}
-        ${mine?`<button class="btn btn-ghost" id="li-edit">✏ Edit</button>`:''}
+        ${mine?`<button class="btn btn-ghost" id="li-edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
         ${mine?`<button class="btn btn-ghost" id="li-del" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
         <button class="btn btn-ghost" id="li-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>
       </div>
@@ -3701,7 +3701,7 @@
     let cats = existing?mktCats(existing):[];
     let _slug = g('d') || null;
     feed.innerHTML=`<div class="article-editor">
-      <button class="btn btn-ghost small" id="le-back">← Cancel</button>
+      <button class="btn btn-ghost small" id="le-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Cancel</button>
       <label class="fld">Title<input class="input" id="le-title" placeholder="What are you selling?" value="${enc(g('title'))}"></label>
       <label class="fld">Summary<input class="input" id="le-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
       <div class="le-pricerow">
@@ -3712,14 +3712,14 @@
       <label class="fld">Location<input class="input" id="le-loc" placeholder="City / region (optional)" value="${enc(g('location'))}"></label>
       <div class="fld">Category<div class="mkt-cats" id="le-cats">${MKT_CATS.map(c=>`<button type="button" class="mkt-chip ${cats.includes(c)?'on':''}" data-c="${enc(c)}">${enc(c)}</button>`).join('')}</div></div>
       <div class="fld">Photos<div class="le-imgs" id="le-imgs"></div>
-        <div class="row" style="margin-top:6px"><button type="button" class="btn btn-ghost small" id="le-img-up">🖼 Add photos</button><input type="file" id="le-img-file" accept="image/*" multiple hidden><span class="spacer"></span></div></div>
+        <div class="row" style="margin-top:6px"><button type="button" class="btn btn-ghost small" id="le-img-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Add photos</button><input type="file" id="le-img-file" accept="image/*" multiple hidden><span class="spacer"></span></div></div>
       <label class="fld">Description<textarea id="le-body" class="article-body" placeholder="Describe the item — condition, details… (markdown)">${enc(existing?existing.content:'')}</textarea></label>
       <label class="fld"><input type="checkbox" id="le-sold" ${existing&&mktStatus(existing)==='sold'?'checked':''}> Mark as sold</label>
       <div class="row"><span class="muted small" id="le-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="le-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save draft</button><button class="btn btn-neon" id="le-pub">Publish ▶</button></div>
     </div>`;
     $('#le-back').onclick=()=>switchView('market');
     $$('#le-cats .mkt-chip').forEach(b=> b.onclick=()=>{ const c=b.dataset.c; if(cats.includes(c)) cats=cats.filter(x=>x!==c); else cats.push(c); b.classList.toggle('on'); });
-    const drawImgs=()=>{ const box=$('#le-imgs'); if(!box) return; box.innerHTML=images.map((u,i)=>`<div class="le-img"><img src="${enc(u)}" onerror="this.src='${LOGO}'"><button type="button" class="le-img-x" data-i="${i}">✕</button></div>`).join(''); $$('.le-img-x',box).forEach(x=> x.onclick=()=>{ images.splice(+x.dataset.i,1); drawImgs(); }); };
+    const drawImgs=()=>{ const box=$('#le-imgs'); if(!box) return; box.innerHTML=images.map((u,i)=>`<div class="le-img"><img src="${enc(u)}" onerror="this.src='${LOGO}'"><button type="button" class="le-img-x" data-i="${i}" aria-label="Remove image"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join(''); $$('.le-img-x',box).forEach(x=> x.onclick=()=>{ images.splice(+x.dataset.i,1); drawImgs(); }); };
     drawImgs();
     $('#le-img-up').onclick=()=>$('#le-img-file').click();
     $('#le-img-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#le-status').textContent=`uploading ${i+1}/${files.length}…`; try{ images.push(await uploadBlob(files[i])); drawImgs(); }catch(err){ $('#le-status').textContent='upload failed: '+err.message; ev.target.value=''; return; } } $('#le-status').textContent=''; ev.target.value=''; };
@@ -4182,7 +4182,7 @@
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
       <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
         _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
-      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()">🔗 Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
+      <div class="repo-card-acts">${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">↗ Web</a>`:''}</div>
     </article>`;
   }
   // ---------- NIP-34 repo detail (README + issues + patches) ----------
@@ -4241,9 +4241,9 @@
       ${preview?`<div class="collab-body">${enc(preview)}${clean.length>240?'…':''}</div>`:''}
       <div class="collab-meta"><img class="collab-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${ev.pubkey}"><span class="name" data-prof="${ev.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(ev.created_at)}</span>${canAct?`<span class="spacer"></span>${
         (state==='closed'||state==='resolved')
-          ? `<button class="cf-act" data-id="${ev.id}" data-kind="1630" title="Reopen">↩ Reopen</button>`
+          ? `<button class="cf-act" data-id="${ev.id}" data-kind="1630" title="Reopen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reopen</button>`
           : `<button class="cf-act" data-id="${ev.id}" data-kind="1631" title="Mark resolved">✅ Resolve</button>`
-            +`<button class="cf-act" data-id="${ev.id}" data-kind="1632" title="Close">🔴 Close</button>`
+            +`<button class="cf-act" data-id="${ev.id}" data-kind="1632" title="Close"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Close</button>`
       }`:''}</div>
     </div>`;
   }
@@ -4293,7 +4293,7 @@
     _rv = isGrasp ? {ev:e, cloneUrl, ref:'HEAD', refName:'', refs:null, canWrite:_rvCanWrite(e),
                      filesLoaded:false, commitsLoaded:false, path:''} : null;
     feed.innerHTML=`<div class="repo-view">
-      <button class="btn btn-ghost small" id="repo-back">← Repos</button>
+      <button class="btn btn-ghost small" id="repo-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Repos</button>
       <div class="rv-head">
         <div class="rv-headrow">
           <img class="rv-avatar" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'" data-prof="${e.pubkey}">
@@ -4317,9 +4317,9 @@
         </div>`:''}
       </div>
       <div class="rv-tabs" role="tablist">
-        <button class="rv-tab active" data-tab="readme">📖 README</button>
-        ${isGrasp?`<button class="rv-tab" data-tab="files">📁 Files</button>`:''}
-        ${isGrasp?`<button class="rv-tab" data-tab="commits">🕘 Commits</button>`:''}
+        <button class="rv-tab active" data-tab="readme"><svg class="ic b-ic" aria-hidden="true"><use href="#i-article"></use></svg>README</button>
+        ${isGrasp?`<button class="rv-tab" data-tab="files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>`:''}
+        ${isGrasp?`<button class="rv-tab" data-tab="commits"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Commits</button>`:''}
         <button class="rv-tab" data-tab="issues">🐛 Issues <span class="rv-count" id="rv-c-issues"></span></button>
         <button class="rv-tab" data-tab="patches">🩹 Patches <span class="rv-count" id="rv-c-patches"></span></button>
       </div>
@@ -4673,7 +4673,7 @@
         </summary><div class="df-body" data-ix="${ix}">${f.binary?'<div class="dl dl-meta">Binary file — download it to inspect.</div>':_diffBody(f.patch)}</div></details>`;
     }).join('');
     box.innerHTML=`<div class="cmv">
-      <div class="cmv-top"><button class="btn btn-ghost small" id="cmv-back">← Commits</button>
+      <div class="cmv-top"><button class="btn btn-ghost small" id="cmv-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Commits</button>
         <button class="btn btn-ghost small" id="cmv-copy" title="Copy the full sha"><code>${enc(j.short||'')}</code> ⧉</button></div>
       <h3 class="cmv-subj">${enc(j.subject||'(no message)')}</h3>
       ${j.body?`<pre class="cmv-body">${enc(j.body)}</pre>`:''}
@@ -4752,8 +4752,8 @@
     const dl=_rvUrl('download',{path});
     const acts=`<span class="fb-fvacts">
         <a class="btn btn-ghost small" href="${enc(dl)}" download="${enc(name)}" title="Download this file">⬇ Download</a>
-        <button class="btn btn-ghost small" id="fv-hist" title="Commits that touched this file">🕘 History</button>
-        ${(_rvMayEdit() && !j.binary)?`<button class="btn btn-neon small" id="fv-edit">✏️ Edit</button>`:''}
+        <button class="btn btn-ghost small" id="fv-hist" title="Commits that touched this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>History</button>
+        ${(_rvMayEdit() && !j.binary)?`<button class="btn btn-neon small" id="fv-edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
         ${_rvMayEdit()?`<button class="btn btn-ghost small" id="fv-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
       </span>`;
     const hd=`<div class="fb-fvhd">📄 <span class="fb-fvname">${enc(name)}</span>${acts}</div>`;
@@ -4801,7 +4801,7 @@
           <span class="muted small" id="fe-status">Signed with your Nostr key — the same authority as a push.</span>
           <span class="fb-editbtns">
             <button class="btn btn-ghost small" id="fe-cancel">Cancel</button>
-            <button class="btn btn-neon small" id="fe-save">✓ Commit</button>
+            <button class="btn btn-neon small" id="fe-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>Commit</button>
           </span>
         </div>
       </div></div>`;
@@ -4878,7 +4878,7 @@
       try{ _adoptOwnLive(streams); }catch(_){}   // never let self-adopt break the list render
       const top=`<div class="streams-top">${_liveStream
         ? `<span class="live-badge">● LIVE</span><span class="muted small" id="stream-viewers">👁 …</span><button class="btn btn-ghost small" id="stream-end">■ End stream</button>`
-        : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive">🔴 Go Live</button>` : '')}</div>`;
+        : (!GUEST ? `<button class="btn btn-neon small" id="stream-golive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Go Live</button>` : '')}</div>`;
       feed.innerHTML = top + (streams.length ? `<div class="stream-grid">${streams.map(streamCard).join('')}</div>` : '<div class="empty">No live streams right now.</div>');
       decorateProfiles();
       { const gl=$('#stream-golive',feed); if(gl) gl.onclick=_goLive; const ge=$('#stream-end',feed); if(ge) ge.onclick=_endLive; }
@@ -4930,7 +4930,7 @@
     const saddr=`30311:${hpk}:${dtag}`;   // NIP-53 stream address — the live-chat (kind-1311) `a` tag
     const isMine = !!(ME && e.pubkey===ME.pubkey);
     feed.innerHTML=`<div class="stream-view">
-      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back">← Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip">⚡ Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
+      <div class="row" style="justify-content:space-between"><button class="btn btn-ghost small" id="st-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Streams</button><span style="display:flex;gap:6px">${isMine?'':`<button class="btn btn-neon small" id="st-tip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Tip</button>`}<button class="btn btn-cyan small" id="st-chat-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button>${isMine?`<button class="btn btn-ghost small" id="st-del" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</span></div>
       <h1 class="av-title">${enc(title)}${st==='live'?' <span class="live-badge">● LIVE</span>':''}</h1>
       <div class="av-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${hpk}">${enc(p.name||p.display_name||'anon')}</span>${st?`<span class="muted small">· ${enc(st)}</span>`:''}<span class="muted small" id="st-viewers">${_viewersTag(e)?` · 👁 ${enc(_viewersTag(e))} watching`:''}</span></div>
       <div class="stream-layout${ClientSettings.get('streamChatHidden',false)?' chat-hidden':''}">
@@ -5191,7 +5191,7 @@
     if(!top || feed.querySelector('#ingest-banner')) return;
     const b=document.createElement('div'); b.id='ingest-banner'; b.className='ingest-banner';
     b.innerHTML=`<div>🔴 <b>Your OBS stream is live on the server</b> — but not announced on Nostr yet, so it won’t show on Discover or your profile until you announce it.</div>`
-      +`<div class="ib-row"><input class="input" id="ib-title" placeholder="Stream title" maxlength="120"><button class="btn btn-neon small" id="ib-go">📡 Announce live</button></div>`;
+      +`<div class="ib-row"><input class="input" id="ib-title" placeholder="Stream title" maxlength="120"><button class="btn btn-neon small" id="ib-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Announce live</button></div>`;
     top.after(b);
     feed.querySelector('#ib-go').onclick=async(ev)=>{ const btn=ev.currentTarget; btn.disabled=true;
       const t=(feed.querySelector('#ib-title').value||'').trim()||'Live stream';
@@ -5210,7 +5210,7 @@
       // Not "streaming is off" — streaming works, this account just isn't allowed yet. Offer the ask.
       modal(`<h3>🔴 Go Live</h3><p>${enc(info.message||'Live streaming isn’t enabled for your account yet.')}</p>
         <div class="row" style="margin-top:16px;justify-content:center;gap:10px;flex-wrap:wrap">
-          <button class="btn btn-neon" id="sreq">🔴 Request streaming access</button>
+          <button class="btn btn-neon" id="sreq"><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Request streaming access</button>
           <button class="btn btn-ghost" id="sreqx">Close</button></div>`, root=>{
         $('#sreq',root).onclick=e=>requestStreamAccess(e.target);
         $('#sreqx',root).onclick=()=>closeModal();
@@ -5269,7 +5269,7 @@
         <button class="btn btn-ghost small hidden" id="gl-img-clear">✕ Clear</button></div>
       <input type="hidden" id="gl-img">
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
-      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled>📡 Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
+      <div class="row gl-actions"><button class="btn btn-neon" id="gl-go" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-live"></use></svg>Announce and Stream</button><button class="btn btn-ghost" id="gl-cancel">Close</button></div>`, root=>{
       const title=()=>($('#gl-title',root).value||'').trim()||'Live stream';
       const announce=()=>!!($('#gl-announce',root)||{}).checked;
       const cover=()=>($('#gl-img',root).value||'').trim();
@@ -5577,7 +5577,7 @@
     el.innerHTML=`<div class="pl-badge">● LIVE</div><div class="pl-viewers" id="pl-viewers">👁 0</div>
       <video id="pl-vid" autoplay playsinline muted></video>
       <div class="pl-note" id="pl-note" hidden>🖥 Sharing your screen</div>
-      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button><button class="btn btn-ghost" id="pl-mute">🎤 Mute</button><button class="btn btn-ghost" id="pl-flip">🔄 Flip camera</button><button class="btn btn-ghost" id="pl-screen">🖥 Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
+      <div class="pl-actions"><button class="btn btn-ghost" id="pl-min">▁ Minimize</button><button class="btn btn-ghost" id="pl-chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Chat</button><button class="btn btn-ghost" id="pl-mute"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Mute</button><button class="btn btn-ghost" id="pl-flip"><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Flip camera</button><button class="btn btn-ghost" id="pl-screen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-tv"></use></svg>Share screen</button><button class="btn btn-neon" id="pl-stop">⏹ Stop streaming</button></div>`;
     document.body.appendChild(el);
     _startViewerPoll();
     // A native screen share is captured OUTSIDE the WebView (MediaProjection), so there's no MediaStream to
@@ -6072,7 +6072,7 @@
     const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
     const addr='34550:'+e.pubkey+':'+d;
     feed.innerHTML=`<div class="article-view">
-      <button class="btn btn-ghost small" id="comm-back">← Communities</button>
+      <button class="btn btn-ghost small" id="comm-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Communities</button>
       <h1 class="av-title">${enc(name)}</h1>
       ${desc?`<div class="about">${linkify(desc)}</div>`:''}
       <div class="row"><button class="btn btn-neon small" id="comm-post">✎ Post to this community</button></div>
@@ -6153,11 +6153,11 @@
     const m=_chanMeta(e); $('#view-title').textContent=m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
     feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back">←</button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
       ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
       <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
       <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
-      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image">📎</button>${window.PC_NOSTR_ONLY?'':'<button class="mini" id="ch-translate" title="translate your message">🌐</button>'}<input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
+      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>${window.PC_NOSTR_ONLY?'':'<button class="mini" id="ch-translate" title="translate your message"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg></button>'}<input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
     $('#ch-back').onclick=()=>switchView('chat');
     { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
@@ -6209,9 +6209,9 @@
     const canWrite = VIEW==='channel' || VIEW==='group';
     // 🌐 translate is a personal read-only action (DOM-only, like translatePost), so it's available on
     // every message regardless of write access — but only when the node has the AI backend (not nostr-only).
-    const tr = window.PC_NOSTR_ONLY ? '' : `<button class="chat-mini chat-tr-btn" data-translate="${enc(e.id)}" title="translate">🌐</button>`;
+    const tr = window.PC_NOSTR_ONLY ? '' : `<button class="chat-mini chat-tr-btn" data-translate="${enc(e.id)}" title="translate"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg></button>`;
     const acts = (canWrite
-      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply">↩</button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react">😀</button>`
+      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>`
       : '') + tr;
     // reply context: when this message replies to one already loaded, show a tappable quote line.
     let rq=''; const par=_chatReplyParent(e);
@@ -6337,7 +6337,7 @@
     if(!_chatReplyTo){ bar.classList.add('hidden'); bar.innerHTML=''; return; }
     const msg=_chatMsgs.get(_chatReplyTo)||_groupMsgs.get(_chatReplyTo), p=msg?profOf(msg.pubkey):{};
     bar.classList.remove('hidden');
-    bar.innerHTML=`<span class="muted small">↩ replying to <b>${enc(msg?(p.name||p.display_name||'anon'):'…')}</b>: ${enc(msg?(msg.content||'').replace(/\s+/g,' ').slice(0,50):'')}</span><button class="chat-reply-x" id="chat-reply-x" title="cancel">✕</button>`;
+    bar.innerHTML=`<span class="muted small">↩ replying to <b>${enc(msg?(p.name||p.display_name||'anon'):'…')}</b>: ${enc(msg?(msg.content||'').replace(/\s+/g,' ').slice(0,50):'')}</span><button class="chat-reply-x" id="chat-reply-x" title="cancel"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
     const x=$('#chat-reply-x'); if(x) x.onclick=_clearChatReply;
   }
   // Channel engagement poll: channels keep a live kind-42 sub, but message-targeted kind 7/9735/5
@@ -6446,7 +6446,7 @@
     // Writable now: posting/reacting/joining go out as NIP-42-authed events to the group's relay. The
     // relay rejects non-members, so a "join" button sends a kind-9021 request first.
     feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back">←</button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join">＋ Join</button></div>
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join">＋ Join</button></div>
       ${g.m.about?`<div class="chatroom-about">${linkify(g.m.about)}</div>`:''}
       <div id="grp-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
       <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
@@ -6523,7 +6523,7 @@
     closeMini();   // only one mini at a time
     let mp=$('#mini-player'); if(!mp){ mp=document.createElement('div'); mp.id='mini-player'; mp.className='mini-player'; document.body.appendChild(mp); }
     const title=(ev.tags.find(t=>t[0]==='title')||[])[1]||'stream';
-    mp.innerHTML=`<div class="mini-bar"><span class="mini-title">▶ ${enc(title)}</span><button class="mini-x" id="mini-open" title="back to stream">⤢</button><button class="mini-x" id="mini-close" title="close">✕</button></div>`;
+    mp.innerHTML=`<div class="mini-bar"><span class="mini-title">▶ ${enc(title)}</span><button class="mini-x" id="mini-open" title="back to stream">⤢</button><button class="mini-x" id="mini-close" title="close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`;
     mp.appendChild(v); v.removeAttribute('id');   // MOVE the playing element (hls stays attached → no interruption)
     _miniHls=_streamHls; _streamHls=null;          // hand hls ownership to the mini
     _miniEv=ev; mp.classList.add('on');
@@ -6658,7 +6658,7 @@
     const verifiable = _isTxid(t.txid) && isXmrAddr(t.addr) && _isProofSig(t.proof);
     return `<div class="xmr-tip-badge${verifiable?' has-proof':''}">`
       + `<span class="xt-amt">ɱ ${t.amt?enc(t.amt)+' XMR':'Monero tip'}</span>`
-      + (verifiable ? `<button class="xt-verify" data-xtxid="${enc(t.txid)}" data-xaddr="${enc(t.addr)}" data-xproof="${enc(t.proof)}" title="copy a wallet command to verify this payment yourself">🔐 Copy verify command</button>`
+      + (verifiable ? `<button class="xt-verify" data-xtxid="${enc(t.txid)}" data-xaddr="${enc(t.addr)}" data-xproof="${enc(t.proof)}" title="copy a wallet command to verify this payment yourself"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Copy verify command</button>`
                     : (_isTxid(t.txid) ? `<span class="xt-txid" title="transaction id">tx ${enc(t.txid.slice(0,10))}…</span>` : ''))
       + `</div>`;
   }
@@ -6707,7 +6707,7 @@
         <div class="poll-opts">${optHtml}</div>
         <div class="poll-foot muted small">${multi?'Multiple choice':'Single choice'}${ended?' · ended':''} · <span class="poll-total">…</span></div>
         <div class="acts"><button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n"></span></button>
-          <button class="act actm" data-a="menu" title="more">☰</button></div>
+          <button class="act actm" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button></div>
       </div></article>`;
   }
   async function hydratePolls(scope){
@@ -7158,7 +7158,7 @@
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
-          <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more">☰</button>
+          <button class="act actm ${BOOKMARKS.has(ev.id)?'on':''}" data-a="menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>
         </div>
       </div></article>`;
    }catch(e){ return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post</div></div></article>`; }
@@ -7591,7 +7591,7 @@
     const presets=zapPresets();
     modal(`<h3>⚡ Zap ${enc(p.name||p.display_name||'')}</h3>
       <div class="zap-presets">${presets.map(a=>`<button class="zap-amt" data-amt="${a}">${a>=1000?(a/1000)+'k':a} sats</button>`).join('')}</div>
-      <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go">⚡ Zap</button></div>`,
+      <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button></div>`,
       root=>{
         $$('.zap-amt',root).forEach(b=> b.onclick=()=>{ closeModal(); _runZap(noteId, pk, +b.dataset.amt); });
         $('#zap-go',root).onclick=()=>{ const v=parseInt(($('#zap-custom',root)||{}).value||'0',10); if(v>0){ closeModal(); _runZap(noteId, pk, v); } else toast('enter an amount'); };
@@ -7652,7 +7652,7 @@
         <p class="muted small">Optional — makes the tip publicly verifiable. In your wallet run <code>get_tx_proof &lt;txid&gt; ${enc(addr.slice(0,10))}…</code> and paste both below; anyone can then confirm the payment with <code>check_tx_proof</code>.</p>
         <input class="input" id="xmr-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false">
         <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
-      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them">✓ I sent it</button>`}</div>`,
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
       root=>{
         const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root); let _u=null, _t=null;
         const amtVal=()=>{ const n=parseFloat(amtEl.value); return (isFinite(n)&&n>0)?String(n):''; };   // omit blank / 0 / NaN — never tx_amount=0
@@ -7728,7 +7728,7 @@
       ${GUEST?'':`<details class="xmr-proof"><summary>🔗 Attach the transaction id (optional)</summary>
         <p class="muted small">Optional — makes the tip publicly verifiable on any BCH explorer.</p>
         <input class="input" id="bch-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false"></details>`}
-      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="bch-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="bch-sent" title="post a public tip note crediting them">✓ I sent it</button>`}</div>`,
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="bch-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="bch-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
       root=>{
         const amtEl=$('#bch-amt',root), qrBox=$('#bch-qr',root), openBtn=$('#bch-open',root); let _u=null,_t=null;
         const amtVal=()=>{ const n=parseFloat(amtEl.value); return (isFinite(n)&&n>0)?String(n):''; };   // omit blank / 0 / NaN
@@ -8245,8 +8245,8 @@
       </div>
       <pre class="rawev-json">${_jsonHtml(json)}</pre>
       <div class="row rawev-acts">
-        <button class="btn btn-cyan small" id="rawev-copyid">🔗 Copy nevent</button>
-        <button class="btn btn-neon small" id="rawev-copy">📋 Copy JSON</button>
+        <button class="btn btn-cyan small" id="rawev-copyid"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy nevent</button>
+        <button class="btn btn-neon small" id="rawev-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy JSON</button>
         <button class="btn btn-cyan small" id="rawev-close">Close</button>
       </div>`, root=>{
       const cp=root.querySelector('#rawev-copy');
@@ -8337,7 +8337,7 @@
       try{ await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
-        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-cyan small" id="ss-meme">🎞️ Meme Builder</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
+        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effect</button><button class="btn btn-cyan small" id="ss-meme">🎞️ Meme Builder</button><button class="btn btn-neon small" id="ss-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
           // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
@@ -8446,7 +8446,7 @@
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
     modal('<h3>📝 Summary</h3><div id="sum-body" style="max-height:60vh;overflow:auto;line-height:1.55;white-space:pre-wrap;font-size:15px;overflow-wrap:anywhere"><div class="spinner"></div></div>'+
-          '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-neon small" id="sum-post" disabled>📣 Post summary</button><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
+          '<div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-neon small" id="sum-post" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post summary</button><button class="btn btn-ghost small" id="sum-close">Close</button></div>',
       root=>{ const c=root.querySelector('#sum-close'); if(c) c.onclick=closeModal; });
     const named=e=>{ const p=profOf(e.pubkey); const nm=p.name||p.display_name||NT().nip19.npubEncode(e.pubkey).slice(0,12); return nm+': '+((mediaParts(e.content).text||e.content||'').trim()); };
     try{
@@ -8582,7 +8582,7 @@
       <div class="fxs-hd">
         <div class="fxs-title"><div><h3>💡 What can I do?</h3>
           <div class="muted small">${n} commands · tap one to start it${cat.effects_count?` · plus ${cat.effects_count} effects in the Effects studio`:''}</div></div>
-          <button type="button" class="fxs-x" id="cmds-close" aria-label="Close">✕</button></div>
+          <button type="button" class="fxs-x" id="cmds-close" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
         <input class="input fxs-search" id="cmds-q" placeholder="Search commands…" autocomplete="off">
       </div>
       <div class="fxs-body" id="cmds-body">
@@ -8591,7 +8591,7 @@
         <div class="fxs-empty hidden" id="cmds-none">Nothing matches that.</div>
       </div>
       <div class="fxs-ft"><code class="fxs-cmd muted" id="cmds-pick">tap a command</code>
-        <div class="fxs-acts">${cat.effects_count?'<button class="btn btn-ghost small" id="cmds-fx">🎬 Effects…</button>':''}</div></div>
+        <div class="fxs-acts">${cat.effects_count?'<button class="btn btn-ghost small" id="cmds-fx"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>Effects…</button>':''}</div></div>
     </div>`, root=>{
       root.classList.add('fxs-modal');
       if(root.parentElement) root.parentElement.classList.add('fxs-bg');
@@ -8641,7 +8641,7 @@
       <div class="fxs-hd">
         <div class="fxs-title">${thumb}<div><h3>🎬 Effects studio</h3>
           <div class="muted small">Pick one base effect · motion and caption stack on top.</div></div>
-          <button type="button" class="fxs-x" id="fxs-close" aria-label="Close">✕</button></div>
+          <button type="button" class="fxs-x" id="fxs-close" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
         <input class="input fxs-search" id="fxs-q" placeholder="Search ${effects.length} effects…" autocomplete="off">
       </div>
       <div class="fxs-body">
@@ -8662,7 +8662,7 @@
         <code class="fxs-cmd" id="fxs-cmd"></code>
         <div class="fxs-acts">
           <button class="btn btn-ghost small" id="fxs-clear">Clear</button>
-          <button class="btn btn-neon" id="fxs-go">▶ Apply</button>
+          <button class="btn btn-neon" id="fxs-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Apply</button>
         </div>
       </div>
     </div>`, root=>{
@@ -8946,7 +8946,7 @@
         <div class="draft-foot"><span class="muted small df-meta">${ctx} saved ${timeAgo(d.ts)}</span>
           <span class="spacer"></span>
           <div class="draft-actions">
-            <button class="btn btn-cyan small" data-act="edit">✏ Edit</button>
+            <button class="btn btn-cyan small" data-act="edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>
             <button class="btn btn-red small" data-act="del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
             <button class="btn btn-cyan small" data-act="send">Send ▶</button>
           </div></div></div>`;
@@ -9292,16 +9292,16 @@
     };
     let qhtml = quote ? _cmpCtx(quote,'Quoting') : (reply ? _cmpCtx(reply,'Replying to') : '');
     modal(`<h3>${title}</h3>${qhtml}
-      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview">👁 Preview</button></div>
+      <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react">😀 React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools">🤖 AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px">💾 Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
+      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-block;margin:0 5px 6px;min-width:120px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
@@ -10507,10 +10507,10 @@
   async function open4chanThread(board, id){
     const feed=$('#feed');
     feed.innerHTML = `<div class="fc-thread-top">
-        <button class="btn btn-ghost small" id="fc-back">← /${enc(board)}/</button>
+        <button class="btn btn-ghost small" id="fc-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>/${enc(board)}/</button>
         <a class="btn btn-ghost small" href="https://boards.4chan.org/${enc(board)}/thread/${enc(id)}" target="_blank" rel="noopener">Open on 4chan ↗</a>
         <button class="btn btn-cyan small" id="fc-sum">✨ Summarize</button>
-        <button class="btn btn-neon small" id="fc-share">🚀 Share</button>
+        <button class="btn btn-neon small" id="fc-share"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Share</button>
       </div>
       <div class="fc-summary hidden" id="fc-summary"></div>
       <div class="fc-posts" id="fc-posts"><div class="spinner"></div></div>`;
@@ -10589,8 +10589,8 @@
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
         <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public">🌸 Public</button>
-        <button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai">🤖 AI Chat</button>
-        ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin">🛡️ Admin</button>`:''}
+        <button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>
+        ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
       </div><div id="files-pane"></div>`;
     $$('.ftab',feed).forEach(b=> b.onclick=()=>{ _filesAdminPk=null; _filesTab=b.dataset.ft; renderBlossom(); });
     const pane=$('#files-pane',feed);
@@ -10646,7 +10646,7 @@
         <img src="${enc(p.picture||LOGO)}" class="badm-prof" data-pk="${pk}" style="width:28px;height:28px;border-radius:50%;cursor:pointer" onerror="this.src='${LOGO}'">
         <b class="badm-prof" data-pk="${pk}" style="cursor:pointer">${enc(nm)}</b>
         <span style="flex:1"></span>
-        <button class="btn small danger" id="badm-purge">🗑️ Purge all</button>
+        <button class="btn small danger" id="badm-purge"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Purge all</button>
       </div><div class="files-grid" id="badm-grid"><div class="spinner"></div></div>`;
     $('#badm-back',pane).onclick=()=>{ _filesAdminPk=null; renderBlossom(); };
     $$('.badm-prof',pane).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.pk));
@@ -10873,14 +10873,14 @@
     catch(e){ console.warn('blossom: upload probe failed', e); canUp=true; }   // inconclusive → let the real PUT decide
     const folders=FilesIdx.folders();
     const folderBar = `<div class="folder-bar">
-        <button class="folder-chip${_filesFolder===''?' active':''}" data-folder="">🗂 All</button>
+        <button class="folder-chip${_filesFolder===''?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder">＋ New folder</button>
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
       ? `${folderBar}<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
-          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder">📁 choose folder</button>
+          <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
           <div class="muted small">→ ${_filesFolder?((FilesIdx.isEncFolder(_filesFolder)?'🔒 ':'📁 ')+enc(_filesFolder)):'All files'} · uploaded one at a time${_filesFolder==='Music'?' · non-audio skipped':(FilesIdx.isEncFolder(_filesFolder)?' · encrypted on this device':'')}</div></div>
           <div class="up-queue" id="bl-queue"></div></div>`
       : `${folderBar}<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
@@ -10985,8 +10985,8 @@
     bar.innerHTML = `<button class="btn btn-ghost small" id="bl-selall">${allSel?'☑':'☐'} Select all${vis.length?' ('+vis.length+')':''}</button>`
       + `<button class="btn btn-ghost small" id="bl-selnone"${n?'':' disabled'}>✖ Select none</button>`
       + `<span class="muted small" style="margin:0 4px">${n?(n+' selected'):'none selected'}</span>`
-      + `<button class="btn btn-cyan small" id="bl-seldl"${n?'':' disabled'}>⬇ Download</button>`
-      + `<button class="btn btn-cyan small" id="bl-selmove"${n?'':' disabled'}>📁 Move</button>`
+      + `<button class="btn btn-cyan small" id="bl-seldl"${n?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`
+      + `<button class="btn btn-cyan small" id="bl-selmove"${n?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Move</button>`
       + `<button class="btn btn-neon small" id="bl-seldel"${n?'':' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`;
     bar.querySelector('#bl-selall').onclick=()=>{ if(allSel) vis.forEach(sha=>_filesSel.delete(sha)); else vis.forEach(sha=>_filesSel.add(sha)); _renderFilesGrid(grid, list); };
     bar.querySelector('#bl-selnone').onclick=()=>{ _filesSelClear(); _renderFilesGrid(grid, list); };
@@ -11082,13 +11082,13 @@
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         return `<div class="file-card enc${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
-          <button class="del" data-sha="${b.sha256}">✕</button>
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts"><button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
+          <button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts"><button class="dlbtn dlenc" data-sha="${b.sha256}" data-name="${enc(dlName)}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button></span></div></div>`;
       }
       return `<div class="file-card${_filesSel.has(b.sha256)?' selected':''}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
         <input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">
-        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}">✕</button>
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}">⬇</button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder">📁</button></span></div></div>`;
+        <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button><button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(b.url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button><button class="movebtn" data-sha="${b.sha256}" title="Move to folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button></span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;margin:10px auto;display:block">↓ Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>';
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
@@ -11363,11 +11363,11 @@
     const tracks=musicTracks(list);
     grid.className='music-list';
     grid.innerHTML = tracks.length ? tracks.map(t=>`<div class="track" data-sha="${t.sha}">
-        <button class="track-play" data-sha="${t.sha}">▶</button>
+        <button class="track-play" data-sha="${t.sha}" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
         <span class="track-name">${enc(t.m.name||'track')}</span>
         <span class="track-meta">🔒 ${(((t.m.size||0)/1048576)).toFixed(1)}MB</span>
-        <button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)">⬇</button>
-        <button class="track-del" data-sha="${t.sha}" title="Delete">✕</button>
+        <button class="track-dl" data-sha="${t.sha}" data-name="${enc((t.m.name||'track')+'.ogg')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>
+        <button class="track-del" data-sha="${t.sha}" title="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>`).join('') : '<div class="empty">No music yet — drop audio files here. They\'re Opus-compressed + encrypted automatically.</div>';
     $$('.track-play',grid).forEach(b=> b.onclick=()=>MusicPlayer.play(b.dataset.sha));
     // A track is stored as Opus ciphertext, so "download" means decrypt-then-save — same path the
@@ -11455,12 +11455,12 @@
         d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play">${pl}</button><button class="mp-exp" title="Expand">▢</button>`;
       } else {
         d.className='mp'+(playing?' playing':'');
-        d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close">✕</button></div>
+        d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize">▁</button><button class="mp-close" title="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
           <canvas class="mp-viz"></canvas>
           <div class="mp-now" title="${enc(name)}">${enc(name)}</div>
           <div class="mp-seek"><div class="mp-seek-fill"></div></div>
           <div class="mp-time"><span class="mp-cur">0:00</span><span class="mp-dur">0:00</span></div>
-          <div class="mp-controls"><button class="mp-prev" title="Previous">⏮</button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next">⏭</button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle">🔀</button></div>
+          <div class="mp-controls"><button class="mp-prev" title="Previous">⏮</button><button class="mp-play mp-big">${pl}</button><button class="mp-next" title="Next">⏭</button><button class="mp-shuffle${this.shuffle?' on':''}" title="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button></div>
           <div class="mp-search-row"><input class="mp-search" type="search" placeholder="🔍 Search tracks…" value="${enc(this._search||'')}"></div>
           <div class="mp-list">${this._listHtml()}</div>`;
       }
@@ -11569,7 +11569,7 @@
         const url=_absUrl(f.url);
         const thumb=isImg?`<img src="${enc(thumbUrl(url))}" loading="lazy">`:`<div class="file-icon">📎<span>${enc((f.mime.split('/')[1]||'file').slice(0,8))}</span></div>`;
         const dlName=downloadName({sha256:f.sha, type:f.mime, url}, f.name, '');
-        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}">✕</button><div class="meta"><span class="fname" title="${enc(f.name||'')}">${enc(fileLabel(f.name, extOfBlob({url, type:f.mime}, {name:f.name}), 0))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}">⬇</button></span></div></div>`;
+        return `<div class="file-card" data-sha="${enc(f.sha)}"><a href="${enc(url)}" data-mime="${enc(f.mime||'')}" target="_blank">${thumb}</a><button class="copy" data-url="${enc(url)}" title="Copy URL">⧉</button><button class="del" data-sha="${enc(f.sha)}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button><div class="meta"><span class="fname" title="${enc(f.name||'')}">${enc(fileLabel(f.name, extOfBlob({url, type:f.mime}, {name:f.name}), 0))}</span><span class="fc-acts"><button class="dlbtn" data-url="${enc(url)}" data-name="${enc(dlName)}" title="Download ${enc(dlName)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button></span></div></div>`;
       }).join('')}</div>`;
     $$('.del',pane).forEach(b=> b.onclick=()=>delAiFile(b.dataset.sha));
     $$('.copy',pane).forEach(b=> b.onclick=()=>copyUrl(b.dataset.url));
@@ -12354,8 +12354,8 @@
       if(!imgs.length){ strip.hidden=true; strip.innerHTML=''; return; }
       strip.hidden=false;
       strip.innerHTML=imgs.map(u=> NO_IMAGES
-        ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove">✕</button></span>`
-        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.closest('.dm-att')&&this.closest('.dm-att').remove()"><button class="dm-att-x" title="remove">✕</button></span>`).join('');
+        ? `<span class="dm-att ds" data-url="${enc(u)}">🖼 image<button class="dm-att-x" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`
+        : `<span class="dm-att" data-url="${enc(u)}"><img src="${enc(u)}" loading="lazy" onerror="this.closest('.dm-att')&&this.closest('.dm-att').remove()"><button class="dm-att-x" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`).join('');
       strip.querySelectorAll('.dm-att-x').forEach(b=> b.onclick=()=>{ removeOne(b.closest('.dm-att').dataset.url); sync(); inp.focus(); }); };
     inp.addEventListener('input', sync);
     inp.addEventListener('paste', async e=>{
@@ -12461,7 +12461,7 @@
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
       <div class="dm-atts" id="dm-atts-new" hidden></div>
-      <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif">🎬 GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files">🌸 Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
       const _newSync=wireImgAttach(body, $('#dm-atts-new',root));   // paste-to-attach + preview strip here too
@@ -12547,7 +12547,7 @@
     bar.hidden = false;
     bar.innerHTML = `<div class="dm-rb-body"><span class="dm-rb-who">${_dmReply.mine?'Replying to yourself':'Replying'}</span>
       <span class="dm-rb-txt">${enc(_dmQuoteOf(_dmReply.text))}</span></div>
-      <button class="mini" id="dm-rb-x" title="Cancel reply" aria-label="Cancel reply">✕</button>`;
+      <button class="mini" id="dm-rb-x" title="Cancel reply" aria-label="Cancel reply"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
     const x=$('#dm-rb-x',bar); if(x) x.onclick=()=>{ _dmReply=null; _dmReplyBanner(); const i=$('#dm-in'); if(i) i.focus(); };
   }
   function _dmMsgMenu(anchorEl, pk, mid){
@@ -12610,7 +12610,7 @@
     const _fresh = (_dmLastPk !== pk);
     const _atBottom = _fresh || !_prev || (_prev.scrollHeight - _prev.scrollTop - _prev.clientHeight < 80);
     const _wantTop=_dmScrollTop;   // "load older" wants to stay at the top after this render
-    const older = start>0 ? `<button class="dm-older" id="dm-older">⬆ Load older (${start})</button>` : '';
+    const older = start>0 ? `<button class="dm-older" id="dm-older"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg>Load older (${start})</button>` : '';
     // Paint the thread chrome + bubbles IMMEDIATELY, BEFORE decrypting. Decryption is ECDH+AES in the
     // crypto worker, which on a throttled/high-latency link is often busy verifying the incoming feed —
     // awaiting it first left the whole pane blank ("clicked and no messages show"). Undecrypted bubbles
@@ -12638,15 +12638,15 @@
         + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
     };
-    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back">←</button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
+    wrap.innerHTML=`<div class="topbar"><button class="mini" id="dm-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button> <b class="dm-peer-name name" data-prof="${pk}" style="cursor:pointer">${emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'))}</b><span class="spacer"></span><button class="mini" id="dm-mute" title="Mute this sender">${MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'}</button></div>
       <div class="dm-msgs" id="dm-msgs">${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}</div>
       <div class="dm-compose">
         <div class="dm-replybar" id="dm-replybar" hidden></div>
         <div class="dm-atts" id="dm-atts" hidden></div>
         <div class="dm-row">
-          <button class="mini" id="dm-attach" title="attach">📎</button>
+          <button class="mini" id="dm-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
           <button class="mini" id="dm-files" title="your Blossom files">🌸</button>
-          ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF">🎬</button>`:''}
+          ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg></button>`:''}
           <input type="file" id="dm-file" multiple hidden>
           <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…"></textarea>
           <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send">➤</button>
@@ -12800,16 +12800,16 @@
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-        <div class="prof-actions">${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`:`
+        <div class="prof-actions">${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
-          <button class="btn btn-ghost small" id="zap-prof">⚡ Zap</button>
+          <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
           ${isBchAddr(bchOf(p))?`<button class="btn btn-ghost small" id="bchtip-prof" title="tip Bitcoin Cash (BCH)">🟢 Tip</button>`:''}
-          <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more">☰</button>`}</div></div>
+          <button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`}</div></div>
       <div class="pbody"><h2>${emojiName(pk,p.name||p.display_name||'anon')}<span class="vchk" id="prof-vchk"></span></h2>
         ${niceNip05(p.nip05)?`<div class="muted small">${enc(niceNip05(p.nip05))}</div>`:''}
         <div class="npubrow"><code>${enc(npub.slice(0,24))}…</code><button class="mini icon-btn" id="copy-npub" title="Copy npub"><svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M0 0h6v6H0zM2 2v2h2V2zM10 0h6v6h-6zM12 2v2h2V2zM0 10h6v6H0zM2 12v2h2v-2zM9 9h2v2H9zM13 9h3v2h-3zM9 13h2v3H9zM12 12h4v4h-2v-2h-2z"/></svg></button></div>
-        ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap">⚡ ${enc(p.lud16)}</button>`:''}
+        ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)">🟢 ${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
         <div class="about">${linkify(p.about||'')}</div>
@@ -13164,7 +13164,7 @@
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
-      <div class="row"><button class="btn btn-cyan small" id="pf-up">🖼 Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
+      <div class="row"><button class="btn btn-cyan small" id="pf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —
       // e.g. the signup publish lost the race with the first socket. The name is a public read, so
       // prefill the empty field with it: the verified handle is then one Save away instead of a
@@ -13432,9 +13432,9 @@
         </div>
         <textarea class="input" id="np-input" rows="2"></textarea>
         <div class="np-egs" id="np-egs"></div>
-        <div class="np-run"><span class="muted small np-hint">Ctrl+Enter to run</span><button class="btn btn-ghost small" id="np-save-cur" title="Save this task to run again later">⭐ Save task</button><button class="btn btn-neon" id="np-go">▶ Run</button></div>
+        <div class="np-run"><span class="muted small np-hint">Ctrl+Enter to run</span><button class="btn btn-ghost small" id="np-save-cur" title="Save this task to run again later">⭐ Save task</button><button class="btn btn-neon" id="np-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Run</button></div>
         <div class="np-tabs">
-          <button class="np-tab active" data-tab="recent">🕘 Recent jobs</button>
+          <button class="np-tab active" data-tab="recent"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Recent jobs</button>
           <button class="np-tab" data-tab="saved">⭐ Saved</button>
         </div>
         <div class="np-tabpanel" data-panel="recent">
@@ -13478,7 +13478,7 @@
           <span class="nj-ic">${t.mode==='agent'?'🤖':'⌨️'}</span>
           <span class="np-saved-name" title="${enc(_agentTaskCmd(t))}">${enc(t.name||t.text)}</span>
           <span class="np-saved-tgt muted small">${enc(t.all?'all':(t.node||'local'))}</span>
-          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}">▶ Run</button><button class="btn btn-ghost small nps-edit" data-i="${i}" title="Edit this task">✏️</button><button class="btn btn-red small nps-del" data-i="${i}" title="Delete this task">🗑</button></span>
+          <span class="nj-acts"><button class="btn btn-neon small nps-run" data-i="${i}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Run</button><button class="btn btn-ghost small nps-edit" data-i="${i}" title="Edit this task"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button><button class="btn btn-red small nps-del" data-i="${i}" title="Delete this task"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></span>
         </div>`;
         const editHtml=(t,i)=>`<div class="np-saved-edit" data-i="${i}">
           <label class="fld">Name<input class="input" id="nse-name" value="${enc(t.name||'')}" placeholder="e.g. Nightly disk check"></label>
@@ -13492,7 +13492,7 @@
             <label class="np-all"><input type="checkbox" id="nse-all"${t.all?' checked':''}> All nodes</label>
           </div>
           <textarea class="input" id="nse-text" rows="3" placeholder="What should this task do?">${enc(t.text||'')}</textarea>
-          <div class="np-run"><button class="btn btn-ghost small" id="nse-cancel">Cancel</button><button class="btn btn-neon small" id="nse-save">✓ Save</button></div>
+          <div class="np-run"><button class="btn btn-ghost small" id="nse-cancel">Cancel</button><button class="btn btn-neon small" id="nse-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>Save</button></div>
         </div>`;
         savedBox.innerHTML=list.map((t,i)=> i===editIdx ? editHtml(t,i) : rowHtml(t,i)).join('');
         savedBox.querySelectorAll('.nps-run').forEach(b=> b.onclick=()=>{ const t=_agentSavedGet()[+b.dataset.i]; if(t) _nodeRun(_agentTaskCmd(t), true); });
@@ -13537,15 +13537,15 @@
   async function aiMount(feed){
     _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none">🤖</button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration">🔊</button><button class="btn btn-ghost small" id="ai-del" title="delete this chat">🗑️</button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
-        <button class="mini" id="ai-attach" title="attach">📎</button><input type="file" id="ai-file" multiple hidden>
+        <button class="mini" id="ai-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><input type="file" id="ai-file" multiple hidden>
         <button class="mini" id="ai-make" title="Make something (image, song, video…)">✨</button>
-        <button class="mini" id="ai-mic" title="Voice input (speech-to-text)">🎤</button>
+        <button class="mini" id="ai-mic" title="Voice input (speech-to-text)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
-        <button class="btn btn-neon" id="ai-send">▶</button>
+        <button class="btn btn-neon" id="ai-send" aria-label="Send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
       </div>
     </div>`;
     _ai.attach=[];
@@ -13916,12 +13916,12 @@
       <div class="fxs-hd">
         <div class="fxs-title"><div><h3>${G.icon} ${enc(G.title)}</h3>
           <div class="muted small">${enc(G.blurb)}</div></div>
-          <button type="button" class="fxs-x" id="gen-x" aria-label="Close">✕</button></div>
+          <button type="button" class="fxs-x" id="gen-x" aria-label="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
       </div>
       <div class="fxs-body">
         ${G.file ? `
         <div class="fxs-sec">📎 ${G.multi?'Your files':'Your file'}</div>
-        <button type="button" class="btn btn-ghost full gen-file-btn" id="gen-file-btn">📎 Choose ${G.multi?'files':'a file'}</button>
+        <button type="button" class="btn btn-ghost full gen-file-btn" id="gen-file-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Choose ${G.multi?'files':'a file'}</button>
         <input type="file" id="gen-file" accept="${enc(G.accept||'')}" ${G.multi?'multiple':''} hidden>
         <div class="gen-file-list muted small" id="gen-file-list"></div>
         ${(G.extra||[]).map(([id,label,ph])=>`<div class="fxs-sec">${enc(label)}</div>
@@ -13946,7 +13946,7 @@
           <textarea class="input gen-lyrics" id="gen-lyrics" rows="3" placeholder="[verse]&#10;your words here…"></textarea>`:''}
       </div>
       <div class="fxs-ft"><code class="fxs-cmd muted" id="gen-cmd">${G.kind==='url'?'paste a link first':'describe something first'}</code>
-        <div class="fxs-acts"><button class="btn btn-neon" id="gen-go" disabled>▶ ${enc(G.go||'Generate')}</button></div></div>
+        <div class="fxs-acts"><button class="btn btn-neon" id="gen-go" disabled><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>${enc(G.go||'Generate')}</button></div></div>
     </div>`, root=>{
       root.classList.add('fxs-modal');
       if(root.parentElement) root.parentElement.classList.add('fxs-bg');
@@ -14312,7 +14312,7 @@
       <div class="lt-log" id="lt-log"><div class="lt-hint muted">Pick the two languages, then tap the mic and speak. Either person can talk — it auto-detects and translates to the other side.</div></div>
       <div class="lt-foot">
         <button id="lt-speak" class="lt-speak" title="speak the translation aloud">${_ltSpeak?'🔊':'🔇'}</button>
-        <button id="lt-mic" class="lt-mic" aria-label="tap to speak">🎤</button>
+        <button id="lt-mic" class="lt-mic" aria-label="tap to speak"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
         <span id="lt-status" class="lt-status muted"></span>
       </div></div>`;
     const save=()=>{ _ltSavePair({ a:$('#lt-a').value, b:$('#lt-b').value }); };
@@ -14338,7 +14338,7 @@
     const h=log.querySelector('.lt-hint'); if(h) h.remove();
     const el=document.createElement('div'); el.className='lt-turn';
     el.innerHTML=`<div class="lt-src"><span class="lt-tag">${_ltFlag(srcLang)} ${enc(_ltName(srcLang))}</span>${enc(original)}</div>`
-      +`<div class="lt-tr"><button class="lt-replay" title="play the translation again" aria-label="replay">🔊</button>`
+      +`<div class="lt-tr"><button class="lt-replay" title="play the translation again" aria-label="replay"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button>`
       +`<span class="lt-tag">${_ltFlag(tgtLang)} ${enc(_ltName(tgtLang))}</span>${enc(translated)}</div>`;
     // Replay always plays (even when auto-speak is off). Clear the cancel flag first: it's an explicit
     // on-view action, and the flag can linger true after a navigate-away (would otherwise mute ltSpeak).
@@ -14551,7 +14551,7 @@
     // [Add](magnet:<url-encoded magnet>) → an add-torrent button. (cmd: hrefs contain spaces that
     // would break markdown link parsing, so stash them BEFORE mdToHtml runs.)
     src=src.replace(/\[([^\]]+)\]\(cmd:([^)]+)\)/g,(m,label,cmd)=>stash(`<button class="ai-cmd" data-cmd="${enc(cmd.trim())}">${enc(label)}</button>`));
-    src=src.replace(/\[([^\]]+)\]\(magnet:([^)\s]+)\)/g,(m,label,mag)=>{ let u=mag; try{ u=decodeURIComponent(mag); }catch(_){} return stash(`<button class="ai-magnet" data-magnet="${enc(u)}">🧲 ${enc(label)}</button>`); });
+    src=src.replace(/\[([^\]]+)\]\(magnet:([^)\s]+)\)/g,(m,label,mag)=>{ let u=mag; try{ u=decodeURIComponent(mag); }catch(_){} return stash(`<button class="ai-magnet" data-magnet="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>${enc(label)}</button>`); });
     src=src.replace(/magnet:\?[^\s)<]+/gi,u=>stash(`<button class="ai-magnet" data-magnet="${enc(u)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Add torrent</button>`));
     let html=mdToHtml(src);
     return html.replace(/ S(\d+) /g,(m,i)=>slots[+i]||'');
@@ -14858,7 +14858,7 @@
       return head+'<div class="ai-pins">'+d.saved_searches.map(p=>{
         const run=p.run||('search '+(p.query||''));
         return `<div class="ai-pin"><div class="ai-pin-q">📌 ${enc(p.query||run)}</div>`
-          +`<div class="ai-pin-btns"><button class="ai-cmd" data-cmd="${enc(run)}">▶ Run</button>`
+          +`<div class="ai-pin-btns"><button class="ai-cmd" data-cmd="${enc(run)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg>Run</button>`
           +`<button class="ai-cmd ai-cmd-danger" data-cmd="pin delete ${enc(String(p.id))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button></div></div>`;
       }).join('')+'</div>';
     }
@@ -14872,7 +14872,7 @@
           `<div class="ai-pin"><div class="ai-pin-q">⏰ ${enc(r.text||'')}`
           +`<div class="muted small">${enc(r.human||'')}</div></div>`
           +`<div class="ai-pin-btns"><button class="ai-cmd ai-cmd-danger" `
-          +`data-cmd="remind cancel ${enc(String(r.id))}">🗑 Cancel</button></div></div>`).join('')+'</div>';
+          +`data-cmd="remind cancel ${enc(String(r.id))}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Cancel</button></div></div>`).join('')+'</div>';
     }
     if(d.type==='files' && Array.isArray(d.files)){
       const arr=d.files;
@@ -14967,7 +14967,7 @@
     // clear stale chips first — else removing the LAST attachment leaves its chip in the DOM
     // (aiUpdateLinkActions only wipes the bar when it had link-actions), so the ✕ looks dead.
     if(!_ai.attach.length){ bar.innerHTML=''; delete bar.dataset.link; aiUpdateLinkActions(); return; }
-    const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x">✕</button></span>`).join('');
+    const chips=_ai.attach.map((a,i)=>`<span class="ai-chip">${enc(a.name)} <button data-i="${i}" class="ai-chip-x" aria-label="Remove attachment"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></span>`).join('');
     const acts=_aiAttachActions();
     const actions='<div class="fx-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">'+
       acts.map((a,i)=>`<button class="fx-mot fx-act" data-i="${i}">${enc(a[0])}</button>`).join('')+'</div>';
@@ -15072,12 +15072,12 @@
           <div class="muted small">${enc(ME.npub.slice(0,20))}… · <span title="client build — the app.js ?v timestamp; matches on a fresh load">build ${_clientBuild()}</span></div></div></div>
         <div class="set-body">
           <div class="set-actions">
-            <button class="btn btn-ghost small" id="set-copy-npub">🔑 Copy npub</button>
-            ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin" style="color:var(--neon,#0ff)">🛠️ Admin panel</button>`:''}
-            ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b">🔓 Show private key (nsec)</button>`:''}
-            <button class="btn btn-ghost small hidden" id="set-google-link">🔑 Sign in with Google on other devices</button>
+            <button class="btn btn-ghost small" id="set-copy-npub"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Copy npub</button>
+            ${IS_ADMIN?`<button class="btn btn-ghost small" id="set-admin" style="color:var(--neon,#0ff)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-gear"></use></svg>Admin panel</button>`:''}
+            ${ME.mode==='local'?`<button class="btn btn-ghost small" id="set-show-nsec" style="color:#ffcf2b"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Show private key (nsec)</button>`:''}
+            <button class="btn btn-ghost small hidden" id="set-google-link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Sign in with Google on other devices</button>
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my posts to this relay</button>
-            <button class="btn btn-ghost small" id="set-logout">🚪 Logout</button>
+            <button class="btn btn-ghost small" id="set-logout"><svg class="ic b-ic" aria-hidden="true"><use href="#i-logout"></use></svg>Logout</button>
             <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all my notes</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete my account</button>
           </div>
@@ -15093,14 +15093,14 @@
             : 'Available when you sign in on this device with your key (nsec). Extension / remote-signer sessions can’t sign for another device.'}</div>
         </div></div>
         <div class="set-body">
-          <button class="btn btn-neon small" id="set-scan-qr">📷 Scan QR code</button>
+          <button class="btn btn-neon small" id="set-scan-qr"><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
         </div>
       </section>
       <section class="set-card">
         <div class="set-head"><div><div class="set-title">🔔 Notifications</div>
           <div class="muted small">Push notifications for mentions, replies, reactions and zaps — delivered even when the app is closed.</div></div></div>
         <div class="set-body">
-          <button class="btn btn-neon small" id="set-push-toggle">🔔 Enable push notifications</button>
+          <button class="btn btn-neon small" id="set-push-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bell"></use></svg>Enable push notifications</button>
           <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
         </div>
       </section>
@@ -15127,7 +15127,7 @@
         modal(`<h3>🔓 Your private key (nsec)</h3>
           <p class="muted small" style="color:#ff9b6b">Anyone with this key has FULL control of your account. Never share it. Store it somewhere safe — it's the only way to recover your account.</p>
           <div class="keyrow"><code id="nsec-val">${enc(nsec)}</code></div>
-          <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy">📋 Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
+          <div class="set-actions"><button class="btn btn-neon small" id="nsec-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy nsec</button><button class="btn btn-ghost small" id="nsec-close">Close</button></div>`,
           root=>{
             $('#nsec-copy',root).onclick=async()=>{ try{ await navigator.clipboard.writeText(nsec); toast('nsec copied — keep it secret!'); }catch(_){ window.prompt('Your nsec (copy it):', nsec); } };
             $('#nsec-close',root).onclick=closeModal;
@@ -15370,7 +15370,7 @@
         </div>
         <div class="us-pane" data-pane="zaps">
           <div class="muted small">Got the <b>Alby</b> (or any WebLN) browser extension? Zaps already use it — just tap ⚡. Otherwise connect a wallet with a <b>Nostr Wallet Connect</b> string (NIP-47) — handy on mobile or with Alby Hub / Coinos / Primal. Stored only in this browser.</div>
-          <div class="set-actions"><button class="btn btn-cyan small" id="set-webln">⚡ Connect Alby / WebLN extension</button></div>
+          <div class="set-actions"><button class="btn btn-cyan small" id="set-webln"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Connect Alby / WebLN extension</button></div>
           <input class="input" id="set-nwc" type="password" placeholder="nostr+walletconnect://… (for wallets without an extension)" value="${enc(ClientSettings.get('nwc',''))}">
           <div class="set-actions"><button class="btn btn-neon small" id="set-nwc-save">Save wallet</button>
             <button class="btn btn-cyan small" id="set-nwc-clear">Disconnect</button></div>
@@ -15713,7 +15713,7 @@
       <input class="input" data-f="smtp_server" placeholder="SMTP server" value="${enc(a.smtp_server||'')}">
       <input class="input" data-f="smtp_port" placeholder="587" value="${enc(String(a.smtp_port||587))}">
       <input class="input" data-f="password" type="password" placeholder="${a.password?'•••• (kept — blank keeps it)':'password'}">
-      <button class="mini us-mail-del" data-i="${i}" title="remove">✕</button></div>`).join('');
+      <button class="mini us-mail-del" data-i="${i}" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join('');
     $$('.us-mail-del',wrap).forEach(b=> b.onclick=()=>{ _usMail.splice(+b.dataset.i,1); usRenderMail(); });
   }
   function usCollectMail(){
@@ -15731,7 +15731,7 @@
   function niceImport(){ const p=Store.profile(ME.pubkey)||{}; return p.nip05?String(p.nip05).replace(/^_@/,''):''; }
   function drawRelayRows(){
     const wrap=$('#set-relay-list'); if(!wrap) return;
-    wrap.innerHTML = _setRelays.map((u,i)=>`<div class="relay-row"><span class="rr-dot"></span><input class="input" value="${enc(u)}" placeholder="wss://relay.example.com" data-i="${i}"><button class="mini rr-del" data-i="${i}" title="remove">✕</button></div>`).join('');
+    wrap.innerHTML = _setRelays.map((u,i)=>`<div class="relay-row"><span class="rr-dot"></span><input class="input" value="${enc(u)}" placeholder="wss://relay.example.com" data-i="${i}"><button class="mini rr-del" data-i="${i}" title="remove"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join('');
     $$('.rr-del',wrap).forEach(b=> b.onclick=()=>{ _setRelays = $$('#set-relay-list input').map(x=>x.value.trim()); _setRelays.splice(+b.dataset.i,1); if(!_setRelays.length)_setRelays=['']; drawRelayRows(); });
   }
   // Normalize a relay URL: default a bare host to wss://, keep an explicit ws://, strip trailing /
@@ -15898,7 +15898,7 @@
     // was the one that never did, which is why an issue opened from a repo had no visible way out. Bare
     // "←", not "← Repos": a thread is reached from a feed, a notification, a profile or a repo, so it
     // cannot name one destination — it walks the history it came through instead.
-    let html = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back">←</button></div>`;
+    let html = `<div class="thread-top"><button class="btn btn-ghost small" id="th-back" title="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
     html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
     html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
@@ -16494,7 +16494,7 @@
       inp.classList.toggle('nofind', !ok); };
     const openFind=()=>{ if(bar){ inp.focus(); inp.select(); return; }
       bar=document.createElement('div'); bar.className='find-bar';
-      bar.innerHTML='<input type="text" class="find-input" placeholder="Find in page…" spellcheck="false"><button class="find-btn" data-f="prev" title="Previous (⇧Enter)">▲</button><button class="find-btn" data-f="next" title="Next (Enter)">▼</button><button class="find-btn" data-f="x" title="Close (Esc)">✕</button>';
+      bar.innerHTML='<input type="text" class="find-input" placeholder="Find in page…" spellcheck="false"><button class="find-btn" data-f="prev" title="Previous (⇧Enter)">▲</button><button class="find-btn" data-f="next" title="Next (Enter)">▼</button><button class="find-btn" data-f="x" title="Close (Esc)"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>';
       document.body.appendChild(bar);
       inp=bar.querySelector('.find-input'); if(lastQ) inp.value=lastQ; inp.focus(); inp.select();
       inp.addEventListener('keydown', e=>{
@@ -17811,7 +17811,7 @@
       // ↩ U+21A9 has an emoji form and the system font was drawing it as the colour ↩️ — so Reply came out
       // as a coloured badge next to a flat ♥. The selector pins both to the flat text glyph.
       bar.innerHTML=`<button class="rbq" data-q="react" data-id="${id}" data-pk="${ev.pubkey}" title="React">♥︎</button>`
-                   +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply">↩︎</button>`;
+                   +`<button class="rbq" data-q="reply" data-id="${id}" data-pk="${ev.pubkey}" title="Reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button>`;
       body.appendChild(bar);
     });
     all.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
@@ -18231,7 +18231,7 @@
       <div id="grp-panel" class="call-group" style="display:none">
         <p class="muted small">Pick up to 6 people, then start — everyone connects peer-to-peer (mesh).</p>
         <div class="grp-list">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<label class="grp-contact"><input type="checkbox" class="grp-pick" value="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></label>`; }).join('')}</div>
-        <button class="btn btn-neon full" id="grp-start" style="margin-top:8px">📞 Start group call</button>
+        <button class="btn btn-neon full" id="grp-start" style="margin-top:8px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Start group call</button>
       </div>
       <div class="call-contacts">${contacts.map(pk=>{ const p=profOf(pk)||{}; return `<button class="call-contact" data-pk="${pk}"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span>${enc(p.name||p.display_name||'anon')}</span></button>`; }).join('')}</div>
     </div>`;
@@ -18370,8 +18370,8 @@
         return `<div class="call-tile" data-hex="${t.hex}"><video class="room-remote" data-hex="${t.hex}" autoplay playsinline ${_room.video&&conn?'':'style="display:none"'}></video>${(_room.video&&conn)?'':`<img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`}<span class="tl-name">${enc(p.name||p.display_name||'…')}${conn?'':' <span class="muted">·connecting</span>'}</span></div>`;
       }).join('')}</div>
       <div class="call-actions">${ringingIn
-        ? `<button class="call-btn accept" id="room-accept">📞 Join</button><button class="call-btn decline" id="room-decline">✕</button>`
-        : `<button class="call-btn" id="room-min" title="minimize">▁</button><button class="call-btn" id="room-mute" title="mute">${_room.muted?'🔇':'🎙️'}</button>${_room.video?`<button class="call-btn" id="room-cam">${_room.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="room-hang">✕</button>`}</div>`;
+        ? `<button class="call-btn accept" id="room-accept"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Join</button><button class="call-btn decline" id="room-decline" aria-label="Decline call"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`
+        : `<button class="call-btn" id="room-min" title="minimize">▁</button><button class="call-btn" id="room-mute" title="mute">${_room.muted?'🔇':'🎙️'}</button>${_room.video?`<button class="call-btn" id="room-cam">${_room.camOff?'🚫':'📷'}</button>`:''}<button class="call-btn hang" id="room-hang" aria-label="Hang up"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`}</div>`;
     const lv=el.querySelector('#room-local'); if(lv && _room.local && lv.srcObject!==_room.local){ lv.srcObject=_room.local; lv.play&&lv.play().catch(()=>{}); }
     el.querySelectorAll('.room-remote').forEach(v=>{ const peer=_room.peers.get(v.dataset.hex); if(peer && peer.stream && v.srcObject!==peer.stream){ v.srcObject=peer.stream; v.play&&v.play().catch(()=>{}); } });
     const b=id=>el.querySelector('#'+id);

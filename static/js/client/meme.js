@@ -663,9 +663,9 @@
           <!-- The emoji is in its own span so a narrow phone can drop it and keep the WORD: three icons plus
                two arrows fit where "🖼️ Media 🅣 Text ➕ More ↶ ↷" is 58px too wide, and a labelled button
                beats a pictogram nobody has to guess at. -->
-          <button class="btn btn-neon small" id="mb-add-media"><i class="mb-e">🖼️</i>Media</button>
-          <button class="btn btn-cyan small" id="mb-add-text"><i class="mb-e">🅣</i>Text</button>
-          <button class="btn btn-cyan small" id="mb-more" title="Music, a voice-over, stickers, effects, your Blossom drive, ready-made layouts"><i class="mb-e">➕</i>More</button>
+          <button class="btn btn-neon small" id="mb-add-media"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
+          <button class="btn btn-cyan small" id="mb-add-text"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-text"></use></svg>Text</button>
+          <button class="btn btn-cyan small" id="mb-more" title="Music, a voice-over, stickers, effects, your Blossom drive, ready-made layouts"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-menu"></use></svg>More</button>
           <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
           <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
         </div>
@@ -697,7 +697,7 @@
             ${P.layers.filter(l=>l.type==='audio').map(l=>`<audio data-id="${l.id}" src="${enc(l.src)}" preload="metadata"></audio>`).join('')}
           </div>
           <div class="mb-playrow">
-            <button class="btn btn-ghost small" id="mb-play">▶︎</button>
+            <button class="btn btn-ghost small" id="mb-play" aria-label="Play"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
             <input type="range" id="mb-scrub" class="mb-scrub" min="0" max="${projEnd().toFixed(2)}" step="0.05" value="0">
             <span class="muted small" id="mb-time">0.0s / ${projEnd().toFixed(1)}s</span>
           </div>
@@ -938,8 +938,8 @@
         // for on mobile. Audio has no stacking order, so it gets no grip.
         `<i class="mb-rgrip" title="Drag to restack — what is drawn on top of what" aria-hidden="true">⇅</i>`}${thumb}
         ${l.type==='audio' ? '' : `<span class="mb-zbtns">
-          <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front">⬆︎</button>
-          <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back">⬇︎</button>
+          <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg></button>
+          <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>
         </span>`}
       </div>
       <div class="mb-lane">
@@ -1012,7 +1012,7 @@
           <label class="mb-f"><span>Outline</span><input type="color" id="mb-f-stroke" value="${enc(l.stroke)}"></label>
         </div>` : `
         ${l.type==='video' ? trimWidget(l) + `
-        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>` : ''}
+        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below.">🪄 Remove the background</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
@@ -1023,8 +1023,8 @@
            ≤820px rules) — and "in the layer panel" meant: select the layer, open Look & sound, scroll to
            the end. Which is indistinguishable from not being there. -->
       <div class="mb-order">
-        <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
-        <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
+        <button class="btn btn-cyan small" id="mb-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg> Send back</button>
+        <button class="btn btn-cyan small" id="mb-front"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg> Bring front</button>
       </div>
 
       ${_sect('place', '📐 Position &amp; size', (isText
@@ -1058,7 +1058,7 @@
           <option value="">— apply an effect to this image —</option>
           ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
         </select></label>
-        <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above">▶︎ Preview effect</button>` : ''}
+        <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview effect</button>` : ''}
         ${isText ? `
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-wrap" ${l.wrap===false?'':'checked'}><span>Wrap long lines</span></label>
         ${l.wrap===false ? '' : `<label class="mb-f"><span>Wrap width <b>${_wrapPct(l)}%</b> of the frame</span><input type="range" id="mb-f-wrappct" min="20" max="100" step="1" value="${_wrapPct(l)}"></label>`}
@@ -1842,7 +1842,7 @@
   async function pickAudio(){
     const st=document.getElementById('mb-status');
     PC.modal(`<h3>🎵 Add audio</h3>
-      <button class="btn btn-neon full" id="mba-file">📁 Upload a file from this device</button>
+      <button class="btn btn-neon full" id="mba-file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Upload a file from this device</button>
       <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>
       <button class="btn btn-cyan full" id="mba-rec">🎙️ Record a voice-over</button>`, root=>{
       root.querySelector('#mba-rec').onclick=()=>{ PC.closeModal(); recordVoice(); };
@@ -2289,14 +2289,14 @@
     // Opened from a post (🎞️ Meme Builder on a note) → offer the reply right here, the way the Effects
     // studio does. Without it the only route back to the thread is copy-link, find the post, paste.
     const to=_replyTarget();
-    const replyBtn = to ? `<button class="btn btn-neon small" id="mb-reply">↩️ Reply${to.name?' to '+enc(to.name):' to the post'}</button>` : '';
+    const replyBtn = to ? `<button class="btn btn-neon small" id="mb-reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply${to.name?' to '+enc(to.name):' to the post'}</button>` : '';
     out.innerHTML=`<div class="mb-result">
       ${isImg ? `<img src="${url}" alt="" class="mb-resvid">`
               : `<video src="${url}" controls playsinline class="mb-resvid"></video>`}
       <div class="mb-resacts">
         ${replyBtn}
-        <button class="btn btn-neon small" id="mb-post">📤 Post to Nostr</button>
-        <button class="btn btn-cyan small" id="mb-copy">🔗 Upload &amp; copy link</button>
+        <button class="btn btn-neon small" id="mb-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post to Nostr</button>
+        <button class="btn btn-cyan small" id="mb-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Upload &amp; copy link</button>
         <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a layer, so you can build on top of it">🎞️ Use as a layer</button>
         <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.${ext}">⬇️ Download</a>
       </div>
@@ -2642,9 +2642,9 @@
   function projectMenu(){
     PC.modal(`<h3>📂 ${enc(P.name || 'Untitled')}</h3>
       <div class="muted small" style="margin-bottom:10px">${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
-      <button class="btn btn-neon full" id="mbp-save">💾 Save to my Blossom drive</button>
+      <button class="btn btn-neon full" id="mbp-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to my Blossom drive</button>
       <button class="btn btn-cyan full" id="mbp-open">📂 Open a saved project…</button>
-      <button class="btn btn-cyan full" id="mbp-name">✏️ Rename this project</button>
+      <button class="btn btn-cyan full" id="mbp-name"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Rename this project</button>
       <button class="btn btn-cyan full" id="mbp-new">🆕 Start a new project</button>
       <button class="btn btn-danger full" id="mbp-clear">🧹 Remove every layer</button>`, root=>{
       const q = (id) => root.querySelector('#'+id);

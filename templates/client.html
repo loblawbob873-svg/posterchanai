@@ -14,8 +14,11 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="PosterChan">
-    <!-- Apply the theme BEFORE first paint (no flash). Default = Professional (clean, broad appeal)
-         for the login page + a fresh visitor; a saved choice (incl. Cyberpunk, the bare :root) wins.
+    <!-- Apply the theme BEFORE first paint (no flash). The default comes from the client_default_theme
+         setting and is CYBERPUNK (the bare :root, so the attribute is removed rather than set); a saved
+         per-user choice wins over it. The comment here used to say Professional, which stopped being
+         true when the default was switched and is worth keeping honest — it is the first thing anyone
+         reads when asking "what does a stranger see".
          Cached locally on every theme change/settings load; the Nostr-stored value re-syncs on login. -->
     <script>try{var d='{{ default_theme|default("cyberpunk") }}';var t=localStorage.getItem('pc_theme')||d;if(t!=='cyberpunk')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     <!-- Avatars/media: auto-upgrade http:// to https:// (mixed content is otherwise blocked on
@@ -99,6 +102,20 @@
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.4 6.6h15.2"/><path d="M9.4 6.6V4.8a1.2 1.2 0 011.2-1.2h2.8a1.2 1.2 0 011.2 1.2v1.8"/><path d="M6.4 6.6l.9 12a1.6 1.6 0 001.6 1.5h6.2a1.6 1.6 0 001.6-1.5l.9-12"/><path d="M10.4 10.4v6M13.6 10.4v6"/></symbol>
   <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M19.6 11.2l-7.9 7.9a4.6 4.6 0 01-6.5-6.5l8.3-8.3a3.1 3.1 0 014.4 4.4l-8.3 8.3a1.6 1.6 0 01-2.2-2.2l7.5-7.5"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><circle cx="17.6" cy="5.8" r="2.6"/><circle cx="6.4" cy="12" r="2.6"/><circle cx="17.6" cy="18.2" r="2.6"/><path d="M8.7 10.8l6.6-3.6M8.7 13.2l6.6 3.6"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19.4 12H4.6"/><path d="M10.6 5.8L4.4 12l6.2 6.2"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M5 9.4h3.2L12.6 6v12l-4.4-3.4H5z"/><path d="M15.8 9.6a3.6 3.6 0 010 4.8M18.2 7.2a7 7 0 010 9.6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.4 12S5.9 5.8 12 5.8 21.6 12 21.6 12 18.1 18.2 12 18.2 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9.2" y="3" width="5.6" height="10.4" rx="2.8"/><path d="M5.8 11.6a6.2 6.2 0 0012.4 0"/><path d="M12 17.8v3.2M9 21h6"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13.4 2.6L4.8 13.6h5.6l-.8 7.8 8.6-11h-5.6z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M12 6.9V12l3.4 2"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9.4"/><path d="M18 12v3.2M20.8 12v2.4"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4.4 7.6h3l1.4-2.2h6.4l1.4 2.2h3a1.8 1.8 0 011.8 1.8v8.2a1.8 1.8 0 01-1.8 1.8H4.4a1.8 1.8 0 01-1.8-1.8V9.4a1.8 1.8 0 011.8-1.8z"/><circle cx="12" cy="13.2" r="3.4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.6 12.6l4.8 4.8 10-10.8"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3.6 6.6h3.6l9.2 10.8h4"/><path d="M3.6 17.4h3.6l3.4-4"/><path d="M13.8 8.2l2.6-.8 4-.8"/><path d="M18.2 4.4l2.2 2.2-2.2 2.2M18.2 15.2l2.2 2.2-2.2 2.2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.4 3.2v5.4c0 4.6-3.2 8.2-7.4 10.4-4.2-2.2-7.4-5.8-7.4-10.4V6.2z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 20.4V9.2"/><path d="M7.8 13.4L12 9.2l4.2 4.2"/><path d="M4.4 4.6h15.2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.4 12a8.4 8.4 0 01-14.5 5.8L3.6 15.6"/><path d="M3.6 12a8.4 8.4 0 0114.5-5.8l2.3 2.2"/><path d="M3.6 20.2v-4.6h4.6M20.4 3.8v4.6h-4.6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></symbol>
   <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M8.6 14.2a4.4 4.4 0 006.8 0"/><circle cx="9.3" cy="9.8" r=".95" fill="currentColor" stroke="none"/><circle cx="14.7" cy="9.8" r=".95" fill="currentColor" stroke="none"/></symbol>
 </defs></svg>
 <script>

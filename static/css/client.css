@@ -57,6 +57,13 @@
   --sh-2:0 6px 16px -8px rgba(0,0,0,.45);
   --sh-3:0 22px 48px -24px rgba(0,0,0,.6);
   --ring:0 0 0 2px rgba(var(--accent-rgb),.55);   /* keyboard focus, one definition for the whole app */
+  /* Spacing + type scale. The stylesheet is 4,400 lines of ad-hoc px — 7px here, 8px there, 12.5px,
+     14.5px — and that inconsistency IS most of what "unpolished" means; nothing lines up with anything
+     because no two values were ever chosen together. A 4px-based ladder and five sizes. No theme
+     overrides these, so all seven inherit one rhythm. Adopted where this pass already touches; the rest
+     converts as surfaces get worked on, NOT in one blind sweep. */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
+  --fs-0:12px; --fs-1:13.5px; --fs-2:15px; --fs-3:17px; --fs-4:21px;
   --amb1:rgba(0,255,255,.06); --amb2:rgba(255,0,255,.045);  /* body ambient glow (themeable) */
 }
 
@@ -510,6 +517,11 @@ a.btn.full{display:block}
 .btn:has(.b-ic){display:inline-flex;align-items:center;justify-content:center;gap:7px}
 .btn.full:has(.b-ic){display:flex}
 svg.ic.b-ic{width:1.05em;height:1.05em;stroke-width:1.9;opacity:.95}
+/* Icon-only dismiss buttons (.mini-x, .dm-att-x, .track-del, .ai-chip-x, …). Every one of those classes
+   already sized its ✕ with its own font-size, so sizing this in em means each keeps exactly the size it
+   had and not one of their rules needs touching. vertical-align centres it on the text baseline for the
+   ones that are inline rather than flex. */
+svg.ic.x-ic{width:1em;height:1em;stroke-width:2.1;vertical-align:-.12em}
 /* One keyboard-focus treatment for everything interactive, declared after the button variants so it
    wins over their resting shadow. :where() keeps it at zero specificity, so any control with its own
    focus styling still overrides it. Most controls had none at all, which made tabbing invisible. */
@@ -1447,7 +1459,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 @media(prefers-reduced-motion:reduce){ .celeb{display:none} }   /* JS skips it too — this is the backstop */
 .note::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:.15s}
 .note:hover::before{background:linear-gradient(var(--neon),var(--neon2));box-shadow:0 0 10px var(--neon)}
-.acts{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}
+/* space-between spread six icons across the ENTIRE card width, so the gap between them was a function
+   of how wide the viewport happened to be — 150px apart on desktop. Nothing about that reads as a
+   grouped toolbar; it reads as six unrelated things that drifted apart, and it makes the eye travel the
+   full card to go from reply to zap. Group them at a fixed rhythm and let bookmark hold the right edge,
+   which is the arrangement every reader app converged on for a reason. */
+.acts{display:flex;justify-content:flex-start;align-items:center;gap:var(--sp-2);margin-top:var(--sp-3)}
+.acts > :last-child{margin-left:auto}
 /* the "☰ more" hamburger sits at the bottom-right; the 5 primary actions spread evenly across */
 /* Post action buttons ARE left-navbar items — the SAME declarations as .nav-item, not an approximation.
    Idle = uniform var(--muted) (NO per-type amber/green/cyan — uniform colour is what makes a row read as
@@ -2508,25 +2526,29 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-right:3px;color
    claimed a whole row while two short ones shared the next, so a third of the block was dead space.
    Equal cells fill every row; the label ellipsizes and `title` carries the full tag. */
 #rb-topics .tag-cloud{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:2px 0}
-#rb-topics .tag-chip{min-width:0;gap:5px;justify-content:space-between;padding:7px 10px;
-  font-size:12.5px;letter-spacing:.4px;
-  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px)}
+#rb-topics .tag-chip{min-width:0;gap:var(--sp-1);justify-content:space-between;
+  padding:var(--sp-2) var(--sp-2);font-size:var(--fs-1);letter-spacing:0;
+  clip-path:polygon(5px 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%,0 5px)}
 #rb-topics .tag-chip:hover{transform:none}   /* a lift reads as jitter in a dense grid */
 #rb-topics .tag-chip .tg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #rb-topics .tag-chip .tag-n{flex:0 0 auto}
-.tag-chip{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
-  background:linear-gradient(135deg,rgba(var(--accent-rgb),.12),rgba(var(--accent2-rgb),.07));
-  border:1px solid rgba(var(--accent-rgb),.4);color:var(--neon);   /* theme accent, not hardcoded cyan (was teal on Professional etc.) */
-  padding:8px 15px;font-family:'Orbitron',sans-serif;font-size:14.5px;font-weight:700;
-  letter-spacing:.7px;text-transform:uppercase;transition:.16s;position:relative;
-  /* angular clipped corners = cyberpunk tag */
-  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
-  box-shadow:inset 0 0 8px rgba(var(--accent-rgb),.12)}
-.tag-chip:hover{color:#fff;border-color:var(--neon2);
-  background:linear-gradient(135deg,rgba(var(--accent-rgb),.24),rgba(var(--accent2-rgb),.18));
-  box-shadow:0 0 14px rgba(var(--accent-rgb),.5),0 0 24px rgba(var(--accent2-rgb),.3);transform:translateY(-2px)}
-.tag-chip .tag-n{color:var(--neon2);font-size:12px;font-weight:600;letter-spacing:0;
-  text-shadow:0 0 6px rgba(var(--accent2-rgb),.5)}
+/* A hashtag is a LINK, and it was drawn as a control: Orbitron 700, uppercased, letter-spaced, on a
+   two-colour gradient inside an accent border with an inset glow — five decorations competing on an
+   element whose whole content is one short word. Uppercasing also destroys the shape of the word, which
+   is the thing you actually scan for in a list of twenty. Now: the UI font at its natural case, a quiet
+   surface, one hairline. The angular corner survives at 6px because that clip IS the cyberpunk signature
+   — it just doesn't need four other effects helping it. All theme vars, so all seven inherit. */
+.tag-chip{display:inline-flex;align-items:center;gap:var(--sp-2);cursor:pointer;
+  background:var(--panel2);
+  border:1px solid var(--line);color:var(--text);
+  padding:var(--sp-2) var(--sp-3);font-size:var(--fs-1);font-weight:600;
+  letter-spacing:0;transition:.16s;position:relative;
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
+.tag-chip:hover{color:var(--neon);border-color:rgba(var(--accent-rgb),.55);
+  background:color-mix(in srgb, var(--neon) 10%, var(--panel2))}
+/* The count is secondary information, so it reads as secondary: no accent colour, no glow. */
+.tag-chip .tag-n{color:var(--muted);font-size:var(--fs-0);font-weight:600;letter-spacing:0;
+  font-variant-numeric:tabular-nums}
 a.hashtag{color:var(--cyan);font-weight:600}
 a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
@@ -3972,7 +3994,11 @@ body.modal-open .mobilenav{display:none}
 .mb-bar .btn{margin:0}
 .mb-barmain{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:1 1 auto;min-width:0}
 .mb-barmain .btn{flex:0 0 auto}
-.mb-e{font-style:normal;margin-right:5px}     /* the leading emoji, dropped below 480px (see there) */
+.mb-e{font-style:normal;margin-right:5px}     /* the leading icon, dropped below 480px (see there) */
+/* It is a sprite <svg> now, not an <i> holding an emoji. margin-right is the wrong lever for that —
+   the .btn:has(.b-ic) rule already lays the button out as a flex row with a gap — and an svg needs
+   its own baseline nudge, so zero the margin and let the flex gap do the spacing. */
+svg.mb-e{margin-right:0}
 .mb-barend{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 .mb-status{flex:0 0 auto;white-space:nowrap}
 .mb-spacer{flex:1 1 auto}
