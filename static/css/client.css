@@ -170,7 +170,7 @@
    drew a white/panel2 pill across the top of the timeline while bare-:root cyberpunk looked correct. */
 :root[data-theme] .tl-cmp-ta{ background:transparent; }
 :root[data-theme] .note .av{ background:var(--panel2); }
-:root[data-theme] .note .txt img,
+:root[data-theme] .note .txt img:not(.emoji-inline),
 :root[data-theme] .note .txt video,
 :root[data-theme] .note .media img,
 :root[data-theme] .note .media video{ background:var(--panel2); }
@@ -1284,13 +1284,18 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    ================================================================================================ */
 .media-row img,.media-row video,
 .mc-item img,.mc-item video,
-.note .txt img,.note .txt video,.note .media img,.note .media video,
-.quoted .txt img,.quoted .txt video{
+.note .txt img:not(.emoji-inline),.note .txt video,.note .media img,.note .media video,
+.quoted .txt img:not(.emoji-inline),.quoted .txt video{
   aspect-ratio:var(--arn);
   width:min(100%, calc(var(--nw) * 1px), calc(var(--mh) * var(--arn)));
   height:auto; object-fit:contain;
 }
-.note .txt img,.note .txt video,.note .media img,.note .media video{--mh:300px;height:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
+/* `:not(.emoji-inline)` on every `img` above and below: these are ATTACHMENT rules, and a NIP-30 custom
+   emoji is an <img> that lives INSIDE .txt too. At (0,2,1) they outspecified the (0,1,0) `.emoji-inline`
+   sizing, so a :shortcode: in a name or an @mention rendered at its natural size — a 300px-tall image
+   dropped mid-sentence — with a media border and an 8px margin around it. Same specificity trap as the
+   `.notif img` avatar rule below; excluding the class keeps it from coming back with the next media rule. */
+.note .txt img:not(.emoji-inline),.note .txt video,.note .media img,.note .media video{--mh:300px;height:auto;max-width:100%;max-height:300px;border-radius:12px;margin:8px 6px 0 0;border:1px solid var(--line);display:inline-block;vertical-align:top;background:#0d0a1a}
 /* media gallery (pulled out of the text so newlines can't stack them) — capped height */
 /* ===== multi-attachment carousel (2+ media) =====
    Horizontal scroll-snap does the paging, so touch swipe / trackpad / shift-wheel all work natively and
@@ -1359,7 +1364,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .quoted .hd .name{font-weight:700;color:var(--text)}
 .quoted .hd .handle,.quoted .hd .time{color:var(--muted);font-size:13px}
 .quoted .txt{font-size:16px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;overflow:clip;overflow-clip-margin:.5em}   /* was missing both: newlines collapsed and a long npub/URL blew out the card; overflow:clip = zalgo guard (see .note .txt) */
-.quoted .txt img,.quoted .txt video{--mh:280px;max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
+.quoted .txt img:not(.emoji-inline),.quoted .txt video{--mh:280px;max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}
 .modal .quoted{max-height:46vh;overflow:auto}
 /* profile Replies tab: show the parent post as "↩ replying to" context above each reply */

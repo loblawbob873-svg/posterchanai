@@ -2268,6 +2268,14 @@
     // cards, article/stream/market bylines, AND search results — so bridged :shortcode: names render
     // their images everywhere a name with data-prof appears.
     $$('.name[data-prof]').forEach(_decorName);
+    // Inline @mentions inside a note body, which linkify() renders as the "@profile" placeholder whenever
+    // the mentioned pubkey's kind-0 hasn't arrived yet. Every other name on the card is patched above; the
+    // mention was the one that wasn't, so a whole thread read "@profile @profile" permanently. Own attribute
+    // (NOT data-prof, which is the generic click-to-open-profile hook and would rebind the anchor's onclick),
+    // dropped once filled so this is one-shot per mention.
+    $$('a.mention[data-mpk]').forEach(a=>{ const pk=a.dataset.mpk; const p=Store.profile(pk); if(!p) return;
+      const nm=p.name||p.display_name||niceNip05(p.nip05); if(!nm) return;
+      a.innerHTML='@'+emojiName(pk,nm); a.removeAttribute('data-mpk'); });
   }
 
   // ---------- view routing ----------
@@ -16209,8 +16217,13 @@
         const d=NT().nip19.decode(ent.replace(/^nostr:/i,''));
         if(d.type==='npub' || d.type==='nprofile'){
           const pk = d.type==='npub' ? d.data : d.data.pubkey;
-          needProfile(pk); const nm=(Store.profile(pk)||{}).name||(Store.profile(pk)||{}).display_name;
-          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}">@${nm?emojiName(pk,nm):'profile'}</a>`;
+          // The kind-0 usually ISN'T cached yet when a note body is built (on a cold thread that's every
+          // mention in it), so this rendered "@profile" — and nothing ever re-renders a note body, so the
+          // placeholder stuck for the life of the page even though needProfile resolved it a second later.
+          // Mark the unresolved ones with data-mpk so decorateProfiles can fill them in when the kind-0 lands.
+          const mp=Store.profile(pk)||{}; needProfile(pk);
+          const nm=mp.name||mp.display_name||niceNip05(mp.nip05);
+          return pre+`<a href="#" class="mention" data-np="${NT().nip19.npubEncode(pk)}"${nm?'':` data-mpk="${pk}"`}>@${nm?emojiName(pk,nm):'profile'}</a>`;
         }
         if(d.type==='note' || d.type==='nevent'){
           const id = d.type==='note' ? d.data : d.data.id;
