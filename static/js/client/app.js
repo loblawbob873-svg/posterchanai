@@ -2351,6 +2351,7 @@
     feed.classList.toggle('feed-dm', VIEW==='messages');   // full-height messages layout (no :has needed)
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
+    feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     // Admin uses a PERSISTENT iframe (loaded once, kept alive) so revisiting it doesn't reload
     // /admin every time — that reload was the flicker / "not loading". Hide it + restore #feed for
@@ -7991,6 +7992,7 @@
     if(!window.PC_NOSTR_ONLY) items.push(['effect','🎬 Effect']);         // apply an effect to the post's image
     items.push(['memebuild','🎞️ Meme Builder']);   // drop the post's media in as a layer to edit/compose
     if(!window.PC_NOSTR_ONLY) items.push(['screenshot','📸 Screenshot']); // render the post as a clean card → Blossom link
+    items.push(['rawjson','🧾 Raw event (JSON)']);   // the signed event exactly as it is on the relay
     if(mine) items.push(['pin', PINNED.has(id)?'📌 Unpin from profile':'📌 Pin to profile']);
     if(mine){ const ev=Store.get(id); const tagged=!!(ev && ev.tags.some(t=>t[0]==='content-warning'));
       // Only offer it when the post isn't already warned (a re-posted copy already carries the tag).
@@ -8012,6 +8014,7 @@
       if(a==='effect') return effectPost(id, pk);
       if(a==='memebuild') return memeBuildPost(id, pk);
       if(a==='screenshot') return screenshotPost(id);
+      if(a==='rawjson') return showRawEvent(id);
       if(a==='pin') return togglePin(id);
       if(a==='nsfw') return repostWithWarning(id);
       if(a==='delete') return doDelete(id, art);
@@ -8020,6 +8023,86 @@
       if(a==='block') return doBlock(pk);
     });
   }
+  // 🧾 Raw event — the signed object exactly as it sits on the relay. Nostr is a protocol of plain JSON and
+  // everything interesting about a post that the card cannot show is in it: which event it replies to, who
+  // it p-tags, the content warning, the client that made it, the proof-of-work nonce, the signature. There
+  // was no way to see any of that here, so "what does this post actually contain" meant opening another
+  // client. Rendered rather than dumped — the header fields are decoded into human terms above a
+  // pretty-printed, token-coloured body.
+  const _KIND_NAMES = {0:'profile metadata', 1:'short text note', 3:'follow list', 4:'encrypted DM (legacy)',
+    5:'deletion request', 6:'repost', 7:'reaction', 9:'group chat message', 16:'generic repost',
+    40:'channel create', 42:'channel message', 1018:'poll response', 1063:'file metadata', 1068:'poll',
+    1111:'comment', 1311:'live chat message', 1984:'report', 9735:'zap receipt', 10000:'mute list',
+    10002:'relay list', 10063:'blossom server list', 13194:'wallet info', 14:'direct message',
+    24133:'nostr connect', 25050:'call signalling', 30000:'follow set', 30008:'profile badges',
+    30023:'long-form article', 30078:'application data', 30311:'live event', 30402:'classified listing',
+    30617:'git repo announcement', 30618:'git repo state', 30818:'wiki article', 31922:'calendar event',
+    34550:'community definition'};
+
+  async function showRawEvent(id){
+    let ev = Store.get(id);
+    if(!ev){ ev = await fetchEvent(id); if(ev) Store.saveEvent(ev); }
+    if(!ev){ toast('post not loaded'); return; }
+    const json = _prettyEvent(ev);
+    let when=''; try{ when = new Date(ev.created_at*1000).toLocaleString(); }catch(_){ }
+    let npub=ev.pubkey; try{ npub = NT().nip19.npubEncode(ev.pubkey); }catch(_){ }
+    let nevent=ev.id; try{ nevent = NT().nip19.neventEncode({ id:ev.id, author:ev.pubkey }); }catch(_){ }
+    const kindName = _KIND_NAMES[ev.kind] || '';
+    modal(`<h3>🧾 Raw event</h3>
+      <div class="rawev-meta">
+        <span>kind</span><b>${ev.kind}${kindName?` <i>${enc(kindName)}</i>`:''}</b>
+        <span>created</span><b>${enc(when)} <i>${ev.created_at}</i></b>
+        <span>tags</span><b>${(ev.tags||[]).length}</b>
+        <span>author</span><b class="rawev-mono">${enc(npub)}</b>
+        <span>event</span><b class="rawev-mono">${enc(nevent)}</b>
+      </div>
+      <pre class="rawev-json">${_jsonHtml(json)}</pre>
+      <div class="row rawev-acts">
+        <button class="btn btn-cyan small" id="rawev-copyid">🔗 Copy nevent</button>
+        <button class="btn btn-neon small" id="rawev-copy">📋 Copy JSON</button>
+        <button class="btn btn-cyan small" id="rawev-close">Close</button>
+      </div>`, root=>{
+      const cp=root.querySelector('#rawev-copy');
+      if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(json); toast('📋 JSON copied'); }catch(_){ toast('could not copy'); } };
+      const ci=root.querySelector('#rawev-copyid');
+      if(ci) ci.onclick=async()=>{ try{ await navigator.clipboard.writeText(nevent); toast('🔗 nevent copied'); }catch(_){ toast('could not copy'); } };
+      const cl=root.querySelector('#rawev-close'); if(cl) cl.onclick=closeModal;
+    });
+  }
+
+  // Pretty-print the event with each TAG on ONE line. Plain JSON.stringify(…,2) puts every element of every
+  // tag on a line of its own, so a normal reply — four or five tags — becomes twenty lines of one word each
+  // and the shape of the thing you came to read is gone. Tags are the interesting part of a nostr event and
+  // they are short arrays of strings; inline is how every other tool shows them.
+  //
+  // Safe as a text substitution: JSON.stringify escapes a newline inside a string as `\n` (two characters),
+  // so a REAL newline followed by exactly two spaces and `]` can only be the pretty-printer closing a
+  // depth-1 array — and `tags` is the only one a nostr event has. A non-match leaves the plain output.
+  function _prettyEvent(ev){
+    const json = JSON.stringify(ev, null, 2);
+    const tags = ev && ev.tags;
+    if(!Array.isArray(tags) || !tags.length) return json;
+    const inline = '[\n' + tags.map(t=>'    '+JSON.stringify(t)).join(',\n') + '\n  ]';
+    return json.replace(/"tags": \[[\s\S]*?\n {2}\]/, () => '"tags": ' + inline);
+  }
+
+  // Colourise pretty-printed JSON. The tokeniser runs on the RAW string and every emitted fragment — matched
+  // or not — goes through enc() on its way out, so an event whose content is `<script>` (or a tag value that
+  // looks like markup) is escaped exactly as it would be anywhere else. Escaping FIRST would not work: enc
+  // turns `"` into `&quot;`, and the string-literal rule would then match nothing.
+  function _jsonHtml(s){
+    const re = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+    let out='', last=0, m;
+    while((m = re.exec(s))){
+      out += enc(s.slice(last, m.index));
+      last = re.lastIndex;
+      if(m[1]) out += m[2] ? `<span class="jk">${enc(m[1])}</span>${enc(m[2])}` : `<span class="js">${enc(m[1])}</span>`;
+      else if(m[3]) out += `<span class="jl">${enc(m[3])}</span>`;
+      else out += `<span class="jn">${enc(m[4])}</span>`;
+    }
+    return out + enc(s.slice(last));
+  }
+
   // 📸 Screenshot: render the post as a clean tweet-style CARD (just the post, like the Nitter cards)
   // server-side from the note's own fields — reliable + instance-branded, no live-SPA capture/timing.
   // The card PNG is uploaded to Blossom and its link copied (image-on-clipboard is unreliable after a
@@ -8067,12 +8150,24 @@
       try{ await navigator.clipboard.writeText(link); }catch(_){}
       modal(`<h3>📸 Post card</h3><img src="${enc(link)}" style="max-width:100%;max-height:54vh;border-radius:10px;display:block;margin:0 auto">`+
         `<div class="muted small" style="margin-top:10px;word-break:break-all">${enc(link)}</div>`+
-        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
+        `<div class="row" style="justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-cyan small" id="ss-fx">🎬 Effect</button><button class="btn btn-cyan small" id="ss-meme">🎞️ Meme Builder</button><button class="btn btn-neon small" id="ss-copy">📋 Copy link</button><a class="btn btn-cyan small" href="${enc(link)}" target="_blank" rel="noopener">↗ Open</a><button class="btn btn-cyan small" id="ss-close">Close</button></div>`,
         root=>{
           const cp=root.querySelector('#ss-copy'); if(cp) cp.onclick=async()=>{ try{ await navigator.clipboard.writeText(link); toast('📋 link copied'); }catch(_){ toast(link); } };
           // 🎬 Effect: run the card PNG through the Effects studio; no reply target → its 🚀 Post button
           // publishes a fresh timeline post, exactly like an effect made from a regular image.
           const fx=root.querySelector('#ss-fx'); if(fx) fx.onclick=()=>{ closeModal(); launchEffectStudio(link, null); };
+          // 🎞️ Meme Builder: the card is already a Blossom URL, which is exactly what a layer source is —
+          // so it can go straight in as one (caption it, put it on a background, add a clip after it).
+          // Same seed-after-the-view-renders ordering as memeBuildPost, and the same reply target, so the
+          // finished meme can still answer the post the card was made from.
+          const mb=root.querySelector('#ss-meme');
+          if(mb) mb.onclick=()=>{
+            closeModal(); switchView('meme');
+            setTimeout(()=>{
+              const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(link, 'image/png', { id, pk: ev.pubkey });
+              toast(ok ? '🎞️ card added to the Meme Builder' : 'could not add that card');
+            }, 60);
+          };
           const cl=root.querySelector('#ss-close'); if(cl) cl.onclick=closeModal;
         });
       toast('📸 card ready — link copied');
@@ -12489,7 +12584,7 @@
     // modifier class on #feed (full-height inner-scroll layout). Those are only toggled in the timeline
     // render path, so opening a profile straight from AI chat inherited feed-ai → the page couldn't
     // scroll ("stuck"). Clear them here so #feed scrolls again.
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');
     feed.innerHTML='<div class="spinner"></div>';
     // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
     // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
@@ -15467,7 +15562,7 @@
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=$('#feed');
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable view — clear chat/AI overflow:hidden (opened from a chat → would be stuck)
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable view — clear chat/AI overflow:hidden (opened from a chat → would be stuck)
     feed.innerHTML='<div class="spinner"></div>';
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
@@ -17346,7 +17441,7 @@
     VIEW='hashtag'; _hidePill(); _clearNav(); $('#view-title').textContent='#'+tag;
     cleanupInlineStream();
     const feed=$('#feed');
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable view — clear chat/AI overflow:hidden
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable view — clear chat/AI overflow:hidden
     feed.innerHTML='<div class="spinner"></div>';
     // The relay's #t filter is case-SENSITIVE, but trending lowercases tags AND counts inline #hashtags —
     // so a post tagged "LillyPhillips" (or one that only writes #LillyPhillips in its text) trended yet the
@@ -17509,7 +17604,7 @@
   }
   function renderTrending(){
     const feed=$('#feed'); if(!feed) return;
-    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate');   // scrollable list view
+    feed.classList.remove('feed-ai','feed-chat','feed-dm','feed-translate','feed-meme');   // scrollable list view
     _tr.gen++;   // invalidate any in-flight page from the previous entry / the other tab
     _tr.win=TR_WIN0; _tr.done=false; _tr.exhausted=false; _tr.shown=new Set(); _tr.queue=[]; _tr.loading=true;
     // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline

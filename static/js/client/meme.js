@@ -84,6 +84,92 @@
   let sel = null;        // selected layer id
   let _rendering = false;// a render is in flight — survives view repaints, unlike the button's disabled flag
   let _uid = 0;
+
+  // ---------- ONE panel at a time ----------
+  // The builder used to be one long column: two wrapped toolbars (~6 rows on a phone), the stage, the whole
+  // inspector, then the timeline — ~1700px of scrolling, so the stage, the controls and the timeline were
+  // never on screen together. Tapping a clip changed a panel that was off-screen upwards, which reads as
+  // "tapping did nothing" (there was a scrollIntoView hack for exactly that). Sideways it was worse: the
+  // toolbars alone ate a landscape phone.
+  //
+  // Now the stage is ALWAYS on screen and everything else is one of a few panes behind a tab strip. Desktop
+  // shows every pane at once (it has the room) and hides the tabs — same markup, no second code path.
+  let _tab = 'layer';                       // which pane the tabs are showing (mobile/tablet only)
+  let _hasResult = false;                   // a finished render is sitting in #mb-result → offer its tab
+  // Inspector sections. A layer panel is ~20 controls; collapsed by default it is the handful you actually
+  // reach for. Module-level so the state survives repaint('inspector'), which happens on every drag end.
+  const _sec = { place:true, time:false, look:false };
+  // Read the groups' state back OFF THE DOM immediately before the panel is rebuilt, rather than tracking it
+  // with a `toggle` listener. <details> fires `toggle` ASYNCHRONOUSLY, so a rebuild triggered in the same
+  // task as the click — tap a group open, then tap a clip — ran before the event and rewrote the panel from
+  // the stale flags, snapping every group back to its default. Reading the live `open` property has no such
+  // race, and there is nothing to re-bind on each repaint.
+  function _saveSecState(){
+    document.querySelectorAll('.mb-sec').forEach(d=>{ if(d.dataset.sec in _sec) _sec[d.dataset.sec] = d.open; });
+  }
+  const _mobileLayout = () => { try{ return !window.matchMedia || window.matchMedia('(max-width:1100px)').matches; }catch(_){ return false; } };
+
+  function _paintTabs(){
+    const bar = document.getElementById('mb-tabs'); if(!bar) return;
+    bar.innerHTML = tabsInner();
+    bar.querySelectorAll('.mb-tab').forEach(b=>b.addEventListener('click',()=>_showTab(b.dataset.tab)));
+  }
+  // Switch panes without re-rendering: a full render() would rebuild the stage's <video> elements (and
+  // restart them from frame 0) every time you looked at the timeline.
+  function _showTab(name){
+    if(name==='result' && !_hasResult) name='layer';
+    _tab = name;
+    document.querySelectorAll('.mb-pane').forEach(p=>p.classList.toggle('on', p.dataset.pane===name));
+    document.querySelectorAll('.mb-tab').forEach(t=>t.classList.toggle('on', t.dataset.tab===name));
+    _fitStage();                     // the pane that just opened is a different height → the stage resizes
+    // The playhead is positioned from a real lane's measured offset, and a display:none lane measures 0 —
+    // so a pane that was hidden the last time the playhead moved comes back with it parked at the far left,
+    // over the track names. Re-place it against the lanes now that they have a box.
+    if(name === 'timeline'){ const s=document.getElementById('mb-scrub'); paintPlayhead(s ? +s.value||0 : 0); }
+  }
+
+  // Fit the stage into whatever vertical space is left, in JS, because CSS cannot.
+  // The stage's geometry contract is that its box IS the project's aspect ratio — every layer is positioned
+  // in % of it, so a box that is not the project's shape puts every layer in the wrong place (that is why the
+  // old rule sized from the HEIGHT and let aspect-ratio derive the width). `height:42vh` honoured that but
+  // ignored what was left over, which is the whole problem in landscape: 42vh of a 390px-tall phone is a
+  // 164px stage under 6 rows of toolbar. Measuring the free space and setting BOTH axes is exact, needs no
+  // aspect-ratio fallback behaviour, and is the only thing that adapts to an orientation change.
+  function _fitStage(){
+    const st = document.getElementById('mb-stage'); if(!st || !P) return;
+    const host = st.parentElement; if(!host) return;
+    if(!_mobileLayout()){ st.style.height=''; st.style.width=''; return; }   // desktop keeps the CSS height
+    const availH = host.clientHeight, availW = host.clientWidth;
+    if(!availH || !availW) return;
+    const ar = (+P.w||1) / (+P.h||1);
+    let h = availH, w = h * ar;
+    if(w > availW){ w = availW; h = w / ar; }
+    // Any minimum has to scale the WHOLE box. Clamping one axis on its own is how the stage stops being
+    // the project's shape — measured on a short landscape window, a 67px-wide 9:16 stage was floored to
+    // 70px and every layer's %-position moved with it. Overflowing a tiny box is the lesser evil (and
+    // .mb-fit clips it); a stage that lies about the frame is not.
+    const MIN = 60, s = Math.max(1, MIN/h, MIN/w);
+    st.style.height = Math.round(h*s) + 'px';
+    st.style.width  = Math.round(w*s) + 'px';
+  }
+  // ONE listener for the life of the page (the module is an IIFE that boots once). It no-ops whenever the
+  // builder is not on screen, so there is nothing to tear down when you leave the view.
+  let _fitT = null;
+  window.addEventListener('resize', ()=>{ if(_fitT) clearTimeout(_fitT); _fitT=setTimeout(_fitStage, 80); });
+  window.addEventListener('orientationchange', ()=>setTimeout(_fitStage, 250));
+  // …and watch the box itself, because most of what resizes it is not a window resize: opening a pane,
+  // selecting a layer (the inspector is taller than "select a layer to edit it"), expanding an inspector
+  // group, the on-screen keyboard. Without this the stage kept whatever size it was given at render time
+  // and simply overflowed its box — measured at 455px tall inside a 178px slot, i.e. mostly off-screen.
+  // Re-entrancy is not a risk: .mb-fit is `flex:1 1 0`, so its own box never depends on the stage inside it.
+  let _fitRO = null;
+  function _watchFit(){
+    if(typeof ResizeObserver === 'undefined') return;
+    const host = document.querySelector('.mb-fit'); if(!host) return;
+    if(!_fitRO) _fitRO = new ResizeObserver(()=>{ if(_fitT) clearTimeout(_fitT); _fitT=setTimeout(_fitStage, 16); });
+    _fitRO.disconnect();                 // render() replaces the element every time
+    _fitRO.observe(host);
+  }
   const nid = () => 'L' + (++_uid) + Math.random().toString(36).slice(2, 6);
 
   function blank(){
@@ -551,53 +637,58 @@
   }
 
   // ---------- rendering the UI ----------
+  // What the Layer tab is called right now — "✎ Text" reads as a live thing you can go and edit, where a
+  // permanent "Layer" gives no hint that tapping a clip did anything.
+  function _selName(){
+    const l = P.layers.find(x=>x.id===sel);
+    if(!l) return 'Layer';
+    return l.type==='text' ? 'Text' : l.type==='audio' ? 'Music' : l.type==='video' ? 'Video' : 'Image';
+  }
+  function tabsInner(){
+    const t = [['layer','✎ '+_selName()], ['timeline','🎞 Timeline'], ['canvas','⚙︎ Canvas']];
+    if(_hasResult) t.push(['result','🎬 Result']);
+    return t.map(([k,lbl])=>`<button class="mb-tab${_tab===k?' on':''}" data-tab="${k}" role="tab"
+      aria-selected="${_tab===k}">${enc(lbl)}</button>`).join('');
+  }
+
   function view(){
     return `
     <div class="mb-wrap">
-      <!-- TWO rows, split by what they do: everything that ADDS a layer on the first, everything that acts
-           on the PROJECT on the second. One row of eleven buttons wrapped into an unreadable block on a
-           phone, and put "Clear all" next to "Add text". -->
+      <!-- ONE row, on every width. The two wrapped rows this replaces cost ~6 rows of a phone screen before
+           you saw any of the meme. The five rarer sources moved behind ➕ More (a sheet with room to say what
+           each one does), and everything that configures the PROJECT moved into the ⚙︎ Canvas pane. What is
+           left is the three things you actually do: add, undo, render. -->
       <div class="mb-bar">
-        <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
-        <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
-        <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme, or record a voice-over">🎵 Add audio</button>
-        <button class="btn btn-cyan small" id="mb-add-sticker" title="Drop an emoji or a custom instance emoji on the meme as its own draggable layer">😀 Sticker</button>
-        <button class="btn btn-cyan small" id="mb-add-effect" title="Add an effect (dancing man, shrug, a character) as its own layer you can drag, resize and time">✨ Add effect</button>
-        <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
-        <button class="btn btn-cyan small" id="mb-tpl" title="Start from a ready-made layout — classic top/bottom captions, a two-panel split, a caption bar">📐 Templates</button>
-      </div>
-      <div class="mb-bar">
-        <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
-        <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
-        <button class="btn btn-cyan small" id="mb-proj" title="Save, open, rename or start a new project">📂 ${enc(P.name || 'Untitled')}</button>
-        <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
-        <select class="input mb-size" id="mb-size" aria-label="Canvas size">
-          ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
-          ${PRESETS.some(([n,w,h])=>P.w===w&&P.h===h) ? '' :
-            `<option value="${P.w}x${P.h}" selected>${P.w}×${P.h}</option>`}
-        </select>
-        <label class="mb-bgpick" title="Canvas background — this is what shows AROUND a photo that doesn't fill the frame (the bars). It was always black with no way to change it.">
-          <input type="color" id="mb-bg" value="${enc(P.bg)}" aria-label="Canvas background colour">
-        </label>
-        <span class="mb-spacer"></span>
-        <span class="muted small" id="mb-status"></span>
-        <!-- A meme is very often a PICTURE, and plenty of places still only take a GIF. The format sits on
-             the Render button rather than in a settings panel because it changes what the button produces. -->
-        <select class="input mb-fmt" id="mb-fmt" aria-label="Export format" title="MP4 keeps the sound; GIF loops silently; Still is one frame at the playhead">
-          <option value="mp4" ${_fmt()==='mp4'?'selected':''}>MP4</option>
-          <option value="gif" ${_fmt()==='gif'?'selected':''}>GIF</option>
-          <option value="png" ${_fmt()==='png'?'selected':''}>Still</option>
-        </select>
-        <button class="btn btn-neon small" id="mb-render">${_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render')}</button>
+        <div class="mb-barmain">
+          <!-- The emoji is in its own span so a narrow phone can drop it and keep the WORD: three icons plus
+               two arrows fit where "🖼️ Media 🅣 Text ➕ More ↶ ↷" is 58px too wide, and a labelled button
+               beats a pictogram nobody has to guess at. -->
+          <button class="btn btn-neon small" id="mb-add-media"><i class="mb-e">🖼️</i>Media</button>
+          <button class="btn btn-cyan small" id="mb-add-text"><i class="mb-e">🅣</i>Text</button>
+          <button class="btn btn-cyan small" id="mb-more" title="Music, a voice-over, stickers, effects, your Blossom drive, ready-made layouts"><i class="mb-e">➕</i>More</button>
+          <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
+          <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
+        </div>
+        <span class="muted small mb-status" id="mb-status"></span>
+        <div class="mb-barend">
+          <!-- Render is the only control that must never scroll out of reach, so it is its own group. The
+               export format moved to ⚙︎ Canvas: it is set once per project, and the button already SAYS what
+               it will produce (📷 Still / 🎞️ GIF / 🎬 Render), which is what it was next to the format for. -->
+          <button class="btn btn-neon small" id="mb-render">${_fmt()==='png'?'📷 Still':(_fmt()==='gif'?'🎞️ GIF':'🎬 Render')}</button>
+        </div>
       </div>
 
-      <div class="mb-main">
-        <div class="mb-stagewrap">
-          <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
-            ${_stageOrder().map(stageEl).join('')}
-            <!-- Snap guides: shown only while a drag is actually snapped to that line (see applySnaps). -->
-            <i class="mb-guide mb-gv" id="mb-gv" style="display:none"></i>
-            <i class="mb-guide mb-gh" id="mb-gh" style="display:none"></i>
+      <div class="mb-body">
+        <div class="mb-left">
+          <!-- .mb-fit is the box the stage is fitted INTO (see _fitStage) — it owns the leftover height, the
+               stage owns the project's aspect ratio, and neither has to know about the other. -->
+          <div class="mb-fit">
+            <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
+              ${_stageOrder().map(stageEl).join('')}
+              <!-- Snap guides: shown only while a drag is actually snapped to that line (see applySnaps). -->
+              <i class="mb-guide mb-gv" id="mb-gv" style="display:none"></i>
+              <i class="mb-guide mb-gh" id="mb-gh" style="display:none"></i>
+            </div>
           </div>
           <!-- Music beds have nothing to show on the stage, but the PREVIEW has to be able to hear them —
                otherwise you can only judge the mix by rendering. One hidden <audio> per track, driven by
@@ -612,28 +703,93 @@
           </div>
         </div>
 
-        <div class="mb-side">
+        <div class="mb-tabs" id="mb-tabs" role="tablist">${tabsInner()}</div>
+
+        <div class="mb-pane${_tab==='layer'?' on':''}" data-pane="layer" id="mb-pane-layer" role="tabpanel">
           <div class="mb-inspector" id="mb-inspector">${inspector()}</div>
         </div>
+        <div class="mb-pane${_tab==='timeline'?' on':''}" data-pane="timeline" id="mb-pane-timeline" role="tabpanel">
+          ${timelinePane()}
+        </div>
+        <div class="mb-pane${_tab==='canvas'?' on':''}" data-pane="canvas" id="mb-pane-canvas" role="tabpanel">
+          ${canvasPane()}
+        </div>
+        <div class="mb-pane${_tab==='result'?' on':''}" data-pane="result" id="mb-pane-result" role="tabpanel">
+          <div id="mb-result"></div>
+        </div>
       </div>
+    </div>`;
+  }
 
-      ${P.layers.some(_isVisual) ? `<div class="mb-tlbar">
-        <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead.</span>
-        <span class="mb-spacer"></span>
+  // 🎞 Timeline pane — the clip lanes plus the two things you do TO the sequence (lay it out, dissolve
+  // between clips) and the zoom. Arrange and the crossfade used to sit in the top toolbar and in a bar of
+  // their own respectively; both are timeline edits, so they live with the timeline.
+  function timelinePane(){
+    const any = P.layers.some(_isVisual);
+    return `${any ? `<div class="mb-tlbar">
+        <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
         <label class="mb-tlf" title="Dissolve between consecutive clips. ⇄ Arrange overlaps them by this much so there is something to blend.">⇄
           <select class="input" id="mb-xfade">
             ${[0,0.25,0.5,0.75,1,1.5].map(v=>`<option value="${v}" ${Math.abs(_xfade()-v)<0.01?'selected':''}>${v?v+'s':'cut'}</option>`).join('')}
           </select>
         </label>
+        <span class="mb-spacer"></span>
         <span class="mb-zoom">
           <button class="mb-zb" id="mb-zoomout" title="Zoom out" aria-label="Zoom the timeline out">−</button>
           <b id="mb-zoomlbl">${_zoom()%1?_zoom().toFixed(1):_zoom()}×</b>
           <button class="mb-zb" id="mb-zoomin" title="Zoom in — a long build is unreadable at 1×" aria-label="Zoom the timeline in">+</button>
         </span>
+        <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead.</span>
       </div>` : ''}
-      <div class="mb-timeline" id="mb-timeline">${timelineInner()}</div>
-      <div id="mb-result"></div>
-    </div>`;
+      <div class="mb-timeline" id="mb-timeline">${timelineInner()}</div>`;
+  }
+
+  // ⚙︎ Canvas pane — the shape of the frame, what shows around a photo that doesn't fill it, and the
+  // project itself. All of it was in the second toolbar, where a 42px colour swatch and a shape dropdown
+  // sat one thumb-width from Render.
+  function canvasPane(){
+    const custom = !PRESETS.some(([n,w,h])=>P.w===w&&P.h===h);
+    return `
+      <div class="mb-secttl">Canvas shape</div>
+      <div class="mb-sizes">
+        ${PRESETS.map(([n,w,h])=>`<button class="mb-szb${(P.w===w&&P.h===h)?' on':''}" data-size="${w}x${h}"><b>${enc(n)}</b><i>${w}×${h}</i></button>`).join('')}
+      </div>
+      ${custom ? `<div class="muted small">Currently ${P.w}×${P.h} — a custom shape (⇲ Canvas to this photo). Picking one above rescales every layer to it.</div>` : ''}
+      <label class="mb-bgrow" title="This is what shows AROUND a photo that doesn't fill the frame — the bars.">
+        <input type="color" id="mb-bg" value="${enc(P.bg)}" aria-label="Canvas background colour">
+        <span>Background — the bars around a photo that doesn’t fill the frame</span>
+      </label>
+      <div class="mb-secttl">Export</div>
+      <!-- A meme is very often a PICTURE, and plenty of places still only take a GIF. -->
+      <label class="mb-f"><span>Format — what 🎬 Render produces</span>
+        <select class="input" id="mb-fmt" title="MP4 keeps the sound; GIF loops silently; Still is one frame at the playhead">
+          <option value="mp4" ${_fmt()==='mp4'?'selected':''}>MP4 video (with sound)</option>
+          <option value="gif" ${_fmt()==='gif'?'selected':''}>GIF (looping, silent)</option>
+          <option value="png" ${_fmt()==='png'?'selected':''}>Still image (frame at the playhead)</option>
+        </select></label>
+      <div class="mb-secttl">This project</div>
+      <div class="muted small mb-dbg">${enc(P.name || 'Untitled')} · ${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
+      <button class="btn btn-cyan small full" id="mb-proj">📂 Save, open, rename, start new…</button>`;
+  }
+
+  // ➕ More — the five sources that are not "a picture" or "some words". A sheet rather than five buttons in
+  // the toolbar: each one gets a line saying what it is, which is what those buttons never had room for.
+  function addMenu(anchor){
+    PC.modal(`<h3>➕ Add to the meme</h3>
+      <button class="btn btn-cyan full mb-addb" id="mba-audio"><b>🎵 Music or a voice-over</b><i>A track under the whole meme, or talk over it</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-tpl"><b>📐 Ready-made layout</b><i>Top/bottom captions, a two-panel split, a caption bar</i></button>`, root=>{
+      const go = (id, fn) => { const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
+      go('mba-audio', pickAudio);
+      // The emoji picker is a POPOVER and anchors to an element — the sheet's own button is gone by the time
+      // it opens, so anchor it to ➕ More, which is still there.
+      go('mba-sticker', ()=>pickSticker(anchor || document.getElementById('mb-more')));
+      go('mba-effect', pickEffect);
+      go('mba-blossom', pickBlossom);
+      go('mba-tpl', pickTemplate);
+    });
   }
 
   // The timeline's scrolling CONTENT. Everything that has to line up with a clip lane — the ruler and the
@@ -831,6 +987,10 @@
       <label class="mb-f mb-check"><input type="checkbox" id="mb-f-afade" ${l.fade?'checked':''}><span>Fade in/out</span></label>
       <div class="muted small mb-dbg">Music never lengthens the meme — anything past ${projEnd().toFixed(1)}s is cut off.</div>`;
     }
+    // The panel is ~20 controls for a video layer. Shown all at once it is a wall you scroll rather than
+    // read — and on a phone it was most of the reason the builder felt unusable. Split it: the handful you
+    // reach for on every layer stay at the top, the rest go into three named, collapsible groups whose
+    // open/closed state is remembered (_sec) so the panel comes back the way you left it.
     return `
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
@@ -845,9 +1005,45 @@
         <div class="mb-frow">
           <label class="mb-f"><span>Colour</span><input type="color" id="mb-f-color" value="${enc(l.color)}"></label>
           <label class="mb-f"><span>Outline</span><input type="color" id="mb-f-stroke" value="${enc(l.stroke)}"></label>
-        </div>
-        <button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
-        ${alignGrid()}
+        </div>` : `
+        ${l.type==='video' ? trimWidget(l) + `
+        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>` : ''}
+        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
+        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
+
+      ${_sect('place', '📐 Position &amp; size', (isText
+        ? `<button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
+           ${alignGrid()}
+           <div class="muted small mb-dbg">x=${Math.round(l.x)} y=${Math.round(l.y)} size=${Math.round(l.size)} align=${_alignOf(l)||"free"} · canvas ${P.w}×${P.h}</div>`
+        : `${alignGrid()}
+           <div class="mb-frow">
+             <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
+             <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
+           </div>
+           <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped">⇲ Canvas to this photo</button>
+           <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>`))}
+
+      ${_sect('time', '⏱ Timing', `${l.type==='video'
+        ? `<label class="mb-f"><span>Speed <b id="mb-spd-val">${_speedOf(l)}×</b><i class="mb-slot" id="mb-spd-slot">${_slotNote(l)}</i></span>
+             <input type="range" id="mb-f-speed" min="0.25" max="4" step="0.05" value="${_speedOf(l)}"></label>
+           <div class="mb-frow">${[0.5,1,2].map(v=>`<button class="btn btn-cyan small${_speedOf(l)===v?' on':''}" data-spd="${v}">${v}×</button>`).join('')}</div>
+           <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>
+           <div class="muted small mb-dbg">Drag the clip on the 🎞 Timeline to set when it appears in the meme.</div>`
+        : `<div class="mb-frow">
+             <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
+             <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
+           </div>`}`)}
+
+      ${_sect('look', '🎨 Look &amp; sound', `
+        <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
+          ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
+        </select></label>
+        ${(l.type==='image') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
+          <option value="">— apply an effect to this image —</option>
+          ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
+        </select></label>
+        <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above">▶︎ Preview effect</button>` : ''}
+        ${isText ? `
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-wrap" ${l.wrap===false?'':'checked'}><span>Wrap long lines</span></label>
         ${l.wrap===false ? '' : `<label class="mb-f"><span>Wrap width <b>${_wrapPct(l)}%</b> of the frame</span><input type="range" id="mb-f-wrappct" min="20" max="100" step="1" value="${_wrapPct(l)}"></label>`}
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-box" ${l.box?'checked':''}><span>Background box</span></label>
@@ -855,49 +1051,28 @@
           <label class="mb-f"><span>Box colour</span><input type="color" id="mb-f-boxcolor" value="${enc(/^#[0-9a-fA-F]{6}$/.test(l.boxColor||'')?l.boxColor:'#000000')}"></label>
           <label class="mb-f"><span>Box opacity</span><input type="range" id="mb-f-boxalpha" min="0.1" max="1" step="0.05" value="${l.boxAlpha==null?0.55:l.boxAlpha}"></label>
         </div>` : ''}
-        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-shadow" ${l.shadow?'checked':''}><span>Drop shadow</span></label>
-        <div class="muted small mb-dbg">x=${Math.round(l.x)} y=${Math.round(l.y)} size=${Math.round(l.size)} align=${_alignOf(l)||"free"} · canvas ${P.w}×${P.h}</div>` : `
-        <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>
-        <div class="mb-frow">
-          <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
-          <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
-        </div>
-        <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
-        <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped">⇲ Canvas to this photo</button>
-        ${alignGrid()}
-        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}
-        ${l.type==='video' ? trimWidget(l) + `
-        <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>
-        <label class="mb-f"><span>Speed <b id="mb-spd-val">${_speedOf(l)}×</b><i class="mb-slot" id="mb-spd-slot">${_slotNote(l)}</i></span>
-          <input type="range" id="mb-f-speed" min="0.25" max="4" step="0.05" value="${_speedOf(l)}"></label>
-        <div class="mb-frow">${[0.5,1,2].map(v=>`<button class="btn btn-cyan small${_speedOf(l)===v?' on':''}" data-spd="${v}">${v}×</button>`).join('')}</div>
-        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
-      ${l.type==='video'
-        ? `<div class="muted small mb-dbg">Drag the clip on the timeline below to set when it appears in the meme.</div>`
-        : `<div class="mb-frow">
-        <label class="mb-f"><span>Start (s)</span><input class="input" type="number" id="mb-f-start" min="0" step="0.1" value="${l.start}"></label>
-        <label class="mb-f"><span>Length (s)</span><input class="input" type="number" id="mb-f-dur" min="0.1" step="0.1" value="${l.dur}"></label>
-      </div>`}
-      <label class="mb-f"><span>Effect</span><select class="input" id="mb-f-fx">
-        ${FX.map(([v,n])=>`<option value="${v}" ${l.effect===v?'selected':''}>${n}</option>`).join('')}
-      </select></label>
-      ${(l.type==='image') && EFFECTS.length ? `<label class="mb-f"><span>Meme effect</span><select class="input" id="mb-f-meme">
-        <option value="">— apply an effect to this image —</option>
-        ${EFFECTS.map(e=>`<option value="${enc(e.name)}" title="${enc(e.desc||'')}">${enc(e.label||e.name)}</option>`).join('')}
-      </select></label>
-      <button class="btn btn-cyan small full" id="mb-prev-fx" title="Play just this layer in the preview above">▶︎ Preview effect</button>` : ''}
-      <label class="mb-f"><span>Sound</span><select class="input" id="mb-f-snd">
-        <option value="">None</option>
-        ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
-      </select></label>
-      ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
-      <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
-      <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right">⇄ Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom">⇅ Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright">⌾ 0°</button></div>
-      <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>
-      <div class="mb-order">
-        <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
-        <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
-      </div>`;
+        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-shadow" ${l.shadow?'checked':''}><span>Drop shadow</span></label>` : ''}
+        <label class="mb-f"><span>Sound</span><select class="input" id="mb-f-snd">
+          <option value="">None</option>
+          ${SOUNDS.map(n=>`<option value="${enc(n)}" ${l.sound===n?'selected':''}>${enc(n)}</option>`).join('')}
+        </select></label>
+        ${l.sound ? `<label class="mb-f"><span>Sound volume</span><input type="range" id="mb-f-sndvol" min="0" max="3" step="0.1" value="${(l.soundVolume==null?1:l.soundVolume)}"></label>` : ''}
+        <label class="mb-f"><span>Opacity</span><input type="range" id="mb-f-op" min="0.05" max="1" step="0.05" value="${l.opacity}"></label>
+        <div class="mb-frow"><button class="btn btn-cyan small${l.flipH?' on':''}" id="mb-fliph" title="Mirror left-to-right">⇄ Flip</button><button class="btn btn-cyan small${l.flipV?' on':''}" id="mb-flipv" title="Mirror top-to-bottom">⇅ Flip</button><button class="btn btn-cyan small" id="mb-rot0" title="Back to upright">⌾ 0°</button></div>
+        <label class="mb-f"><span>Rotate <b id="mb-rot-val">${Math.round(+l.rotate||0)}°</b></span><input type="range" id="mb-f-rot" min="-180" max="180" step="1" value="${Math.round(+l.rotate||0)}"></label>
+        <div class="mb-order">
+          <button class="btn btn-cyan small" id="mb-back">⬇︎ Send back</button>
+          <button class="btn btn-cyan small" id="mb-front">⬆︎ Bring front</button>
+        </div>`)}`;
+  }
+
+  // A collapsible inspector group. The title is already escaped by its caller (it carries &amp;), so it is
+  // interpolated raw — everything user-supplied inside `body` went through enc() where it was built.
+  function _sect(key, title, body){
+    return `<details class="mb-sec" data-sec="${key}"${_sec[key]?' open':''}>
+      <summary>${title}</summary>
+      <div class="mb-secbody">${body}</div>
+    </details>`;
   }
 
   // ---------- align to the canvas ----------
@@ -1123,7 +1298,8 @@
   // ---------- interaction ----------
   function repaint(what){
     const root = document.getElementById('feed'); if(!root) return;
-    if(what==='inspector'){ const i=document.getElementById('mb-inspector'); if(i){ i.innerHTML=inspector(); bindInspector(root); } return; }
+    if(what==='inspector'){ const i=document.getElementById('mb-inspector');
+      if(i){ _saveSecState(); i.innerHTML=inspector(); bindInspector(root); } return; }
     if(what==='timeline'){ const t=document.getElementById('mb-timeline');
       if(t){ t.innerHTML=timelineInner();
         // The ruler's tick spacing and the playhead's position both depend on the project length, which a
@@ -1133,9 +1309,15 @@
     render();
   }
 
-  function selectLayer(id){
+  // `from` says where the tap came from, which decides whether the Layer pane takes over the panel area.
+  // 'stage' → yes: the controls for what you just grabbed are the only thing you can want next. 'timeline'
+  // → NO: swapping the timeline out from under the finger that is using it is the worse surprise, so the
+  // Layer tab just relabels itself (✎ Video) and waits to be tapped.
+  function selectLayer(id, from){
     sel = id;
     document.querySelectorAll('.mb-item,.mb-track').forEach(e=>e.classList.toggle('sel', e.dataset.id===id));
+    _paintTabs();                                   // the Layer tab is named after the selection
+    if(from === 'stage') _showTab('layer');
     // Jump the playhead to where this layer actually appears. Selecting a clip whose slot is elsewhere on
     // the timeline used to leave the preview parked at the old time — showing a DIFFERENT clip (or nothing),
     // so you were positioning/trimming something you couldn't see. Skip while playing: yanking the playhead
@@ -1150,20 +1332,6 @@
       }
     }
     repaint('inspector');
-  }
-
-  // Under 1100px the inspector drops BELOW the stage and above the timeline (see the media query), so
-  // tapping a clip in the timeline changed a panel that is off-screen upwards — on a phone that reads as
-  // "tapping the clip did nothing". Bring it into view.
-  //
-  // Only ever called for a confirmed TAP, never from the pointerdown that starts a drag: scrolling the page
-  // out from under a finger that is dragging a clip is worse than the problem it solves.
-  function _revealInspector(){
-    try{
-      if(window.matchMedia && !window.matchMedia('(max-width:1100px)').matches) return;
-      const i=document.getElementById('mb-inspector');
-      if(i && i.scrollIntoView) i.scrollIntoView({ block:'nearest', behavior:'smooth' });
-    }catch(_){ }
   }
 
   // ONE pointer-events drag implementation for stage move/resize AND timeline slide/stretch. Pointer
@@ -1187,7 +1355,7 @@
     stage.addEventListener('pointerdown', (e)=>{
       const item = e.target.closest('.mb-item'); if(!item) return;
       const l = P.layers.find(x=>x.id===item.dataset.id); if(!l) return;
-      selectLayer(l.id);
+      selectLayer(l.id, 'stage');
       const rect = stage.getBoundingClientRect();
       const pxW = P.w/rect.width, pxH = P.h/rect.height;      // screen px -> project px
       const resizing = !!e.target.closest('.mb-h');
@@ -1265,7 +1433,7 @@
       if(!zb){
         // Tapping the row (its thumbnail/name, not its clip bar) selects that layer.
         const row = e.target.closest('.mb-track[data-id]');
-        if(row && !e.target.closest('.mb-clip')){ selectLayer(row.dataset.id); _revealInspector(); }
+        if(row && !e.target.closest('.mb-clip')) selectLayer(row.dataset.id, 'timeline');
         return;
       }
       e.preventDefault(); e.stopPropagation();
@@ -1291,7 +1459,7 @@
       }
       const clip = e.target.closest('.mb-clip'); if(!clip) return;
       const l = P.layers.find(x=>x.id===clip.dataset.id); if(!l) return;
-      selectLayer(l.id);
+      selectLayer(l.id, 'timeline');
       const lane = clip.parentElement, rect = lane.getBoundingClientRect();
       const total = Math.max(projEnd(), 1), perPx = total/rect.width;
       const grip = e.target.closest('.mb-grip'), side = grip && grip.dataset.grip;
@@ -1320,7 +1488,7 @@
           if(!moved){                 // a plain click: select + seek only, never touch the order
             l.start=ost; l.dur=odur;  // undo any sub-pixel drift so the clip cannot creep
             unsnapIfUnchanged();
-            repaint('timeline'); repaint('inspector'); syncScrub(); _revealInspector(); return;
+            repaint('timeline'); repaint('inspector'); syncScrub(); return;
           }
           // Move ONLY the clip you dragged. Auto-resequencing every other clip on each drop meant nudging
           // one layer silently rewrote the timing of everything after it — you could never adjust a single
@@ -1897,7 +2065,7 @@
       const s3=document.getElementById('mb-status'); if(s3) s3.textContent='';
       const o2=document.getElementById('mb-result');
       if(err && err.name==='AbortError'){ toast('render cancelled'); if(o2) o2.innerHTML=''; }
-      else if(o2) o2.innerHTML='<div class="mb-err">⚠️ '+enc(_renderErr((err&&err.message)||err))+'</div>';
+      else if(o2){ o2.innerHTML='<div class="mb-err">⚠️ '+enc(_renderErr((err&&err.message)||err))+'</div>'; _openResultPane(); }
     }finally{
       _rendering=false; _renderAbort=null; _stopRenderClock();
       const b=document.getElementById('mb-render');
@@ -1953,12 +2121,22 @@
     toast('canvas matched — whole photo, no bars');
   }
 
+  // The finished meme (or the error that stopped it) lands in its own pane, and the tab strip grows a
+  // 🎬 Result tab to hold it. It used to be appended to the bottom of the page, which on a phone meant a
+  // render you had to go looking for — and in the new fixed-height layout would be off-screen entirely.
+  function _openResultPane(){
+    _hasResult = true;
+    _paintTabs();
+    _showTab('result');
+  }
+
   function showResult(blob, out){
     // Re-look-up the panel. `out` was captured before the render started, and ANY edit made while it ran
     // rebuilds the view — which detaches that element, so a finished meme would be written into a node
     // that is no longer on the page and silently vanish.
     out = document.getElementById('mb-result') || out;
     if(!out) return;
+    _openResultPane();
     const url=URL.createObjectURL(blob);
     // Trust the BLOB's own type, not the format we asked for. A render can be forwarded to a peer node
     // (see _meme_lb_forward), and a peer still running older code answers with an MP4 whatever `fmt`
@@ -2249,21 +2427,27 @@
     // trim…) jumped the preview to whatever clip happens to be at zero — it looked like the app had
     // selected a different layer out of nowhere.
     const _prevT = (()=>{ const s=document.getElementById('mb-scrub'); return s ? +s.value||0 : null; })();
+    _saveSecState();       // …same for which inspector groups are open (see _saveSecState)
     pauseAudio();          // BEFORE the rebuild — after it, these elements are detached and unreachable
+    // A rebuild empties #mb-result, so the Result tab must go with it — otherwise it stays on the strip
+    // and opens an empty pane. (showResult sets it again.)
+    _hasResult = false;
+    if(_tab === 'result') _tab = 'layer';
+    // Full-height, non-scrolling layout for this view — same opt-in class the DM/AI/Translate views use.
+    feed.classList.add('feed-meme');
     feed.innerHTML=view();
     _audioEls = Array.from(feed.querySelectorAll('#mb-audios audio'));
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
     bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root);
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
+    root.querySelectorAll('.mb-tab').forEach(b=>b.addEventListener('click',()=>_showTab(b.dataset.tab)));
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
-    on('mb-add-audio','click',pickAudio);
-    // The picker anchors to the BUTTON (it is a popover, not a modal), so it needs the event's target.
-    on('mb-add-sticker','click',(e)=>pickSticker(e.currentTarget));
-    on('mb-add-effect','click',pickEffect);
-    on('mb-add-blossom','click',pickBlossom);
-    on('mb-tpl','click',pickTemplate);
+    on('mb-more','click',(e)=>addMenu(e.currentTarget));
+    root.querySelectorAll('.mb-szb').forEach(b=>b.addEventListener('click',()=>{
+      const [w,h]=String(b.dataset.size||'').split('x').map(Number); if(w&&h) _resizeCanvas(w,h);
+    }));
     on('mb-undo','click',undo);
     on('mb-redo','click',redo);
     on('mb-proj','click',projectMenu);
@@ -2283,7 +2467,6 @@
     on('mb-render','click',doRender);
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
-    on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); _resizeCanvas(w,h); });
     // Re-render the bar so the button says what it will now produce (📷 Still / 🎞️ GIF / 🎬 Render).
     on('mb-fmt','change',(e)=>{ P.fmt=e.target.value; save(); render(); });
     // Repaint the stage directly rather than re-rendering the view: a full render() would replace the
@@ -2293,6 +2476,14 @@
     // Row selection and ruler scrubbing are DELEGATED inside bindTimeline — they must survive
     // repaint('timeline'), which replaces every row.
     if(_prevT) paintPlayhead(_prevT); else seek(0);
+    // The stage is sized from the space actually left over (see _fitStage). Called straight away — reading
+    // .mb-fit's clientHeight flushes layout, so the box is already real — and AGAIN on the next frame, for
+    // the things that are not settled yet (a webfont, an <img> that changes a row's height). Not rAF alone:
+    // that leaves the first paint dependent on a callback the browser is free to defer, and a stage that has
+    // not been fitted is 2px wide.
+    _watchFit();
+    _fitStage();
+    requestAnimationFrame(_fitStage);
   }
 
   // ---------- the project menu ----------
