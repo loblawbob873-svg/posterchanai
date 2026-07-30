@@ -230,6 +230,12 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio",
         "circlecrop", "ocr", "post", "translate", "flashcards",
     }
+    # The NON-effect commands /meme/apply-effect is allowed to run on a single Meme Builder layer.
+    # That endpoint's allowlist is a security boundary — it is what stops a crafted `effect` from
+    # reaching any command in _execute_command_inner — so widening it is an explicit, named decision
+    # rather than "also allow MEDIA_TOOL_COMMANDS". These must take image BYTES and return a file:
+    # cutting a layer's background out is compositing, which is exactly what the builder is for.
+    MEME_LAYER_TOOLS = {"removebackground"}
     OVERLAY_MOTIONS = {"glow"}
     # --- effect modifier combination rules (ONE source of truth: the command path, the
     # media API and the web studio all resolve combos through check_motion_combo) ---
@@ -252,6 +258,14 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         self.is_bot = is_bot
         self.search_service = SearchService(db)
         self.chat_service = ChatService(db, user=user)
+
+    @classmethod
+    def meme_layer_allowed(cls) -> set:
+        """Everything /meme/apply-effect may run on ONE Meme Builder layer: the effects, plus the
+        named layer tools. It is the endpoint's allowlist, so it is what keeps a crafted `effect`
+        out of the rest of _execute_command_inner — defined once, here with the sets it is built
+        from, rather than as an expression inline in the router where nothing can test it."""
+        return set(cls.MOTION_EFFECTS) | set(cls.ANIMATED_EFFECTS) | set(cls.MEME_LAYER_TOOLS)
 
     @classmethod
     def wants_attachments(cls, command: Optional[str]) -> bool:

@@ -772,14 +772,14 @@
       <button class="btn btn-cyan small full" id="mb-proj">📂 Save, open, rename, start new…</button>`;
   }
 
-  // ➕ More — the five sources that are not "a picture" or "some words". A sheet rather than five buttons in
-  // the toolbar: each one gets a line saying what it is, which is what those buttons never had room for.
+  // ➕ More — the sources that are not "a picture" or "some words". A sheet rather than four buttons in the
+  // toolbar: each one gets a line saying what it is, which is what those buttons never had room for.
+  // Blossom is NOT here — it is one of the two answers to 🖼️ Media, which is where you look for a photo.
   function addMenu(anchor){
     PC.modal(`<h3>➕ Add to the meme</h3>
       <button class="btn btn-cyan full mb-addb" id="mba-audio"><b>🎵 Music or a voice-over</b><i>A track under the whole meme, or talk over it</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mba-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-tpl"><b>📐 Ready-made layout</b><i>Top/bottom captions, a two-panel split, a caption bar</i></button>`, root=>{
       const go = (id, fn) => { const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
       go('mba-audio', pickAudio);
@@ -787,7 +787,6 @@
       // it opens, so anchor it to ➕ More, which is still there.
       go('mba-sticker', ()=>pickSticker(anchor || document.getElementById('mb-more')));
       go('mba-effect', pickEffect);
-      go('mba-blossom', pickBlossom);
       go('mba-tpl', pickTemplate);
     });
   }
@@ -1009,7 +1008,8 @@
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
-        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
+        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below.">🪄 Remove the background</button>` : ''}
+        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
 
       ${_sect('place', '📐 Position &amp; size', (isText
         ? `<button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
@@ -1640,8 +1640,19 @@
     return added;
   }
 
-  async function pickMedia(){
-    // Blossom picker OR a local file. Local files upload first so the render service can fetch them.
+  // 🖼️ Media asks WHERE from — the two places a picture can come from, on one sheet. Blossom used to be
+  // buried in ➕ More next to stickers and templates, which is not where you look for "a photo".
+  function pickMedia(){
+    PC.modal(`<h3>🖼️ Add media</h3>
+      <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo or video off your phone or computer</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>`, root=>{
+      const go=(id,fn)=>{ const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
+      go('mbm-local', pickLocalMedia);
+      go('mbm-blossom', pickBlossom);
+    });
+  }
+  function pickLocalMedia(){
+    // Local files upload to Blossom first, so the render service only ever fetches things that exist.
     const inp=document.createElement('input'); inp.type='file';
     inp.accept='image/*,video/*'; inp.multiple=true;
     inp.onchange=()=>addMediaFiles(inp.files);
@@ -1887,12 +1898,21 @@
   // swap in as the layer's source — so the effect is applied ON that image, exactly like the Effects
   // studio. Guarded like doRender so a double-tap can't fire two renders.
   let _fxBusy = false;
-  async function applyMemeEffect(base, name){
+  // `opts` renames the operation for the parts a person reads — the progress line, the toast and the
+  // layer's name. Background removal goes through this same path (it is a server-side transform of the
+  // layer's image that swaps its source in place, with the same one-way-door protection and the same
+  // ↺ revert), but calling it "applying removebackground…" and naming the layer after a command would
+  // be nonsense. Effects pass nothing and keep reading as effects.
+  async function applyMemeEffect(base, name, opts){
+    opts = opts || {};
+    const label = opts.busy || ('applying '+name);
+    const done = opts.done || '';
+    const layerName = opts.layerName || '';
     if(!name || !base || !base.src){ toast('add an image to this layer first'); return; }
     if(_fxBusy){ toast('still rendering the last effect — hang on'); return; }
     _fxBusy = true;
     const st=document.getElementById('mb-status');
-    if(st) st.textContent='applying '+name+'…';
+    if(st) st.textContent=label+'…';
     try{
       const auth = await selfProof();
       const r = await fetch('/client/meme/apply-effect',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -1912,14 +1932,18 @@
         base.origName = base.name || ''; base.origDur = +base.dur || 0;
       }
       base.src = j.url;
-      base.type = (j.is_video===false) ? 'image' : 'video';
-      if(+j.dur>0) base.dur = +j.dur;
-      base.name = String(name).slice(0,24);
+      const isVid = (j.is_video !== false);
+      base.type = isVid ? 'video' : 'image';
+      // Only a VIDEO result re-times the layer. ffprobe reports a duration for a still too (one frame,
+      // ~0.04s), and taking it would shrink the slot to a frame — the layer would be in the project and
+      // invisible in the export. A cut-out is the same picture with its background gone: same slot.
+      if(isVid && +j.dur>0) base.dur = +j.dur;
+      base.name = String(layerName || name).slice(0,24);
       base.trim = 0;
       sel = base.id;
       save(); render();
-      toast(name+' applied');
-    }catch(err){ toast('effect failed: '+((err&&err.message)||err)); }
+      toast(done || (name+' applied'));
+    }catch(err){ toast('failed: '+((err&&err.message)||err)); }
     finally{ _fxBusy = false; if(st) st.textContent=''; }
   }
 
@@ -2272,6 +2296,14 @@
     // Put the layer's ORIGINAL picture back. applyMemeEffect replaces the source in place, which used to be
     // a one-way door: the wrong pick out of a hundred-name list cost you the layer (Ctrl+Z covers it too now,
     // but not once you have made other edits on top).
+    // 🪄 Remove the background — the same rembg cut-out the `removebackground` command does, run on this
+    // layer's image and swapped in place, so the layers beneath show through. Not in the "Meme effect"
+    // dropdown: that list is the effect catalogue, and a cut-out is a compositing tool you go looking for
+    // by name, not something to find among a hundred entries. Keeps the layer's own name — it is still
+    // the same picture. First run on a node downloads the ~170MB u2net model, hence the honest wait text.
+    on('mb-nobg','click',()=>applyMemeEffect(l, 'removebackground', {
+      busy: 'removing the background', done: '🪄 background removed — ↺ undo puts it back',
+      layerName: l.name || srcName(l.src) }));
     on('mb-fx-revert','click',()=>{
       if(!l.origSrc) return;
       snap();

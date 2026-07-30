@@ -1287,8 +1287,11 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     # it here would 400 a pick that works everywhere else.
     effect = (data.effect or "").strip().lower()
     effect = CommandService.COMMAND_ALIASES.get(effect, effect)
-    allowed = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
-    if effect not in allowed:
+    # Effects, plus the handful of media TOOLS that make sense on one layer (removebackground).
+    # Defined on CommandService, next to the sets it is built from — this allowlist is what stops a
+    # crafted `effect` from reaching any branch of _execute_command_inner, so it gets one definition
+    # and a test. `removebg`/`rmbg`/`nobg` reach it through the alias resolved above.
+    if effect not in CommandService.meme_layer_allowed():
         raise HTTPException(status_code=400, detail="unknown effect")
 
     _now = time.monotonic()
@@ -1339,8 +1342,13 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     ct_out = str(out.get("content_type") or "video/mp4")
     ext_out = "mp4" if "mp4" in ct_out else ((ct_out.split("/")[-1] or "mp4").split(";")[0])
 
+    # A STILL has no duration worth reporting — ffprobe answers ~0.04s for a PNG (one frame at 25fps),
+    # and the client would take that as the layer's new slot length, shrinking it to a single frame and
+    # dropping it out of the export. Only probe what is actually a video.
     dur = 0.0
     try:
+        if not ct_out.startswith("video/"):
+            raise ValueError("still image — no duration")
         import subprocess as _sp
         import tempfile as _tf
         with _tf.NamedTemporaryFile(suffix="." + ext_out, delete=False) as tfh:
