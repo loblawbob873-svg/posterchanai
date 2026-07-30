@@ -673,7 +673,8 @@ class _Effects1Mixin:
         return {"type": "files", "content": summary, "files": outputs}
 
     async def _ruckus_command(self, attachments: Optional[list], args: str = "") -> dict:
-        """Uncle Ruckus + caption on an attached image: `ruckus [text]`."""
+        """Uncle Ruckus over an attached image: `ruckus`. Takes NO caption — he is a reaction
+        overlay (like `carl`), so any argument is ignored rather than drawn on the picture."""
         from app.services.media_service import is_image
 
         if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
@@ -683,10 +684,8 @@ class _Effects1Mixin:
         from app.services.effects_service import add_ruckus
         from app.services.effects_service.character import _pointing_attachments
 
-        caption = (args or "").strip()
-        fn = ((lambda d: add_ruckus(d, caption)) if caption else add_ruckus)
         outputs, summary = await asyncio.to_thread(
-            _pointing_attachments, attachments, "ruckus", "Ruckus, No Relation", fn)
+            _pointing_attachments, attachments, "ruckus", "Uncle Ruckus", add_ruckus)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

@@ -3883,7 +3883,11 @@ body.modal-open .mobilenav{display:none}
    put it: drawtext never wraps, draws from the layer's x, and left-aligns its lines. So: white-space:pre
    (no wrapping), no max-width (nothing to wrap against), text-align:left, line-height:1 so the box hugs
    the glyphs. With these, the preview's top-left IS the rendered text's top-left. */
-.mb-text{font-weight:700;line-height:1;white-space:pre;width:max-content;max-width:none;text-align:left;
+/* text-align:CENTRE, not left: the renderer anchors every line on the caption's centre (x = cx - text_w/2,
+   or (w-text_w)/2 when the ⇔ Centre flag is on), so a caption with more than one line exports with its
+   lines centred on each other. Left-aligning them here made the preview disagree with the export for any
+   multi-line caption — which is now every caption long enough to wrap. */
+.mb-text{font-weight:700;line-height:1;white-space:pre;width:max-content;max-width:none;text-align:center;
   padding:0;margin:0;
   /* Match the font ffmpeg draws with (Liberation Sans Bold, via _meme_font_path). The preview used to
      inherit the THEME font — cyberpunk's stylised glyphs meant the caption you saw was not the caption
@@ -3898,6 +3902,15 @@ body.modal-open .mobilenav{display:none}
      .716 for Arial/Liberation). So the export always came out ~0.19 x font-size HIGHER than the preview
      showed — 36px on a 189px caption. Lift the preview by the same amount so ink lines up with ink. */
   transform:translateY(-0.19em)}
+/* ONE span per wrapped line. Each is its own inline-block so the optional background box hugs that line's
+   own ink — which is what drawtext's box=1 draws. The box itself is a box-SHADOW spread, never padding:
+   padding would move the glyphs, and drawtext's boxborderw does not. */
+.mb-tline{display:inline-block}
+/* Snap guides: shown only while a drag is snapped to that line (JS toggles display). Deliberately thin and
+   dashed so they read as a guide rather than as part of the meme. */
+.mb-guide{position:absolute;pointer-events:none;z-index:4}
+.mb-gv{top:0;bottom:0;width:0;border-left:1px dashed var(--neon);margin-left:-1px}
+.mb-gh{left:0;right:0;height:0;border-top:1px dashed var(--neon);margin-top:-1px}
 /* Resize handle — only on the selected layer, and finger-sized (18px) rather than a desktop 8px dot. */
 .mb-h{display:none;position:absolute;right:-9px;bottom:-9px;width:18px;height:18px;border-radius:50%;
   background:var(--neon);border:2px solid var(--bg);cursor:nwse-resize}
@@ -3921,7 +3934,9 @@ body.modal-open .mobilenav{display:none}
 /* The flip toggles are the only mb- buttons with an ON state, and there was no .btn.on rule to
    carry it — an unlit toggle is worse than no toggle, you cannot tell whether the layer is
    mirrored. Same treatment as .tl-cmp-btn.on. */
-.mb-frow .btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan);border-color:rgba(var(--accent-rgb),.55)}
+/* …and the same for a toggle that is NOT in a .mb-frow — ⇔ Centre horizontally is a full-width button, so
+   scoping the lit state to .mb-frow left it with no way to show that it is on. */
+.mb-frow .btn.on,.mb-inspector .btn.on{background:rgba(var(--accent-rgb),.18);color:var(--cyan);border-color:rgba(var(--accent-rgb),.55)}
 .mb-frow .mb-f{flex:1 1 0}
 /* Visual clip trimmer (video layer): the source video IS the scrubber. Bright band = kept, dark = trimmed,
    neon bars = drag handles. Theme vars only for the frame; the dim/handles are fixed so they read on any clip. */
@@ -3942,8 +3957,36 @@ body.modal-open .mobilenav{display:none}
 .mb-check{flex-direction:row;align-items:center;gap:8px}
 .mb-order{display:flex;gap:8px}
 .mb-order .btn{margin:0;flex:1}
-.mb-timeline{display:flex;flex-direction:column;gap:6px;padding:10px;
-  border:1px solid var(--line);border-radius:var(--r)}
+/* Nine-position align pad. Square cells in a 3x3 so it reads as the canvas it maps onto, and 34px tall so
+   each one is a real touch target rather than a 9-way sliver. */
+.mb-align{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.mb-ab{height:34px;line-height:1;padding:0;font-size:14px;cursor:pointer;color:var(--muted);
+  background:var(--panel2);border:1px solid var(--line);border-radius:7px}
+.mb-ab:hover{color:var(--fg);border-color:var(--neon)}
+/* The timeline is the scroll PORT; .mb-tlinner is the content, and the ruler and playhead are inside it so
+   they stay glued to the lanes when a phone scrolls the timeline sideways. */
+.mb-timeline{padding:10px;border:1px solid var(--line);border-radius:var(--r)}
+.mb-tlinner{position:relative;display:flex;flex-direction:column;gap:6px}
+/* Seconds ruler — same .mb-track/.mb-lane geometry as a clip row, which is what makes a tick line up with
+   the clip below it without measuring anything. */
+.mb-rrow{align-items:flex-end}
+.mb-rname{flex:0 0 132px}
+.mb-rlane{height:20px;background:transparent;cursor:pointer;touch-action:none}
+.mb-tick{position:absolute;top:6px;bottom:0;width:0;border-left:1px solid var(--line)}
+/* Longhands, NOT the `font:` shorthand: `font:600 10px/1 inherit` is invalid (the shorthand's family slot
+   cannot be `inherit`) and the whole declaration is dropped, which leaves the labels at the default size.
+   font-style:normal because the tick is an <i>. */
+.mb-tick b{position:absolute;left:3px;top:-8px;font-weight:600;font-size:10px;line-height:1;font-style:normal;
+  color:var(--muted);white-space:nowrap}
+.mb-tick b.mb-tickr{left:auto;right:3px}          /* the final label hangs left of its line, or it is clipped */
+/* Playhead: one line across every lane, with a grab tab at the top. Positioned in px by paintPlayhead
+   (from a real lane's offset), so it cannot drift from the lanes at any breakpoint. */
+.mb-ph{position:absolute;top:14px;bottom:2px;width:0;border-left:2px solid var(--danger);
+  margin-left:-1px;pointer-events:none;z-index:3}
+/* The line itself is pointer-transparent (it lies over every lane and would eat clip drags); only the tab
+   is grabbable, which is also the visible "you can drag this" affordance. */
+.mb-ph b{position:absolute;left:-7px;top:-9px;width:16px;height:16px;border-radius:3px;background:var(--danger);
+  pointer-events:auto;cursor:ew-resize;touch-action:none}
 .mb-empty{padding:6px 2px}
 .mb-tlhint{margin:8px 2px 4px}
 .mb-track{display:flex;align-items:center;gap:10px;min-width:0}
@@ -3990,11 +4033,20 @@ body.modal-open .mobilenav{display:none}
   .mb-wrap{padding:10px 10px 96px;gap:10px}       /* bottom nav clearance */
   .mb-bar{gap:6px}
   .mb-bar .btn{flex:1 1 auto}                     /* full-width taps, no 30px targets */
-  .mb-size{flex:1 1 100%}
+  /* Shares a row rather than claiming one of its own (it used to be flex-basis:100%). The bar is two rows
+     now, and a third row for one dropdown costs ~46px of a phone screen that the stage should have. */
+  .mb-size{flex:1 1 84px;min-width:84px}
   .mb-stage{height:42vh}                          /* leave room for the timeline without scrolling */
-  /* The lane keeps a usable width and the ROW scrolls, instead of clip bars collapsing to slivers. */
+  /* The lane keeps a usable width and the CONTENT scrolls, instead of clip bars collapsing to slivers.
+     min-width goes on .mb-tlinner (the scroll content), not on each row: the playhead is positioned
+     against the inner element, so it has to be the thing that is 520px wide. */
   .mb-timeline{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  .mb-track{min-width:520px}
+  .mb-tlinner{min-width:520px}
+  .mb-rname{flex-basis:104px}                     /* match .mb-trackname at this breakpoint */
+  /* Icon-only buttons must NOT stretch with the rest of the bar — a full-width ↶ next to a full-width ↷
+     eats the row a phone needs for Templates and Project. */
+  .mb-bar .btn.mb-icon{flex:0 0 auto;min-width:44px}
+  .mb-ab{height:38px;font-size:15px}              /* thumb-sized align pad */
   /* The name column now carries a THUMBNAIL plus the z-order buttons, which do not fit the old 96px.
      Give it a little more room and shrink both, so the row still reads at a glance on a phone. */
   .mb-trackname{flex-basis:104px;font-size:12px;gap:4px}

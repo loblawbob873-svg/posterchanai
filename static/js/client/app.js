@@ -17894,7 +17894,9 @@
     // Blossom upload + the cached self-auth proof + the non-native confirm — needed by any sub-module
     // that stores media or calls a /client endpoint (meme.js). uiConfirm specifically: a sub-module must
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.
-    uploadBlob, selfProof, uiConfirm,
+    // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
+    // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
+    uploadBlob, selfProof, uiConfirm, uiPrompt,
     // NIP-10 reply tags + the cached profile, so a sub-module can reply to a post it was launched from
     // (meme.js: reply with the finished meme) using the SAME tagging as every other reply here — a
     // module rolling its own e/p tags is how a reply ends up detached from its thread.

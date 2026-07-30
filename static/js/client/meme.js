@@ -19,11 +19,12 @@
   // Same contract every sub-module uses (see stats.js/news.js): wait for app.js to publish the bridge,
   // then take our helpers off it rather than off bare globals — app.js is an IIFE, so `toast`,
   // `uploadBlob` and friends are NOT global.
-  let PC = null, toast, uploadBlob, selfProof, uiConfirm, ME;
+  let PC = null, toast, uploadBlob, selfProof, uiConfirm, uiPrompt, ME;
   function boot(){
     PC = window.__PC;
     if(!PC) return setTimeout(boot, 50);
-    ({ toast, uploadBlob, selfProof, uiConfirm } = PC);
+    ({ toast, uploadBlob, selfProof, uiConfirm, uiPrompt } = PC);
+    bindKeys();          // ONCE, on the document — see bindKeys for why not per render()
     window.PCMeme = {
       render(){ ME = PC.ME; P = load(); render(); },
       // Persist on the way OUT too. Every edit already saves, but leaving the view is exactly when a
@@ -86,7 +87,7 @@
   const nid = () => 'L' + (++_uid) + Math.random().toString(36).slice(2, 6);
 
   function blank(){
-    return { w:720, h:1280, fps:30, bg:'#000000', duration:6, layers:[] };
+    return { name:'', w:720, h:1280, fps:30, bg:'#000000', duration:6, layers:[] };
   }
   // Persist across view switches / reloads so a half-built meme is not lost by tapping Home.
   // A silent failure here USED to mean the build quietly stopped persisting (localStorage full, or blocked in
@@ -122,6 +123,141 @@
       // saved at the bottom or right came back somewhere else entirely.
       if((+l.x||0) <= -8) l.x = Math.round(W*0.08);
       if((+l.y||0) <= -8) l.y = Math.round(H*0.08);
+    });
+  }
+
+  // ---------- undo / redo ----------
+  // Snapshots of the WHOLE project as JSON, not per-action inverses. P is already fully serializable
+  // (it is exactly what localStorage holds and what Save writes to Blossom), so undo is "restore a
+  // string" — there is no inverse operation to get wrong, and any feature added later is covered the
+  // moment it calls snap(). Media is referenced by URL, so a snapshot is a few KB whatever is on the
+  // timeline. This is the safety net that makes the destructive actions (delete, Clear all, applying
+  // an effect over a layer's source, reshaping the canvas) safe to try at all.
+  const HIST_MAX = 40;
+  let _hist = [], _future = [], _burstTag = '', _burstAt = 0;
+  // A COMPOUND edit (a template lays down two captions and re-boxes two clips) is one thing the user did,
+  // so it must be one undo step. Take a snapshot, raise this, build, lower it — every snap() inside is a
+  // no-op and the single outer snapshot is what Ctrl+Z returns to. See groupEdit.
+  let _snapOff = 0;
+  function groupEdit(fn){
+    snap(); _snapOff++;
+    try{ fn(); } finally { _snapOff--; }
+  }
+  // ALWAYS call before mutating — the stack holds the state you are leaving, not the one you arrive at.
+  function snap(){
+    if(_snapOff) return;
+    try{
+      const s = JSON.stringify(P);
+      if(_hist.length && _hist[_hist.length-1] === s) return;   // nothing actually changed
+      _hist.push(s);
+      if(_hist.length > HIST_MAX) _hist.shift();
+      _future.length = 0;            // a fresh edit forks the timeline; the old redo path is gone
+      _burstTag = '';
+      _syncHistBtns();
+    }catch(_){ }
+  }
+  // Dragging fires per pointermove and typing per keystroke; ONE undo step per burst is what a person
+  // means by "undo that". The same tag within 1.2s folds into the snapshot already taken.
+  function snapBurst(tag){
+    const now = Date.now();
+    if(_burstTag === tag && (now - _burstAt) < 1200){ _burstAt = now; return; }
+    snap(); _burstTag = tag; _burstAt = now;
+  }
+  // Drop the pending snapshot when the gesture turned out to change nothing — a TAP on a clip selects it
+  // and a tap on the stage may not move a pixel, and a history entry identical to the present state makes
+  // the next Ctrl+Z a visible no-op, which reads as "undo is broken". Safe to call unconditionally: a
+  // gesture that did change something has a different string and keeps its snapshot.
+  // Popping is always CORRECT whoever pushed it: an entry equal to the present state is a no-op undo step
+  // by definition.
+  function unsnapIfUnchanged(){
+    try{ if(_hist.length && _hist[_hist.length-1] === JSON.stringify(P)) _hist.pop(); }catch(_){ }
+    _syncHistBtns();
+  }
+  // Plenty of edits deliberately do NOT re-render the view (slider drags, arrow nudges, flip toggles — a
+  // full rebuild would restart the video elements), so the ↶/↷ buttons cannot get their enabled state from
+  // view() alone: they stayed greyed out after those edits even though Ctrl+Z worked. Update them directly.
+  function _syncHistBtns(){
+    const u = document.getElementById('mb-undo'), r = document.getElementById('mb-redo');
+    if(u) u.disabled = !_hist.length;
+    if(r) r.disabled = !_future.length;
+  }
+  function _restore(s){
+    let next = null;
+    try{ next = JSON.parse(s); }catch(_){ return; }
+    if(!next || !Array.isArray(next.layers)) return;
+    P = next;
+    if(!P.layers.some(x => x.id === sel)) sel = null;   // the selected layer may not exist in this state
+    save(); render();
+  }
+  function undo(){
+    if(!_hist.length){ toast('nothing left to undo'); return; }
+    try{ _future.push(JSON.stringify(P)); }catch(_){ }
+    _burstTag = '';
+    _restore(_hist.pop());
+  }
+  function redo(){
+    if(!_future.length){ toast('nothing to redo'); return; }
+    try{ _hist.push(JSON.stringify(P)); }catch(_){ }
+    _burstTag = '';
+    _restore(_future.pop());
+  }
+
+  // ---------- keyboard ----------
+  // BARE keys here, not the app's Alt+<letter>: the global shortcuts are all Alt-modified (see SHORTCUTS
+  // in app.js) so there is no collision, and an editor without Space/Delete/arrows/Ctrl+Z feels broken no
+  // matter how good the mouse story is. Registered ONCE from boot() on the document — render() rebuilds
+  // the entire view on nearly every edit, so a per-render listener would stack up a copy per repaint and
+  // a single Delete would remove a dozen layers.
+  const _typing = (t) => !!t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') || t.isContentEditable);
+  function bindKeys(){
+    document.addEventListener('keydown', (e)=>{
+      if(!P || !document.getElementById('mb-stage')) return;    // not in the Meme Builder
+      if(_typing(e.target)) return;                             // they meant to type it
+      if(e.altKey) return;                                      // Alt+<letter> belongs to the app
+      // A modal (effect picker, Open, templates) or a uiConfirm is on top — its own keys win, and
+      // Escape there must close IT, not deselect a layer behind it.
+      if(document.querySelector('#modal-root .modal-bg, .uiconfirm-bg')) return;
+      const k = e.key, ctrl = e.ctrlKey || e.metaKey;
+      const l = P.layers.find(x => x.id === sel);
+      if(ctrl){
+        if(k === 'z' || k === 'Z'){ e.preventDefault(); (e.shiftKey ? redo : undo)(); return; }
+        if(k === 'y' || k === 'Y'){ e.preventDefault(); redo(); return; }
+        if(k === 'd' || k === 'D'){ e.preventDefault(); if(l) duplicateLayer(l); return; }
+        return;                       // every other Ctrl combo stays the browser's (copy, find, reload)
+      }
+      // Space plays/pauses — EXCEPT on a focused button or link, where Space is how the keyboard presses it.
+      // Rarely in the way: almost every toolbar action re-renders the view, which destroys the button it was
+      // fired from and hands focus back to the body.
+      if(k === ' ' || k === 'Spacebar'){
+        if(/^(BUTTON|A)$/.test(e.target && e.target.tagName || '')) return;
+        e.preventDefault(); togglePlay(); return;
+      }
+      if(k === 'Escape'){ if(sel){ e.preventDefault(); sel = null; render(); } return; }
+      if(k === 'Delete' || k === 'Backspace'){
+        if(!l) return;
+        e.preventDefault();
+        snap();
+        P.layers = P.layers.filter(x => x.id !== l.id); sel = null; save(); render();
+        toast('layer deleted — Ctrl+Z to undo');       // no confirm: undo is the better answer
+        return;
+      }
+      if(k.indexOf('Arrow') === 0){
+        if(!l || l.type === 'audio') return;           // a music bed has no position to nudge
+        if(l.type === 'text' && _alignOf(l) === 'center' && (k === 'ArrowLeft' || k === 'ArrowRight')){
+          toast('centred caption — switch off ⇔ Centre to move it sideways'); return;
+        }
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;              // Shift = the coarse nudge, like every editor
+        snapBurst('nudge:' + l.id);                    // BEFORE the mutation
+        if(k === 'ArrowLeft' || k === 'ArrowRight') l.x = Math.round((+l.x||0) + (k === 'ArrowRight' ? step : -step));
+        else l.y = Math.round((+l.y||0) + (k === 'ArrowDown' ? step : -step));
+        save();
+        // Move the element in place rather than repaint('inspector'): a repaint would rebuild the video
+        // trim widget (restarting the clip) on every keypress, and x/y are not inspector inputs anyway.
+        const it = document.querySelector('.mb-item[data-id="' + l.id + '"]');
+        if(it) applyGeom(it, l);
+        return;
+      }
     });
   }
 
@@ -178,20 +314,103 @@
         const r = el.getBoundingClientRect();
         // seek() hides layers outside the playhead's window (display:none), and a hidden element measures
         // ZERO — which produced a centre equal to the layer's left edge and put the caption off to one side.
-        // Measure only when it is actually laid out; otherwise send nothing and let the renderer use x.
-        if(!r.width) return null;
-        const k = P.w / st.getBoundingClientRect().width;
-        return Math.round((+l.x||0) + r.width * k / 2); }
+        // Measure only when it is actually laid out; a hidden layer falls through to the font measurement
+        // below (NOT to null: with the renderer centring each line on cx, no cx means the lines are drawn
+        // left-anchored instead — so a wrapped caption that happens to be outside the playhead's window at
+        // render time would export left-aligned while the preview showed it centred).
+        if(r.width){
+          const k = P.w / st.getBoundingClientRect().width;
+          return Math.round((+l.x||0) + r.width * k / 2);
+        }
+      }
+    }catch(_){ }
+    // Same canvas metrics the wrapper uses, in project pixels already — the widest line IS the box width.
+    try{
+      const size = +l.size || 64;
+      const w = wrapText(l).split('\n').reduce((m, ln)=>Math.max(m, _measure(ln, size)), 0);
+      if(w) return Math.round((+l.x||0) + w/2);
     }catch(_){ }
     return null;
   }
 
   const _alignOf = (l) => (l.align || '');   // '' = obey the x you dragged it to; 'center' = let ffmpeg centre it
 
+  // ---------- caption word-wrap ----------
+  // drawtext NEVER wraps, so a caption longer than the frame used to run straight off the edge of the
+  // exported video with nothing on screen to warn you (the preview is white-space:pre and max-content
+  // wide, so it overflowed the stage the same way and simply got clipped). The renderer already draws
+  // ONE drawtext PER LINE of whatever text it is handed (see _line_dy in meme_builder_service), so the
+  // wrapping belongs here — and it has to be computed ONCE and used for BOTH the preview and the render
+  // payload, or the preview is lying again.
+  //
+  // Measured with a canvas 2D context in the SAME font/weight the preview and ffmpeg use, so the break
+  // points are the ones drawtext would have chosen at that size.
+  let _measCtx = null;
+  function _measure(s, px){
+    try{
+      if(!_measCtx) _measCtx = document.createElement('canvas').getContext('2d');
+      _measCtx.font = '700 ' + px + 'px PCMemeFont, "Liberation Sans", Helvetica, Arial, sans-serif';
+      return _measCtx.measureText(s).width;
+    }catch(_){ return String(s).length * px * 0.5; }   // no canvas → a rough guess beats not wrapping
+  }
+  // Percentage of the canvas width a caption may fill before it wraps. 92% leaves a margin on both
+  // sides, which is what a caption wants; the inspector exposes it per layer.
+  const _wrapPct = (l) => clamp(l.wrapPct == null ? 92 : l.wrapPct, 20, 100);
+  // `wrap:false` opts a layer out entirely (a deliberate one-liner you want to overflow). Anything else —
+  // including a layer saved before this existed — wraps: a caption that already fits is untouched by
+  // wrapping, and one that doesn't was broken, so ON is the safe default for old projects too.
+  function wrapText(l){
+    const raw = String(l.text == null ? '' : l.text);
+    if(l.wrap === false || !raw) return raw;
+    const max = P.w * _wrapPct(l) / 100;
+    const size = +l.size || 64;
+    const out = [];
+    raw.replace(/\r\n?/g, '\n').split('\n').forEach(para=>{
+      let line = '';
+      para.split(' ').forEach(word=>{
+        if(!line && _measure(word, size) > max){
+          // A single word wider than the frame (a URL, a keysmash) — break it by character, because
+          // leaving it unwrapped is the exact bug this function exists to fix.
+          let chunk = '';
+          for(const ch of word){
+            if(chunk && _measure(chunk + ch, size) > max){ out.push(chunk); chunk = ch; }
+            else chunk += ch;
+          }
+          line = chunk;
+          return;
+        }
+        const cand = line ? line + ' ' + word : word;
+        if(line && _measure(cand, size) > max){ out.push(line); line = word; }
+        else line = cand;
+      });
+      out.push(line);
+    });
+    return out.join('\n');
+  }
+  // A caption's preview markup: ONE inline-block span per line, separated by a real newline (the parent
+  // is white-space:pre, so that is the line break). Per-line spans are what make the optional background
+  // box match the export — drawtext's box=1 draws a box around EACH line's own ink, and a background on
+  // the whole block would instead be one rectangle the width of the longest line. The box is painted with
+  // box-shadow rather than padding, so it expands the paint area WITHOUT moving the text (which is exactly
+  // what drawtext's boxborderw does).
+  function _textInnerHTML(l){
+    const size = +l.size || 64;
+    const bx = l.box ? `background:${enc(_boxColor(l))};box-shadow:0 0 0 ${(Math.max(4, size/5)/P.w*100).toFixed(3)}cqw ${enc(_boxColor(l))};` : '';
+    return wrapText(l).split('\n')
+      .map(ln => `<span class="mb-tline" style="${bx}">${enc(ln || ' ')}</span>`).join('\n');
+  }
+  // The box colour as a CSS rgba(), from the same hex + alpha pair the renderer gets.
+  function _boxColor(l){
+    const hex = /^#[0-9a-fA-F]{6}$/.test(l.boxColor || '') ? l.boxColor : '#000000';
+    const a = clamp(l.boxAlpha == null ? 0.55 : l.boxAlpha, 0, 1);
+    return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${a})`;
+  }
+
   const _stageOrder = () => P.layers.filter(_isVisual).concat(P.layers.filter(l=>l.type==='text'));
 
   function addLayer(type, src, extra){
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
+    snap();
     // APPEND to the end of the timeline, do not stack at t=0. Defaulting every new layer to start:0 made
     // a second image land exactly on top of the first — the timeline read as "everything overlaps", which
     // is not how a video editor behaves. Media appends after the last clip so drops play in sequence;
@@ -253,6 +472,7 @@
   function duplicateLayer(l){
     if(!l) return null;
     if(P.layers.length >= 24){ toast('24 layers is the limit'); return null; }
+    snap();
     const c = Object.assign({}, l, { id: nid() });
     if(c.type === 'text'){
       if(_alignOf(c) !== 'center') c.x = clamp(c.x + Math.round(P.w*0.04), 0, Math.max(0, P.w-16));
@@ -273,16 +493,22 @@
   function view(){
     return `
     <div class="mb-wrap">
+      <!-- TWO rows, split by what they do: everything that ADDS a layer on the first, everything that acts
+           on the PROJECT on the second. One row of eleven buttons wrapped into an unreadable block on a
+           phone, and put "Clear all" next to "Add text". -->
       <div class="mb-bar">
         <button class="btn btn-neon small" id="mb-add-media">🖼️ Add media</button>
         <button class="btn btn-cyan small" id="mb-add-text">🅣 Add text</button>
         <button class="btn btn-cyan small" id="mb-add-audio" title="Add a music track under the whole meme">🎵 Add music</button>
         <button class="btn btn-cyan small" id="mb-add-effect" title="Add an effect (dancing man, shrug, a character) as its own layer you can drag, resize and time">✨ Add effect</button>
         <button class="btn btn-cyan small" id="mb-add-blossom">🌸 From Blossom</button>
-        <button class="btn btn-cyan small" id="mb-save">💾 Save</button>
-        <button class="btn btn-cyan small" id="mb-open">📂 Open</button>
+        <button class="btn btn-cyan small" id="mb-tpl" title="Start from a ready-made layout — classic top/bottom captions, a two-panel split, a caption bar">📐 Templates</button>
+      </div>
+      <div class="mb-bar">
+        <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
+        <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
+        <button class="btn btn-cyan small" id="mb-proj" title="Save, open, rename or start a new project">📂 ${enc(P.name || 'Untitled')}</button>
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
-        <button class="btn btn-danger small" id="mb-clear" title="Remove every layer and start a fresh build">🧹 Clear all</button>
         <select class="input mb-size" id="mb-size" aria-label="Canvas size">
           ${PRESETS.map(([n,w,h])=>`<option value="${w}x${h}" ${P.w===w&&P.h===h?'selected':''}>${n}</option>`).join('')}
           ${PRESETS.some(([n,w,h])=>P.w===w&&P.h===h) ? '' :
@@ -300,6 +526,9 @@
         <div class="mb-stagewrap">
           <div class="mb-stage" id="mb-stage" style="aspect-ratio:${P.w}/${P.h};background:${P.bg}">
             ${_stageOrder().map(stageEl).join('')}
+            <!-- Snap guides: shown only while a drag is actually snapped to that line (see applySnaps). -->
+            <i class="mb-guide mb-gv" id="mb-gv" style="display:none"></i>
+            <i class="mb-guide mb-gh" id="mb-gh" style="display:none"></i>
           </div>
           <!-- Music beds have nothing to show on the stage, but the PREVIEW has to be able to hear them —
                otherwise you can only judge the mix by rendering. One hidden <audio> per track, driven by
@@ -319,12 +548,68 @@
         </div>
       </div>
 
-      ${P.layers.some(_isVisual) ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to reorder it — the rest reflow back-to-back. Drag its edges to trim.</div>' : ''}
-      <div class="mb-timeline" id="mb-timeline">
-        ${P.layers.length ? _rowOrder().map(trackEl).join('') : '<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'}
-      </div>
+      ${P.layers.some(_isVisual) ? '<div class="muted small mb-tlhint">Drag a clip along the timeline to move it, or its edges to trim. Tap the ruler to move the playhead.</div>' : ''}
+      <div class="mb-timeline" id="mb-timeline">${timelineInner()}</div>
       <div id="mb-result"></div>
     </div>`;
+  }
+
+  // The timeline's scrolling CONTENT. Everything that has to line up with a clip lane — the ruler and the
+  // playhead — lives in here rather than over the .mb-timeline box, because on a phone the box scrolls
+  // horizontally: a playhead positioned against the outer element would slide away from the lanes it is
+  // supposed to be marking the moment you scrolled.
+  function timelineInner(){
+    if(!P.layers.length) return '<div class="mb-tlinner"><div class="muted small mb-empty">No layers yet — add media or text to start.</div></div>';
+    return `<div class="mb-tlinner" id="mb-tlinner">
+      ${rulerEl()}
+      ${_rowOrder().map(trackEl).join('')}
+      <i class="mb-ph" id="mb-ph"><b></b></i>
+    </div>`;
+  }
+
+  // A seconds ruler above the tracks. Built as a .mb-track so its lane is the SAME box as every clip lane
+  // (same name-column width, same gap) — that is what makes a tick at 3s sit exactly above the clip that
+  // starts at 3s, with no measuring. Tick spacing steps up with the project length so the labels never
+  // collide: 1s up to 12s, then 2s, then 5s.
+  function rulerEl(){
+    const total = Math.max(projEnd(), 1);
+    const step = total <= 12 ? 1 : (total <= 30 ? 2 : 5);
+    const ticks = [];
+    for(let t = 0; t <= total + 0.001; t += step){
+      const pct = t/total*100;
+      // The last label has to hang to the LEFT of its line or it is cut off by the edge of the timeline
+      // (which on a phone is a scroll edge, so it is simply never readable).
+      const lbl = pct > 98 ? ' class="mb-tickr"' : '';
+      ticks.push(`<i class="mb-tick" style="left:${pct.toFixed(3)}%"><b${lbl}>${t % 1 ? t.toFixed(1) : t}s</b></i>`);
+    }
+    return `<div class="mb-track mb-rrow">
+      <div class="mb-trackname mb-rname"></div>
+      <div class="mb-lane mb-rlane" id="mb-rlane" title="Tap or drag to move the playhead">${ticks.join('')}</div>
+    </div>`;
+  }
+
+  // Put the playhead over the lanes at time t. Position comes from a real lane's offset inside .mb-tlinner
+  // rather than from the CSS name-column width, so it stays correct when that width changes at the 820px
+  // breakpoint (and if it ever changes again).
+  function paintPlayhead(t){
+    const inner = document.getElementById('mb-tlinner'), ph = document.getElementById('mb-ph');
+    if(!inner || !ph) return;
+    const lane = inner.querySelector('.mb-lane');
+    if(!lane){ ph.style.display='none'; return; }
+    const total = Math.max(projEnd(), 1);
+    const frac = clamp(t, 0, total) / total;
+    ph.style.display = '';
+    ph.style.left = (lane.offsetLeft + frac * lane.offsetWidth) + 'px';
+  }
+
+  // Tap or drag anywhere on the ruler to move the playhead — the standard way to scrub a timeline, and
+  // until now the ONLY scrubber was the slider above the stage, in a different part of the page.
+  function _rulerSeek(clientX){
+    const lane = document.getElementById('mb-rlane'); if(!lane) return;
+    const r = lane.getBoundingClientRect(); if(!r.width) return;
+    const t = clamp((clientX - r.left) / r.width, 0, 1) * Math.max(projEnd(), 1);
+    const s = document.getElementById('mb-scrub'); if(s) s.value = t.toFixed(2);
+    seek(t);
   }
 
   function stageEl(l){
@@ -333,8 +618,9 @@
     if(l.type==='text'){
       // Centred captions span the full width and centre their text, mirroring drawtext's (w-text_w)/2.
       const cpos = _alignOf(l)==='center' ? `left:50%;top:${(l.y/P.h*100).toFixed(3)}%;` : pos;   // .centred shifts back by half its width
-      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};opacity:${l.opacity}">
-        ${enc(l.text||' ')}<i class="mb-h"></i></div>`;
+      // Drop shadow, matching the renderer's shadowx/shadowy (size/18, black at 65%).
+      const sh = l.shadow ? `text-shadow:${(Math.max(2,l.size/18)/P.w*100).toFixed(3)}cqw ${(Math.max(2,l.size/18)/P.w*100).toFixed(3)}cqw 0 rgba(0,0,0,.65);` : '';
+      return `<div class="mb-item mb-text${_alignOf(l)==='center'?' centred':''}${s}" data-id="${l.id}" style="${cpos}font-size:${(l.size/P.w*100).toFixed(3)}cqw;color:${enc(l.color)};-webkit-text-stroke:.03em ${enc(l.stroke)};${sh}opacity:${l.opacity}">${_textInnerHTML(l)}<i class="mb-h"></i></div>`;
     }
     const size = `width:${(l.w/P.w*100).toFixed(3)}%;height:${(l.h/P.h*100).toFixed(3)}%;`;
     // Mirror the renderer's mirror+rotate. Order matters and CSS applies transforms RIGHT to LEFT, so
@@ -447,14 +733,26 @@
           <label class="mb-f"><span>Colour</span><input type="color" id="mb-f-color" value="${enc(l.color)}"></label>
           <label class="mb-f"><span>Outline</span><input type="color" id="mb-f-stroke" value="${enc(l.stroke)}"></label>
         </div>
-        <button class="btn btn-cyan small full" id="mb-center">⇔ Centre horizontally</button>
+        <button class="btn btn-cyan small full${_alignOf(l)==='center'?' on':''}" id="mb-center">⇔ Centre horizontally</button>
+        ${alignGrid()}
+        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-wrap" ${l.wrap===false?'':'checked'}><span>Wrap long lines</span></label>
+        ${l.wrap===false ? '' : `<label class="mb-f"><span>Wrap width <b>${_wrapPct(l)}%</b> of the frame</span><input type="range" id="mb-f-wrappct" min="20" max="100" step="1" value="${_wrapPct(l)}"></label>`}
+        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-box" ${l.box?'checked':''}><span>Background box</span></label>
+        ${l.box ? `<div class="mb-frow">
+          <label class="mb-f"><span>Box colour</span><input type="color" id="mb-f-boxcolor" value="${enc(/^#[0-9a-fA-F]{6}$/.test(l.boxColor||'')?l.boxColor:'#000000')}"></label>
+          <label class="mb-f"><span>Box opacity</span><input type="range" id="mb-f-boxalpha" min="0.1" max="1" step="0.05" value="${l.boxAlpha==null?0.55:l.boxAlpha}"></label>
+        </div>` : ''}
+        <label class="mb-f mb-check"><input type="checkbox" id="mb-f-shadow" ${l.shadow?'checked':''}><span>Drop shadow</span></label>
         <div class="muted small mb-dbg">x=${Math.round(l.x)} y=${Math.round(l.y)} size=${Math.round(l.size)} align=${_alignOf(l)||"free"} · canvas ${P.w}×${P.h}</div>` : `
+        <label class="mb-f"><span>Layer name</span><input class="input" id="mb-f-name" maxlength="24" placeholder="${enc(srcName(l.src))}" value="${enc(l.name||'')}"></label>
         <div class="mb-frow">
           <label class="mb-f"><span>W</span><input class="input" type="number" id="mb-f-w" value="${Math.round(l.w)}"></label>
           <label class="mb-f"><span>H</span><input class="input" type="number" id="mb-f-h" value="${Math.round(l.h)}"></label>
         </div>
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
         <button class="btn btn-cyan small full" id="mb-canvas-match" title="Reshape the CANVAS to this photo — the third option: no bars AND nothing cropped">⇲ Canvas to this photo</button>
+        ${alignGrid()}
+        ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above">▶︎ Preview clip</button>
         <label class="mb-f mb-check"><input type="checkbox" id="mb-f-mute" ${l.mute?'checked':''}><span>Mute this clip</span></label>` : ''}`}
@@ -486,6 +784,50 @@
       </div>`;
   }
 
+  // ---------- align to the canvas ----------
+  // Nine one-tap positions. Dragging alone can never land a layer EXACTLY on an edge or dead centre, and
+  // on a phone it is not close: the finger covers the layer you are placing. Same grid for media and for
+  // captions, with one difference — the middle column of a caption sets the ffmpeg CENTRE flag instead of
+  // computing an x, because (w-text_w)/2 is exact by construction and a measured pixel x is not.
+  const _AGRID = [
+    ['0','0','↖ top left'], ['0.5','0','↑ top centre'], ['1','0','↗ top right'],
+    ['0','0.5','← left'],   ['0.5','0.5','⊙ centre'],   ['1','0.5','→ right'],
+    ['0','1','↙ bottom left'], ['0.5','1','↓ bottom centre'], ['1','1','↘ bottom right'],
+  ];
+  function alignGrid(){
+    return `<div class="mb-f"><span>Snap to the canvas</span><div class="mb-align">`
+      + _AGRID.map(([h,v,t])=>`<button class="mb-ab" data-h="${h}" data-v="${v}" title="${enc(t)}">${enc(t.slice(0,1))}</button>`).join('')
+      + `</div></div>`;
+  }
+  // The layer's size in PROJECT pixels. Media carries it (w/h); a caption's size is whatever its glyphs
+  // measure, so it comes off the preview element — which is laid out only while the playhead is inside
+  // the layer's window (seek() hides the rest), and selecting a layer seeks there, so by the time this
+  // panel is on screen the measurement is real. The font-derived fallback keeps it sane if it isn't.
+  function _layerBox(l){
+    if(_isVisual(l)) return { w: +l.w||0, h: +l.h||0 };
+    try{
+      const el = document.querySelector('.mb-item[data-id="'+l.id+'"]');
+      const st = document.getElementById('mb-stage');
+      if(el && st){
+        const r = el.getBoundingClientRect(), sr = st.getBoundingClientRect();
+        if(r.width && sr.width) return { w: r.width * (P.w/sr.width), h: r.height * (P.h/sr.height) };
+      }
+    }catch(_){ }
+    const size = +l.size||64, lines = wrapText(l).split('\n').length;
+    return { w: Math.min(P.w, size * 0.55 * (l.text||'').length), h: size * lines };
+  }
+  function alignLayer(l, hx, vy){
+    if(!l || l.type==='audio') return;
+    snap();
+    const b = _layerBox(l);
+    if(hx != null){
+      if(l.type==='text' && hx === 0.5) l.align = 'center';
+      else { if(l.type==='text') l.align = ''; l.x = Math.round((P.w - b.w) * hx); }
+    }
+    if(vy != null) l.y = Math.round((P.h - b.h) * vy);
+    save(); render();
+  }
+
   const srcName = (u) => { try{ return decodeURIComponent(String(u).split('/').pop()).slice(0,18) || 'clip'; }catch(_){ return 'clip'; } };
   function enc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -511,6 +853,75 @@
       </div>`;
   }
 
+
+  // ---------- templates ----------
+  // A blank canvas and an "Add media" button is the hardest screen in the whole builder: the formats people
+  // actually want (a caption top and bottom, a two-panel comparison, a caption bar over a clip) are all
+  // several correct-in-a-particular-order steps away, and none of them are discoverable. A template is just
+  // a prebuilt bit of the same project structure — no server call, nothing new for the renderer — so it is
+  // pure ease of use. Each is ONE undo step (groupEdit), and each says up front what it needs.
+  //
+  // `need` is the number of media layers the layout arranges; a template that only adds captions needs 0
+  // and works before you have added anything, so you can write the joke first and drop the picture in after.
+  function _caption(text, yFrac, extra){
+    const size = Math.max(18, Math.round(P.w / 9));
+    const l = addLayer('text', '', Object.assign({ text, size, align: 'center',
+      dur: +Math.max(projEnd(), 3).toFixed(2) }, extra || {}));
+    // addLayer sets a text layer's x/y AFTER it merges `extra` (that is where the 8% default comes from),
+    // so the position has to be written here rather than passed in.
+    if(l) l.y = Math.round(P.h * yFrac);
+    return l;
+  }
+  // Lay the first `n` clips out as panels: each gets a box, fills it (cropping), and runs the WHOLE
+  // timeline — panels are side by side in space, not one after another in time, so their `start` is 0.
+  function _panels(boxes){
+    const seq = mediaSeq().slice(0, boxes.length);
+    const dur = +Math.max.apply(null, seq.map(l => +l.dur || 0).concat([2])).toFixed(2);
+    seq.forEach((l, i)=>{
+      Object.assign(l, boxes[i], { fit: 'cover', start: 0, dur });
+    });
+    return seq.length;
+  }
+  const TEMPLATES = [
+    { label: '🅣 Classic top &amp; bottom captions', need: 0,
+      hint: 'Two big centred captions. Add the picture whenever you like — the captions sit over it.',
+      apply(){ _caption('TOP TEXT', 0.04); _caption('BOTTOM TEXT', 0.84); } },
+    { label: '⬒ Caption bar over the clip', need: 0,
+      hint: 'A white bar across the top with black text — the “explain the joke above the picture” format.',
+      apply(){ _caption('when you see it', 0.03, { color: '#000000', stroke: '#000000',
+        box: true, boxColor: '#ffffff', boxAlpha: 1, size: Math.max(14, Math.round(P.w/16)) }); } },
+    { label: '⬓ Two panels, top and bottom', need: 2,
+      hint: 'Your first two clips stacked — the comparison format. Both play at once.',
+      apply(){ const h = Math.round(P.h/2);
+        _panels([{ x:0, y:0, w:P.w, h }, { x:0, y:h, w:P.w, h }]); } },
+    { label: '◫ Two panels, side by side', need: 2,
+      hint: 'Your first two clips left and right, both playing at once.',
+      apply(){ const w = Math.round(P.w/2);
+        _panels([{ x:0, y:0, w, h:P.h }, { x:w, y:0, w, h:P.h }]); } },
+    { label: '⬛ Full-bleed clip + bottom caption', need: 1,
+      hint: 'The first clip fills the frame (edges cropped) with one caption low over it.',
+      apply(){ _panels([{ x:0, y:0, w:P.w, h:P.h }]); _caption('caption', 0.8); } },
+  ];
+  function pickTemplate(){
+    const have = mediaSeq().length;
+    const rows = TEMPLATES.map((t,i)=>{
+      const short = t.need > have;
+      return `<button class="btn btn-ghost full mb-tplrow" data-i="${i}" ${short?'disabled':''}>`
+        + `<b>${t.label}</b><br><span class="muted small">${enc(t.hint)}`
+        + (short ? ` — needs ${t.need} media layer${t.need===1?'':'s'}, you have ${have}` : '') + '</span></button>';
+    }).join('');
+    PC.modal(`<h3>📐 Start from a layout</h3>
+      <div class="muted small" style="margin-bottom:8px">Everything a template makes is an ordinary layer —
+      drag, retime and restyle it afterwards. ↶ undo puts it all back.</div>${rows}`, root=>{
+      root.querySelectorAll('.mb-tplrow').forEach(btn=>btn.onclick=()=>{
+        const t = TEMPLATES[+btn.dataset.i]; if(!t) return;
+        PC.closeModal();
+        groupEdit(()=>t.apply());
+        save(); render();
+        toast('layout applied — ↶ undo to drop it');
+      });
+    });
+  }
 
   // ---------- Blossom ----------
   // Your drive, as a source for layers AND as where saved projects live. Media already on Blossom needs
@@ -545,11 +956,20 @@
   // your other devices — localStorage alone is per-device and one "clear site data" from losing the lot.
   const PROJ_MARK = 'pcmeme-project';
   async function saveProject(){
+    // Ask for a NAME the first time. Saved projects used to be listed as "3 layers · 720×1280 · <date>",
+    // which is unusable the moment you have two of them — you cannot tell which build is which without
+    // opening it, and opening it replaces the one you are working on.
+    if(!P.name){
+      const n = await uiPrompt('Name this project', { value: '', placeholder: 'dog on a skateboard' });
+      if(n == null) return;                                  // cancelled — do not save an unnamed blob
+      P.name = String(n).slice(0, 60).trim();
+      save(); render();
+    }
     try{
       const doc = JSON.stringify(Object.assign({ [PROJ_MARK]: 1, savedAt: Math.floor(Date.now()/1000) }, P));
       const f = new File([doc], 'meme-project.json', { type: 'application/json' });
       const url = await uploadBlob(f);
-      toast('project saved to Blossom');
+      toast('“' + (P.name || 'project') + '” saved to Blossom');
       return url;
     }catch(err){ toast('save failed: ' + ((err&&err.message)||err)); }
   }
@@ -570,14 +990,16 @@
     if(!found.length){ toast('no saved projects found on Blossom'); return; }
     found.sort((x,y)=>(y.j.savedAt||0)-(x.j.savedAt||0));
     const row = (f,i) => `<button class="btn btn-ghost full mb-projrow" data-i="${i}">`
+      + `<b>${enc(f.j.name || 'Untitled')}</b><br><span class="muted small">`
       + `${f.j.layers.length} layer${f.j.layers.length===1?'':'s'} · ${f.j.w}×${f.j.h}`
-      + (f.j.savedAt ? ' · ' + new Date(f.j.savedAt*1000).toLocaleString() : '') + '</button>';
+      + (f.j.savedAt ? ' · ' + new Date(f.j.savedAt*1000).toLocaleString() : '') + '</span></button>';
     PC.modal('<h3>📂 Open a saved project</h3>' + found.map(row).join(''), root=>{
       root.querySelectorAll('.mb-projrow').forEach(btn => btn.onclick = async () => {
         const f = found[+btn.dataset.i];
         PC.closeModal();
-        if(P.layers.length && !await uiConfirm('Replace the project you are working on?')) return;
-        P = f.j; delete P[PROJ_MARK]; sel = null; save(); render();
+        if(P.layers.length && !await uiConfirm('Replace the project you are working on? (↶ undo brings it back.)')) return;
+        snap();                       // opening REPLACES the current build — undo has to reach back past it
+        P = f.j; delete P[PROJ_MARK]; sel = null; _healLayers(P); save(); render();
       });
     });
   }
@@ -586,7 +1008,12 @@
   function repaint(what){
     const root = document.getElementById('feed'); if(!root) return;
     if(what==='inspector'){ const i=document.getElementById('mb-inspector'); if(i){ i.innerHTML=inspector(); bindInspector(root); } return; }
-    if(what==='timeline'){ const t=document.getElementById('mb-timeline'); if(t){ t.innerHTML=P.layers.length?_rowOrder().map(trackEl).join(''):'<div class="muted small mb-empty">No layers yet — add media or text to start.</div>'; } return; }
+    if(what==='timeline'){ const t=document.getElementById('mb-timeline');
+      if(t){ t.innerHTML=timelineInner();
+        // The ruler's tick spacing and the playhead's position both depend on the project length, which a
+        // trim just changed — repaint them with the rows rather than leaving a stale ruler behind.
+        const s=document.getElementById('mb-scrub'); paintPlayhead(s?+s.value||0:0); }
+      return; }
     render();
   }
 
@@ -607,6 +1034,20 @@
       }
     }
     repaint('inspector');
+  }
+
+  // Under 1100px the inspector drops BELOW the stage and above the timeline (see the media query), so
+  // tapping a clip in the timeline changed a panel that is off-screen upwards — on a phone that reads as
+  // "tapping the clip did nothing". Bring it into view.
+  //
+  // Only ever called for a confirmed TAP, never from the pointerdown that starts a drag: scrolling the page
+  // out from under a finger that is dragging a clip is worse than the problem it solves.
+  function _revealInspector(){
+    try{
+      if(window.matchMedia && !window.matchMedia('(max-width:1100px)').matches) return;
+      const i=document.getElementById('mb-inspector');
+      if(i && i.scrollIntoView) i.scrollIntoView({ block:'nearest', behavior:'smooth' });
+    }catch(_){ }
   }
 
   // ONE pointer-events drag implementation for stage move/resize AND timeline slide/stretch. Pointer
@@ -635,7 +1076,9 @@
       const pxW = P.w/rect.width, pxH = P.h/rect.height;      // screen px -> project px
       const resizing = !!e.target.closest('.mb-h');
       const sx=e.clientX, sy=e.clientY, ox=l.x, oy=l.y, ow=l.w, oh=l.h, osz=l.size;
+      const box = _layerBox(l);          // measured ONCE, at grab: it must not change mid-drag
       e.preventDefault();
+      snap();                            // one snapshot per gesture, taken before the first move
       drag(e, (ev)=>{
         const dx=(ev.clientX-sx)*pxW, dy=(ev.clientY-sy)*pxH;
         if(resizing){
@@ -647,10 +1090,43 @@
           // almost immediately and simply would not move left any further. drawtext accepts any x/y, so the
           // editor should not invent a boundary the renderer does not have.
           l.x = Math.round(ox+dx); l.y = Math.round(oy+dy);
+          // …but pull it onto the obvious lines while it is near them. Holding Shift drags raw.
+          if(!ev.shiftKey) applySnaps(l, box);
         }
+        if(l.type==='text' && resizing) item.innerHTML=_textInnerHTML(l)+'<i class="mb-h"></i>';   // size changed the wrapping
         applyGeom(item, l);
-      }, ()=>{ save(); repaint('inspector'); });
+      }, ()=>{ showGuides(null,null); unsnapIfUnchanged(); save(); repaint('inspector'); });
     });
+  }
+
+  // ---------- snapping ----------
+  // Dragging can never land a layer exactly on an edge or on the centre line — and on a phone your finger
+  // is over the thing you are placing, so "roughly centred" is the best you could do. Pull x/y onto the
+  // canvas edges and centres while within a small distance, and SHOW the line you snapped to (a snap with
+  // no feedback reads as the drag being fought). Shift bypasses it for genuinely free placement.
+  function applySnaps(l, box){
+    const tol = Math.max(6, P.w * 0.015);          // ~1.5% of the frame, floor of 6px for a tiny canvas
+    const bw = box.w || 0, bh = box.h || 0;
+    let gx = null, gy = null;
+    // Horizontal: left edge, centre, right edge. A centred caption's x is ignored by the renderer, so it
+    // is left out of the horizontal set (the ⇔ Centre flag is the exact version of that snap).
+    if(!(l.type === 'text' && _alignOf(l) === 'center')){
+      const cands = [[0, 0], [Math.round((P.w - bw)/2), P.w/2], [Math.round(P.w - bw), P.w]];
+      for(const [x, line] of cands){
+        if(Math.abs(l.x - x) <= tol){ l.x = x; gx = line; break; }
+      }
+    }
+    const vc = [[0, 0], [Math.round((P.h - bh)/2), P.h/2], [Math.round(P.h - bh), P.h]];
+    for(const [y, line] of vc){
+      if(Math.abs(l.y - y) <= tol){ l.y = y; gy = line; break; }
+    }
+    showGuides(gx, gy);
+  }
+  // The two guide lines live in the stage and are moved/hidden rather than created per frame.
+  function showGuides(x, y){
+    const gv = document.getElementById('mb-gv'), gh = document.getElementById('mb-gh');
+    if(gv){ if(x == null) gv.style.display='none'; else { gv.style.display=''; gv.style.left=(x/P.w*100).toFixed(3)+'%'; } }
+    if(gh){ if(y == null) gh.style.display='none'; else { gh.style.display=''; gh.style.top=(y/P.h*100).toFixed(3)+'%'; } }
   }
 
   function applyGeom(el, l){
@@ -665,8 +1141,17 @@
     // z-order right on the layer row, next to its thumbnail — that's where you're already looking when you
     // decide what should sit on top. Bound on the timeline (not the inspector) so it works without selecting
     // the layer first. stopPropagation: these live inside the row, which is also the drag surface.
+    // EVERY timeline gesture is delegated on #mb-timeline, which survives repaint('timeline') replacing its
+    // children. Bound per row instead, selecting a layer by tapping its row silently stopped working after
+    // the first trim or drag — the listeners went with the old innerHTML.
     tl.addEventListener('click', (e)=>{
-      const zb = e.target.closest('.mb-z'); if(!zb) return;
+      const zb = e.target.closest('.mb-z');
+      if(!zb){
+        // Tapping the row (its thumbnail/name, not its clip bar) selects that layer.
+        const row = e.target.closest('.mb-track[data-id]');
+        if(row && !e.target.closest('.mb-clip')){ selectLayer(row.dataset.id); _revealInspector(); }
+        return;
+      }
       e.preventDefault(); e.stopPropagation();
       const l = P.layers.find(x=>x.id===zb.dataset.id); if(!l) return;
       const i = P.layers.indexOf(l); if(i<0) return;
@@ -675,11 +1160,19 @@
       // neighbour instead, which is what "move it under that one" actually means.
       const j = zb.dataset.z==='front' ? i+1 : i-1;
       if(j<0 || j>=P.layers.length) return;                 // already at the top/bottom
+      snap();
       P.layers[i]=P.layers[j]; P.layers[j]=l;
       save(); render();
     });
     tl.addEventListener('pointerdown', (e)=>{
       if(e.target.closest('.mb-z')) return;   // a z-order tap is not the start of a drag
+      if(e.target.closest('.mb-rlane') || e.target.closest('.mb-ph')){
+        e.preventDefault();
+        if(_playT) stopPlay(false);           // scrubbing during playback would fight the ticker
+        _rulerSeek(e.clientX);
+        drag(e, (ev)=>_rulerSeek(ev.clientX));
+        return;
+      }
       const clip = e.target.closest('.mb-clip'); if(!clip) return;
       const l = P.layers.find(x=>x.id===clip.dataset.id); if(!l) return;
       selectLayer(l.id);
@@ -689,6 +1182,7 @@
       const sx=e.clientX, ost=l.start, odur=l.dur;
       let moved=false;   // a CLICK must never reshuffle the timeline — only an actual drag does
       e.preventDefault();
+      snap();            // one snapshot per gesture; a click that changes nothing is deduped by snap()
       drag(e, (ev)=>{
         if(Math.abs(ev.clientX-sx) > 3) moved=true;
         const d=(ev.clientX-sx)*perPx;
@@ -709,14 +1203,15 @@
         if(l.type!=='text'){
           if(!moved){                 // a plain click: select + seek only, never touch the order
             l.start=ost; l.dur=odur;  // undo any sub-pixel drift so the clip cannot creep
-            repaint('timeline'); repaint('inspector'); syncScrub(); return;
+            unsnapIfUnchanged();
+            repaint('timeline'); repaint('inspector'); syncScrub(); _revealInspector(); return;
           }
           // Move ONLY the clip you dragged. Auto-resequencing every other clip on each drop meant nudging
           // one layer silently rewrote the timing of everything after it — you could never adjust a single
           // clip without disturbing the rest. Laying clips back-to-back is now an explicit action (⇄ Arrange).
-          save(); repaint('timeline'); repaint('inspector'); syncScrub(); return;
+          unsnapIfUnchanged(); save(); repaint('timeline'); repaint('inspector'); syncScrub(); return;
         }
-        save(); repaint('inspector'); syncScrub();
+        unsnapIfUnchanged(); save(); repaint('inspector'); syncScrub();
       });
     });
   }
@@ -737,6 +1232,7 @@
       if(v && on){ const local=(l.trim||0)+(t-l.start); if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } } }
     });
     seekAudio(t);
+    paintPlayhead(t);
     const time=document.getElementById('mb-time');
     if(time) time.textContent=t.toFixed(1)+'s / '+projEnd().toFixed(1)+'s';
   }
@@ -958,6 +1454,15 @@
       // The effect transforms the still into a clip — swap the layer's source IN PLACE (keep its box and
       // timeline slot), so the effect lands on this image. It becomes a video layer; duration follows the
       // effect clip so the whole thing plays.
+      snap();
+      // Remember what was here so "↺ Undo the effect on this layer" can put the picture back. This was a
+      // ONE-WAY door: the original URL was overwritten, so the wrong pick out of a hundred-name dropdown
+      // cost you the layer. Only recorded on the FIRST effect, so stacking effects still reverts all the
+      // way to the photo you started from rather than to the previous effect's output.
+      if(!base.origSrc){
+        base.origSrc = base.src; base.origType = base.type;
+        base.origName = base.name || ''; base.origDur = +base.dur || 0;
+      }
       base.src = j.url;
       base.type = (j.is_video===false) ? 'image' : 'video';
       if(+j.dur>0) base.dur = +j.dur;
@@ -1023,6 +1528,7 @@
           let at = base ? P.layers.indexOf(base) + 1 : P.layers.length;
           const firstText = P.layers.findIndex(x=>x.type==='text');
           if(firstText>=0 && at>firstText) at = firstText;
+          snap();
           P.layers.splice(at, 0, ov);
           sel = ov.id;                 // selected on arrival, so it can be dragged/resized immediately
           if(st) st.textContent='';
@@ -1034,8 +1540,30 @@
     });
   }
 
+  // A render is one blocking POST that the server gives up on after 150s. "rendering…" with no clock and
+  // no way out meant a slow job was indistinguishable from a hung one, and the only exit was leaving the
+  // view (which does not stop the request). Now it counts up and the button becomes a cancel.
+  let _renderAbort = null, _renderTick = null;
+  function _stopRenderClock(){
+    if(_renderTick){ clearInterval(_renderTick); _renderTick = null; }
+  }
+  // ffmpeg's stderr tail is the truth but not an explanation. Map the failures that are actually the edit's
+  // fault onto the change that fixes them, and keep the raw text for anything unrecognised.
+  function _renderErr(msg){
+    const m = String(msg || '');
+    if(/timed out/i.test(m)) return m;                    // the server already words this one well
+    if(/No such file|not found|404|could not fetch/i.test(m))
+      return 'a layer’s media could not be fetched — re-add that layer (its link may have expired)';
+    if(/Invalid data found|moov atom|Invalid argument/i.test(m))
+      return 'one of the clips is in a format this node can’t read — try re-adding it, or convert it first';
+    if(/No space left/i.test(m)) return 'the server ran out of disk while rendering — tell the admin';
+    return m || 'render failed';
+  }
+
   async function doRender(){
     if(!P.layers.length){ toast('add a layer first'); return; }
+    // Second tap while a render is in flight = CANCEL it (see the button's label below).
+    if(_rendering && _renderAbort){ try{ _renderAbort.abort(); }catch(_){ } return; }
     // Guard on MODULE state, not just the button's disabled flag: any repaint/render() of the view replaces
     // that button with a fresh ENABLED one, so mid-render edits made it clickable again and each click
     // spawned another full server-side ffmpeg of the same project (they pile up and the UI sits on
@@ -1044,8 +1572,18 @@
     _rendering = true;
     const st=document.getElementById('mb-status'), btn=document.getElementById('mb-render');
     const out=document.getElementById('mb-result');
-    if(btn){ btn.disabled=true; }
-    if(st) st.textContent='rendering…';
+    // NOT disabled: the button is how you cancel. Leaving it live is also what makes the guard on
+    // _rendering (module state, not the button) load-bearing — see the check at the top.
+    if(btn){ btn.textContent='✕ Cancel'; btn.classList.add('btn-danger'); }
+    let secs=0;
+    if(st) st.textContent='rendering… 0s';
+    _stopRenderClock();
+    _renderTick=setInterval(()=>{ secs++;
+      const s2=document.getElementById('mb-status');
+      if(!s2 || !document.getElementById('mb-stage')){ _stopRenderClock(); return; }
+      s2.textContent='rendering… '+secs+'s';
+    }, 1000);
+    _renderAbort = (typeof AbortController!=='undefined') ? new AbortController() : null;
     try{
       const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
         layers:P.layers.map(l=>({ type:l.type, src:l.src, start:+l.start, dur:+l.dur, trim:+l.trim||0,
@@ -1054,10 +1592,15 @@
           flipH:!!l.flipH, flipV:!!l.flipV, rotate:+l.rotate||0,
           // NOT `+l.volume||1`: that turned a deliberate volume of 0 back into full volume.
           volume:(l.volume==null?1:+l.volume), fade:!!l.fade,
-          text:l.text, size:+l.size, color:l.color, stroke:l.stroke, fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
+          // The WRAPPED text, not the raw text: the renderer draws one line per newline it is given, and
+          // wrapText is the same function the preview lays out, so what you saw is what gets drawn.
+          text:(l.type==='text' ? wrapText(l) : l.text), size:+l.size, color:l.color, stroke:l.stroke,
+          box:!!l.box, boxColor:l.boxColor||'#000000', boxAlpha:(l.boxAlpha==null?0.55:+l.boxAlpha), shadow:!!l.shadow,
+          fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }) });
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, edit }),
+        signal: _renderAbort ? _renderAbort.signal : undefined });
       if(!r.ok){
         let msg=''; try{ msg=(await r.json()).detail||''; }catch(_){ msg=await r.text().catch(()=>''); }
         throw new Error(msg||('render failed ('+r.status+')'));
@@ -1066,9 +1609,15 @@
       if(st) st.textContent='';
       showResult(blob, out);
     }catch(err){
-      if(st) st.textContent='';
-      if(out) out.innerHTML='<div class="mb-err">⚠️ '+enc((err&&err.message)||err)+'</div>';
-    }finally{ _rendering=false; const b=document.getElementById('mb-render'); if(b) b.disabled=false; }
+      const s3=document.getElementById('mb-status'); if(s3) s3.textContent='';
+      const o2=document.getElementById('mb-result');
+      if(err && err.name==='AbortError'){ toast('render cancelled'); if(o2) o2.innerHTML=''; }
+      else if(o2) o2.innerHTML='<div class="mb-err">⚠️ '+enc(_renderErr((err&&err.message)||err))+'</div>';
+    }finally{
+      _rendering=false; _renderAbort=null; _stopRenderClock();
+      const b=document.getElementById('mb-render');
+      if(b){ b.textContent='🎬 Render'; b.classList.remove('btn-danger'); b.disabled=false; }
+    }
   }
 
   // Who the "reply with it" button will answer, or null. Named so the button can say WHOSE post it
@@ -1087,6 +1636,8 @@
   // what they covered — which reads as "changing the size wrecked my build".
   function _resizeCanvas(w, h){
     w = Math.max(16, Math.round(w)/2*2|0) || P.w; h = Math.max(16, Math.round(h)/2*2|0) || P.h;
+    if(w === P.w && h === P.h) return;
+    snap();      // reshaping rewrites every layer's geometry — the one edit you most want to take back
     const rx = w/P.w, ry = h/P.h;
     P.layers.forEach(l=>{
       if(l.type==='audio') return;                 // no geometry
@@ -1109,6 +1660,7 @@
     // Cap the long edge like the presets do (1280): the canvas is the RENDER size, and a 2048-tall
     // project is a much slower ffmpeg for no visible gain on a phone.
     const cap = 1280, r = Math.min(1, cap/Math.max(iw, ih));
+    snap();   // deduped against _resizeCanvas's own snapshot (same state, nothing changed between them)
     _resizeCanvas(iw*r, ih*r);
     l.x = 0; l.y = 0; l.w = P.w; l.h = P.h; l.fit = 'contain';
     sel = l.id; save(); render();
@@ -1127,7 +1679,8 @@
         ${replyBtn}
         <button class="btn btn-neon small" id="mb-post">📤 Post to Nostr</button>
         <button class="btn btn-cyan small" id="mb-copy">🔗 Upload &amp; copy link</button>
-        <a class="btn btn-neon small" href="${url}" download="meme.mp4">⬇️ Download</a>
+        <button class="btn btn-cyan small" id="mb-again" title="Put this render back on the timeline as a clip, so you can build on top of it">🎞️ Use as a layer</button>
+        <a class="btn btn-neon small" href="${url}" download="${enc((P.name||'meme').replace(/[^\w.-]+/g,'_').slice(0,40))}.mp4">⬇️ Download</a>
       </div>
       <div class="muted small" id="mb-reslink"></div>
     </div>`;
@@ -1158,6 +1711,23 @@
       }catch(err){ rb.disabled=false; rb.textContent=was;
         const el=linkEl(); if(el) el.textContent='reply failed: '+((err&&err.message)||err); }
     };
+    // Feed the finished render back in as a clip. The AI view has had this since it was built
+    // (ai-memefile), and not having it here meant "flatten what I've got and keep going" — the way you
+    // build a meme with more than 24 layers, or bake a caption in before adding another — was
+    // download-then-re-upload-by-hand. The URL has to be a Blossom one, exactly like any other layer
+    // source, so the render is uploaded first.
+    const ag=document.getElementById('mb-again');
+    if(ag) ag.onclick=async()=>{
+      if(ag.disabled) return;
+      ag.disabled=true; const was=ag.textContent; ag.textContent='uploading…';
+      try{
+        const u=await up();
+        addLayer('video', u, { name:(P.name||'meme').slice(0,24) });
+        save(); render();
+        toast('added as a new clip at the end of the timeline');
+      }catch(err){ ag.disabled=false; ag.textContent=was;
+        const el=linkEl(); if(el) el.textContent='upload failed: '+((err&&err.message)||err); }
+    };
     const p=document.getElementById('mb-post');
     if(p) p.onclick=async()=>{ try{ const u=await up();
         // compose() takes an OPTIONS OBJECT — passing the bare URL string destructured to nothing and
@@ -1169,72 +1739,106 @@
   function bindInspector(root){
     const l=P.layers.find(x=>x.id===sel); if(!l) return;
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
-    const num=(id,key,lo,hi)=>on(id,'input',(e)=>{ l[key]=clamp(e.target.value,lo,hi); save();
+    // Typing in a number box is a BURST (one snapshot for the whole edit), and every one of these
+    // handlers mutates, so the snapshot has to be taken before the assignment — see snapBurst.
+    const num=(id,key,lo,hi)=>on(id,'input',(e)=>{ snapBurst(key+':'+l.id); l[key]=clamp(e.target.value,lo,hi); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) applyGeom(it,l);
       if(key==='start'||key==='dur') repaint('timeline'); });
     num('mb-f-w','w',16,4320); num('mb-f-h','h',16,4320);
     // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
     // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
-    on('mb-fill','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='cover';
+    on('mb-fill','click',()=>{ snap(); l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='cover';
       save(); render(); toast('fills the frame — edges cropped'); });
     // The whole photo, scaled to fit inside the canvas. Can't do both: filling a different aspect ratio
     // always crops, and showing everything always leaves bars — so make it an explicit choice.
     on('mb-canvas-match','click',()=>matchCanvasToLayer(l));
-    on('mb-fit','click',()=>{ l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='contain';
+    on('mb-fit','click',()=>{ snap(); l.x=0; l.y=0; l.w=P.w; l.h=P.h; l.fit='contain';
       save(); render(); toast('whole photo — bars where the aspect differs'); });
+    on('mb-f-name','input',(e)=>{ snapBurst('name:'+l.id); l.name=String(e.target.value||'').slice(0,24); save(); repaint('timeline'); });
     // Centre a caption: drawtext anchors the text's LEFT edge, so "centred" means x = (canvas - textWidth)/2.
     // Measure the preview element (it now hugs its text) and convert screen px -> project px.
     on('mb-center','click',()=>{
       // Flag it and let ffmpeg centre with (w-text_w)/2. Measuring the preview and computing a pixel x was
       // wrong: the browser wraps the caption at 92% and uses a different font, so the measured width (and
       // therefore x) did not match the single unwrapped line drawtext actually draws.
+      snap();
       l.align = (_alignOf(l)==='center') ? '' : 'center';
       save(); render(); toast(_alignOf(l)==='center' ? 'caption centred' : 'caption free-positioned');
     });
+    root.querySelectorAll('.mb-ab').forEach(b=>b.addEventListener('click',()=>{
+      alignLayer(l, b.dataset.h==='' ? null : +b.dataset.h, b.dataset.v==='' ? null : +b.dataset.v);
+    }));
     num('mb-f-start','start',0,120); num('mb-f-dur','dur',0.1,120); num('mb-f-trim','trim',0,600);
     if(l.type==='video') bindTrim(root, l);
     on('mb-prev-clip','click',()=>previewLayer(l));   // play just this clip, not the whole meme
     on('mb-prev-fx','click',()=>previewLayer(l));      // same for an effect layer
-    num('mb-f-size','size',8,400);
-    on('mb-f-text','input',(e)=>{ l.text=e.target.value; save();
-      const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.childNodes[0].nodeValue=l.text;
-      repaint('timeline'); });
-    on('mb-f-color','input',(e)=>{ l.color=e.target.value; save(); repaint(); });
-    on('mb-f-stroke','input',(e)=>{ l.stroke=e.target.value; save(); repaint(); });
-    on('mb-f-fx','change',(e)=>{ l.effect=e.target.value; save(); });
+    // A caption's element is rebuilt (not just restyled) whenever anything that changes its WRAPPING or
+    // its box changes — the markup is one span per wrapped line, so the lines have to be recomputed.
+    const _paintText=()=>{ const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
+      if(it) it.innerHTML=_textInnerHTML(l)+'<i class="mb-h"></i>'; };
+    on('mb-f-size','input',(e)=>{ snapBurst('size:'+l.id); l.size=clamp(e.target.value,8,400); save();
+      const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) applyGeom(it,l);
+      _paintText(); });                       // size changes where the lines break
+    on('mb-f-text','input',(e)=>{ snapBurst('text:'+l.id); l.text=e.target.value; save();
+      _paintText(); repaint('timeline'); });
+    on('mb-f-color','input',(e)=>{ snapBurst('color:'+l.id); l.color=e.target.value; save(); repaint(); });
+    on('mb-f-stroke','input',(e)=>{ snapBurst('stroke:'+l.id); l.stroke=e.target.value; save(); repaint(); });
+    on('mb-f-wrap','change',(e)=>{ snap(); l.wrap=!!e.target.checked; save(); repaint('inspector'); _paintText(); });
+    on('mb-f-wrappct','input',(e)=>{ snapBurst('wrappct:'+l.id); l.wrapPct=clamp(e.target.value,20,100); save(); _paintText();
+      const lb=e.target.parentElement && e.target.parentElement.querySelector('b'); if(lb) lb.textContent=_wrapPct(l)+'%'; });
+    on('mb-f-box','change',(e)=>{ snap(); l.box=!!e.target.checked; save(); repaint('inspector'); _paintText(); });
+    on('mb-f-boxcolor','input',(e)=>{ snapBurst('boxcolor:'+l.id); l.boxColor=e.target.value; save(); _paintText(); });
+    on('mb-f-boxalpha','input',(e)=>{ snapBurst('boxalpha:'+l.id); l.boxAlpha=clamp(e.target.value,0.1,1); save(); _paintText(); });
+    on('mb-f-shadow','change',(e)=>{ snap(); l.shadow=!!e.target.checked; save(); render(); });
+    on('mb-f-fx','change',(e)=>{ snap(); l.effect=e.target.value; save(); });
+    // Put the layer's ORIGINAL picture back. applyMemeEffect replaces the source in place, which used to be
+    // a one-way door: the wrong pick out of a hundred-name list cost you the layer (Ctrl+Z covers it too now,
+    // but not once you have made other edits on top).
+    on('mb-fx-revert','click',()=>{
+      if(!l.origSrc) return;
+      snap();
+      l.src=l.origSrc; l.type=l.origType||'image'; l.name=l.origName||''; l.trim=0;
+      if(+l.origDur>0) l.dur=+l.origDur;
+      delete l.origSrc; delete l.origType; delete l.origName; delete l.origDur;
+      save(); render(); toast('effect undone — original picture is back');
+    });
     // --- music layer ---
-    on('mb-aud-all','click',()=>{ l.start=0; l.dur=+Math.max(projEnd(),0.1).toFixed(2); save(); render();
+    on('mb-aud-all','click',()=>{ snap(); l.start=0; l.dur=+Math.max(projEnd(),0.1).toFixed(2); save(); render();
       toast('music spans the whole meme'); });
-    on('mb-f-avol','input',(e)=>{ l.volume=clamp(e.target.value,0,2); save();
+    on('mb-f-avol','input',(e)=>{ snapBurst('avol:'+l.id); l.volume=clamp(e.target.value,0,2); save();
       const a=_audioEls.find(x=>x.dataset.id===l.id); if(a) a.volume=clamp(l.volume,0,1); });
-    on('mb-f-afade','change',(e)=>{ l.fade=e.target.checked; save(); });
-    on('mb-f-snd','change',(e)=>{ l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
+    on('mb-f-afade','change',(e)=>{ snap(); l.fade=e.target.checked; save(); });
+    on('mb-f-snd','change',(e)=>{ snap(); l.sound=e.target.value; save(); repaint('inspector'); toast(l.sound?('sound: '+l.sound):'sound removed'); });
     // The per-layer "Meme effect" dropdown is the SOURCE OF TRUTH for full effects (dancing man, shrug,
     // characters): picking one renders it server-side and overlays it ON this layer. Trigger dropdown —
     // reset to the placeholder after firing so it can be used again.
     on('mb-f-meme','change',(e)=>{ const nm=e.target.value; e.target.value=''; if(nm) applyMemeEffect(l, nm); });
-    on('mb-f-sndvol','input',(e)=>{ l.soundVolume=clamp(e.target.value,0,3); save(); });
-    on('mb-f-mute','change',(e)=>{ l.mute=e.target.checked; save(); });
-    on('mb-f-op','input',(e)=>{ l.opacity=clamp(e.target.value,0.05,1); save();
+    on('mb-f-sndvol','input',(e)=>{ snapBurst('sndvol:'+l.id); l.soundVolume=clamp(e.target.value,0,3); save(); });
+    on('mb-f-mute','change',(e)=>{ snap(); l.mute=e.target.checked; save(); });
+    on('mb-f-op','input',(e)=>{ snapBurst('op:'+l.id); l.opacity=clamp(e.target.value,0.05,1); save();
       const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) it.style.opacity=l.opacity; });
     // Flip/rotate repaint the layer's transform IN PLACE rather than re-rendering the board: a full
     // re-render on every slider step would rebuild the <video> elements and restart them from frame 0.
     const _paintX=()=>{ const it=root.querySelector('.mb-item[data-id="'+l.id+'"]');
       const m=it && it.querySelector('img,video'); if(!m) return;
       m.style.transform=_xform(l); m.style.transformOrigin='center'; };
-    on('mb-fliph','click',(e)=>{ l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
-    on('mb-flipv','click',(e)=>{ l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
-    on('mb-f-rot','input',(e)=>{ l.rotate=clamp(e.target.value,-180,180); save();
+    on('mb-fliph','click',(e)=>{ snap(); l.flipH=!l.flipH; save(); e.currentTarget.classList.toggle('on',!!l.flipH); _paintX(); });
+    on('mb-flipv','click',(e)=>{ snap(); l.flipV=!l.flipV; save(); e.currentTarget.classList.toggle('on',!!l.flipV); _paintX(); });
+    on('mb-f-rot','input',(e)=>{ snapBurst('rot:'+l.id); l.rotate=clamp(e.target.value,-180,180); save();
       const v=root.querySelector('#mb-rot-val'); if(v) v.textContent=Math.round(l.rotate)+'°'; _paintX(); });
-    on('mb-rot0','click',()=>{ l.rotate=0; l.flipH=false; l.flipV=false; save(); inspector();
-      const b=root.querySelector('#mb-f-rot'); if(b) b.value=0; _paintX(); });
+    on('mb-rot0','click',()=>{ snap(); l.rotate=0; l.flipH=false; l.flipV=false; save();
+      const b=root.querySelector('#mb-f-rot'); if(b) b.value=0;
+      const v=root.querySelector('#mb-rot-val'); if(v) v.textContent='0°'; _paintX(); });
     on('mb-dup','click',()=>duplicateLayer(l));
-    on('mb-del','click',async()=>{
-      if(!await uiConfirm('Delete this layer?')) return;
+    // No confirm — Ctrl+Z (and the ↶ button) is a better answer than a dialog, and the dialog was the
+    // only thing standing between you and a mis-tap on a phone anyway.
+    on('mb-del','click',()=>{
+      snap();
       P.layers=P.layers.filter(x=>x.id!==l.id); sel=null; save(); render();
+      toast('layer deleted — ↶ undo to bring it back');
     });
-    on('mb-front','click',()=>{ const i=P.layers.indexOf(l); if(i>-1){ P.layers.splice(i,1); P.layers.push(l); save(); render(); } });
-    on('mb-back','click',()=>{ const i=P.layers.indexOf(l); if(i>0){ P.layers.splice(i,1); P.layers.unshift(l); save(); render(); } });
+    on('mb-front','click',()=>{ const i=P.layers.indexOf(l); if(i>-1){ snap(); P.layers.splice(i,1); P.layers.push(l); save(); render(); } });
+    on('mb-back','click',()=>{ const i=P.layers.indexOf(l); if(i>0){ snap(); P.layers.splice(i,1); P.layers.unshift(l); save(); render(); } });
   }
 
   // Wire the visual trimmer (trimWidget) for a video layer: two draggable handles over the source video set
@@ -1292,9 +1896,11 @@
           try{ vid.currentTime=t; }catch(_){}   // show the frame under the handle
           paint();
         };
+        snap();                  // one snapshot per trim gesture
         const up=()=>{
           document.removeEventListener('pointermove',move);
           document.removeEventListener('pointerup',up);
+          unsnapIfUnchanged();
           save();
           repaint('timeline');   // the clip bar + project length reflect the new duration
         };
@@ -1324,31 +1930,62 @@
     on('mb-add-audio','click',pickAudio);
     on('mb-add-effect','click',pickEffect);
     on('mb-add-blossom','click',pickBlossom);
-    on('mb-save','click',saveProject);
-    on('mb-open','click',openProject);
+    on('mb-tpl','click',pickTemplate);
+    on('mb-undo','click',undo);
+    on('mb-redo','click',redo);
+    on('mb-proj','click',projectMenu);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
     // automatically on every drop, which made adjusting one clip rewrite the whole timeline.
-    on('mb-arrange','click',()=>{ resequence(); save(); render(); toast('clips laid back-to-back'); });
-    // Start over. Only the LAYERS go — the canvas size/background you picked are settings, not content,
-    // and having them reset too would mean re-choosing the preset after every clear.
-    on('mb-clear','click',async ()=>{
-      if(!P.layers.length){ toast('nothing to clear'); return; }
-      if(!await uiConfirm(`Remove all ${P.layers.length} layer${P.layers.length===1?'':'s'}? This can’t be undone.`)) return;
-      stopPlay(true);
-      P.layers=[]; sel=null; save(); render();
-      toast('all layers cleared');
-    });
+    on('mb-arrange','click',()=>{ snap(); resequence(); unsnapIfUnchanged(); save(); render(); toast('clips laid back-to-back'); });
     on('mb-render','click',doRender);
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
     on('mb-size','change',(e)=>{ const [w,h]=e.target.value.split('x').map(Number); _resizeCanvas(w,h); });
     // Repaint the stage directly rather than re-rendering the view: a full render() would replace the
     // colour input mid-drag and drop the picker.
-    on('mb-bg','input',(e)=>{ P.bg=e.target.value||'#000000';
+    on('mb-bg','input',(e)=>{ snapBurst('bg'); P.bg=e.target.value||'#000000';
       const st=document.getElementById('mb-stage'); if(st) st.style.background=P.bg; save(); });
-    root.querySelectorAll('.mb-track').forEach(t=>t.addEventListener('click',(e)=>{
-      if(!e.target.closest('.mb-clip')) selectLayer(t.dataset.id); }));
-    seek(0);
+    // Row selection and ruler scrubbing are DELEGATED inside bindTimeline — they must survive
+    // repaint('timeline'), which replaces every row.
+    if(_prevT) paintPlayhead(_prevT); else seek(0);
+  }
+
+  // ---------- the project menu ----------
+  // Save / Open / Rename / New / Clear behind one button. They were five buttons in a bar that already had
+  // eleven, which on a phone wrapped into a wall where "Clear all" sat one thumb-width from "Add text".
+  function projectMenu(){
+    PC.modal(`<h3>📂 ${enc(P.name || 'Untitled')}</h3>
+      <div class="muted small" style="margin-bottom:10px">${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
+      <button class="btn btn-neon full" id="mbp-save">💾 Save to my Blossom drive</button>
+      <button class="btn btn-cyan full" id="mbp-open">📂 Open a saved project…</button>
+      <button class="btn btn-cyan full" id="mbp-name">✏️ Rename this project</button>
+      <button class="btn btn-cyan full" id="mbp-new">🆕 Start a new project</button>
+      <button class="btn btn-danger full" id="mbp-clear">🧹 Remove every layer</button>`, root=>{
+      const q = (id) => root.querySelector('#'+id);
+      q('mbp-save').onclick = ()=>{ PC.closeModal(); saveProject(); };
+      q('mbp-open').onclick = ()=>{ PC.closeModal(); openProject(); };
+      q('mbp-name').onclick = async ()=>{
+        PC.closeModal();
+        const n = await uiPrompt('Name this project', { value: P.name || '', placeholder: 'dog on a skateboard' });
+        if(n == null) return;
+        snap(); P.name = String(n).slice(0, 60).trim(); save(); render();
+      };
+      // A NEW project resets the canvas and the name as well as the layers — that is the difference from
+      // Clear, which keeps the shape you set up and only empties it. Undo covers both.
+      q('mbp-new').onclick = async ()=>{
+        PC.closeModal();
+        if(P.layers.length && !await uiConfirm('Start a new project? The current one is replaced (↶ undo brings it back).')) return;
+        snap(); stopPlay(true); P = blank(); sel = null; save(); render(); toast('new project');
+      };
+      q('mbp-clear').onclick = async ()=>{
+        PC.closeModal();
+        if(!P.layers.length){ toast('nothing to clear'); return; }
+        if(!await uiConfirm(`Remove all ${P.layers.length} layer${P.layers.length===1?'':'s'}?`)) return;
+        snap(); stopPlay(true);
+        P.layers=[]; sel=null; save(); render();
+        toast('all layers cleared — ↶ undo brings them back');
+      };
+    });
   }
 
   boot();

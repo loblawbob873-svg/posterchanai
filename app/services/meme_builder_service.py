@@ -150,8 +150,21 @@ def _drawtext(layer: dict, w: int, h: int) -> str:
     # must never reach drawtext at all. `_line_dy` shifts each line down by a line height.
     y_off = int(_num(layer.get("_line_dy"), 0, 200, 0)) * int(round(size * 1.18))
     y_expr = f"{y + y_off}"
+    # Optional background box — the "caption bar" look (black text on a solid strip) that a plain outlined
+    # caption cannot do. drawtext draws it around THIS drawtext's own text, so with one filter per line the
+    # box hugs each line, which is what the client's per-line preview spans mirror. boxborderw scales with
+    # the font so the padding looks the same at any size.
+    box = ""
+    if layer.get("box"):
+        box = (f"box=1:boxcolor={_ff_colour(layer.get('boxColor'), 'black')}@"
+               f"{_num(layer.get('boxAlpha'), 0, 1, 0.55):.2f}:boxborderw={max(4, size // 5)}:")
+    # Drop shadow, offset by a fraction of the font size like the outline width is.
+    shadow = ""
+    if layer.get("shadow"):
+        d = max(2, size // 18)
+        shadow = f"shadowcolor=black@0.65:shadowx={d}:shadowy={d}:"
     return (f"drawtext={fontfile}textfile='{{TEXTFILE}}':fontsize={size}:fontcolor={colour}:"
-            f"borderw={max(2, size//14)}:bordercolor={stroke}:x={x_expr}:y={y_expr}{alpha}:"
+            f"borderw={max(2, size//14)}:bordercolor={stroke}:{box}{shadow}x={x_expr}:y={y_expr}{alpha}:"
             f"enable='between(t,{start:.3f},{end:.3f})'")
 
 

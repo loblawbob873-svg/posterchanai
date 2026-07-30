@@ -249,12 +249,14 @@ def add_nodontthinkiwill(data: bytes, caption: str = "NO, I DON'T THINK I WILL")
     return _add_pointing_meme(data, "nodontthinkiwill", caption)
 
 
-def add_ruckus(data: bytes, caption: str = "RUCKUS, NO RELATION") -> bytes:
-    """`ruckus` — Uncle Ruckus introducing himself over your image (see _add_pointing_meme).
+def add_ruckus(data: bytes) -> bytes:
+    """`ruckus` — Uncle Ruckus stands over whatever you attached (see _add_reaction_overlay).
 
-    He is not pointing at anything either; the bubble is his line, and an argument replaces it.
+    NO caption and no speech bubble: the pose is the whole joke, and a bubble reading "RUCKUS, NO
+    RELATION" over every image was text nobody asked for — it covered a third of the frame and had
+    to be overwritten with an argument to get out of the way. He is a reaction overlay like Carl.
     """
-    return _add_pointing_meme(data, "ruckus", caption)
+    return _add_reaction_overlay(data, "ruckus")
 
 
 def add_nothingeverhappens(data: bytes, caption: str = "NOTHING EVER HAPPENS") -> bytes:
@@ -640,6 +642,8 @@ _REACTION_SIZES = {
     # sideways for its pointing arm; a standing figure needs the opposite — height, so his face is
     # not a thumbnail — and the width cap stops mattering at all.
     "carl":    (0.55, 0.45),
+    # Ruckus is 369x684 — the same tall, narrow standing figure as Carl, so he takes Carl's numbers.
+    "ruckus":  (0.55, 0.45),
     "soyjack": (0.44, 0.98),   # a WIDE pair that must span the frame, or they point at nothing
     "anyways": (0.52, 0.42),   # tall and narrow; the side-eye reads at half the frame height
     # Jerry is chest-up and roughly square (882x674), mic out to one side — a hair over half the
@@ -716,7 +720,7 @@ def nodontthinkiwill_attachments(attachments):
 
 
 def ruckus_attachments(attachments):
-    return _pointing_attachments(attachments, "ruckus", "Ruckus, No Relation", add_ruckus)
+    return _pointing_attachments(attachments, "ruckus", "Uncle Ruckus", add_ruckus)
 
 
 def nothingeverhappens_attachments(attachments):
