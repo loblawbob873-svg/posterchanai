@@ -34,11 +34,29 @@
     radial-gradient(ellipse 800px 600px at 100% 100%,var(--amb2) 0%,transparent 55%),
     var(--bg);
   --sticky-sh:0 10px 18px -14px rgba(0,0,0,.8);
-  --neon:#00ffff; --neon2:#ff00ff; --cyan:#00ffff; --green:#00ff88; --amber:#ffcf2b; --accent-rgb:0,255,255; --accent2-rgb:255,0,255;
+  /* The accents are deliberately NOT the pure #00ffff / #ff00ff primaries any more. Fully saturated
+     channel-max colour is the one thing that reads as "default HTML neon" rather than as a designed
+     palette — it also clips on wide-gamut displays and vibrates against dark backgrounds. These sit a
+     few degrees off primary with the saturation pulled back: same unmistakable cyan/magenta identity,
+     but it looks chosen. --accent-rgb/--accent2-rgb MUST track them (dozens of rgba(var(--accent-rgb),…)). */
+  --neon:#3ce8ff; --neon2:#ff5cf0; --cyan:#3ce8ff; --green:#00ff88; --amber:#ffcf2b; --accent-rgb:60,232,255; --accent2-rgb:255,92,240;
   --danger:#ff6b8b;   /* delete/danger action color; overridden per-theme so it stays readable */
-  --text:#edeefa; --muted:#9fa1c6; --line:rgba(0,255,255,.22);
-  --glow:0 0 12px rgba(0,255,255,.5); --glow-cy:0 0 12px rgba(0,255,255,.45);
+  /* A hairline is STRUCTURE, not decoration. At .22 cyan every card, input and divider was an accent-
+     coloured outline, so nothing could stand out by being accented — the whole page was. Barely-tinted
+     and much fainter: the boxes still read as boxes, and an accent border now means something. */
+  --text:#edeefa; --muted:#9fa1c6; --line:rgba(125,210,255,.16);
+  --glow:0 0 18px -2px rgba(60,232,255,.45); --glow-cy:0 0 18px -2px rgba(60,232,255,.4);
   --r:14px;
+  /* Derived from each theme's own --r, so a theme that squares its corners (win98) stays square and
+     every theme gets the same 3-step rhythm for free without declaring anything. */
+  --r-sm:calc(var(--r) - 5px); --r-lg:calc(var(--r) + 6px);
+  /* Elevation, separate from glow. Depth was previously ONLY coloured bloom, which is why everything
+     looked lit rather than layered. Neutral and low-alpha, so it reads correctly on light themes too —
+     no theme overrides these, so all seven inherit the same ladder. */
+  --sh-1:0 1px 2px rgba(0,0,0,.28);
+  --sh-2:0 6px 16px -8px rgba(0,0,0,.45);
+  --sh-3:0 22px 48px -24px rgba(0,0,0,.6);
+  --ring:0 0 0 2px rgba(var(--accent-rgb),.55);   /* keyboard focus, one definition for the whole app */
   --amb1:rgba(0,255,255,.06); --amb2:rgba(255,0,255,.045);  /* body ambient glow (themeable) */
 }
 
@@ -350,7 +368,10 @@ code{font-family:"JetBrains Mono",ui-monospace,monospace;word-break:break-all}
 .scanlines{position:fixed;inset:0;pointer-events:none;z-index:9990;
   background:repeating-linear-gradient(to bottom,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);opacity:.55;
   transform:translateZ(0);contain:strict}
-.grid-bg{position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.18;
+/* .10, not .18: an animated grid sitting behind a column of body text is a legibility tax the content
+   pays on every screen, and it was the loudest thing in the empty regions of the page. Still present —
+   it is part of the flagship's character — just no longer competing with what you came to read. */
+.grid-bg{position:fixed;inset:0;pointer-events:none;z-index:-1;opacity:.10;
   background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
   background-size:46px 46px;mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 75%);
   transform:translateZ(0);contain:strict}   /* rasterize the masked grid once → no per-frame mask cost */
@@ -465,8 +486,14 @@ body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation-play
 a.btn{display:inline-block;text-align:center;text-decoration:none}
 a.btn.full{display:block}
 .btn.small{padding:7px 13px;font-size:13.5px}
-.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--glow)}
-.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--glow-cy)}
+/* Glow is a STATE, not a resting style. Every filled button glowing at rest is why a row of six reads
+   as six equally-urgent things and the eye finds no primary — the single loudest "unpolished" signal in
+   the UI. At rest they get real elevation (--sh-1); the bloom is what hover/focus adds. Shared rules, so
+   all seven themes inherit the behaviour and only the colour differs. */
+.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--sh-1)}
+.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--sh-1)}
+.btn-neon:hover{box-shadow:var(--glow),var(--sh-2)}
+.btn-cyan:hover{box-shadow:var(--glow-cy),var(--sh-2)}
 /* filled "danger/negative" action (e.g. Hold'em Fold) — red reads as stop across all themes, so it's
    intentionally a fixed red gradient like the admin's btn-danger, not theme vars. */
 .btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
@@ -477,6 +504,10 @@ a.btn.full{display:block}
 .btn-ghost{background:var(--panel2);color:var(--neon)}
 .btn-ghost{background:color-mix(in srgb, var(--neon) 15%, var(--panel2));border-color:var(--neon);color:var(--neon)}
 .btn-ghost:hover{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon);color:var(--neon)}
+/* One keyboard-focus treatment for everything interactive, declared after the button variants so it
+   wins over their resting shadow. :where() keeps it at zero specificity, so any control with its own
+   focus styling still overrides it. Most controls had none at all, which made tabbing invisible. */
+:where(a,button,.btn,input,select,textarea,summary,[tabindex]):focus-visible{outline:none;box-shadow:var(--ring)}
 .input,textarea{width:100%;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:11px;
   color:var(--text);padding:12px 14px;font-size:15.5px;outline:none;margin:6px 0;font-family:inherit}
 .input:focus,textarea:focus{border-color:var(--cyan);box-shadow:var(--glow-cy)}
