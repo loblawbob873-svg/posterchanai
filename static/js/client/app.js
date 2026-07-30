@@ -13883,8 +13883,14 @@
       root=>{ $$('.gen-pick',root).forEach(b=> b.onclick=()=>{ closeModal(); openGenStudio(b.dataset.gen); }); });
   }
 
-  function openGenStudio(kind){
-    const G=_GEN[kind]; if(!G) return;
+  // `opts` lets ANOTHER part of the app borrow this sheet without borrowing the chat: `over` patches the
+  // wording (title/blurb/button) and `onSubmit` takes the result instead of sending the command. That is
+  // how the Meme Builder generates an image layer — same chips, same live command preview, same mobile
+  // layout, one implementation. Without it the builder would need a second prompt UI that drifts.
+  function openGenStudio(kind, opts){
+    opts = opts || {};
+    const base0 = _GEN[kind]; if(!base0) return;
+    const G = opts.over ? Object.assign({}, base0, opts.over) : base0;
     const picked=new Set();
     let lyrics='', instrumental=false;
     const chip=(v)=>`<button type="button" class="fxs-chip gen-chip" data-pick="${enc(v)}">${enc(v)}</button>`;
@@ -13956,7 +13962,10 @@
           (G.toggles||[]).forEach(([id])=>{ o[id]=!!(($('#gen-t-'+id,root)||{}).checked); });
           return G.compose(base, [...picked], o);
         }
-        let out=G.cmd+' '+[base, ...picked].join(', ');
+        // .trim() so a borrower can blank the verb (`over:{cmd:''}`): the Meme Builder isn't running a
+        // chat command, and its footer should preview the PROMPT, not "geni …" — which reads like an
+        // instruction to go and type that somewhere. No effect on the real commands (cmd is non-empty).
+        let out=(G.cmd+' '+[base, ...picked].join(', ')).trim();
         if(music){
           if(instrumental) out+=' instrumental';
           else if(lyrics.trim()) out+=' | '+lyrics.trim().replace(/\s*\n\s*/g,' / ');
@@ -13991,6 +14000,14 @@
       go.onclick=async()=>{
         const c=build(); if(!c) return;
         closeModal();
+        // Borrowed sheet (Meme Builder): hand the caller the finished prompt and let it do the work.
+        // `prompt` is the command WITHOUT its verb — the description plus the chips it picked — which
+        // is what a caller that isn't the chat actually wants.
+        if(opts.onSubmit){
+          const desc=(ta ? (ta.value||'').trim() : '');
+          opts.onSubmit({ cmd:c, prompt:[desc, ...picked].filter(Boolean).join(', '), picks:[...picked], files });
+          return;
+        }
         // File commands run on ATTACHMENTS, so the file has to be attached before the command is sent.
         if(G.file && files.length){ try{ await aiAddFiles(files); }catch(_){ } }
         const inp=$('#ai-input');
@@ -18343,6 +18360,9 @@
     // would know nothing about this instance's custom emoji. onPick gets (value, close) where value is
     // either a unicode emoji or ":shortcode:"; instEmojiUrl resolves the latter to its image.
     openEmojiPopover, instEmojiUrl: (sc) => InstEmoji.map[String(sc||'').replace(/:/g,'')] || '',
+    // AI Chat's "Make something" sheet, borrowable with {over, onSubmit} — the Meme Builder opens the
+    // IMAGE one to generate a layer, so the two prompt UIs can never drift apart (see openGenStudio).
+    openGenStudio,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 

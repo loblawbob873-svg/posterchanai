@@ -1640,16 +1640,59 @@
     return added;
   }
 
-  // 🖼️ Media asks WHERE from — the two places a picture can come from, on one sheet. Blossom used to be
-  // buried in ➕ More next to stickers and templates, which is not where you look for "a photo".
+  // 🖼️ Media asks WHERE from — the places a picture can come from, on one sheet. Blossom used to be
+  // buried in ➕ More next to stickers and templates, which is not where you look for "a photo"; and
+  // "one that doesn't exist yet" belongs on the same sheet for the same reason.
   function pickMedia(){
     PC.modal(`<h3>🖼️ Add media</h3>
       <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo or video off your phone or computer</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>`, root=>{
+      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>`, root=>{
       const go=(id,fn)=>{ const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
       go('mbm-local', pickLocalMedia);
       go('mbm-blossom', pickBlossom);
+      go('mbm-ai', pickAiImage);
     });
+  }
+  // 🎨 The prompt sheet is AI Chat's OWN "Make an image" studio (PC.openGenStudio), borrowed with a
+  // different destination: same style/mood/shot chips, same live preview, same mobile layout, and the
+  // list can't drift between the two places. Only the ending differs — the result becomes a layer here
+  // instead of a chat message.
+  function pickAiImage(){
+    if(!PC.openGenStudio){ toast('image generation isn’t available on this build'); return; }
+    PC.openGenStudio('image', {
+      over: { title:'Generate an image layer', go:'Generate', cmd:'',
+              blurb:'Describe what you want to see. It arrives as a new layer on the timeline.' },
+      onSubmit: ({ prompt }) => genImageLayer(prompt),
+    });
+  }
+  // Shares _fxBusy with the effect renders on purpose: both are one heavy server job on the same node,
+  // and a generation holds its GPU lock outright (the endpoint's own per-user cooldown would 429 the
+  // second one anyway — better to say so before sending it).
+  async function genImageLayer(prompt){
+    prompt = (prompt||'').trim(); if(!prompt) return;
+    if(_fxBusy){ toast('still working on the last one — hang on'); return; }
+    _fxBusy = true;
+    const st=document.getElementById('mb-status');
+    if(st) st.textContent='generating your image… this can take a minute';
+    try{
+      const auth = await selfProof();
+      const r = await fetch('/client/meme/generate-image',{ method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, prompt }) });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
+      // An ordinary image layer, exactly like an uploaded photo — it is a Blossom URL either way, so
+      // everything downstream (preview, drag/resize, effects, render) needs to know nothing about it.
+      // addLayer returns null at the 24-layer limit (and says so itself) — don't then claim it landed.
+      if(!addLayer('image', j.url, { name: prompt.slice(0,24) })) return;
+      // A generation runs for a minute, which is long enough to wander off to another view — and
+      // render() writes into #feed, so calling it from there would paint the builder over whatever
+      // the user is now looking at. addLayer already save()d, so the layer is waiting either way.
+      if(document.getElementById('mb-stage')) render();
+      toast('image added as a new layer');
+    }catch(err){ toast('generation failed: '+((err&&err.message)||err)); }
+    // The status line is re-queried: render() above rebuilt the panel, so the captured node is stale.
+    finally{ _fxBusy=false; const s2=document.getElementById('mb-status'); if(s2) s2.textContent=''; }
   }
   function pickLocalMedia(){
     // Local files upload to Blossom first, so the render service only ever fetches things that exist.

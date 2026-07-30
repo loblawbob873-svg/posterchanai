@@ -1177,6 +1177,84 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
                          "name": name, "dur": round(nominal, 2)})
 
 
+class MemeGenImageReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
+    prompt: str                  # what to draw (style chips are already folded into it by the client)
+
+
+_genimg_cooldown: dict = {}      # pubkey -> monotonic ts of last generation (in-memory; single port-3051 worker)
+_genimg_busy: set = set()        # pubkeys with a generation IN FLIGHT right now
+_GENIMG_COOLDOWN_S = 20.0        # per-user minimum gap — a generation holds the node's GPU lock outright
+
+
+# Generate an image from a prompt and store it, so the Meme Builder can hang it on the timeline as an
+# ordinary image layer (🖼️ Media → 🎨 Generate one with AI). Deliberately its OWN endpoint calling
+# image_factory directly, NOT `geni` through the command dispatch: /meme/apply-effect's allowlist keeps
+# the GPU-for-minutes commands out on purpose (tests/test_meme_layer_tools.py pins that), and routing a
+# builder feature through it would have meant widening that boundary. Storing to Blossom rather than
+# handing back base64 mirrors /meme/effect — a layer needs a stable URL, and /meme/render fetches it
+# later exactly like any other source.
+@router.post("/meme/generate-image")
+async def meme_generate_image(data: MemeGenImageReq, request: Request, db: Session = Depends(get_db)):
+    from app.services import blossom_service
+    from app.services.image_factory import generate_image_for_user
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    if not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+
+    prompt = (data.prompt or "").strip()[:1500]
+    if not prompt:
+        raise HTTPException(status_code=400, detail="describe the image first")
+
+    # Per-user gate, same shape as the effect one but stricter: a generation takes the shared
+    # GPUResourceLock for its whole run, so it stalls chat and every other GPU task on this node.
+    # BOTH halves are needed. The cooldown alone is stamped when the job STARTS, and a generation
+    # routinely runs longer than the cooldown — so a second tap 21s in would queue a second GPU job
+    # behind the first. The in-flight set is what makes it literally one at a time per user, and the
+    # cooldown is re-stamped on the way out so back-to-back requests are still spaced.
+    _now = time.monotonic()
+    if pk in _genimg_busy or _now - _genimg_cooldown.get(pk, 0.0) < _GENIMG_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one image at a time — give the last one a moment")
+    _genimg_cooldown[pk] = _now
+    _genimg_busy.add(pk)
+
+    try:
+        b64 = await generate_image_for_user(db=db, user=None, prompt=prompt)
+    except Exception as e:
+        logger.warning("[meme] image generation failed for %s: %s", pk[:12], e)
+        raise HTTPException(status_code=502, detail="image generation failed")
+    finally:
+        _genimg_busy.discard(pk)
+        _genimg_cooldown[pk] = time.monotonic()
+    if not b64:
+        raise HTTPException(status_code=503, detail="no image backend answered — try again later")
+
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        raise HTTPException(status_code=502, detail="image generation returned nothing usable")
+
+    # The backend hands back a full-size PNG (~1.4 MB at 1024²) and this blob is fetched again by every
+    # preview AND by the render — so compress it exactly like `geni` does, keeping the original whenever
+    # the re-encode doesn't actually help (flat output, where PNG wins).
+    mime, ext = "image/png", "png"
+    try:
+        from app.services import media_service as _ms
+        small = await asyncio.to_thread(_ms.compress_image, raw)
+        if small and len(small) < len(raw):
+            raw, mime, ext = small, "image/jpeg", "jpg"
+    except Exception as e:
+        logger.warning("[meme] generated-image compression skipped (%s: %s)", type(e).__name__, e)
+
+    desc = await blossom_service.save_blob(db, pk, raw, mime)
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext}"
+    return JSONResponse({"ok": True, "url": url, "prompt": prompt})
+
+
 class MemeApplyEffectReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
