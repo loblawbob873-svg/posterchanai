@@ -1,6 +1,6 @@
 """Auto-split from callbacks.py: media callback handlers. Bodies moved verbatim."""
 from ._common import CommandService, User, _CLIP_START_PROMPT, _EFFECT_CAPTION_PROMPT, _FLASHCARD_TTL, _MEDIA_ACTION_TTL, _MEME_PROMPT, _SOCIAL_CAPTION_PROMPT, _clip_pending, _effect_caption_pending, _effect_char_pending, _flashcard_decks_cache, _media_action_cache, logger, telegram_service, time
-from .keyboards import _character_prompt_keyboard, _media_action_keyboard, _media_effects_keyboard, _media_fx_memes_keyboard, _media_fx_sounds_keyboard, _media_fx_themes_keyboard, _media_translate_keyboard
+from .keyboards import _character_prompt_keyboard, _media_action_keyboard, _media_effects_keyboard, _media_fx_characters_keyboard, _media_fx_memes_keyboard, _media_fx_sounds_keyboard, _media_fx_themes_keyboard, _media_translate_keyboard
 from .senders import User, _deliver_files_result, _media_action_cache, _offer_ytdl_share, _send_flashcard, logger, telegram_service, time
 
 
@@ -231,13 +231,15 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     "themes": _media_fx_themes_keyboard,
                     "sounds": _media_fx_sounds_keyboard,
                     "memes": _media_fx_memes_keyboard,
+                    "characters": _media_fx_characters_keyboard,
                 }.get(_cat)
                 if not _cat_kbd:
                     await telegram_service.send_message(chat_id, "Unknown effects category.")
                 elif not any(is_image(fn, ct) for fn, _, ct in _atts):
                     await telegram_service.send_message(chat_id, "Nothing to do — that upload has no image.")
                 else:
-                    _cat_label = {"themes": "📺 TV/Movie Themes", "sounds": "🔊 Sound clips", "memes": "🎨 Memes / overlays"}[_cat]
+                    _cat_label = {"themes": "📺 TV/Movie Themes", "sounds": "🔊 Sound clips",
+                                  "memes": "🎨 Memes / overlays", "characters": "🧍 Characters"}[_cat]
                     await telegram_service.send_message(
                         chat_id, f"{_cat_label}:", reply_markup=_cat_kbd(),
                     )

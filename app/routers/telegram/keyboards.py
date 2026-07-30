@@ -1,5 +1,5 @@
 """Auto-split from the original telegram.py monolith. No behavior change."""
-from ._common import Optional, _FC_LETTERS, _FX_MEMES, _FX_SOUNDS, _FX_THEMES, _POST_PROMPTS, _TRANSLATE_LANGS, re
+from ._common import Optional, _FC_LETTERS, _FX_CHARACTERS, _FX_MEMES, _FX_SOUNDS, _FX_THEMES, _POST_PROMPTS, _TRANSLATE_LANGS, re
 
 def _split_news_into_articles(content: str) -> list:
     """Split news markdown into individual (source_name, title, url, message_text) tuples."""
@@ -468,15 +468,34 @@ def _recover_post_text(callback_query: dict) -> str:
     return _msg_text
 
 
+def _installed_characters(entries: list) -> list:
+    """`entries` (label, name) filtered to the characters whose art resolves on THIS node.
+
+    Same rule meme_builder_service.alpha_effect_catalog() states for itself: validated against real
+    files, never a hard-coded list that can drift from the installed assets."""
+    from app.services.effects_service.character import _character_path
+    return [(lbl, name) for lbl, name in entries if _character_path(name)]
+
+
 def _character_prompt_keyboard() -> dict:
-    """Buttons to pick a bottom-right character (or skip). Drives the media:chr:<name> callback."""
-    return {"inline_keyboard": [
-        [{"text": "🫵 Carl", "callback_data": "media:chr:carl"},
-         {"text": "😮 Soyjak", "callback_data": "media:chr:soyjack"}],
-        [{"text": "🙄 Anyways", "callback_data": "media:chr:anyways"},
-         {"text": "🤷 Shrug", "callback_data": "media:chr:shrug"}],
-        [{"text": "▶️ No character", "callback_data": "media:chr:none"}],
-    ]}
+    """Buttons to pick a bottom-right character (or skip). Drives the media:chr:<name> callback.
+
+    Built from _FX_CHARACTERS so the picker can't fall behind the character registry — it offered 4
+    of the 11 installed cutouts, and every one it left out was reachable only by typing
+    `char <name>`. `anyways` is listed by hand: `lookingaway` resolves to the second panel of that
+    two-panel meme, so as a bottom-right SPRITE the original one-panel side-eye is the better art.
+    """
+    rows: list = []
+    pair: list = []
+    for lbl, name in _installed_characters(_FX_CHARACTERS + [("🙄 Anyways", "anyways")]):
+        pair.append({"text": lbl, "callback_data": f"media:chr:{name}"})
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([{"text": "▶️ No character", "callback_data": "media:chr:none"}])
+    return {"inline_keyboard": rows}
 
 
 def _media_action_keyboard(attachments: list, user=None) -> Optional[dict]:
@@ -589,8 +608,8 @@ def _fx_category_keyboard(effects: list, back_to: str) -> dict:
 
 def _media_effects_keyboard() -> dict:
     """Category picker shown after tapping '✨ Effects' on an upload. Splits the
-    (50+) effects into Themes / Sounds / Memes so no single list is overwhelming;
-    each opens its own sub-keyboard (media:fxcat:<cat>)."""
+    (50+) effects into Themes / Sounds / Memes / Characters so no single list is
+    overwhelming; each opens its own sub-keyboard (media:fxcat:<cat>)."""
     return {"inline_keyboard": [
         [
             {"text": "📺 TV/Movie Themes", "callback_data": "media:fxcat:themes"},
@@ -598,6 +617,7 @@ def _media_effects_keyboard() -> dict:
         ],
         [
             {"text": "🎨 Memes / overlays", "callback_data": "media:fxcat:memes"},
+            {"text": "🧍 Characters", "callback_data": "media:fxcat:characters"},
         ],
         [
             {"text": "🪄 Alive (3D)", "callback_data": "media:alive"},
@@ -620,6 +640,10 @@ def _media_fx_memes_keyboard() -> dict:
     kb = _fx_category_keyboard(_FX_MEMES, "media:effects")
     kb["inline_keyboard"].insert(0, [{"text": "🖼 Meme", "callback_data": "media:meme"}])
     return kb
+
+
+def _media_fx_characters_keyboard() -> dict:
+    return _fx_category_keyboard(_installed_characters(_FX_CHARACTERS), "media:effects")
 
 
 def _ytdl_video_keyboard() -> dict:

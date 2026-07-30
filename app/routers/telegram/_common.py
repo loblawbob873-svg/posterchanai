@@ -304,6 +304,20 @@ _FX_MEMES = [
     ("🔫 Makima", "makima"), ("🦈 Gura", "gura"),
     ("😎 Thug", "thug"), ("🔵 Blue", "blue"),
 ]
+# The character reaction/pointing overlays — someone stands over your image and reacts to it. They
+# were reachable only by TYPING the command: none of them was in any keyboard, so on Telegram the
+# whole family was invisible. Their art is a drop-in PNG (see effects_service._CHARACTERS), so both
+# keyboards below FILTER this list by what actually resolves on the node rather than trusting it —
+# an entry whose art is missing would otherwise render an error, or (in the `char <name>` picker)
+# silently leak the token into the effect's own argument.
+# `jerry` is deliberately absent: he is already in _FX_THEMES, paired with the Seinfeld theme.
+_FX_CHARACTERS = [
+    ("🫵 Carl", "carl"), ("😮 Soyjak", "soyjack"),
+    ("🪕 Uncle Ruckus", "ruckus"), ("🤷 Shrug", "shrug"),
+    ("👉 Pointing (anime)", "theraped"), ("🧓 Would (old man)", "would"),
+    ("🙈 Looking away", "lookingaway"), ("🏫 Nothing ever happens", "nothingeverhappens"),
+    ("🙅 I don't think I will", "nodontthinkiwill"),
+]
 _TRANSLATE_LANGS = [
     "English", "Spanish", "French",
     "German", "Italian", "Portuguese",

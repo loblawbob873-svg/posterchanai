@@ -84,5 +84,56 @@ class TestAliasResolution(unittest.TestCase):
         self.assertTrue(CS.wants_attachments("anyways"))
 
 
+class TestTelegramEffectKeyboards(unittest.TestCase):
+    """The Effects keyboards are the OTHER hand-written name list, and the one a user actually taps.
+
+    Each button fires `media:zq:<name>`, which is handed straight to execute_command — so a typo or a
+    renamed effect makes the button answer with a chat reply from the LLM instead of rendering, and
+    nothing in the keyboard code would notice. Sizes are asserted too: Telegram silently rejects a
+    callback_data over 64 bytes, and the layout is rows of 2 by construction.
+    """
+
+    def _entries(self):
+        from app.routers.telegram._common import _FX_CHARACTERS, _FX_MEMES, _FX_SOUNDS, _FX_THEMES
+        return {"themes": _FX_THEMES, "sounds": _FX_SOUNDS, "memes": _FX_MEMES,
+                "characters": _FX_CHARACTERS}
+
+    def test_every_button_runs_a_real_effect(self):
+        for cat, entries in self._entries().items():
+            for label, name in entries:
+                resolved = CS.COMMAND_ALIASES.get(name, name)
+                self.assertIn(resolved, EFFECTS, f"{cat}: '{label}' -> {name} is not an effect")
+                self.assertTrue(CS.wants_attachments(name),
+                                f"{cat}: '{label}' -> {name} would render with no image")
+
+    def test_no_effect_is_offered_in_two_categories(self):
+        seen: dict = {}
+        for cat, entries in self._entries().items():
+            for _label, name in entries:
+                self.assertNotIn(name, seen, f"{name} is in both {seen.get(name)} and {cat}")
+                seen[name] = cat
+
+    def test_callback_data_fits_telegrams_limit(self):
+        for cat, entries in self._entries().items():
+            for _label, name in entries:
+                self.assertLessEqual(len(f"media:zq:{name}".encode()), 64, f"{cat}: {name}")
+
+    def test_character_keyboards_only_offer_installed_art(self):
+        """Both character keyboards are filtered by _character_path, because a name whose PNG is
+        missing renders an error from the effects list — and, in the `char <name>` picker, is not
+        consumed by the arg parser at all, so the token leaks into the effect's own argument."""
+        from app.routers.telegram.keyboards import (_character_prompt_keyboard,
+                                                    _media_fx_characters_keyboard)
+        from app.services.effects_service.character import _character_path
+        for kb in (_media_fx_characters_keyboard(), _character_prompt_keyboard()):
+            for row in kb["inline_keyboard"]:
+                self.assertLessEqual(len(row), 2, "keyboards are rows of 2")
+                for btn in row:
+                    name = btn["callback_data"].rsplit(":", 1)[1]
+                    if name in ("none", "effects"):     # Back / No character
+                        continue
+                    self.assertTrue(_character_path(name), f"{name}: art missing but offered")
+
+
 if __name__ == "__main__":
     unittest.main()
