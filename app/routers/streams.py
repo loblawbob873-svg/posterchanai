@@ -425,6 +425,11 @@ def stream_ingest(request: Request, current_user: User = Depends(get_current_use
         # Save-to-Blossom recording: whether the node offers it, and this user's opt-in.
         "record_available": record_on,
         "record_enabled": bool(getattr(current_user, "stream_record", False)),
+        # Per-streamer quality tier. Offered only when the clamp is actually on — with no clamp there is no
+        # transcode to lower, so a picker would be a control that does nothing.
+        "quality_available": stream_service.clamp_enabled(cfg),
+        "quality": stream_service.get_quality(token),
+        "quality_tiers": sorted(stream_service.QUALITY_TIERS.keys(), reverse=True),
         # The Android app's native screen share pushes RTMP directly (its WebView has no getDisplayMedia, so
         # the screen can't go through WHIP). It needs the WHOLE url, not OBS's server+key split — and it must
         # be built HERE, because the encoder (RootEncoder) parses an RTMP url as `app/stream` and mangles the
@@ -690,6 +695,27 @@ def stream_vods_by_token(token: str, db=Depends(get_db)):
     rows = (db.query(StreamVOD).filter(StreamVOD.token == token)
             .order_by(StreamVOD.started_at.desc()).limit(200).all())
     return {"vods": [_vod_json(v) for v in rows]}
+
+
+@router.post("/quality")
+def stream_quality_set(body: dict, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Set THIS user's stream quality tier ("720"/"480"/"360", anything else = auto//node default).
+
+    Keyed by the caller's own publish token, so a user can only ever change their own stream — and the
+    tier is capped against the admin clamp settings when clamp.sh is generated, so this can only lower
+    what the node already does, never ask it for more bandwidth.
+    """
+    # JSONResponse, not HTTPException — this router imports neither HTTPException nor anything that
+    # re-exports it, and every other handler here reports errors the same way.
+    token = _user_token(db, current_user)
+    if not token:
+        return JSONResponse({"error": "no stream token for this user"}, status_code=400)
+    try:
+        tier = stream_service.set_quality(token, str(body.get("quality") or ""))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    logger.info("[stream] %s set quality tier %s", token[:8], tier)
+    return {"quality": tier}
 
 
 @router.post("/record")

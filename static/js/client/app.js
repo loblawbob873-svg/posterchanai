@@ -5179,6 +5179,12 @@
       <label class="fld">Title<input class="input" id="gl-title" placeholder="What are you streaming?" maxlength="120" autofocus></label>
       <label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-announce" checked> Also announce to followers (a post with a watch link)</label>
       ${info.record_available?`<label class="muted small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="gl-record" ${info.record_enabled?'checked':''}> Save my streams — recorded and kept in your “Past streams”</label>`:''}
+      ${info.quality_available?`<div class="gl-q">
+        <div class="muted small">Quality — lower it if your connection is slow or you're on mobile data:</div>
+        <div class="gl-qrow">
+          ${['auto'].concat(info.quality_tiers||[]).map(q=>`<label class="gl-qopt"><input type="radio" name="gl-q" value="${enc(q)}" ${String(info.quality||'auto')===q?'checked':''}><span>${q==='auto'?'Auto':enc(q)+'p'}</span></label>`).join('')}
+        </div>
+      </div>`:''}
       ${canPhone || canScreen
         ? `<div class="gl-src">
              <div class="muted small" style="margin-bottom:4px">What do you want to broadcast?</div>
@@ -5226,6 +5232,15 @@
           _streamFetch('/api/streams/record',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:rc.checked})})
             .then(()=>toast(rc.checked?'recording on':'recording off')).catch(()=>{ toast('couldn’t save'); rc.checked=!rc.checked; })
             .finally(()=>{ rc.disabled=false; }); }; }
+      // Quality: saved the moment you pick it, so it applies to the stream you are about to start (the
+      // clamp reads the tier when the stream goes live, not when this sheet was opened).
+      $$('input[name="gl-q"]',root).forEach(r=> r.onchange=()=>{
+        const v=r.value;
+        _streamFetch('/api/streams/quality',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({quality:v==='auto'?'':v})})
+          .then(()=>toast(v==='auto'?'quality: node default':'quality: '+v+'p'))
+          .catch(()=>toast('couldn\u2019t save the quality'));
+      });
       $('#gl-cancel',root).onclick=closeModal;
       // Source is CHOSEN, never launched on click. Picking a source used to open the camera and start
       // publishing immediately, so the wrong lens was already broadcasting before you could switch it —

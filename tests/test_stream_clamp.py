@@ -16,7 +16,9 @@ which looks like it works) and the parts that are easy to "simplify" back into a
 
 No MediaMTX, ffmpeg or database needed — this is all config/script generation and pure helpers.
 """
+import subprocess
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import yaml
@@ -392,3 +394,74 @@ class TestClampEnabled(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPerStreamerQualityTiers(unittest.TestCase):
+    """A streamer may LOWER their own stream's quality; they may never raise it.
+
+    The generated script is shell, so the two failure modes worth pinning are (a) a tier whose args got
+    mangled by quoting — the reason each tier gets its own run function with LITERAL args rather than a
+    variable — and (b) a tier that resolves higher than the admin ceiling, which would turn a "save my
+    data" control into a way to make the node spend more.
+    """
+
+    CFG = {"stream_clamp_height": "720", "stream_clamp_fps": "30", "stream_clamp_bitrate": "1500k",
+           "stream_clamp_audio_bitrate": "128k", "stream_clamp_encoder": "libx264",
+           "stream_rtsp_port": "8554", "stream_auth_secret": "s3cret"}
+
+    def _script(self, cfg=None):
+        S._write_clamp_script(cfg or dict(self.CFG))
+        return Path(str(S._CLAMP_SCRIPT)).read_text()
+
+    def test_the_generated_script_is_valid_shell(self):
+        self._script()
+        r = subprocess.run(["sh", "-n", str(S._CLAMP_SCRIPT)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_every_tier_has_its_own_run_functions(self):
+        t = self._script()
+        for name in S.QUALITY_TIERS:
+            self.assertIn(f"run_hw_{name}()", t)
+            self.assertIn(f"run_sw_{name}()", t)
+        self.assertIn("run_hw_auto()", t)          # a stream with no tier must still have its path
+        self.assertIn("run_sw_auto()", t)
+
+    def test_the_quality_path_is_a_real_path_not_a_python_repr(self):
+        """`{quality_dir}` in the script f-string interpolated the FUNCTION object, and sh -n accepts that
+        happily because it is syntactically a fine string — so the tier file could never be found."""
+        t = self._script()
+        line = [l for l in t.splitlines() if l.startswith("QFILE=")][0]
+        self.assertNotIn("<function", line)
+        self.assertIn("/quality/", line)
+
+    def test_a_tier_can_only_lower_the_ceiling(self):
+        """With the node configured BELOW a tier, that tier must not raise it."""
+        cfg = dict(self.CFG)
+        cfg["stream_clamp_bitrate"] = "400k"       # lower than every tier's own rate
+        cfg["stream_clamp_height"] = "360"
+        t = self._script(cfg)
+        for line in t.splitlines():
+            if ") VMAX_CFG=" in line:
+                kbps = int(line.split("VMAX_CFG=")[1].split()[0].rstrip(";").strip())
+                self.assertLessEqual(kbps, 400, line)
+        # …and no tier's filter may ask for more height than the node allows
+        self.assertNotIn("min(720,", t)
+        self.assertNotIn("min(480,", t)
+
+    def test_tier_scale_filters_survive_generation_intact(self):
+        """The filter carries nested single quotes; each tier's must arrive complete, with its own height."""
+        t = self._script()
+        self.assertIn("min(480,iw)", t)
+        self.assertIn("min(360,iw)", t)
+        self.assertIn("min(720,iw)", t)
+
+    def test_set_and_get_round_trip_and_reject_bad_tokens(self):
+        self.assertEqual(S.set_quality("tok_ABC-1", "480"), "480")
+        self.assertEqual(S.get_quality("tok_ABC-1"), "480")
+        # anything unknown clears back to auto rather than leaving a stale file
+        self.assertEqual(S.set_quality("tok_ABC-1", "9001"), "auto")
+        self.assertEqual(S.get_quality("tok_ABC-1"), "auto")
+        for bad in ("", "../etc/passwd", "a b", "a;rm -rf /", "x" * 200):
+            with self.assertRaises(ValueError):
+                S.set_quality(bad, "480")
+            self.assertEqual(S.get_quality(bad), "auto")

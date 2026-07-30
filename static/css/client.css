@@ -4166,3 +4166,16 @@ body.modal-open .mobilenav{display:none}
 
 /* Vim cursor in the side columns. They are dense lists, so a left rule reads better than a full ring. */
 .sidebar .nav-item.sel,.rightbar .notif.sel{box-shadow:inset 3px 0 0 var(--neon);background:rgba(var(--accent-rgb),.10)}
+
+/* Go Live: the per-streamer quality tier. Radio PILLS rather than a <select>, because this is a choice you
+   want to see the current value of at a glance while checking everything else before going live — and on a
+   phone a row of thumb-sized pills beats a dropdown you have to open to read. Wraps on narrow screens. */
+.gl-q{margin:8px 0}
+.gl-qrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.gl-qopt{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;min-height:38px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel2);cursor:pointer;font-size:13px}
+.gl-qopt:has(input:checked){border-color:var(--neon);color:var(--cyan);background:rgba(var(--accent-rgb),.16)}
+.gl-qopt input{accent-color:var(--neon)}
+@media(max-width:820px){
+  .gl-qopt{flex:1 1 auto;justify-content:center}   /* fill the row so every target is thumb-sized */
+}

@@ -38,6 +38,69 @@ _CLAMP_SCRIPT = _STREAM_DIR / "clamp.sh"         # generated each spawn (gitigno
 # and every viewer silently gets the unclamped source.
 CLAMP_SUFFIX = "_clamped"
 
+# ---- per-streamer quality tiers -------------------------------------------------------------------
+# A streamer can ask for LESS than the node's ceiling — "my connection is bad today", "I'm on data". Each
+# tier is (height, fps, video-bitrate) and is capped against the admin settings when the clamp script is
+# generated, so a tier can only ever LOWER what the clamp already does: this is not a way to ask the node
+# for more bandwidth than the operator allowed.
+# Chosen per stream (not per node) and read at stream START from a file, so switching tiers needs no
+# MediaMTX respawn — a config change respawns it and drops every live stream, which would be an absurd
+# price for one streamer changing their own quality.
+QUALITY_TIERS = {
+    "720": (720, 30, "1500k"),
+    "480": (480, 30, "900k"),
+    "360": (360, 24, "500k"),
+}
+
+
+def quality_dir() -> str:
+    """Directory holding one file per token: the streamer's chosen tier. Lives beside the generated
+    clamp script, is created on demand, and is read by clamp.sh — so it must be a plain path with no
+    shell metacharacters (it is interpolated into the generated script)."""
+    d = _STREAM_DIR / "quality"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.warning("[stream] could not create %s: %s", d, e)
+    return str(d)
+
+
+def _quality_token_ok(token: str) -> bool:
+    """A token is a path segment in MediaMTX AND a filename here — allow only what both accept."""
+    return bool(token) and len(token) <= 128 and all(c.isalnum() or c in "-_" for c in token)
+
+
+def set_quality(token: str, tier: str) -> str:
+    """Record a streamer's tier choice. `tier` outside QUALITY_TIERS means AUTO (the node default), which
+    is stored as a removal so there is no stale file to reason about. Returns the tier now in force."""
+    if not _quality_token_ok(token):
+        raise ValueError("bad stream token")
+    path = os.path.join(quality_dir(), token)
+    tier = (tier or "").strip()
+    if tier not in QUALITY_TIERS:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return "auto"
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:      # write+rename: clamp.sh may read this the instant a stream starts
+        fh.write(tier)
+    os.replace(tmp, path)
+    return tier
+
+
+def get_quality(token: str) -> str:
+    """The tier in force for this token, or "auto"."""
+    if not _quality_token_ok(token):
+        return "auto"
+    try:
+        with open(os.path.join(quality_dir(), token)) as fh:
+            v = fh.read().strip()
+        return v if v in QUALITY_TIERS else "auto"
+    except OSError:
+        return "auto"
+
 _RECONCILE_INTERVAL = 5
 _MAX_RESTARTS_PER_HOUR = 12
 _RESTART_WINDOW = 3600
@@ -279,9 +342,41 @@ def _write_clamp_script(cfg: dict) -> None:
     import os.path as _osp
     ffprobe = _osp.join(_osp.dirname(ffmpeg), "ffprobe") if _osp.dirname(ffmpeg) else "ffprobe"
     ceiling_kbps = _rate_kbps(p["vbitrate"])
+    # Resolved to a PATH here: `{quality_dir}` in the script f-string below would interpolate the
+    # FUNCTION object (it did — the generated script had a literal `<function quality_dir at 0x…>` as
+    # its path, which sh -n happily accepts because it is syntactically a fine string).
+    qdir = quality_dir()
     audio_kbps = _rate_kbps(p["abitrate"], default=128)
     hw_pre, hw_post = _clamp_video_args(encoder, p)
     sw_pre, sw_post = _clamp_video_args("libx264", p)
+    # Per-tier run functions, args written LITERALLY for exactly the reason the comment above run_hw gives:
+    # these filter strings carry nested single quotes, so a fragment expanded from a shell variable would
+    # reach ffmpeg with its quote characters as data. One function per (tier x encoder) keeps the shell
+    # parsing them, and the dispatch below picks one. Each tier is capped to the admin params — min() on
+    # every axis — so a tier can only lower the ceiling, never raise it.
+    tier_fns, tier_cases, tier_ceils = [], [], []
+    for _name, (_h, _f, _vb) in QUALITY_TIERS.items():
+        _tp = dict(p)
+        _tp["height"] = min(int(p["height"]), _h)
+        _tp["fps"] = min(int(p["fps"]), _f)
+        _tp["vbitrate"] = _vb if _rate_kbps(_vb) < ceiling_kbps else p["vbitrate"]
+        _hp, _hq = _clamp_video_args(encoder, _tp)
+        _sp, _sq = _clamp_video_args("libx264", _tp)
+        tier_fns.append(
+            f"run_hw_{_name}() {{\n"
+            f"  # shellcheck disable=SC2086\n"
+            f"  exec \"$FFMPEG\" {_hp} $COMMON -i \"$IN\" {_hq} $OUTOPTS \"$OUT\"\n"
+            f"}}\n"
+            f"run_sw_{_name}() {{\n"
+            f"  # shellcheck disable=SC2086\n"
+            f"  exec \"$FFMPEG\" {_sp} $COMMON -i \"$IN\" {_sq} $OUTOPTS \"$OUT\"\n"
+            f"}}")
+        tier_cases.append(f"  {_name}) run_hw_{_name} ;;")
+        tier_ceils.append(f"  {_name}) VMAX_CFG={min(_rate_kbps(_vb), ceiling_kbps)} ;;")
+    tier_funcs = "\n".join(tier_fns)
+    tier_hw_case = "\n".join(tier_cases)
+    tier_sw_case = "\n".join(c.replace("run_hw_", "run_sw_") for c in tier_cases)
+    tier_ceil_case = "\n".join(tier_ceils)
     # `-map 0:a:0?` — the trailing ? makes audio OPTIONAL. A screen share published with no microphone has
     # no audio track at all, and a non-optional map aborts ffmpeg outright ("Stream map ... does not exist"),
     # which would leave that stream permanently unwatchable instead of merely silent.
@@ -319,7 +414,22 @@ COMMON="-nostdin -hide_banner -loglevel warning -fflags nobuffer -rtsp_transport
 # the artefacts in a low-bitrate picture are detail the encoder has to spend bits reproducing. So the
 # ceiling is min(measured source, configured), which leaves a fat OBS stream fully clamped while making a
 # weak phone stream roughly bandwidth-neutral instead of far worse.
-VMAX_CFG={ceiling_kbps}      # configured ceiling, kbit/s
+VMAX_CFG={ceiling_kbps}      # configured ceiling, kbit/s (lowered by the streamer's tier below)
+# The streamer's own quality choice, read at stream START from a file keyed by token (see
+# stream_service.set_quality). Anything not a known tier — including no file at all — means AUTO, i.e. the
+# node's configured ceiling. Read defensively: this file is written by the app and only ever contains a
+# short tier name, but it is shell input, so strip it to the characters a tier can contain.
+Q=auto
+QFILE="{qdir}/$SRC"
+if [ -f "$QFILE" ]; then
+  Q=$(tr -cd 'a-z0-9' < "$QFILE" 2>/dev/null || echo auto)
+  [ -n "$Q" ] || Q=auto
+fi
+case "$Q" in
+{tier_ceil_case}
+  *) Q=auto ;;
+esac
+[ "$Q" = auto ] || echo "clamp: $SRC using the streamer's ${{Q}}p tier (ceiling $VMAX_CFG kbit/s)" >&2
 AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sources (see below)
 VMIN=150                     # never target something absurd if the probe reads very low
 AUD_MIN=48                   # below this speech stops being intelligible
@@ -387,13 +497,28 @@ OUTOPTS="{maps} -c:a aac -b:a ${{AUD}}k -ar 48000 -f rtsp -rtsp_transport tcp"
 # The encoder args are written out LITERALLY in each function (not passed as "$1") so that the shell parses
 # their quoting. A fragment expanded from a variable keeps its quote characters as data, and ffmpeg would
 # then be handed a filter string with literal `"` in it.
-run_hw() {{
+run_hw_auto() {{
   # shellcheck disable=SC2086
   exec "$FFMPEG" {hw_pre} $COMMON -i "$IN" {hw_post} $OUTOPTS "$OUT"
 }}
-run_sw() {{
+run_sw_auto() {{
   # shellcheck disable=SC2086
   exec "$FFMPEG" {sw_pre} $COMMON -i "$IN" {sw_post} $OUTOPTS "$OUT"
+}}
+{tier_funcs}
+# Dispatch on the streamer's tier. `auto` (and anything unrecognised) is the node's configured clamp, so a
+# stream that never asked for a tier behaves exactly as it did before this existed.
+run_hw() {{
+  case "$Q" in
+{tier_hw_case}
+  *) run_hw_auto ;;
+  esac
+}}
+run_sw() {{
+  case "$Q" in
+{tier_sw_case}
+  *) run_sw_auto ;;
+  esac
 }}
 
 # Ask the hardware encoder DIRECTLY whether it works, with a throwaway encode of a few synthetic frames.
