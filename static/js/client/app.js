@@ -4460,22 +4460,41 @@
           await _issueAttach(e.dataTransfer.files, ta, st);
         });
         $('#ri-pub',root).onclick=async()=>{
-          const subj=($('#ri-subj',root).value||'').trim();
-          const body=ta.value.trim();
-          if(!subj){ st.textContent='A subject is required.'; return; }
-          const tags=[['a', addr], ['subject', subj]];
-          // Address the owner + maintainers. Without a `p` tag a 1621 notifies NOBODY — not our
-          // notifications, not push, not any other nostr client — so an issue could sit unread forever;
-          // that is the actual reason filing one felt like shouting into a void. It also covers REPLIES
-          // for free: NIP-10 replyTags() carries a parent's `p` tags forward, so everyone on the issue
-          // stays on the thread without a second mechanism watching for them.
-          _repoPeople(repo).forEach(pk=>{ if(pk!==(ME&&ME.pubkey)) tags.push(['p',pk]); });
-          imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
-          st.textContent='publishing…';
-          try{ const r=await publish(1621, body, tags);
-            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); }
-            else { toast('issue published'); closeModal(); if(VIEW==='repo') openRepo(repo); }
-          }catch(err){ st.textContent='failed: '+((err&&err.message)||err); }
+          // EVERYTHING in one try. Tag building used to sit outside it — `_repoPeople(repo)` and
+          // `imetaTagsFor(body)` both run real logic over untrusted content, and a throw there rejected
+          // this async handler with nothing caught: no message in #ri-status, no toast, the modal frozen
+          // mid-publish. On a phone that also means no bottom nav (body.modal-open hides it), i.e. an app
+          // you have to kill. Inside the try it becomes a line of red text you can read and report.
+          const pub=$('#ri-pub',root);
+          try{
+            const subj=($('#ri-subj',root).value||'').trim();
+            const body=ta.value.trim();
+            if(!subj){ st.textContent='A subject is required.'; return; }
+            const tags=[['a', addr], ['subject', subj]];
+            // Address the owner + maintainers. Without a `p` tag a 1621 notifies NOBODY — not our
+            // notifications, not push, not any other nostr client — so an issue could sit unread forever;
+            // that is the actual reason filing one felt like shouting into a void. It also covers REPLIES
+            // for free: NIP-10 replyTags() carries a parent's `p` tags forward, so everyone on the issue
+            // stays on the thread without a second mechanism watching for them.
+            _repoPeople(repo).forEach(pk=>{ if(pk!==(ME&&ME.pubkey)) tags.push(['p',pk]); });
+            imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
+            st.textContent='publishing…';
+            if(pub) pub.disabled=true;                  // one issue per press, not one per impatient tap
+            const r=await publish(1621, body, tags);
+            if(r && r.ok===false){ st.textContent='relay: '+(r.msg||'rejected'); return; }
+            toast('issue published');
+            closeModal();
+            // AFTER the modal is gone, and in its own guard: openRepo re-renders the whole view, and a
+            // throw in there used to take out the success path too — the issue was published but the UI
+            // looked broken, which is indistinguishable from a failed publish.
+            try{ if(VIEW==='repo') openRepo(repo); }
+            catch(err2){ toast('published — reopen the repo to see it'); }
+          }catch(err){
+            st.textContent='failed: '+((err&&err.message)||err);
+          }finally{
+            // Always give the button back. Without this a relay hiccup left the only way forward disabled.
+            const b=$('#ri-pub',root); if(b) b.disabled=false;
+          }
         };
       });
   }
@@ -15974,6 +15993,52 @@
     return close;
   }
   function toast(m){ const t=document.createElement('div'); t.className='toast'; t.textContent=m; $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),3200); }
+
+  // ---------- last-resort error surface ----------
+  // There was NO global error handler in this client. An exception thrown anywhere in an async click
+  // handler therefore died silently: no message, no log the user can reach, and whatever half-state the
+  // handler was in stayed on screen. On a PHONE that is not a cosmetic problem — `body.modal-open` hides
+  // .mobilenav (so a modal is not covered by the fixed nav), so a handler that throws while a modal is up
+  // leaves the phone with no navigation at all and nothing to tap. The only way out is killing the app,
+  // which is exactly the report this exists to answer.
+  //
+  // Two jobs, both deliberately small:
+  //   1. SAY something. A toast with the real message is the difference between "the app broke" and a
+  //      bug report that can be acted on.
+  //   2. SELF-HEAL the one state that is unrecoverable by tapping: modal-open with no modal present.
+  // It does NOT close modals or undo anything — a handler that failed halfway may still hold text the
+  // user typed, and throwing that away to tidy up would be its own bug.
+  (function installErrorNet(){
+    let last = 0, shown = 0;
+    const say = (what, err) => {
+      // ALWAYS log — the console is what a developer reads over adb/chrome://inspect, and the rate limit
+      // below is about not burying the SCREEN. Gating both together would hide the very error a bug report
+      // needs from the one place it can be read reliably.
+      try{ console.error('[pc] ' + what, err); }catch(_){ }
+      // Rate-limit the toast hard: a render loop that throws every frame must not bury the UI in them.
+      const now = Date.now();
+      if(now - last < 1500 || shown > 8) return;
+      last = now; shown++;
+      const msg = (err && (err.message || err.reason && err.reason.message || err.reason)) || err || '';
+      try{ toast('⚠ ' + what + ': ' + String(msg).slice(0, 140)); }catch(_){ }
+    };
+    // Restore the navigation whenever the class outlives its modal. Cheap, and it runs on the same events
+    // that would otherwise leave it stranded.
+    const healNav = () => {
+      try{
+        const root = $('#modal-root');
+        if(document.body.classList.contains('modal-open') && root && !root.firstElementChild
+           && !document.querySelector('.uiconfirm-bg')){
+          document.body.classList.remove('modal-open');
+        }
+      }catch(_){ }
+    };
+    window.addEventListener('error', e => { say('something went wrong', e.error || e); healNav(); });
+    window.addEventListener('unhandledrejection', e => { say('action failed', e.reason || e); healNav(); });
+    // …and on a timer as a backstop, because the stranding can also happen without any exception (a modal
+    // removed by something other than closeModal). 4s is invisible to the user and costs one class check.
+    setInterval(healNav, 4000);
+  })();
 
   // Ctrl/Cmd+F find-in-page. ONLY in the Electron desktop shell — a browser/PWA already has a real
   // native find bar (Ctrl+F), but the desktop app has none, so the key did nothing. Uses the Chromium
