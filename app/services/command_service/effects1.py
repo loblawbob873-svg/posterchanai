@@ -673,22 +673,11 @@ class _Effects1Mixin:
         return {"type": "files", "content": summary, "files": outputs}
 
     async def _ruckus_command(self, attachments: Optional[list], args: str = "") -> dict:
-        """Uncle Ruckus over an attached image: `ruckus`. Takes NO caption — he is a reaction
-        overlay (like `carl`), so any argument is ignored rather than drawn on the picture."""
-        from app.services.media_service import is_image
-
-        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
-            return {"type": "text", "content": "Attach an image, then send `ruckus`."}
-
-        import asyncio
-        from app.services.effects_service import add_ruckus
-        from app.services.effects_service.character import _pointing_attachments
-
-        outputs, summary = await asyncio.to_thread(
-            _pointing_attachments, attachments, "ruckus", "Uncle Ruckus", add_ruckus)
-        if not outputs:
-            return {"type": "text", "content": summary}
-        return {"type": "files", "content": summary, "files": outputs}
+        """Uncle Ruckus over an attached image, set to his theme: `ruckus`. Takes NO caption — he is
+        a reaction overlay (like `carl`/`soyjack`), so any argument is ignored rather than drawn on
+        the picture. Output is video/mp4 wherever assets/ruckus.mp3 is installed."""
+        from app.services.effects_service import ruckus_attachments
+        return await self._reaction_command(attachments, "ruckus", ruckus_attachments)
 
     async def _nothingeverhappens_command(self, attachments: Optional[list], args: str = "") -> dict:
         """The angry teacher + caption on an attached image: `nothingeverhappens [text]`."""

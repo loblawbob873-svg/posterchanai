@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, _SHRUG_AUDIO_CANDIDATES, _SHRUG_DURATION, _SOYJACK_AUDIO_CANDIDATES, _SOYJACK_DURATION, logger, os
+from ._common import List, OutputFile, Path, _CHARACTERS, _CHARS_DIR_CANDIDATES, _RUCKUS_AUDIO_CANDIDATES, _RUCKUS_DURATION, _SHRUG_AUDIO_CANDIDATES, _SHRUG_DURATION, _SOYJACK_AUDIO_CANDIDATES, _SOYJACK_DURATION, logger, os
 
 def _character_path(name: str) -> str:
     """Resolve a character name (or alias) to an existing asset path ("" if unknown/missing)."""
@@ -315,6 +315,28 @@ def add_soyjack_video(data: bytes, source_filename: str = "image.jpg") -> bytes:
     if not audio:
         raise RuntimeError("Soyjack audio (assets/soyjack.mp3) is missing on the server")
     return image_audio_to_video(still, "soyjack.jpg", audio, duration=_SOYJACK_DURATION)
+
+
+def _ruckus_audio_path() -> str:
+    """First existing ruckus mp3 from the candidate list ("" if none). The `_<name>_audio_path` NAME
+    is load-bearing — meme_builder_service.sound_names() discovers sounds by that regex, so defining
+    it is what puts `ruckus` in the Meme Builder's sound list."""
+    for p in _RUCKUS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_ruckus_video(data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """The Uncle Ruckus still, looped under his theme → MP4. Mirrors add_soyjack_video; the branded
+    end-card is appended later by CommandService._brand_effect_videos like every other
+    MOTION_EFFECTS video."""
+    from app.services.media_service import image_audio_to_video
+    still = add_ruckus(data)
+    audio = _ruckus_audio_path()
+    if not audio:
+        raise RuntimeError("Ruckus audio (assets/ruckus.mp3) is missing on the server")
+    return image_audio_to_video(still, "ruckus.jpg", audio, duration=_RUCKUS_DURATION)
 
 
 def add_shrug_video(data: bytes, caption: str = "Whaddya gonna do?",
@@ -720,7 +742,10 @@ def nodontthinkiwill_attachments(attachments):
 
 
 def ruckus_attachments(attachments):
-    return _pointing_attachments(attachments, "ruckus", "Uncle Ruckus", add_ruckus)
+    """Uncle Ruckus carries his theme, so his output is video/mp4 rather than a still — same shape
+    as soyjack, and it degrades to the silent still when assets/ruckus.mp3 isn't installed."""
+    return _reaction_video_attachments(attachments, "ruckus", "Uncle Ruckus", "🪕",
+                                       _ruckus_audio_path, add_ruckus_video, add_ruckus)
 
 
 def nothingeverhappens_attachments(attachments):
@@ -736,26 +761,38 @@ def carl_attachments(attachments):
     return _pointing_attachments(attachments, "carl", "Carl", add_carl)
 
 
-def soyjack_attachments(attachments):
-    """Soyjack now carries audio, so its output is video/mp4 rather than a still — same shape as
-    shrug/diarrhea. Falls back to the silent still if the sound asset is missing, so a server
-    without assets/soyjack.mp3 degrades instead of erroring."""
+def _reaction_video_attachments(attachments, key: str, title: str, emoji: str,
+                                audio_path_fn, video_fn, still_fn, still_title: str = ""):
+    """A reaction overlay that CARRIES SOUND: the cutout still, looped under its mp3 → video/mp4.
+
+    One body for soyjack/ruckus, which differ only in their asset and their caption. Where the sound
+    asset isn't installed the effect degrades to the silent still via _pointing_attachments rather
+    than erroring, so a node missing assets/<key>.mp3 still answers."""
     from ._common import _human_size, is_image
-    if not _soyjack_audio_path():
-        return _pointing_attachments(attachments, "soyjack", "Soyjak", add_soyjack)
+    if not audio_path_fn():
+        return _pointing_attachments(attachments, key, still_title or title, still_fn)
     images = [(f, d, ct) for f, d, ct in (attachments or []) if is_image(f, ct)]
     if not images:
         return [], "No image — attach an image first."
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_soyjack_video(data, source_filename=filename)
-        out: OutputFile = {"filename": f"{stem}_soyjack.mp4", "data": result,
+        result = video_fn(data, source_filename=filename)
+        out: OutputFile = {"filename": f"{stem}_{key}.mp4", "data": result,
                            "content_type": "video/mp4"}
-        return [out], f"## 😮 Soyjaks pointing\n\n😮 {filename}: {_human_size(len(result))}"
+        return [out], f"## {emoji} {title}\n\n{emoji} {filename}: {_human_size(len(result))}"
     except Exception as e:
-        logger.error(f"soyjack failed for {filename}: {e}", exc_info=True)
-        return [], f"Could not apply soyjack to {filename}: {e}"
+        logger.error(f"{key} failed for {filename}: {e}", exc_info=True)
+        return [], f"Could not apply {key} to {filename}: {e}"
+
+
+def soyjack_attachments(attachments):
+    """Soyjack now carries audio, so its output is video/mp4 rather than a still — same shape as
+    shrug/diarrhea. Falls back to the silent still if the sound asset is missing, so a server
+    without assets/soyjack.mp3 degrades instead of erroring."""
+    return _reaction_video_attachments(attachments, "soyjack", "Soyjaks pointing", "😮",
+                                       _soyjack_audio_path, add_soyjack_video, add_soyjack,
+                                       still_title="Soyjak")
 
 
 def _lookingaway_panels():

@@ -241,6 +241,15 @@ _SOYJACK_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/soyjack.mp3",
 ]
 _SOYJACK_DURATION = 8.2
+# `ruckus` — Uncle Ruckus standing over your image, set to the first 8s of his theme. Same shape as
+# soyjack: a reaction overlay that carries sound, so the effect's output is an MP4 rather than a
+# still. The duration caps a hair above the 8.0s track so a re-encode can't clip the tail.
+_RUCKUS_AUDIO_CANDIDATES = [
+    os.environ.get("RUCKUS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "ruckus.mp3"),
+    "/var/lib/posterchanai/assets/ruckus.mp3",
+]
+_RUCKUS_DURATION = 8.2
 _SETH_AUDIO_CANDIDATES = [
     os.environ.get("SETH_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "seth.mp3"),

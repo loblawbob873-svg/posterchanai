@@ -53,7 +53,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "theraped": "Point at an attached image with the pointing-up meme character: theraped",
         "nothingeverhappens": "The angry teacher lectures your image: nothingeverhappens [text]",
         "nodontthinkiwill": "Old Steve Rogers declines your image: nodontthinkiwill [text]",
-        "ruckus": "Uncle Ruckus stands over an attached image, unimpressed: ruckus",
+        "ruckus": "Uncle Ruckus stands over an attached image to his own theme → 8s MP4: ruckus",
         "would": "Old man points up at an attached image saying WOULD: would",
         "shrug": "Rabbi shrugs at an attached image: \"Whaddya gonna do?\": shrug",
         "carl": "Carl stands over an attached image, unimpressed: carl",
