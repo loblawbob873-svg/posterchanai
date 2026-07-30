@@ -1014,7 +1014,7 @@
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
-        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below.">🪄 Remove the background</button>` : ''}
+        ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
@@ -2646,7 +2646,7 @@
       <button class="btn btn-cyan full" id="mbp-open">📂 Open a saved project…</button>
       <button class="btn btn-cyan full" id="mbp-name"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Rename this project</button>
       <button class="btn btn-cyan full" id="mbp-new">🆕 Start a new project</button>
-      <button class="btn btn-danger full" id="mbp-clear">🧹 Remove every layer</button>`, root=>{
+      <button class="btn btn-danger full" id="mbp-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg>Remove every layer</button>`, root=>{
       const q = (id) => root.querySelector('#'+id);
       q('mbp-save').onclick = ()=>{ PC.closeModal(); saveProject(); };
       q('mbp-open').onclick = ()=>{ PC.closeModal(); openProject(); };

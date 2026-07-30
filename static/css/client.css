@@ -860,7 +860,12 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .rightbar .notif .notif-ctx .qav{max-height:none;width:18px;height:18px}   /* the avatar is not "media" */
 /* Native builds — a compact 2×2 of platform links, pinned above the GitHub row (it's .rb-apps that
    takes the margin-top:auto now, so the pair sits together at the foot of the column). */
-.rb-apps{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
+/* NOT margin-top:auto. The rail is a flex column, so that pinned this block to the BOTTOM — and with
+   an empty Notifications list (the common case) it opened ~600px of void in the middle of the column,
+   with a heading and a divider floating in the dead centre. Empty space at the END of a column is
+   invisible; empty space in the MIDDLE reads as broken layout. The rail scrolls, so on a busy account
+   this simply sits below the notifications instead of being reachable only past them. */
+.rb-apps{padding-top:var(--sp-3);border-top:1px solid var(--line)}
 .rb-apps h4{margin:0 0 9px;font-size:11.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--muted)}
 .rb-appgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .rb-app{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--line);border-radius:10px;
@@ -1392,7 +1397,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px}
 /* repost/boost glyph (SVG, themed via currentColor) — replaces the off-theme orange 🔁 emoji */
+/* The five note-action icons are sprite <use> now, not hand-drawn fill art, so they inherit
+   svg.ic (20px, fill:none, stroke:currentColor) and match every other icon on the card — they used to
+   be visibly heavier than their neighbours. These rules keep only what is genuinely per-icon: the sizes
+   the old constants set inline, which svg.ic would otherwise flatten to a uniform 20px. */
 .rt-ico{vertical-align:-3px;flex:none}
+.react-ico,.zap-ico{flex:none}
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
 .act.rt .rt-ico{transition:filter .12s;width:22px;height:22px}   /* flat: no drop-shadow glow on hover/active */
 .quoted{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;background:rgba(8,5,18,.4)}
@@ -1511,10 +1521,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .cmp-left,.cmp-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center}
 .cmp-right{margin-left:auto}
 /* Draft + Post on their own centered row beneath the tool buttons */
-/* Draft/Post row. Centering is set INLINE in the composer markup (cache-proof, and zoom-immune since
-   it's text-align not flex); this is just the styling fallback. */
-.cmp-actions{text-align:center;margin-top:12px}
-.cmp-actions .btn{display:inline-block;min-width:120px;margin:0 5px;vertical-align:middle}
+/* Draft/Post row. The centering USED to be duplicated as inline styles on the markup, for cache-
+   proofing. That backfired twice: an inline `display` cannot be overridden, so it beat the icon-gap
+   rule (the icon sat flush against "Draft") AND it beat the ≤520px rule below — meaning the phone fix
+   that puts Draft and Post on ONE row had never actually applied since the day it was written. The
+   class owns the layout now; a stale stylesheet would break far more than this row anyway. */
+.cmp-actions{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:center;align-items:center;margin-top:var(--sp-3)}
+.cmp-actions .btn{min-width:120px;margin:0;vertical-align:middle}
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}

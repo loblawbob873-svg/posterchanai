@@ -8,13 +8,13 @@
   let LOGO = '/static/posterchan-relay.png';   // overridden by CFG.logo_url (Admin → custom logo)
   // Repost/boost glyph as an SVG (inherits currentColor → themes green/cyan with a glow), instead of
   // the 🔁 emoji which renders a fixed orange that clashes with the cyberpunk palette.
-  const RT_ICON = '<svg class="rt-ico" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M23.77 15.67a.75.75 0 00-1.06 0l-2.22 2.22V7.65a3.75 3.75 0 00-3.75-3.75h-5.85a.75.75 0 000 1.5h5.85c1.24 0 2.25 1.01 2.25 2.25v10.24l-2.22-2.22a.75.75 0 10-1.06 1.06l3.5 3.5c.147.147.34.22.53.22s.384-.073.53-.22l3.5-3.5a.75.75 0 000-1.06zm-10.66 3.28H7.26c-1.24 0-2.25-1.01-2.25-2.25V6.46l2.22 2.22a.75.75 0 101.06-1.06l-3.5-3.5a.75.75 0 00-1.06 0l-3.5 3.5a.75.75 0 101.06 1.06l2.22-2.22V16.7a3.75 3.75 0 003.75 3.75h5.85a.75.75 0 000-1.5z"/></svg>';
+  const RT_ICON = '<svg class="ic rt-ico" aria-hidden="true"><use href="#i-repost"></use></svg>';
   // Reply glyph as an SVG (themed cyan + glow like the other action icons) — the 💬 emoji clashed
   // with the cyberpunk palette and read the same as the quote bubble; this reply-arrow is distinct.
-  const REPLY_ICON = '<svg class="rp-ico" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M10 9V6.5a1 1 0 00-1.7-.71l-6 6a1 1 0 000 1.42l6 6A1 1 0 0010 18.5V16c4.7 0 7.9 1.4 10.2 4.4.3.4 1 .15.96-.35C20.6 13.2 16.4 9.4 10 9z"/></svg>';
+  const REPLY_ICON = '<svg class="ic rp-ico" aria-hidden="true"><use href="#i-reply"></use></svg>';
   // Quote-post glyph as an SVG (themes cyan + glow, and sizes like the repost icon) — the old ❝
   // text glyph floated high in its line box and couldn't be size-matched to the emoji actions.
-  const QUOTE_ICON = '<svg class="q-ico" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01z"/></svg>';
+  const QUOTE_ICON = '<svg class="ic q-ico" aria-hidden="true"><use href="#i-quote"></use></svg>';
   // Web-of-trust shield — SVG so it takes the neon cyan colour + glow (emoji can't be recoloured).
   const WOT_ICON = '<svg class="wot-ico" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l7 3v6c0 4.7-3.1 8.3-7 11-3.9-2.7-7-6.3-7-11V5l7-3z"/></svg>';
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
@@ -25,8 +25,8 @@
   const CALL_ICON = '<svg class="call-ico" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.2.2 2.4.6 3.6.1.4 0 .7-.2 1l-2.3 2.2z"/></svg>';
   // React (smiley) + Zap (bolt) as monochrome fill:currentColor glyphs so they track the .act muted→accent
   // colour like reply/repost/quote — the coloured 😀/⚡ emoji were the one thing that didn't match the navbar.
-  const REACT_ICON = '<svg class="react-ico" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zM9 8.75a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5zm6 0a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5zM8.5 13.8c.9 1.8 2.1 2.7 3.5 2.7s2.6-.9 3.5-2.7c.2-.4-.1-.7-.5-.5-.9 1.4-1.9 2-3 2s-2.1-.6-3-2c-.4-.2-.7.1-.5.5z"/></svg>';
-  const ZAP_ICON = '<svg class="zap-ico" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg>';
+  const REACT_ICON = '<svg class="ic react-ico" aria-hidden="true"><use href="#i-smile"></use></svg>';
+  const ZAP_ICON = '<svg class="ic zap-ico" aria-hidden="true"><use href="#i-zap"></use></svg>';
   const isDesktop = () => !window.matchMedia('(max-width:820px)').matches;   // pop-out player is desktop-only
   // ---- UI themes (slugs match static/css/client.css :root[data-theme] + schemas.CLIENT_THEMES) ----
   // Cyberpunk is the flagship default (the bare :root), so it carries NO data-theme attribute.
@@ -2761,7 +2761,7 @@
           <div class="tl-cmp-tools">
             <button class="tl-cmp-btn" id="tl-cmp-attach" title="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
             <button class="tl-cmp-btn" id="tl-cmp-react" title="Emoji / GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>
-            <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll">📊</button>
+            <button class="tl-cmp-btn" id="tl-cmp-poll" title="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>
             <button class="tl-cmp-btn" id="tl-cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
             <!-- Background / Schedule / Sensitive live behind ⋯ deliberately. Five icons + Post is
                  exactly what fits one row at 360px (~269px of 279px); a sixth wraps Post onto its
@@ -2778,7 +2778,7 @@
           <div class="tl-cmp-poll hidden" id="tl-cmp-pollbox">
             <div class="muted small">Poll options</div>
             <div id="tl-cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
-            <div class="row"><button class="btn btn-ghost small" id="tl-cmp-poll-add">＋ Add option</button>
+            <div class="row"><button class="btn btn-ghost small" id="tl-cmp-poll-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add option</button>
               <label class="muted small" style="margin-left:auto"><input type="checkbox" id="tl-cmp-poll-multi"> Allow multiple</label></div>
           </div>
         </div>
@@ -3041,7 +3041,7 @@
       // body{zoom:.85} / calc(100dvh/.85) pair and ends up taller than the viewport in Firefox, which is
       // what pushed every fixed/absolute FAB off-screen.
       feed.innerHTML = _timelineHeaderHtml() + '<div id="tl-notes"></div>'
-        + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post">＋</button>' : '');
+        + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>' : '');
       _bindTimelineHeader(feed);
       { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
       notesEl=$('#tl-notes',feed);
@@ -3978,8 +3978,8 @@
     const scoped=()=>_repoScope==='mine'?mine:repos;
     const grid=r=>`<div class="repo-grid">${r.map(repoCard).join('')}</div>`;
     feed.innerHTML = `<div class="art-top repo-top">
-        ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create">＋ Create repo</button>`:''}
-        <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new">＋ Announce a repo</button>
+        ${_gitHostBase()?`<button class="btn btn-neon small" id="repo-create"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create repo</button>`:''}
+        <button class="btn ${_gitHostBase()?'btn-ghost':'btn-neon'} small" id="repo-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Announce a repo</button>
         ${mine.length?`<div class="repo-scope" role="tablist">
           <button class="repo-sc${_repoScope==='mine'?' on':''}" data-scope="mine" role="tab">Mine</button>
           <button class="repo-sc${_repoScope==='all'?' on':''}" data-scope="all" role="tab">All repos</button>
@@ -4321,7 +4321,7 @@
         ${isGrasp?`<button class="rv-tab" data-tab="files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>`:''}
         ${isGrasp?`<button class="rv-tab" data-tab="commits"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Commits</button>`:''}
         <button class="rv-tab" data-tab="issues">🐛 Issues <span class="rv-count" id="rv-c-issues"></span></button>
-        <button class="rv-tab" data-tab="patches">🩹 Patches <span class="rv-count" id="rv-c-patches"></span></button>
+        <button class="rv-tab" data-tab="patches"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bandage"></use></svg>Patches <span class="rv-count" id="rv-c-patches"></span></button>
       </div>
       <div class="rv-panel" data-panel="readme">
         <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
@@ -4329,7 +4329,7 @@
       ${isGrasp?`<div class="rv-panel" data-panel="files" hidden><div class="fb" id="rv-files"><div class="spinner"></div></div></div>`:''}
       ${isGrasp?`<div class="rv-panel" data-panel="commits" hidden><div class="fb" id="rv-commits"><div class="spinner"></div></div></div>`:''}
       <div class="rv-panel" data-panel="issues" hidden>
-        <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue">＋ New issue</button></div>
+        <div class="rv-collab-hd"><span class="search-section-title">Issues</span><button class="btn btn-neon small" id="rv-newissue"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New issue</button></div>
         <div class="rv-collab" id="rv-issues"><div class="spinner"></div></div>
       </div>
       <div class="rv-panel" data-panel="patches" hidden>
@@ -4720,7 +4720,7 @@
       <span class="fb-hby">${enc(h.author||'')}</span>
       <span class="fb-hwhen" title="${enc(new Date((h.at||0)*1000).toLocaleString())}">${enc(h.at?timeAgo(h.at):'')}</span></div>`:'';
     const tools = _rvMayEdit()
-      ? `<div class="fb-tools"><button class="btn btn-ghost small" id="fb-new">＋ New file</button></div>` : '';
+      ? `<div class="fb-tools"><button class="btn btn-ghost small" id="fb-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New file</button></div>` : '';
     box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${tools}${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
     $$('.fb-crumb',box).forEach(a=>{
       a.onclick=()=>_loadRepoFiles(feed,a.dataset.p);
@@ -6120,7 +6120,7 @@
     const shown=chans.filter(c=> active.has(c.id) || (ME && c.pubkey===ME.pubkey))
       .sort((a,b)=> (active.get(b.id)||b.created_at) - (active.get(a.id)||a.created_at));
     feed.innerHTML=`<div class="chat-list">
-      <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new">＋ New channel</button></div>
+      <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New channel</button></div>
       ${shown.length?`<div class="stream-grid">${shown.map(channelCard).join('')}</div>`
         :'<div class="empty">No active channels yet. Tap ＋ New channel to start one — channels appear here once they have messages on this instance.</div>'}
       <div id="nip29-groups"></div></div>`;
@@ -6446,7 +6446,7 @@
     // Writable now: posting/reacting/joining go out as NIP-42-authed events to the group's relay. The
     // relay rejects non-members, so a "join" button sends a kind-9021 request first.
     feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join">＋ Join</button></div>
+      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Join</button></div>
       ${g.m.about?`<div class="chatroom-about">${linkify(g.m.about)}</div>`:''}
       <div id="grp-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
       <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
@@ -9296,17 +9296,17 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll">📊 Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image">🎨</button>`}<input type="file" id="cmp-file" multiple hidden></div>
+      <div class="row cmp-tools"><div class="cmp-left"><button class="btn btn-ghost small" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI ▾</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)">🔞</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<input type="file" id="cmp-file" multiple hidden></div>
       </div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions" style="display:block;text-align:center;margin-top:12px"><button class="btn btn-ghost small" id="cmp-draft" style="display:inline-flex;margin:0 5px 6px;min-width:120px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn" style="display:inline-block;margin:0 5px 6px;min-width:120px">⏰ Schedule</button>'}<button class="btn btn-neon small" id="cmp-send" style="display:inline-block;margin:0 5px 6px;min-width:120px">Post ▶</button></div>
-      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go">⏰ Schedule ▶</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
+      <div class="cmp-actions"><button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button>'}<button class="btn btn-neon small" id="cmp-send">Post ▶</button></div>
+      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule ▶</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
-        <div class="row"><button class="btn btn-ghost small" id="cmp-poll-add">＋ Add option</button>
+        <div class="row"><button class="btn btn-ghost small" id="cmp-poll-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add option</button>
           <label class="muted small" style="margin-left:auto"><input type="checkbox" id="cmp-poll-multi"> Allow multiple</label></div>
       </div>
       <div class="muted small" id="cmp-status"></div>`, root=>{
@@ -10509,7 +10509,7 @@
     feed.innerHTML = `<div class="fc-thread-top">
         <button class="btn btn-ghost small" id="fc-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>/${enc(board)}/</button>
         <a class="btn btn-ghost small" href="https://boards.4chan.org/${enc(board)}/thread/${enc(id)}" target="_blank" rel="noopener">Open on 4chan ↗</a>
-        <button class="btn btn-cyan small" id="fc-sum">✨ Summarize</button>
+        <button class="btn btn-cyan small" id="fc-sum"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Summarize</button>
         <button class="btn btn-neon small" id="fc-share"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Share</button>
       </div>
       <div class="fc-summary hidden" id="fc-summary"></div>
@@ -10875,7 +10875,7 @@
     const folderBar = `<div class="folder-bar">
         <button class="folder-chip${_filesFolder===''?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${_filesFolder===f?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
-        <button class="folder-chip newfolder" id="bl-newfolder">＋ New folder</button>
+        <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(_filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
       </div>`;
     const head = canUp
@@ -13537,12 +13537,12 @@
   async function aiMount(feed){
     _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards">🏠 Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new">＋ New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-home" title="Home — the starter cards"><svg class="ic b-ic" aria-hidden="true"><use href="#i-home"></use></svg>Home</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><input type="file" id="ai-file" multiple hidden>
-        <button class="mini" id="ai-make" title="Make something (image, song, video…)">✨</button>
+        <button class="mini" id="ai-make" title="Make something (image, song, video…)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
         <button class="mini" id="ai-mic" title="Voice input (speech-to-text)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
         <button class="btn btn-neon" id="ai-send" aria-label="Send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
@@ -15297,7 +15297,7 @@
         <div class="us-pane" data-pane="mail">
           <div class="muted small">IMAP/SMTP accounts for the <code>mail</code> command. First account is the default sender.</div>
           <div id="us-mail-list"></div>
-          <button class="btn btn-ghost small" id="us-mail-add">＋ Add email account</button>
+          <button class="btn btn-ghost small" id="us-mail-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add email account</button>
         </div>
         <div class="us-pane" data-pane="telegram">
           <div class="${s.telegram_chat_id?'us-ok':'muted small'}" id="us-tg-status">${s.telegram_chat_id?('✓ Linked (chat '+enc(String(s.telegram_chat_id))+')'):'⚠ Not linked — generate a key below and send it to your bot.'}</div>
@@ -15335,7 +15335,7 @@
           <div class="set-body ${relaysOn?'':'disabled'}" id="set-relays-body">
             <div id="set-relay-list"></div>
             <div class="set-actions">
-              <button class="btn btn-ghost small" id="set-relay-add">＋ Add relay</button>
+              <button class="btn btn-ghost small" id="set-relay-add"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add relay</button>
               <button class="btn btn-ghost small" id="set-relay-ext">⇣ Import from extension</button>
             </div>
             <div class="set-actions">
@@ -17912,7 +17912,7 @@
     // Same header as Home/Nostrverse (composer + tabs) and the same #tl-notes box, so the inline
     // composer, the ＋ FAB and loadSentinel() all behave exactly as they do on the other two tabs.
     feed.innerHTML = _timelineHeaderHtml() + _trBarHtml() + '<div id="tl-notes"><div class="spinner"></div></div>'
-      + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post">＋</button>' : '');
+      + (ME && !GUEST ? '<button class="tl-fab" id="tl-fab" title="New post" aria-label="New post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>' : '');
     _bindTimelineHeader(feed);
     { const fb=$('#tl-fab',feed); if(fb) fb.onclick=()=>compose(); }
     $$('.tr-tab',feed).forEach(b=> b.onclick=()=>{ const t=b.dataset.tr; if(t===_tr.tab) return;
