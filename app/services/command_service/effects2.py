@@ -63,6 +63,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _gura_command(self, attachments: Optional[list]) -> dict:
+        """Shark Pog pops over an attached image on Gura's "a": `gura`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `gura`."}
+
+        import asyncio
+        from app.services.effects_service import gura_attachments
+
+        outputs, summary = await asyncio.to_thread(gura_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _rebecca_command(self, attachments: Optional[list]) -> dict:
         """Put Rebecca dancing with a thumbs up over an attached image for 8s: `rebecca`."""
         from app.services.media_service import is_image

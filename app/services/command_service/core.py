@@ -53,9 +53,10 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "theraped": "Point at an attached image with the pointing-up meme character: theraped",
         "nothingeverhappens": "The angry teacher lectures your image: nothingeverhappens [text]",
         "nodontthinkiwill": "Old Steve Rogers declines your image: nodontthinkiwill [text]",
+        "ruckus": "Uncle Ruckus introduces himself over your image: ruckus [text]",
         "would": "Old man points up at an attached image saying WOULD: would",
         "shrug": "Rabbi shrugs at an attached image: \"Whaddya gonna do?\": shrug",
-        "carl": "Carl points at an attached image: carl",
+        "carl": "Carl stands over an attached image, unimpressed: carl",
         "soyjack": "Two soyjaks point and yell at an attached image: soyjack",
         "lookingaway": "The monkey puppet looks away from an attached image, then turns to you: lookingaway",
         "dildo": "Scatter dildos all over an attached image: dildo",
@@ -102,6 +103,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "vibe": "Put a cute anime girl dancing over an attached image for 8s: vibe",
         "rebecca": "Put Rebecca dancing with a thumbs up over an attached image for 8s: rebecca",
         "makima": "Makima finger-guns whoever is in an attached image for 8s: makima",
+        "gura": "Shark Pog pops over an attached image on Gura's \"a\": gura",
         "feliz": "Turn an attached image into a short MP4 set to the feliz clip: feliz",
         "sleepwell": "Turn an attached image into a short MP4 set to the Sleep Well clip: sleepwell",
         "horse": "Turn an attached image into a short MP4 set to the horse clip: horse",
@@ -172,6 +174,9 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "nodont": "nodontthinkiwill",
         "idontthinkiwill": "nodontthinkiwill",
         "dontthinkiwill": "nodontthinkiwill",
+        "rukus": "ruckus",
+        "uncleruckus": "ruckus",
+        "unclerukus": "ruckus",
         "nothingever": "nothingeverhappens",
         "nothinghappens": "nothingeverhappens",
         "torrent": "torrents",
@@ -206,10 +211,10 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "lookaway": "lookingaway",
     }
     MOTION_EFFECTS = {
-        "collage", "meme", "theraped", "nothingeverhappens", "nodontthinkiwill", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
+        "collage", "meme", "theraped", "nothingeverhappens", "nodontthinkiwill", "ruckus", "would", "shrug", "carl", "soyjack", "lookingaway", "dildo", "poo", "cum", "blood", "bullethole", "fire", "nakedman", "gay", "hag", "goon",
         "blacked", "kosher", "blue", "barked", "hava", "indian", "yakety", "yamete",
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
-        "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima",
+        "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "gura",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
         "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "uwu",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider", "hugebitch",
@@ -217,7 +222,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
     # Effects whose output is ALWAYS a video (they animate the still themselves).
     ANIMATED_EFFECTS = {"chimp", "clay", "reze", "vibe", "rebecca", "makima", "nakedman", "beavis",
-                        "uwu"}
+                        "uwu", "gura"}
     # NON-effect commands that work on the uploaded FILE BYTES rather than on text extracted from
     # them. Every EFFECT does too, but they are deliberately NOT repeated here — see
     # wants_attachments.
@@ -647,6 +652,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._nothingeverhappens_command(attachments, arg)
         elif command == "nodontthinkiwill":
             return await self._nodontthinkiwill_command(attachments, arg)
+        elif command == "ruckus":
+            return await self._ruckus_command(attachments, arg)
         elif command == "would":
             return await self._would_command(attachments)
         elif command == "shrug":
@@ -747,6 +754,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._rebecca_command(attachments)
         elif command == "makima":
             return await self._makima_command(attachments)
+        elif command == "gura":
+            return await self._gura_command(attachments)
         elif command == "feliz":
             return await self._feliz_command(attachments)
         elif command == "sleepwell":
@@ -845,7 +854,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             "`glow` `trippy`, which stack on top. E.g. `dildo zoom trippy`, "
             "`whoabuddy pulse glow`. A second movement is refused rather than half-applied, "
             "and `alive` (3D parallax needs a still) is refused on the effects that always "
-            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` `makima` `uwu` — where the other movements work fine.\n"
+            "output a video — `chimp` `clay` `reze` `vibe` `rebecca` `makima` `gura` `uwu` — where the other movements work fine.\n"
         )
 
         return {"type": "text", "content": help_text}

@@ -287,6 +287,20 @@ _MAKIMA_SHOOT_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "makima_shoot.mov"),
     "/var/lib/posterchanai/assets/makima_shoot.mov",
 ]
+_GURA_AUDIO_CANDIDATES = [
+    os.environ.get("GURA_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "gura.mp3"),
+    "/var/lib/posterchanai/assets/gura.mp3",
+]
+# Both assets are built to exactly this length by scripts/gen_gura.py — the mp3 is padded out to it
+# so the "a" plays ONCE (image_gif_overlay_video loops audio), and the sprite's pop is timed to the
+# vocal onset inside it. Changing this here alone desyncs them.
+_GURA_DURATION = 2.2
+_GURA_POG_CANDIDATES = [
+    os.environ.get("GURA_POG_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "gura_pog.mov"),
+    "/var/lib/posterchanai/assets/gura_pog.mov",
+]
 _REBECCA_AUDIO_CANDIDATES = [
     os.environ.get("REBECCA_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "rebecca.mp3"),
@@ -579,6 +593,11 @@ _CHARACTERS = {
     "idontthinkiwill": "nodontthinkiwill.png", "dontthinkiwill": "nodontthinkiwill.png",
     "nothingeverhappens": "nothingeverhappens.png", "neh": "nothingeverhappens.png",
     "nothingever": "nothingeverhappens.png", "nothinghappens": "nothingeverhappens.png",
+    # Uncle Ruckus, standing full-body. The source was a PNG cutout re-encoded as JPEG, so its
+    # transparency had become a literal checkerboard; scripts/gen_ruckus.py keys it back out.
+    # `rukus` is deliberate — it is how the name gets typed.
+    "ruckus": "ruckus.png", "uncleruckus": "ruckus.png", "rukus": "ruckus.png",
+    "unclerukus": "ruckus.png",
     # `would` — the old man of the pointing-up meme. Same drop-in rule as theraped.
     "would": "would.png", "oldman": "would.png", "jiisan": "would.png",
     "shrug": "shrug.png", "rabbi": "shrug.png", "whaddya": "shrug.png",
@@ -599,7 +618,7 @@ _CHARACTERS = {
     "anyways": "anyways.png", "anyway": "anyways.png", "puppet": "anyways.png", "monkey": "anyways.png",
 }
 CHARACTER_NAMES = ["theraped", "would", "shrug", "carl", "soyjack", "lookingaway", "jerry",
-                   "nothingeverhappens", "nodontthinkiwill"]
+                   "nothingeverhappens", "nodontthinkiwill", "ruckus"]
 _CHARS_DIR_CANDIDATES = [
     os.path.join(_REPO_ROOT, "assets", "characters"),
     "/var/lib/posterchanai/assets/characters",

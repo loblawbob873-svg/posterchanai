@@ -189,10 +189,10 @@ _ALPHA_CHARACTERS = [
     # `lookingaway` is the two-panel monkey-puppet meme, not a pose — it is rendered by
     # render_lookingaway_alpha, so the label promises the turn that the clip actually performs.
     # (`anyways` is the original command name and still resolves; see COMMAND_ALIASES.)
-    ("carl", "🫵 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
+    ("carl", "🧍 Carl"), ("soyjack", "😮 Soyjaks pointing"), ("lookingaway", "🙈 Looking away (turns to camera)"),
     ("would", "Would (old man)"), ("theraped", "Pointing (anime)"),
     ("jerry", "🎤 Jerry (stand-up)"), ("nothingeverhappens", "🏫 Nothing ever happens"),
-    ("nodontthinkiwill", "🙅 No, I don't think I will"),
+    ("nodontthinkiwill", "🙅 No, I don't think I will"), ("ruckus", "🎩 Uncle Ruckus"),
 ]
 
 
@@ -204,7 +204,7 @@ _ALPHA_CHARACTERS = [
 _ALPHA_CLIP_LABELS = {
     "beavis": "🤤 Beavis (laughing)", "clay": "🗿 Clay", "makima": "🔫 Makima (shooting)",
     "rebecca": "💃 Rebecca (dancing)", "reze": "💣 Reze (dancing)", "uwu": "💗 UwU (dancing)",
-    "vibe": "🕺 Vibe (dancing)",
+    "vibe": "🕺 Vibe (dancing)", "gura": "🦈 Gura (shark pog)",
 }
 
 _alpha_clip_cache: dict = None

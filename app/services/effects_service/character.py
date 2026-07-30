@@ -249,6 +249,14 @@ def add_nodontthinkiwill(data: bytes, caption: str = "NO, I DON'T THINK I WILL")
     return _add_pointing_meme(data, "nodontthinkiwill", caption)
 
 
+def add_ruckus(data: bytes, caption: str = "RUCKUS, NO RELATION") -> bytes:
+    """`ruckus` — Uncle Ruckus introducing himself over your image (see _add_pointing_meme).
+
+    He is not pointing at anything either; the bubble is his line, and an argument replaces it.
+    """
+    return _add_pointing_meme(data, "ruckus", caption)
+
+
 def add_nothingeverhappens(data: bytes, caption: str = "NOTHING EVER HAPPENS") -> bytes:
     """`nothingeverhappens` — the angry teacher pointing at his board (see _add_pointing_meme).
 
@@ -628,7 +636,10 @@ def _add_pointing_meme(data: bytes, char_key: str, caption: str, fallback: str =
 # should be, because "40% of the height" means something different for a wide pair of soyjaks than
 # for one tall puppet: (height_frac, max_width_frac).
 _REACTION_SIZES = {
-    "carl":    (0.46, 0.62),   # landscape, points off to his left — needs room sideways
+    # Full body, hands on hips (0.52 aspect). The old chest-up crop was landscape and needed room
+    # sideways for its pointing arm; a standing figure needs the opposite — height, so his face is
+    # not a thumbnail — and the width cap stops mattering at all.
+    "carl":    (0.55, 0.45),
     "soyjack": (0.44, 0.98),   # a WIDE pair that must span the frame, or they point at nothing
     "anyways": (0.52, 0.42),   # tall and narrow; the side-eye reads at half the frame height
     # Jerry is chest-up and roughly square (882x674), mic out to one side — a hair over half the
@@ -663,7 +674,7 @@ def _add_reaction_overlay(data: bytes, char_key: str) -> bytes:
 
 
 def add_carl(data: bytes) -> bytes:
-    """`carl` — Carl Brutananadilewski points at whatever you attached."""
+    """`carl` — Carl Brutananadilewski stands over whatever you attached, unimpressed."""
     return _add_reaction_overlay(data, "carl")
 
 
@@ -702,6 +713,10 @@ def theraped_attachments(attachments):
 def nodontthinkiwill_attachments(attachments):
     return _pointing_attachments(attachments, "nodontthinkiwill", "No, I Don't Think I Will",
                                  add_nodontthinkiwill)
+
+
+def ruckus_attachments(attachments):
+    return _pointing_attachments(attachments, "ruckus", "Ruckus, No Relation", add_ruckus)
 
 
 def nothingeverhappens_attachments(attachments):

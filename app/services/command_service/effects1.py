@@ -672,6 +672,25 @@ class _Effects1Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _ruckus_command(self, attachments: Optional[list], args: str = "") -> dict:
+        """Uncle Ruckus + caption on an attached image: `ruckus [text]`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `ruckus`."}
+
+        import asyncio
+        from app.services.effects_service import add_ruckus
+        from app.services.effects_service.character import _pointing_attachments
+
+        caption = (args or "").strip()
+        fn = ((lambda d: add_ruckus(d, caption)) if caption else add_ruckus)
+        outputs, summary = await asyncio.to_thread(
+            _pointing_attachments, attachments, "ruckus", "Ruckus, No Relation", fn)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _nothingeverhappens_command(self, attachments: Optional[list], args: str = "") -> dict:
         """The angry teacher + caption on an attached image: `nothingeverhappens [text]`."""
         from app.services.media_service import is_image
