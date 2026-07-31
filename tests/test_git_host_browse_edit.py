@@ -22,6 +22,11 @@ Proves, WITHOUT Postgres (pg_dsn="" -> the maintainer ACL is just the URL owner)
            http.postBuffer) is accepted, lands the right sha, and leaves the repo fsck-clean —
            the `400 Bad request syntax` bug that made every first full push fail.
 
+  ALIAS 11. a clone URL written under a MAINTAINER's npub (ngit derives one per 30617 maintainer, so
+            only the owner's path exists on disk) resolves to the owner's repo — and grants nothing:
+            without a DSN to confirm the ACL it stays a 404, a non-maintainer npub stays a 404, and
+            delete stays owner-only through the aliased URL.
+
 Run: python tests/test_git_host_browse_edit.py   (non-zero exit if any case fails)
 """
 
@@ -257,6 +262,53 @@ def main():
         p = _git("clone", "-q", base, os.path.join(clone, "c"), check_rc=False)
         check("Content-Length clone still works", p.returncode == 0, p.stderr[-300:])
         shutil.rmtree(clone, ignore_errors=True)
+
+        print("11) maintainer-npub alias")
+        # ngit derives a clone URL per key in the 30617 `maintainers` tag, so a second maintainer's
+        # npub is probed as a path that has no directory on disk.
+        msk = os.urandom(32)
+        maint = nostr_service.derive_pubkey(msk)
+        abase = "http://127.0.0.1:%d/%s/demo.git" % (port, maint)
+
+        def aget(path):
+            try:
+                r = urllib.request.urlopen(abase + path, timeout=20)
+                return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode("utf-8", "replace")[:200]
+
+        gh._alias_cache.clear()
+        check("no DSN -> cannot confirm the ACL -> 404", aget("/refs")[0] == 404, aget("/refs"))
+        _real_maints = gh._Handler._maintainers
+        gh._CONFIG["pg_dsn"] = "stub"                       # only gates the lookup; ACL is stubbed
+        gh._Handler._maintainers = lambda self, o, r: {o, maint}
+        gh._alias_cache.clear()
+        try:
+            st, j = aget("/refs")
+            check("maintainer URL serves the owner's repo", st == 200 and
+                  sorted(b["name"] for b in j["branches"]) == ["chunked", "feature/x", "master"], (st, j))
+            clone = tempfile.mkdtemp(prefix="grasp-alias-clone-")
+            p = _git("clone", "-q", abase, os.path.join(clone, "c"), check_rc=False)
+            check("clone via the maintainer URL works", p.returncode == 0, p.stderr[-300:])
+            shutil.rmtree(clone, ignore_errors=True)
+            # The alias renames the URL; it must not widen the ACL. Delete stays OWNER-only, so a
+            # maintainer signing against their own npub path is still refused.
+            req = urllib.request.Request(abase + "/delete", data=b"{}", method="POST")
+            req.add_header("Authorization", nip98(abase + "/delete", msk))
+            try:
+                urllib.request.urlopen(req, timeout=20)
+                check("alias does not grant delete", False, "delete succeeded")
+            except urllib.error.HTTPError as e:
+                check("alias does not grant delete", e.code == 401, e.code)
+            check("repo survived", os.path.isdir(repo))
+            # A pubkey that is NOT a maintainer gets nothing.
+            gh._Handler._maintainers = lambda self, o, r: {o}
+            gh._alias_cache.clear()
+            check("non-maintainer npub still 404s", aget("/refs")[0] == 404)
+        finally:
+            gh._Handler._maintainers = _real_maints
+            gh._CONFIG["pg_dsn"] = ""
+            gh._alias_cache.clear()
     finally:
         httpd.shutdown()
         shutil.rmtree(wt, ignore_errors=True)

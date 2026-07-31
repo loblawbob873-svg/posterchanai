@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -114,6 +115,15 @@ def _publish_state_witness(owner_hex: str, repo_id: str) -> bool:
         return ghs.publish_state_witness(owner_hex, repo_id)
     except Exception:
         return False
+
+
+# Maintainer-alias cache: (requested_owner_hex, repo_id) -> (expiry_monotonic, canonical_owner|None).
+# MISSES are cached too: a client that probes a maintainer URL re-probes it on every fetch/push, and a
+# 404 must not buy a Postgres round-trip each time.
+_ALIAS_TTL = 300.0
+_ALIAS_MAX = 512               # bounded: the miss path is reachable by any caller with any path
+_alias_cache: dict = {}
+_alias_lock = threading.Lock()
 
 
 def _pick_ref(path_ref: str, query: str) -> str:
@@ -316,6 +326,45 @@ class _Handler(BaseHTTPRequestHandler):
             log.warning("[git-host] maintainer ACL read failed (%s) -> owner only", e)
         return maints
 
+    def _resolve_alias_owner(self, owner_hex: str, repo_id: str):
+        """Map a MAINTAINER's path segment back to the owner who actually hosts the repo, or None.
+
+        A GRASP clone URL is `<base>/<npub>/<id>.git`, and ngit derives one per key in the repo's
+        30617 `maintainers` tag — so a two-maintainer repo is probed at two URLs while only the
+        OWNER's directory exists on disk. That is why every `git push` printed
+        `failed to list from https://…/<operator-npub>/posterchanai.git` even though the push to the
+        owner's URL had succeeded.
+
+        This grants nothing: the caller swaps in the canonical owner, so the private-read gate, the
+        maintainer write ACL and the owner-only delete gate all still resolve against the repo's real
+        owner — an alias renames the URL, it is not a second door. Fail-closed: no DSN (we cannot
+        confirm the ACL), no candidate, or an AMBIGUOUS one (two hosted repos share the id and both
+        name the requester) all stay a 404."""
+        key = (owner_hex, repo_id)
+        now = time.monotonic()
+        with _alias_lock:
+            hit = _alias_cache.get(key)
+            # A cached target is re-checked on disk: the owner can delete the repo inside the TTL,
+            # and handing a stale owner to git-http-backend turns a clean 404 into a backend error.
+            if hit and hit[0] > now and (hit[1] is None or ghs.repo_exists(hit[1], repo_id)):
+                return hit[1]
+        canon = None
+        if _CONFIG.get("pg_dsn"):
+            matches = [o for o in ghs.owners_hosting(repo_id)
+                       if o != owner_hex and owner_hex in self._maintainers(o, repo_id)]
+            if len(matches) == 1:
+                canon = matches[0]
+                log.info("[git-host] %s/%s -> maintainer alias of owner %s",
+                         owner_hex[:12], repo_id, canon[:12])
+            elif len(matches) > 1:
+                log.warning("[git-host] %s/%s names %d hosting owners — ambiguous, not aliasing",
+                            owner_hex[:12], repo_id, len(matches))
+        with _alias_lock:
+            if len(_alias_cache) >= _ALIAS_MAX:
+                _alias_cache.clear()
+            _alias_cache[key] = (now + _ALIAS_TTL, canon)
+        return canon
+
     def _write_gate_signer(self, owner_hex: str, repo_id: str, route: str):
         """WRITE authorization for the web editor. Returns the signing maintainer's hex pubkey, or None.
 
@@ -341,7 +390,12 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "POST" and rest == "create":
             return self._serve_create(owner_hex, repo_id)
         if not ghs.repo_exists(owner_hex, repo_id):
-            return self._deny(404, "no such repo")        # never auto-create on read/GET
+            # Not on disk under this npub — it may still be a MAINTAINER's spelling of a repo we do
+            # host (ngit probes one clone URL per maintainer). Never auto-create on read/GET.
+            alias = self._resolve_alias_owner(owner_hex, repo_id)
+            if alias is None:
+                return self._deny(404, "no such repo")
+            owner_hex = alias
         # RAW single-file read (README + file browsing in the client's repo view):
         #   GET /<owner>/<id>.git/raw/<ref>/<path>  ->  `git show <ref>:<path>`
         # Read-gated exactly like a clone (private repos need NIP-98). Our /git/ is otherwise smart-HTTP

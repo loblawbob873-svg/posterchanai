@@ -55,6 +55,16 @@ receive-pack path, created_at ±60s, signer ∈ maintainers).
 The decision lives in `git_auth.decide_push_ref(...)` — a pure function unit-tested with crafted
 events (see `tests/test_git_push_auth.py`).
 
+**Maintainer clone URLs.** A repo lives on disk under ONE owner (`<root>/<owner-hex>/<id>.git`), but
+ngit derives a clone URL per key in the 30617 `maintainers` tag — so a two-maintainer repo is probed
+at `<base>/<owner-npub>/<id>.git` **and** `<base>/<maintainer-npub>/<id>.git`, and the second one has
+no directory. That printed `failed to list from https://…/<maintainer-npub>/<id>.git` on every push
+even though the push to the owner's URL succeeded. `git_host_main._resolve_alias_owner` now maps a
+maintainer's path segment back to the hosting owner (300s cache, `ghs.owners_hosting` + the same
+`load_maintainers` ACL). It renames the URL and nothing else: the private-read gate, the write ACL and
+the **owner-only** delete gate all still resolve against the canonical owner. Fail-closed — no DSN, no
+candidate, or two hosted repos sharing the id all stay a 404.
+
 ## Browse + write API (what the web UI renders from)
 
 Beyond the three smart-HTTP endpoints, `git_host_main.py` serves a small read API — all **read-gated

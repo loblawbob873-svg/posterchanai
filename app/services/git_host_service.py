@@ -113,6 +113,35 @@ def repo_exists(owner_hex: str, repo_id: str) -> bool:
     return bool(d) and os.path.isdir(d)
 
 
+def owners_hosting(repo_id: str) -> list:
+    """Every owner hex that actually has `<repo_id>.git` on disk, sorted.
+
+    One listdir of the store root (owners are directories) — used to map a clone URL written under a
+    MAINTAINER's npub back to the owner who hosts the repo; see git_host_main._resolve_alias_owner."""
+    rid = sanitize_repo_id(repo_id)
+    if not rid:
+        return []
+    root = git_project_root()
+    out = []
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return []
+    for name in names:
+        # repo_dir() only ever creates lowercase-hex owner dirs, so anything else is not ours —
+        # matching on a lowercased copy would hand back a path that does not exist on a
+        # case-sensitive filesystem.
+        if len(name) != 64 or name != name.lower():
+            continue
+        try:
+            bytes.fromhex(name)
+        except ValueError:
+            continue
+        if os.path.isdir(os.path.join(root, name, rid + ".git")):
+            out.append(name)
+    return sorted(out)
+
+
 def _hook_script(target_py: str) -> str:
     """A tiny shell shim git invokes; it execs the venv python on the shared validator, forwarding
     stdin (the ref lines) + the inherited environment (GRASP_* config). Pinned to the interpreter +
