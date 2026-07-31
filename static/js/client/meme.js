@@ -357,6 +357,18 @@
   const projEnd = () => P.layers.filter(l=>l.type!=='audio')
     .reduce((m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || P.duration;
 
+  // What the RENDER is told the project is. projEnd() deliberately ignores audio so a three-minute song
+  // cannot stretch a six-second meme — the renderer truncates music instead. That is right for a bed and
+  // wrong for a spoken LINE: cutting it at the end of the video means the sentence never finishes, which
+  // is exactly "it added the voice but doesn't render it all".
+  //
+  // So the render length covers audio as well, while projEnd() stays as it is: the editing timeline, the
+  // ruler and the reflow all keep behaving the way they do today, and only the exported length changes.
+  // Music still can't run away with the project — a bed is added with dur = the current project length,
+  // so it reaches exactly this far and no further; it is a line LONGER than the visuals that grows it.
+  const renderEnd = () => P.layers.reduce(
+    (m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || projEnd();
+
   // ---------- the MASTER TIMELINE ----------
   // Media clips (image/video) form ONE ordered sequence that plays back-to-back — the way every video editor
   // works. Their `start` is DERIVED from that order, never hand-typed: drop a clip anywhere on the timeline
@@ -1752,6 +1764,21 @@
   // are all non-trivial and already exist. Same reasoning as 🎨 Generate one with AI borrowing the
   // image studio: only the ENDING differs. The take arrives as a blob, goes to Blossom like every other
   // layer source (the renderer only ever fetches URLs), and lands on the timeline as audio.
+  // How long a generated take actually is, from the browser rather than a guess. Resolves 0 if the
+  // metadata never arrives, and the caller then falls back to addLayer's default rather than writing a
+  // bogus duration onto the layer.
+  function _clipSeconds(blob){
+    return new Promise(res=>{
+      let done=false; const fin=v=>{ if(done) return; done=true; try{ URL.revokeObjectURL(a.src); }catch(_){} res(v); };
+      const a=document.createElement('audio');
+      a.preload='metadata';
+      a.onloadedmetadata=()=>fin(isFinite(a.duration)&&a.duration>0 ? a.duration : 0);
+      a.onerror=()=>fin(0);
+      setTimeout(()=>fin(0), 8000);      // never hang the add on a metadata read
+      a.src=URL.createObjectURL(blob);
+    });
+  }
+
   function pickClonedVoice(){
     if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
     PC.openVoiceStudio({
@@ -1763,10 +1790,14 @@
           const name = (text || voiceName || 'voice').slice(0, 24);
           const url = await uploadBlob(new File([blob], name.replace(/[^\w .-]/g, '_') + '.wav',
                                                 { type: 'audio/wav' }));
-          // addLayer returns null at the 24-layer limit (and says so itself) — don't then claim it landed.
-          if(!addLayer('audio', url, { name })) return;
+          // MEASURE the take. addLayer gives an audio layer `dur = the current project length`, which is
+          // right for a music bed — a three-minute song must not stretch a six-second meme, so the
+          // renderer truncates it. A spoken LINE is the opposite: cutting it at the end of the video
+          // means the sentence never finishes, which is exactly "it don't render it all".
+          const secs = await _clipSeconds(blob);
+          if(!addLayer('audio', url, { name, dur: secs || undefined })) return;
           if(document.getElementById('mb-stage')) render();
-          toast('voice line added as a layer');
+          toast(secs ? `voice line added (${secs.toFixed(1)}s)` : 'voice line added as a layer');
         }catch(e){ toast('couldn’t add that: ' + ((e && e.message) || e)); }
         finally{ const s2 = document.getElementById('mb-status'); if(s2) s2.textContent = ''; }
       },
@@ -2201,7 +2232,7 @@
     _renderAbort = (typeof AbortController!=='undefined') ? new AbortController() : null;
     try{
       const _scrub=document.getElementById('mb-scrub');
-      const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:projEnd(),
+      const edit={ w:P.w, h:P.h, fps:P.fps, bg:P.bg, duration:renderEnd(),
         fmt:_fmt(),
         // A still is taken AT THE PLAYHEAD — the frame you are looking at is the frame you meant.
         still:(_fmt()==='png' ? +(_scrub?_scrub.value:0)||0 : 0),

@@ -138,6 +138,21 @@ class VoiceMemeBuilder(unittest.TestCase):
         app = _read("static/js/client/app.js")
         self.assertIn("\n    openVoiceStudio,", app, "openVoiceStudio must be on the PC bridge")
 
+    def test_a_voice_line_is_not_truncated_by_the_video_length(self):
+        """addLayer gives an audio layer dur = the CURRENT project length, and the renderer truncates
+        audio to the project duration. Right for a music bed (a three-minute song must not stretch a
+        six-second meme); wrong for a spoken line, whose sentence then never finishes. The take is
+        measured, and the RENDER length covers audio while projEnd() — the editing timeline — does not."""
+        meme = _read("static/js/client/meme.js")
+        self.assertIn("function _clipSeconds", meme, "the take has to be measured, not guessed")
+        self.assertIn("dur: secs || undefined", meme, "the measured length must reach addLayer")
+        self.assertIn("const renderEnd =", meme)
+        self.assertIn("duration:renderEnd()", meme,
+                      "the render payload must use the audio-aware length")
+        # projEnd stays audio-blind, or the editing timeline changes shape under people
+        pe = meme.split("const projEnd =")[1].split("\n\n")[0]
+        self.assertIn("l.type!=='audio'", pe)
+
     def test_entry_is_on_the_add_sheet(self):
         meme = _read("static/js/client/meme.js")
         self.assertIn('id="mba-voice"', meme)
