@@ -1,6 +1,28 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
 from ._common import List, OutputFile, Path, Tuple, _alive_or_still, _draw_tracked, _human_size, _load_blacked_font, _load_meme_font, _shade, _tracked_width, io, is_image, logger
 
+def _stamp_centred(img, stamp, frac: float = 0.66):
+    """Scale `stamp` to `frac` of the frame and composite it CENTRED, fitting BOTH dimensions.
+
+    The old spelling scaled to a fraction of the WIDTH only and let the height follow the aspect
+    ratio, then rotated with expand=True (which grows the bounding box another ~28% at 20 degrees)
+    and composited at ((W-w)//2, (H-h)//2). On anything wider than it is tall that y goes NEGATIVE and
+    PIL's alpha_composite silently CLIPS — no error, no warning, just a stamp with its top and bottom
+    sliced off. A plain 1920x1080 photo lost a quarter of the stamp; a wide banner lost far more.
+
+    Fitting both axes AFTER the rotation is what makes it correct: scaling first and rotating second
+    means the number you fitted is not the number you draw.
+    """
+    from PIL import Image        # imported per-function in this module, not at module scope
+    W, H = img.size
+    sw, sh = stamp.size
+    sc = min(W * frac / max(sw, 1), H * frac / max(sh, 1))
+    if sc < 1.0:                       # only ever shrink — never upscale a stamp that already fits
+        stamp = stamp.resize((max(int(sw * sc), 1), max(int(sh * sc), 1)), Image.BICUBIC)
+    img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+    return img
+
+
 def _make_gay_stamp(text_h: int):
     """Render a distressed red rubber stamp reading "GAY" on a transparent tile.
 
@@ -66,12 +88,10 @@ def add_gay(data: bytes, count: int = 0) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         stamp = _make_gay_stamp(max(int(min(W, H) * 0.17), 24))
-        target_w = int(W * 0.66)
-        scale = target_w / stamp.width
-        stamp = stamp.resize((max(int(stamp.width * scale), 1),
-                              max(int(stamp.height * scale), 1)), Image.BICUBIC)
+        # Rotate FIRST, then fit — expand=True grows the bounding box, so fitting before the rotation
+        # measures a stamp that is not the one being drawn.
         stamp = stamp.rotate(random.uniform(15, 22), expand=True, resample=Image.BICUBIC)
-        img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+        img = _stamp_centred(img, stamp)
 
         img = img.convert("RGB")
         out = io.BytesIO()
@@ -155,12 +175,10 @@ def add_goon(data: bytes, count: int = 0) -> bytes:
         W, H = img.size
         img = img.convert("RGBA")
         stamp = _make_word_stamp("GOON", max(int(min(W, H) * 0.17), 24))
-        target_w = int(W * 0.66)
-        scale = target_w / stamp.width
-        stamp = stamp.resize((max(int(stamp.width * scale), 1),
-                              max(int(stamp.height * scale), 1)), Image.BICUBIC)
+        # Rotate FIRST, then fit — expand=True grows the bounding box, so fitting before the rotation
+        # measures a stamp that is not the one being drawn.
         stamp = stamp.rotate(random.uniform(15, 22), expand=True, resample=Image.BICUBIC)
-        img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+        img = _stamp_centred(img, stamp)
 
         img = img.convert("RGB")
         out = io.BytesIO()
@@ -295,12 +313,10 @@ def add_hag(data: bytes, count: int = 0) -> bytes:
 
         # HAG stamp — centred (mirrors add_gay)
         stamp = _make_hag_stamp(max(int(min(W, H) * 0.17), 24))
-        target_w = int(W * 0.66)
-        scale = target_w / stamp.width
-        stamp = stamp.resize((max(int(stamp.width * scale), 1),
-                              max(int(stamp.height * scale), 1)), Image.BICUBIC)
+        # Rotate FIRST, then fit — expand=True grows the bounding box, so fitting before the rotation
+        # measures a stamp that is not the one being drawn.
         stamp = stamp.rotate(random.uniform(15, 22), expand=True, resample=Image.BICUBIC)
-        img.alpha_composite(stamp, ((W - stamp.width) // 2, (H - stamp.height) // 2))
+        img = _stamp_centred(img, stamp)
 
         # cute little old lady — small, bottom centre
         lady = _draw_old_lady(max(int(min(W, H) * 0.26), 48))
