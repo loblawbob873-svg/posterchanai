@@ -522,6 +522,15 @@ svg.ic.b-ic{width:1.05em;height:1.05em;stroke-width:1.9;opacity:.95}
    had and not one of their rules needs touching. vertical-align centres it on the text baseline for the
    ones that are inline rather than flex. */
 svg.ic.x-ic{width:1em;height:1em;stroke-width:2.1;vertical-align:-.12em}
+/* Any button whose ENTIRE label is a sprite icon, whatever its class. 54 of them are not .btn — the
+   New Post FAB, .mini, the chat controls, the media-player transport, every ✕ — and the centering
+   above only reaches .btn. A text glyph was centred by line-height/text-align, which does nothing for
+   an <svg>, so each of those had its icon sitting low and left. `:only-child` keeps this off buttons
+   that also carry a count or a label (.act has a <span class="n">), which keep their own layout.
+   Specificity comes from the :has() argument, so it beats a bare class rule; .tl-fab is excluded
+   because it needs block-level flex for its margin-left:auto. */
+button:not(.tl-fab):has(> svg.ic.b-ic:only-child),
+button:not(.tl-fab):has(> svg.ic.x-ic:only-child){display:inline-flex;align-items:center;justify-content:center;flex:none}
 /* One keyboard-focus treatment for everything interactive, declared after the button variants so it
    wins over their resting shadow. :where() keeps it at zero specificity, so any control with its own
    focus styling still overrides it. Most controls had none at all, which made tabbing invisible. */
@@ -674,11 +683,16 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
    sized from the body{zoom:.85} / calc(100dvh/.85) pair and end up taller than the viewport in Firefox,
    which is what cut off every fixed/absolute attempt. margin-left:auto pushes it right; the negative
    top margin keeps it from adding a blank row under the last note. */
-.tl-fab{position:sticky;bottom:22px;z-index:20;display:block;margin:-70px 22px 8px auto;
+/* display:FLEX, not inline-flex — `margin-left:auto` is what pins this to the right edge, and that
+   only works on a block-level box. The old line-height:58px + text-align:center centred a TEXT glyph;
+   an <svg> sits on the baseline instead, which is why the + sat low and left in its circle. */
+.tl-fab{position:sticky;bottom:22px;z-index:20;display:flex;align-items:center;justify-content:center;
+  margin:-70px 22px 8px auto;
   width:58px;height:58px;padding:0;border-radius:50%;cursor:pointer;border:0;
   background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06121a;
-  font-family:inherit;font-size:32px;font-weight:400;line-height:58px;text-align:center;
+  font-family:inherit;font-size:32px;font-weight:400;line-height:1;
   box-shadow:0 8px 22px -6px rgba(0,0,0,.7),var(--glow-cy);transition:transform .15s}
+.tl-fab svg.ic{width:26px;height:26px;stroke-width:2.2}
 .tl-fab:hover{transform:scale(1.06)}
 @media(max-width:820px){ .tl-fab{display:none} }   /* the bottom nav already has ✏️ */
 /* Notification context — the post the notification is about, rendered with the app's normal embedded-post
@@ -1392,7 +1406,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .media-row img:only-child,.media-row video:only-child{--mh:720px;max-height:720px}
 /* profile Media tab — square thumbnail gallery (media only, no post chrome) */
 .media-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
-.media-grid img,.media-grid video{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
+/* height:auto is LOAD-BEARING. _dimAttrs puts width=/height= ATTRIBUTES on every media element to
+   reserve its box before the bytes land, and Chrome maps those to presentation-attribute width/height.
+   This rule overrode the width one with 100% but left the HEIGHT attribute standing — so the box was
+   100% wide by the source image's pixel height, aspect-ratio:1/1 was ignored (it only applies when a
+   dimension is auto), and a 720x960 phone photo rendered as a 298x691 tower. That is the "super long
+   rectangles" in the profile Media tab. */
+.media-grid img,.media-grid video{width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
 .note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px}
@@ -1770,7 +1790,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof .phead .btn{font-size:14.5px;padding:10px 17px;border-radius:12px}
 .prof .prof-actions{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
 .prof .prof-actions .btn{white-space:nowrap}
-.prof .prof-actions .btn .ic{display:none}   /* Settings shows full label on desktop */
+/* :not(.prof-menu-btn) — this hides the icon so the LABELLED profile buttons show their full word on
+   desktop, but the ☰ overflow button has no label: hiding its icon left an empty oval with nothing in
+   it. An icon-only button must keep its icon whatever the row's label policy is. */
+.prof .prof-actions .btn:not(.prof-menu-btn) .ic{display:none}   /* Settings shows full label on desktop */
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.5;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}

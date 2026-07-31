@@ -3148,7 +3148,21 @@
     // a swipe that started off-image yanked the whole view sideways instead of advancing the carousel.)
     // `.notif-tabs` scrolls horizontally when its six tabs overflow — dragging it must scroll the bar,
     // not navigate away from Notifications.
-    const noSwipe = el => !!(el && el.closest && el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.media-car,.notif-tabs,.scrollx,.dm-thread'));
+    // A hand-maintained allowlist of "do not steal this horizontal drag" is a list that is always one
+    // component behind: the composer's background-swatch strip scrolls sideways, was never added, and so
+    // could not be slid on a phone at all — the feed's swipe-to-navigate preventDefault()ed it. Ask the
+    // DOM instead of the list: if any ancestor can actually scroll horizontally, the drag is theirs.
+    // Every future sideways-scrolling row gets this for free.
+    const hScroll = el => {
+      for(let n=el; n && n!==feed; n=n.parentElement){
+        if(n.scrollWidth > n.clientWidth + 1){
+          const ox = getComputedStyle(n).overflowX;
+          if(ox === 'auto' || ox === 'scroll') return true;
+        }
+      }
+      return false;
+    };
+    const noSwipe = el => !!(el && el.closest && (el.closest('.media,.gallery,img,video,pre,code,canvas,table,input,textarea,select,.poll,.carousel,.media-car,.notif-tabs,.scrollx,.dm-thread') || hScroll(el)));
     const indicator = ()=>{ if(!ind || !ind.isConnected){ ind=document.createElement('div'); ind.className='ptr-ind'; ind.textContent='↻'; document.body.appendChild(ind); } return ind; };
     const resetInd = ()=>{ if(ind){ ind.style.opacity=''; ind.style.transform=''; ind.classList.remove('ready','spin'); } };
     feed.addEventListener('touchstart', e=>{
