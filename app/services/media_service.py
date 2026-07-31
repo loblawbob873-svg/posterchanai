@@ -2436,7 +2436,18 @@ def _zoom_vf_video(W: int, H: int, dur: float) -> str:
 
 
 def _pulse_vf_video(W: int, H: int, dur: float) -> str:
-    z = "1.12+0.12*sin(2*PI*2*on/25)"                  # ~1.0..1.24, twice a second
+    # A zoom-IN pulse crops: at zoom z the frame loses (1 - 1/z) of its width and height, half off
+    # each edge. The old 1.00..1.24 threw away 12% of every edge at each peak, and effects that BAKE
+    # their own overlays into the frame — the character composites in character.py, the captions in
+    # text.py — draw inside that band: a corner character sits at a 2.5-3% margin. So `<effect> pulse`
+    # sliced the top off the character's head and clipped the caption, twice a second, while the same
+    # overlays applied AFTER the modifier were untouched. That asymmetry is what made it look random.
+    #
+    # 1.00..1.11 keeps the breathing obvious (it is the rhythm that reads, not the magnitude) and
+    # halves the worst-case loss to ~5% an edge. It cannot be removed entirely without either
+    # letterboxing at the trough or not zooming in at all — the complete fix is overlays living inside
+    # a title-safe margin, which is a composition change, not a filter one.
+    z = "1.055+0.055*sin(2*PI*2*on/25)"                # ~1.0..1.11, twice a second
     return (f"scale={2 * W}:{2 * H},"
             f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
             f"d=1:s={W}x{H}:fps=25")
