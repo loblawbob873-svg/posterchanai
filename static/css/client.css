@@ -4254,11 +4254,18 @@ svg.mb-e{margin-right:0}
    on a desktop too, and without this a zoomed timeline would simply overflow the panel. */
 .mb-timeline{padding:10px;border:1px solid var(--line);border-radius:var(--r);
   overflow-x:auto;-webkit-overflow-scrolling:touch}
-.mb-tlinner{position:relative;display:flex;flex-direction:column;gap:6px}
+/* --mb-pps is PIXELS PER SECOND, and it is what makes the timeline hold still. The lane used to stretch to
+   exactly the project length, so a second was worth however much room happened to be left — change ONE
+   clip's length and every other bar on the timeline moved and resized. With a fixed scale a bar's position
+   and width come from that layer alone, an edit moves nothing but the trailing empty space, and the width
+   of the lane (set in meme.js from this and --mb-name-w) is the only thing that grows. Zoom multiplies it.
+   --mb-name-w is the row's label column; the lane's calc() has to use the very same value the rows do or
+   the ruler ticks drift out of line with the clips underneath them at a breakpoint. */
+.mb-tlinner{position:relative;display:flex;flex-direction:column;gap:6px;min-width:100%;--mb-pps:56px;--mb-name-w:72px}
+.mb-trackname,.mb-rname{flex:0 0 var(--mb-name-w)}
 /* Seconds ruler — same .mb-track/.mb-lane geometry as a clip row, which is what makes a tick line up with
    the clip below it without measuring anything. */
 .mb-rrow{align-items:flex-end}
-.mb-rname{flex:0 0 72px}
 .mb-rlane{height:20px;background:transparent;cursor:pointer;touch-action:none}
 .mb-tick{position:absolute;top:6px;bottom:0;width:0;border-left:1px solid var(--line)}
 /* Longhands, NOT the `font:` shorthand: `font:600 10px/1 inherit` is invalid (the shorthand's family slot
@@ -4308,7 +4315,7 @@ svg.mb-e{margin-right:0}
 .mb-track.sel .mb-tile{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon)}
 /* 132px -> 72px: grip (14) + gap (6) + tile (52). The column used to hold a filename too, which is now in
    the bar, so the 60px it was spending on truncated text goes to the lane. */
-.mb-trackname{flex:0 0 72px;position:relative;display:flex;align-items:center;gap:6px;min-width:0}
+.mb-trackname{position:relative;display:flex;align-items:center;gap:6px;min-width:0}
 /* Restack grip. touch-action:none is what makes a vertical drag OUR gesture instead of a page scroll —
    scoped to this 14px handle precisely so scrolling the page still works everywhere else in the row. */
 /* align-self:stretch, not a fixed height: the grip is the smallest thing a finger has to hit in the row,
@@ -4349,7 +4356,11 @@ svg.mb-e{margin-right:0}
 .mb-clip.mb-cut{border-right:2px dashed var(--danger)}
 /* Preview-only <audio> elements — audible, never visible (hidden would also stop them in some engines). */
 .mb-audios{position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}
-.mb-lane{position:relative;flex:1 1 auto;height:34px;border-radius:9px;background:var(--panel2);min-width:0}
+/* Fixed width from --mb-lane-w (set per render in meme.js), NOT flex:1 1 auto. Absorbing the leftover
+   room is what tied a second's width to the panel's width, so the same project drew a different
+   timeline in a wide window than a narrow one and every edit that changed the length re-laid-out every
+   bar. The fallback keeps a lane on any markup rendered before the property is set. */
+.mb-lane{position:relative;flex:0 0 var(--mb-lane-w,100%);height:34px;border-radius:9px;background:var(--panel2);min-width:0}
 /* The bar carries the layer's NAME on the left and its duration on the right. The padding clears the 14px
    grip at each end so neither label ever sits under one. */
 /* user-select:none — the bar carries real text now AND is the drag surface, so without it dragging a clip
@@ -4429,12 +4440,11 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
      rules key off viewport width and never fire. Same trade as there: the lane gets the width, the row
      is identified by its thumbnail, z-order lives in the layer panel. Without this a landscape phone
      spent 132 of its 300 panel pixels on a name column and left a 135px lane. */
-  .mb-tlinner{min-width:0}
+  .mb-tlinner{--mb-name-w:66px;--mb-pps:44px}
   /* 46 -> 64: the restack grip (14px + its gap) lives INSIDE this column. .mb-rname moves with it or
      the ruler's ticks stop lining up with the clips below them, which is the whole point of the two
      sharing a geometry. The 18px comes off the lane, which is flex:1 1 auto with min-width:0 — so the
      timeline still fits the screen at 1x rather than spilling into a horizontal scroll. */
-  .mb-trackname,.mb-rname{flex-basis:66px}
 }
 @media(max-width:820px){
   /* the fixed .mobilenav overlays the bottom ~62px — reserve it or the open pane runs under the nav */
@@ -4450,10 +4460,8 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
      on a phone the row is identified by its thumbnail alone (46px), the z-order buttons come off the row
      (they are in the layer panel as ⬇︎ Send back / ⬆︎ Bring front), and the lane gets the rest. A 1x
      timeline now fits the screen exactly, and scrolling means you deliberately zoomed in. */
-  .mb-tlinner{min-width:0}
+  .mb-tlinner{--mb-name-w:66px;--mb-pps:44px}
   /* see the note in the landscape rules above — grip width, and .mb-rname must stay identical. */
-  .mb-trackname{flex-basis:66px}
-  .mb-rname{flex-basis:66px}
   .mb-tlbar{gap:8px}
   .mb-tlhint{flex:1 1 100%}                       /* the hint takes its own line; controls stay reachable */
   .mb-zb{width:38px;height:34px}                  /* thumb-sized zoom stepper */

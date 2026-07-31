@@ -844,9 +844,36 @@
     if(s) syncScrub();
   }
 
+  // How many SECONDS the timeline lane spans. Deliberately NOT projEnd(): a lane stretched to exactly the
+  // project length is a scale that changes every time any clip's length changes, so shortening ONE clip
+  // re-laid-out every OTHER bar — "it needs to stop changing layers when I adjust the length of another".
+  //
+  // The lane is now a fixed number of pixels PER SECOND (--mb-pps, times the zoom), and this is only how
+  // far it runs. A second is the same width whatever else is on the timeline, so a bar's position and
+  // width depend on that layer alone and nothing moves when a different layer is edited. The floor keeps
+  // a two-second meme from collapsing to a stub of a lane, and the headroom leaves somewhere to drag a
+  // clip TO — the trailing empty space grows and shrinks, which is the only thing an edit now moves.
+  const TL_MIN_SPAN = 8, TL_TAIL = 2;
+  const tlSpan = () => Math.max(TL_MIN_SPAN, projEnd() + TL_TAIL);
+  // The NARROWEST --mb-pps in client.css (the phone value). Only the ruler needs a number here, and only
+  // to decide tick spacing — picking the smallest means labels that clear each other on a phone clear
+  // each other everywhere, so this cannot go subtly wrong on one breakpoint. The LAYOUT never reads it:
+  // widths are calc()ed against the property itself, so the real scale lives in exactly one place.
+  const TL_PPS_MIN = 44;
+
   function timelineInner(){
     if(!P.layers.length) return '<div class="mb-tlinner"><div class="muted small mb-empty">No layers yet — add media or text to start.</div></div>';
-    return `<div class="mb-tlinner" id="mb-tlinner" style="width:${(_zoom()*100).toFixed(2)}%">
+    // calc() against the same custom properties the rows use, rather than a measured pixel count: the name
+    // column narrows at the 820px breakpoint and --mb-pps drops on a phone, and letting CSS resolve both
+    // means the lane cannot drift out of step with the column beside it on a resize.
+    // The LANE gets an exact width rather than "whatever is left over" (flex:1 1 auto). Left over is what
+    // made the scale depend on the port, so a short project stretched its seconds to fill the panel and a
+    // long one squeezed them — the same rescale-on-every-edit from the other direction. Pinning it lets the
+    // inner also carry min-width:100% (so the row still reaches across a wide panel) WITHOUT that extra
+    // width leaking back into the scale: it becomes trailing space after the lane, not more seconds.
+    const lane = `calc(var(--mb-pps) * ${(tlSpan()*_zoom()).toFixed(3)})`;
+    const w = `--mb-lane-w:${lane};width:calc(var(--mb-name-w) + ${lane})`;
+    return `<div class="mb-tlinner" id="mb-tlinner" style="${w}">
       ${rulerEl()}
       ${_rowOrder().map(trackEl).join('')}
       <i class="mb-ph" id="mb-ph"><b></b></i>
@@ -855,15 +882,16 @@
 
   // A seconds ruler above the tracks. Built as a .mb-track so its lane is the SAME box as every clip lane
   // (same name-column width, same gap) — that is what makes a tick at 3s sit exactly above the clip that
-  // starts at 3s, with no measuring. Tick spacing steps up with the project length so the labels never
-  // collide: 1s up to 12s, then 2s, then 5s.
+  // starts at 3s, with no measuring.
   function rulerEl(){
-    const total = Math.max(projEnd(), 1);
-    // Pick the spacing from what is actually VISIBLE, not from the project length: zoomed in 8x, a 60s
-    // project shows ~7 seconds at a time and deserves 1s ticks, while the unzoomed view of the same
-    // project would be unreadable with them.
-    const span = total / Math.max(1, _zoom());
-    const step = span <= 5 ? 0.5 : (span <= 12 ? 1 : (span <= 30 ? 2 : 5));
+    const total = tlSpan();
+    // Spacing follows the ZOOM alone. It used to be derived from the project length, because the lane was
+    // stretched to fit it and a second was worth a different number of pixels in every project. Now a
+    // second is a fixed width (--mb-pps), so how far apart two labels sit depends only on how far apart
+    // their times are — and a ruler that re-spaces itself when a clip is trimmed is the same jitter the
+    // fixed scale exists to remove. ~55px is the room a "12.5s" label needs.
+    const z = Math.max(1, _zoom());
+    const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30].find(s => s * z * TL_PPS_MIN >= 55) || 60;
     const ticks = [];
     for(let t = 0; t <= total + 0.001; t += step){
       const pct = t/total*100;
@@ -886,7 +914,7 @@
     if(!inner || !ph) return;
     const lane = inner.querySelector('.mb-lane');
     if(!lane){ ph.style.display='none'; return; }
-    const total = Math.max(projEnd(), 1);
+    const total = tlSpan();                 // the LANE's span, so the playhead tracks the same scale as the bars
     const frac = clamp(t, 0, total) / total;
     ph.style.display = '';
     ph.style.left = (lane.offsetLeft + frac * lane.offsetWidth) + 'px';
@@ -897,7 +925,7 @@
   function _rulerSeek(clientX){
     const lane = document.getElementById('mb-rlane'); if(!lane) return;
     const r = lane.getBoundingClientRect(); if(!r.width) return;
-    const t = clamp((clientX - r.left) / r.width, 0, 1) * Math.max(projEnd(), 1);
+    const t = clamp((clientX - r.left) / r.width, 0, 1) * tlSpan();
     const s = document.getElementById('mb-scrub'); if(s) s.value = t.toFixed(2);
     seek(t);
   }
@@ -930,16 +958,22 @@
   }
 
   function trackEl(l){
-    const total = Math.max(projEnd(), 1);
+    const total = tlSpan();
     let left = (l.start/total*100), wid = Math.max(3, l.dur/total*100);
-    // Music is the ONE layer that can run past the end of the timeline (the renderer truncates it), and
-    // an unclamped bar is a real layout break, not a cosmetic one: a 3-minute song on a 6-second meme is
-    // a 3000%-wide absolutely-positioned div in a lane with no overflow clipping. Clamp it to the lane and
-    // mark it as cut, so the bar shows exactly the part that will actually be in the video.
+    // Music is the ONE layer that can run past the end of the lane, and an unclamped bar is a real layout
+    // break, not a cosmetic one: a 3-minute song on a 6-second meme is a 3000%-wide absolutely-positioned
+    // div in a lane with no overflow clipping. Clamp it to the lane so the row survives.
     let cut = false;
     if(l.type==='audio' && left + wid > 100){
       left = Math.min(left, 97); wid = Math.max(3, 100 - left); cut = true;
     }
+    // …and the LABEL is about the meme, not the lane. The bar is clamped at the lane's span (projEnd + a
+    // little headroom), but what matters to the user is where the VIDEO ends — and a bed running past that
+    // is no longer "cut off": renderEnd() counts audio, so it makes the export longer instead. Saying the
+    // opposite of what the renderer does is what hides a stale music bed holding the export at an old
+    // length. See _syncMusicBeds.
+    const _vEnd = projEnd(), _aEnd = (+l.start||0) + (+l.dur||0);
+    const over = l.type==='audio' && _aEnd > _vEnd + 0.05;
     // Every row is [grip][tile][bar], in that order, whatever the layer is. The tile is the SAME 52x34 box
     // for all four types — a frame for a picture or clip, a glyph for text and music — because the previous
     // mix (media showed a thumbnail, text and music showed a truncated string) meant no two rows lined up
@@ -971,7 +1005,7 @@
         <i class="mb-rgrip${l.type==='audio'?' mb-rgrip-off':''}"${l.type==='audio'?' aria-hidden="true"':' title="Drag to restack — what is drawn on top of what" aria-hidden="true"'}>${ic('menu')}</i>${tile}
       </div>
       <div class="mb-lane">
-        <div class="mb-clip${cut?' mb-cut':''}${narrow?' mb-clip-sm':''}" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%"${cut?` title="${l.dur.toFixed(1)}s of music — cut off at ${total.toFixed(1)}s"`:''}>
+        <div class="mb-clip${cut?' mb-cut':''}${narrow?' mb-clip-sm':''}" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%"${over?` title="${l.dur.toFixed(1)}s of music — ${(_aEnd-_vEnd).toFixed(1)}s longer than the clips, so the video is ${_aEnd.toFixed(1)}s. “⇔ Span the whole meme” fits it to ${_vEnd.toFixed(1)}s."`:''}>
           <i class="mb-grip mb-grip-l" data-grip="l"></i>
           ${/* The NAME goes in the bar, not the left column. The bar is the widest thing in the row and was
                carrying one number; the column was 132px of truncated filename that collapsed to nothing on
@@ -979,7 +1013,7 @@
                the name outright rather than ellipsising it to "b…" — the duration is the part you still
                need, and it is the part the grips would otherwise sit on top of. */''}
           ${narrow ? '' : `<span class="mb-cname">${enc(name)}</span>`}
-          <span class="mb-cdur">${cut ? '✂ '+total.toFixed(1)+'s' : l.dur.toFixed(1)+'s'}</span>
+          <span class="mb-cdur">${l.dur.toFixed(1)}s${over ? ' ⤍' : ''}</span>
           <i class="mb-grip mb-grip-r" data-grip="r"></i>
         </div>
       </div>
@@ -1565,7 +1599,7 @@
       const l = P.layers.find(x=>x.id===clip.dataset.id); if(!l) return;
       selectLayer(l.id, 'timeline');
       const lane = clip.parentElement, rect = lane.getBoundingClientRect();
-      const total = Math.max(projEnd(), 1), perPx = total/rect.width;
+      const total = tlSpan(), perPx = total/rect.width;
       const grip = e.target.closest('.mb-grip'), side = grip && grip.dataset.grip;
       const sx=e.clientX, ost=l.start, odur=l.dur;
       let moved=false;   // a CLICK must never reshuffle the timeline — only an actual drag does
@@ -2444,9 +2478,26 @@
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     // Typing in a number box is a BURST (one snapshot for the whole edit), and every one of these
     // handlers mutates, so the snapshot has to be taken before the assignment — see snapBurst.
-    const num=(id,key,lo,hi)=>on(id,'input',(e)=>{ snapBurst(key+':'+l.id); l[key]=clamp(e.target.value,lo,hi); save();
-      const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) applyGeom(it,l);
-      if(key==='start'||key==='dur') repaint('timeline'); });
+    //
+    // An EMPTY box is not the number zero. clamp() runs everything through `Number(v)||0`, so the instant
+    // you select the contents of Width and hit delete — the normal way to retype a value — the layer was
+    // set to the field's MINIMUM (16px, or 0.1s for a length) and saved. Click away, or let anything
+    // rebuild the panel, and that minimum is what comes back: "I set a size and it resets". Ignore a box
+    // that is empty or mid-way through a number, and on `change` (blur/Enter) put the layer's real value
+    // back into a box left empty, so the field can never disagree with the layer it edits.
+    const num=(id,key,lo,hi)=>{
+      const el=root.querySelector('#'+id); if(!el) return;
+      const write=(raw)=>{
+        const s=String(raw==null?'':raw).trim();
+        if(s==='' || !isFinite(Number(s))) return false;
+        snapBurst(key+':'+l.id); l[key]=clamp(s,lo,hi); save();
+        const it=root.querySelector('.mb-item[data-id="'+l.id+'"]'); if(it) applyGeom(it,l);
+        if(key==='start'||key==='dur') repaint('timeline');
+        return true;
+      };
+      el.addEventListener('input',(e)=>write(e.target.value));
+      el.addEventListener('change',(e)=>{ if(!write(e.target.value)) e.target.value=l[key]; });
+    };
     num('mb-f-w','w',16,4320); num('mb-f-h','h',16,4320);
     // Blow the layer up to the FULL project canvas and pin it to 0,0 — the common "make this the background /
     // full-bleed clip" move, which otherwise means typing the project's W and H and zeroing X/Y by hand.
