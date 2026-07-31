@@ -4638,14 +4638,17 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .vs-take{padding:9px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}
 .vs-take-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
 .vs-take-hd b{color:var(--neon);font-size:13px}
-.vs-dl{color:var(--muted);display:flex;padding:2px}
-.vs-dl:hover{color:var(--neon)}
 .vs-said{font-size:13px;opacity:.85;margin-bottom:6px;overflow-wrap:anywhere}
 .vs-take audio{width:100%;height:34px}
 /* Keep / download on a take. A generated take is a blob: URL that dies with the modal — "keep" is what
    makes it outlive the session without spending the GPU again. */
-.vs-take-acts{display:flex;align-items:center;gap:4px}
-.vs-keep{background:none;border:0;padding:2px;color:var(--muted);cursor:pointer;display:flex}
-.vs-keep:hover{color:var(--neon)}
+/* Both actions are real tap targets, not 20px icons with 2px of padding. They sit at the top-right of
+   a take, which is exactly where a thumb arrives holding the phone, so measuring them was worth it:
+   they came out 21x19 and 24x24 before this. -6px margin keeps the header the same HEIGHT while the
+   hit area grows, so the takes list doesn't get taller on every row. */
+.vs-take-acts{display:flex;align-items:center;gap:2px;margin:-6px -4px -6px 0}
+.vs-keep,.vs-dl{display:flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;
+  background:none;border:0;padding:0;color:var(--muted);cursor:pointer;border-radius:8px}
+.vs-keep:hover,.vs-dl:hover{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .vs-keep.on{color:var(--neon);cursor:default}
 .vs-keep:disabled{opacity:.5}
