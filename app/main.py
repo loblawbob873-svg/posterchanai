@@ -278,6 +278,21 @@ async def startup():
             except Exception as e:
                 logging.error(f"Error seeding music settings: {e}")
 
+        # Turnkey Docker voice cloning: POSTERCHANAI_VOICE=1 (compose passes the SAME variable as the
+        # INSTALL_VOICE build arg, so the engine can't be missing from an image that has the feature
+        # on). Seeds only keys the admin hasn't set, so UI changes win.
+        if os.environ.get("POSTERCHANAI_VOICE", "0") == "1":
+            try:
+                from app.services import settings_store as _ss
+                if not _ss.exists("voice_enabled"):
+                    _ss.put("voice_enabled", "true")
+                _vm = os.environ.get("POSTERCHANAI_VOICE_MODEL", "").strip()
+                if _vm and not _ss.exists("voice_model"):
+                    _ss.put("voice_model", _vm)
+                logging.info("Voice cloning auto-configured from POSTERCHANAI_VOICE env")
+            except Exception as e:
+                logging.error(f"Error seeding voice settings: {e}")
+
         # Turnkey Docker video: when POSTERCHANAI_VIDEO=1, auto-enable native text-to-video and
         # (optionally) point video_model at POSTERCHANAI_VIDEO_MODEL. The model auto-downloads to
         # HF_HOME on first use (persisted on the data volume). Only seeds keys the admin hasn't set.

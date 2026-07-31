@@ -158,6 +158,23 @@ class VoiceInstaller(unittest.TestCase):
         self.assertIn("setuptools<81", df)
         self.assertIn("perth.PerthImplicitWatermarker is not None", df)
 
+    def test_docker_can_actually_enable_voice(self):
+        """The Dockerfile ARG is useless if compose never passes it: POSTERCHANAI_VOICE must both
+        INSTALL the engine at build time and enable it at runtime, or you get an image with the
+        feature switched on and no model — exactly the trap the INSTALL_MUSIC comment describes."""
+        compose = _read("docker-compose.yml")
+        self.assertEqual(compose.count("INSTALL_VOICE"), 4, "every build profile must pass it")
+        self.assertIn("POSTERCHANAI_VOICE=${POSTERCHANAI_VOICE:-0}", compose)
+        self.assertIn("INSTALL_VOICE", _read("Dockerfile"))
+        self.assertIn('os.environ.get("POSTERCHANAI_VOICE", "0")', _read("app/main.py"))
+
+    def test_unsupported_language_explains_itself(self):
+        """Chatterbox imports per-language tokenizer helpers lazily; we don't ship them. A raw
+        ModuleNotFoundError from inside a tokenizer is a terrible way to learn that."""
+        src = _read("app/services/voice_local.py")
+        self.assertIn("except ModuleNotFoundError", src)
+        self.assertIn("can't speak that language", src)
+
     def test_installer_never_lets_pip_move_torch(self):
         """--no-deps + a constraints file is what stops chatterbox's torch==2.6.0 pin replacing the
         GPU torch and breaking image, music and video at once."""

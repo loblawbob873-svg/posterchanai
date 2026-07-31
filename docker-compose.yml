@@ -90,6 +90,12 @@ x-common: &common
     # the persisted HF cache on first use. Needs a GPU profile (cuda/rocm/intel).
     - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}
     - POSTERCHANAI_VIDEO_MODEL=${POSTERCHANAI_VIDEO_MODEL:-}
+    # Turnkey voice cloning: POSTERCHANAI_VOICE=1 auto-enables it AND installs Chatterbox into the
+    # image (the build arg reads this same variable, so the engine can't be missing from an image that
+    # has the feature switched on — the trap the music comment below describes). ~6GB of weights
+    # download on first use into the persisted HF cache. Needs a GPU profile for sane speed: it runs
+    # at roughly 10x realtime and holds the GPU lock, so chat/image/music/video queue behind it.
+    - POSTERCHANAI_VOICE=${POSTERCHANAI_VOICE:-0}
     # Turnkey voice/video calls: set POSTERCHANAI_TURN=1 + your PUBLIC IP and the app runs the built-in
     # TURN relay (the binary is baked into the image). Calls work P2P for most users without it; it's the
     # NAT fallback. Needs the ports above reachable (a grey-clouded turn.<domain> record is recommended).
@@ -152,7 +158,7 @@ services:
       # POSTERCHANAI_MUSIC=1 switched the feature on in an image that has no ACE-Step, so `musicgeni`
       # fell through to the retired HTTP path and failed against a localhost:8001 nobody is serving.
       # Music on the cpu profile works but is SLOW — fine for a WSL/Docker Desktop smoke test.
-      args: { GPU: cpu, INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
+      args: { GPU: cpu, INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
 
   # Nostr-only: a self-hosted Nostr relay + the Nostr web client + Blossom, with NO AI stack
   # (no torch/llama/diffusers) — a small, fast image for people who don't care about AI. The relay
@@ -191,7 +197,7 @@ services:
       # BASE_IMAGE selects the CUDA toolkit base; passing it here (not via a base-* stage) means
       # only this profile ever references it, so cpu/nostr builds don't pull it.
       args: { GPU: cuda, BASE_IMAGE: "${CUDA_BASE:-nvidia/cuda:12.5.1-devel-ubuntu24.04}",
-              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
     # Requires the NVIDIA Container Toolkit on the host.
     deploy:
       resources:
@@ -214,7 +220,7 @@ services:
       # ROCm builds on plain ubuntu:24.04 (the default BASE_IMAGE) and installs ROCm userspace in
       # the image. Override with a prebuilt rocm/dev-ubuntu-24.04:*-complete base if you prefer.
       args: { GPU: rocm, BASE_IMAGE: "${ROCM_BASE:-ubuntu:24.04}",
-              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
     # ROCm userspace is in the image; the kernel driver comes from the host. The
     # container runs as root, so it reaches the render node without group juggling;
     # the entrypoint auto-sets HSA_OVERRIDE_GFX_VERSION for consumer RDNA cards.
@@ -233,7 +239,7 @@ services:
       # oneAPI 2025.2+ base (2025.0's SYCL compiler makes the Arc emit EMPTY thinking/code gens).
       # Only this profile references it, so cpu/nostr builds never pull the heavy oneAPI image.
       args: { GPU: intel, BASE_IMAGE: "${INTEL_BASE:-intel/oneapi-basekit:2025.2.2-0-devel-ubuntu24.04}",
-              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}" }
+              INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}", INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}" }
     # Intel Arc: expose the render nodes; host needs the i915 driver.
     devices:
       - /dev/dri

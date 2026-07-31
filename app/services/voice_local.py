@@ -213,14 +213,26 @@ class VoiceService:
         import torch
         import soundfile as sf
 
-        with torch.no_grad():
-            wav = model.generate(
-                text,
-                audio_prompt_path=reference_path,
-                exaggeration=cfg["exaggeration"],
-                cfg_weight=cfg["cfg_weight"],
-                temperature=cfg["temperature"],
-            )
+        try:
+            with torch.no_grad():
+                wav = model.generate(
+                    text,
+                    audio_prompt_path=reference_path,
+                    exaggeration=cfg["exaggeration"],
+                    cfg_weight=cfg["cfg_weight"],
+                    temperature=cfg["temperature"],
+                )
+        except ModuleNotFoundError as e:
+            # Chatterbox's tokenizer imports a per-language helper LAZILY, inside the branch for that
+            # script: spacy_pkuseg for Chinese, dicta_onnx for Hebrew, russian_text_stresser for
+            # Russian. We deliberately don't ship those — two of them pull ONNX models, and none is
+            # reachable for Latin-script text, which is everything the studio has been used for. The
+            # cost of that choice is this exception, and a raw ModuleNotFoundError from deep inside a
+            # tokenizer is a terrible way to learn your language isn't supported.
+            raise RuntimeError(
+                f"cloned voices can't speak that language on this server yet — its text handler needs "
+                f"`{e.name}`, which isn't installed. Latin-script languages work; for the rest, "
+                f"`narrate` uses the cloud voices and covers them all.") from e
         # soundfile, not torchaudio.save — same reasoning as the shim above, and it keeps the bytes
         # in memory instead of round-tripping a temp file.
         arr = wav.detach().to("cpu").float().numpy()
