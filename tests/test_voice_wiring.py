@@ -126,6 +126,28 @@ class VoicePortability(unittest.TestCase):
             self.assertIn(f'"{attr}"', src)
 
 
+class VoiceInstaller(unittest.TestCase):
+    def test_installer_guards_the_watermarker(self):
+        """perth exports PerthImplicitWatermarker as None when its own import fails, so `import perth`
+        succeeding proves nothing. On a Python 3.12 node with setuptools>=81 (pkg_resources removed)
+        that is exactly what happens, and the model dies at construction AFTER the 6GB download."""
+        sh = _read("scripts/install/voice.sh")
+        self.assertIn("setuptools<81", sh)
+        self.assertIn("perth.PerthImplicitWatermarker is not None", sh)
+
+    def test_docker_guards_it_too(self):
+        df = _read("Dockerfile")
+        self.assertIn("setuptools<81", df)
+        self.assertIn("perth.PerthImplicitWatermarker is not None", df)
+
+    def test_installer_never_lets_pip_move_torch(self):
+        """--no-deps + a constraints file is what stops chatterbox's torch==2.6.0 pin replacing the
+        GPU torch and breaking image, music and video at once."""
+        sh = _read("scripts/install/voice.sh")
+        self.assertIn("--no-deps chatterbox-tts", sh)
+        self.assertIn('-c "$CONSTRAINTS"', sh)
+
+
 class VoiceLoadBalancing(unittest.TestCase):
     def test_round_robin_is_not_modulo_list_length(self):
         """`_rr_index % len(candidates)` resets the rotation whenever the node list changes size,

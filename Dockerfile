@@ -275,7 +275,8 @@ RUN if [ "$INSTALL_VOICE" = "1" ] && [ "$GPU" != "nostr" ]; then \
       set -eu; \
       pip install --no-deps chatterbox-tts==0.1.7 s3tokenizer resemble-perth; \
       pip install librosa==0.11.0 conformer==0.3.2 pykakasi==2.3.0 pyloudnorm omegaconf; \
-      python3 -c 'import chatterbox.tts' ; \
+      python3 -c 'import pkg_resources' 2>/dev/null || pip install 'setuptools<81'; \
+      python3 -c 'import chatterbox.tts, perth; assert perth.PerthImplicitWatermarker is not None' ; \
     fi
 
 # --- app source ---------------------------------------------------------------

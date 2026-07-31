@@ -61,6 +61,17 @@ PY
         || { print_error "voice runtime deps failed"; rm -f "$CONSTRAINTS"; deactivate; return 1; }
     rm -f "$CONSTRAINTS"
 
+    # resemble-perth (the watermarker chatterbox constructs on EVERY load) imports pkg_resources, which
+    # setuptools REMOVED in 81. On Python 3.11 boxes with an older setuptools this is invisible; on a
+    # 3.12 box with setuptools>=81 perth swallows the ImportError, exports PerthImplicitWatermarker as
+    # None, and the model dies at construction with "'NoneType' object is not callable" — after the
+    # 6GB download, with nothing pointing at setuptools. Only downgrade when it is genuinely missing,
+    # so a node that already works is left alone.
+    if ! python -c "import pkg_resources" >/dev/null 2>&1; then
+        print_step "pkg_resources is missing (setuptools>=81) — pinning setuptools for the watermarker..."
+        pip install -q "setuptools<81" || print_warning "couldn't pin setuptools; the watermarker may fail to load"
+    fi
+
     # Prove the stack survived AND that the model code imports against it. A green pip is not enough:
     # --no-deps means pip cannot tell us whether chatterbox can actually run on the versions present.
     python - <<'PY' || { print_error "post-install check FAILED — the torch stack or chatterbox is broken"; deactivate; return 1; }
@@ -68,7 +79,13 @@ import sys, torch, transformers, diffusers
 print(f"torch {torch.__version__} | transformers {transformers.__version__} | diffusers {diffusers.__version__}")
 assert transformers.__version__.split(".")[0] == "4", "transformers moved past 4.x — ACE-Step (music) will break"
 import chatterbox.tts  # noqa: F401
-print("chatterbox imports cleanly")
+# Constructing the model calls perth.PerthImplicitWatermarker(). perth exports it as None when its own
+# import failed, so checking `import perth` alone passes on a box where every generation will crash.
+import perth
+assert perth.PerthImplicitWatermarker is not None, (
+    "the perth watermarker did not load (usually pkg_resources / setuptools>=81) — "
+    "every generation would fail at model construction")
+print("chatterbox + watermarker import cleanly")
 PY
     print_success "Voice deps installed"
 
