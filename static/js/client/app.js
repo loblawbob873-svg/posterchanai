@@ -14138,9 +14138,24 @@
       const url = URL.createObjectURL(blob);
       const out = root && root.querySelector('#vs-out');
       if(out){
-        out.innerHTML = `<audio controls autoplay src="${url}" style="width:100%"></audio>
-          <a class="btn btn-cyan small full" download="voice.wav" href="${url}">⬇ Save the audio file</a>`;
+        // APPEND, don't replace. Getting one line out of a voice is the rare case — you try a
+        // reading, change a word, try the other voice, and want to hear them against each other.
+        // Replacing meant every previous take vanished the moment you asked for the next one, so
+        // comparing two required generating the first one again (~45s of GPU each time).
+        const row = document.createElement('div');
+        row.className = 'vs-take';
+        row.innerHTML = `<div class="vs-take-hd"><b>${enc(voice.name)}</b>
+            <a class="vs-dl" download="${enc(voice.name)}.wav" href="${url}" title="Save this take">
+              <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></a></div>
+          <div class="vs-said">${enc(text)}</div>
+          <audio controls autoplay src="${url}"></audio>`;
+        out.appendChild(row);
+        row.scrollIntoView({ block:'nearest' });
       }
+      // Clear the box and hand focus back, so the next line is just typing — the whole point of
+      // making this a conversation rather than a one-shot form.
+      const ta = root && root.querySelector('#vs-text');
+      if(ta){ ta.value=''; ta.focus(); }
       say('');
     }catch(e){ say(''); toast('voice failed: '+((e&&e.message)||e)); }
   }
@@ -14184,7 +14199,7 @@
                   placeholder="Type what you want spoken…"></textarea></label>
       <button class="btn btn-neon full" id="vs-go">🔊 Speak it</button>
       <div class="muted small" id="vs-status" style="margin-top:8px"></div>
-      <div id="vs-out" style="margin-top:8px"></div>`, root=>{
+      <div id="vs-out" class="vs-takes"></div>`, root=>{
       let picked = list[0] ? list[0].id : null;
       const paint=()=>{ $$('.vs-pick',root).forEach(b=>b.classList.toggle('on', b.dataset.id===picked)); };
       paint();
@@ -14201,13 +14216,19 @@
         inp.onchange=()=>{ const f=(inp.files||[])[0]; if(f){ closeModal(); voiceAdd(f); } };
         inp.click();
       };
-      root.querySelector('#vs-go').onclick=()=>{
+      const go=()=>{
         const v=list.find(x=>x.id===picked);
         if(!v){ toast('add a voice first'); return; }
         const t=(root.querySelector('#vs-text').value||'').trim();
         if(!t){ toast('type what it should say'); return; }
         voiceSpeak(v, t, root);
       };
+      root.querySelector('#vs-go').onclick=go;
+      // Ctrl/Cmd+Enter sends, like every other composer here. Plain Enter must NOT — this box holds
+      // the words to be spoken, and line breaks in them are meaningful.
+      root.querySelector('#vs-text').addEventListener('keydown', e=>{
+        if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); go(); }
+      });
     });
   }
   window.__openVoiceStudio = openVoiceStudio;

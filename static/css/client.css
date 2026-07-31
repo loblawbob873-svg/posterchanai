@@ -4632,3 +4632,13 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
      too narrow to hit. */
   .vs-prev{flex:1 1 100%;order:3}
 }
+/* Takes accumulate under the composer, oldest first, so you can play two readings back to back
+   instead of regenerating the first one (~45s of GPU) just to compare. */
+.vs-takes{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.vs-take{padding:9px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}
+.vs-take-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.vs-take-hd b{color:var(--neon);font-size:13px}
+.vs-dl{color:var(--muted);display:flex;padding:2px}
+.vs-dl:hover{color:var(--neon)}
+.vs-said{font-size:13px;opacity:.85;margin-bottom:6px;overflow-wrap:anywhere}
+.vs-take audio{width:100%;height:34px}
