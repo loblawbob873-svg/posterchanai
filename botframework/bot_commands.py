@@ -14,7 +14,7 @@ NO_CAPTION_COMMANDS = (
     "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily",
     "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece",
     "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
-    "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "thug", "feltedtables",
+    "harlem", "chimp", "consider", "clay", "uwu", "wasteland", "mixalot", "nonematters", "thug", "feltedtables",
     "prayer", "feliz", "sleepwell", "horse", "knightrider", "hugebitch",
 )
 

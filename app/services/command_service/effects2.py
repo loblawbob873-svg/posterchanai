@@ -633,6 +633,21 @@ class _Effects2Mixin:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    async def _nonematters_command(self, attachments: Optional[list]) -> dict:
+        """Turn an attached image into an MP4 set to Carl's "none of this matters": `nonematters`."""
+        from app.services.media_service import is_image
+
+        if not attachments or not any(is_image(fn, ct) for fn, _, ct in attachments):
+            return {"type": "text", "content": "Attach an image, then send `nonematters`."}
+
+        import asyncio
+        from app.services.effects_service import nonematters_attachments
+
+        outputs, summary = await asyncio.to_thread(nonematters_attachments, attachments)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _thug_command(self, attachments: Optional[list]) -> dict:
         """Turn an attached image into an MP4 set to the THUG LIFE clip: `thug`."""
         from app.services.media_service import is_image

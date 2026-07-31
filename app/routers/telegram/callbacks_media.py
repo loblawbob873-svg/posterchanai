@@ -1040,6 +1040,14 @@ async def _cb_media(update, db, chat_id, data, callback_query, callback_query_id
                     await telegram_service.send_message(chat_id, "🍑 Baby got back…")
                     _imgs = [a for a in _atts if is_image(a[0], a[2])]
                     await _send_files_result(await cb_command_service.execute_command("mixalot", "", attachments=_imgs))
+            elif _action == "nonematters":
+                # No caption needed — render the video and post it.
+                if not any(is_image(fn, ct) for fn, _, ct in _atts):
+                    await telegram_service.send_message(chat_id, "Nothing to set to music — that upload has no image.")
+                else:
+                    await telegram_service.send_message(chat_id, "\U0001f937 None of this matters…")
+                    _imgs = [a for a in _atts if is_image(a[0], a[2])]
+                    await _send_files_result(await cb_command_service.execute_command("nonematters", "", attachments=_imgs))
             elif _action == "thug":
                 # No caption needed — render the video and post it.
                 if not any(is_image(fn, ct) for fn, _, ct in _atts):

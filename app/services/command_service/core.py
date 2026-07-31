@@ -139,6 +139,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "uwu": "Overlay a dancing cute anime girl on an image, set to an uwu clip: uwu",
         "wasteland": "Turn an attached image into an MP4 set to the Teenage Wasteland intro: wasteland",
         "mixalot": "Turn an attached image into an MP4 set to the Baby Got Back clip: mixalot",
+        "nonematters": "Turn an attached image into an MP4 set to Carl's 'none of this matters': nonematters",
         "thug": "Turn an attached image into an MP4 set to the THUG LIFE clip: thug",
         "feltedtables": "Turn an attached image into an MP4 set to the felted-tables clip: feltedtables",
         "prayer": "Turn an attached image into an MP4 set to the prayer clip: prayer",
@@ -174,6 +175,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "nodont": "nodontthinkiwill",
         "idontthinkiwill": "nodontthinkiwill",
         "dontthinkiwill": "nodontthinkiwill",
+        "dontmatter": "nonematters",
+        "itdontmatter": "nonematters",
         "rukus": "ruckus",
         "uncleruckus": "ruckus",
         "unclerukus": "ruckus",
@@ -216,7 +219,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "curb", "depressing", "fahh", "helpme", "gong", "fbi", "redeem",
         "gigity", "beavis", "heat", "smell", "hood", "akbar", "retard", "whoabuddy", "diarrhea", "seth", "robocop", "titan", "terminator", "reze", "vibe", "rebecca", "makima", "gura",
         "sopranos", "cheers", "munsters", "happydays", "dontwanttowait", "strangerthings", "adamsfamily", "xmen", "futurama", "charliesangles", "differentstroke", "seinfeld", "jerry", "onepiece", "overtaken", "freebird", "kanye", "darkness", "bike", "jobs", "ree", "liberal", "moving",
-        "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "thug", "uwu",
+        "harlem", "chimp", "consider", "clay", "wasteland", "mixalot", "nonematters", "thug", "uwu",
         "feltedtables", "glow", "prayer", "alive", "feliz", "sleepwell", "horse", "knightrider", "hugebitch",
     }
     MOTION_ARGS = ("zoom", "shake", "medshake", "beginshake", "trippy", "pulse", "glow", "alive")
@@ -840,6 +843,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._wasteland_command(attachments)
         elif command == "mixalot":
             return await self._mixalot_command(attachments)
+        elif command == "nonematters":
+            return await self._nonematters_command(attachments)
         elif command == "thug":
             return await self._thug_command(attachments)
         elif command == "feltedtables":

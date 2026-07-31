@@ -570,6 +570,12 @@ _WASTELAND_AUDIO_CANDIDATES = [
     "/var/lib/posterchanai/assets/wasteland.mp3",
 ]
 _WASTELAND_DURATION = 13.0
+_NONEMATTERS_AUDIO_CANDIDATES = [
+    os.environ.get("NONEMATTERS_AUDIO_PATH", ""),
+    os.path.join(_REPO_ROOT, "assets", "nonematters.mp3"),
+    "/var/lib/posterchanai/assets/nonematters.mp3",
+]
+_NONEMATTERS_DURATION = 3.5
 _MIXALOT_AUDIO_CANDIDATES = [
     os.environ.get("MIXALOT_AUDIO_PATH", ""),
     os.path.join(_REPO_ROOT, "assets", "mixalot.mp3"),

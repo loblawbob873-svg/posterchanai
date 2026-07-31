@@ -1,5 +1,5 @@
 """Auto-split from the original effects_service.py monolith. No behavior change."""
-from ._common import List, OutputFile, Path, Tuple, _ADAMSFAMILY_AUDIO_CANDIDATES, _ADAMSFAMILY_DURATION, _BIKE_AUDIO_CANDIDATES, _BIKE_DURATION, _CHARLIESANGLES_AUDIO_CANDIDATES, _CHARLIESANGLES_DURATION, _CHIMP_AUDIO_CANDIDATES, _CHIMP_DURATION, _CHIMP_GIF_CANDIDATES, _CLAY_AUDIO_CANDIDATES, _CLAY_DURATION, _CLAY_OVERLAY_CANDIDATES, _CONSIDER_PNG_CANDIDATES, _DARKNESS_AUDIO_CANDIDATES, _DARKNESS_DURATION, _DIFFERENTSTROKE_AUDIO_CANDIDATES, _DIFFERENTSTROKE_DURATION, _DONTWANTTOWAIT_AUDIO_CANDIDATES, _DONTWANTTOWAIT_DURATION, _FREEBIRD_AUDIO_CANDIDATES, _FREEBIRD_DURATION, _FUTURAMA_AUDIO_CANDIDATES, _FUTURAMA_DURATION, _HAPPYDAYS_AUDIO_CANDIDATES, _HAPPYDAYS_DURATION, _HARLEM_AUDIO_CANDIDATES, _HARLEM_DURATION, _JOBS_AUDIO_CANDIDATES, _JOBS_DURATION, _KANYE_AUDIO_CANDIDATES, _KANYE_DURATION, _LIBERAL_AUDIO_CANDIDATES, _LIBERAL_DURATION, _MIXALOT_AUDIO_CANDIDATES, _MIXALOT_DURATION, _MOVING_AUDIO_CANDIDATES, _MOVING_DURATION, _MUNSTERS_AUDIO_CANDIDATES, _MUNSTERS_DURATION, _ONEPIECE_AUDIO_CANDIDATES, _ONEPIECE_DURATION, _OVERTAKEN_AUDIO_CANDIDATES, _OVERTAKEN_DURATION, _REE_AUDIO_CANDIDATES, _REE_DURATION, _SEINFELD_AUDIO_CANDIDATES, _SEINFELD_DURATION, _SOPRANOS_AUDIO_CANDIDATES, _SOPRANOS_DURATION, _STRANGERTHINGS_AUDIO_CANDIDATES, _STRANGERTHINGS_DURATION, _UWU_AUDIO_CANDIDATES, _UWU_DURATION, _UWU_OVERLAY_CANDIDATES, _WASTELAND_AUDIO_CANDIDATES, _WASTELAND_DURATION, _XMEN_AUDIO_CANDIDATES, _XMEN_DURATION, _alive_or_still, _human_size, io, is_image, logger, os
+from ._common import List, OutputFile, Path, Tuple, _ADAMSFAMILY_AUDIO_CANDIDATES, _ADAMSFAMILY_DURATION, _BIKE_AUDIO_CANDIDATES, _BIKE_DURATION, _CHARLIESANGLES_AUDIO_CANDIDATES, _CHARLIESANGLES_DURATION, _CHIMP_AUDIO_CANDIDATES, _CHIMP_DURATION, _CHIMP_GIF_CANDIDATES, _CLAY_AUDIO_CANDIDATES, _CLAY_DURATION, _CLAY_OVERLAY_CANDIDATES, _CONSIDER_PNG_CANDIDATES, _DARKNESS_AUDIO_CANDIDATES, _DARKNESS_DURATION, _DIFFERENTSTROKE_AUDIO_CANDIDATES, _DIFFERENTSTROKE_DURATION, _DONTWANTTOWAIT_AUDIO_CANDIDATES, _DONTWANTTOWAIT_DURATION, _FREEBIRD_AUDIO_CANDIDATES, _FREEBIRD_DURATION, _FUTURAMA_AUDIO_CANDIDATES, _FUTURAMA_DURATION, _HAPPYDAYS_AUDIO_CANDIDATES, _HAPPYDAYS_DURATION, _HARLEM_AUDIO_CANDIDATES, _HARLEM_DURATION, _JOBS_AUDIO_CANDIDATES, _JOBS_DURATION, _KANYE_AUDIO_CANDIDATES, _KANYE_DURATION, _LIBERAL_AUDIO_CANDIDATES, _LIBERAL_DURATION, _MIXALOT_AUDIO_CANDIDATES, _MIXALOT_DURATION, _MOVING_AUDIO_CANDIDATES, _MOVING_DURATION, _NONEMATTERS_AUDIO_CANDIDATES, _NONEMATTERS_DURATION, _MUNSTERS_AUDIO_CANDIDATES, _MUNSTERS_DURATION, _ONEPIECE_AUDIO_CANDIDATES, _ONEPIECE_DURATION, _OVERTAKEN_AUDIO_CANDIDATES, _OVERTAKEN_DURATION, _REE_AUDIO_CANDIDATES, _REE_DURATION, _SEINFELD_AUDIO_CANDIDATES, _SEINFELD_DURATION, _SOPRANOS_AUDIO_CANDIDATES, _SOPRANOS_DURATION, _STRANGERTHINGS_AUDIO_CANDIDATES, _STRANGERTHINGS_DURATION, _UWU_AUDIO_CANDIDATES, _UWU_DURATION, _UWU_OVERLAY_CANDIDATES, _WASTELAND_AUDIO_CANDIDATES, _WASTELAND_DURATION, _XMEN_AUDIO_CANDIDATES, _XMEN_DURATION, _alive_or_still, _human_size, io, is_image, logger, os
 
 def _munsters_audio_path() -> str:
     """First existing munsters mp3 from the candidate list ("" if none)."""
@@ -1300,6 +1300,48 @@ def wasteland_attachments(
         return [out], summary
     except Exception as e:
         logger.error(f"wasteland failed for {filename}: {e}", exc_info=True)
+        return [], f"❌ {filename}: {e}"
+
+
+def _nonematters_audio_path() -> str:
+    """First existing nonematters mp3 from the candidate list ("" if none)."""
+    for p in _NONEMATTERS_AUDIO_CANDIDATES:
+        if p and os.path.exists(p):
+            return p
+    return ""
+
+
+def add_nonematters(image_data: bytes, source_filename: str = "image.jpg") -> bytes:
+    """Turn a still image into a short MP4 playing Carl's "none of this matters". MP4 bytes."""
+    from app.services.media_service import image_audio_to_video
+    audio = _nonematters_audio_path()
+    if not audio:
+        raise RuntimeError("Nonematters audio (assets/nonematters.mp3) is missing on the server")
+    return image_audio_to_video(image_data, source_filename, audio, duration=_NONEMATTERS_DURATION)
+
+
+def nonematters_attachments(
+    attachments: List[Tuple[str, bytes, str]],
+) -> Tuple[List[OutputFile], str]:
+    """Turn the first image attachment into a nonematters MP4. Mirrors
+    mixalot_attachments (video output, routed through the bots' video path)."""
+    images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
+    if not images:
+        return [], "No image — attach an image first."
+    filename, data, _ = images[0]
+    data = [(_f, _d) for _f, _d, _c in images] if len(images) > 1 else data
+    stem = Path(filename).stem or "image"
+    try:
+        result = add_nonematters(data, filename)
+        out: OutputFile = {
+            "filename": f"{stem}_nonematters.mp4",
+            "data": result,
+            "content_type": "video/mp4",
+        }
+        summary = f"## 🤷 None of this matters\n\n🤷 {filename}: {_human_size(len(result))}"
+        return [out], summary
+    except Exception as e:
+        logger.error(f"nonematters failed for {filename}: {e}", exc_info=True)
         return [], f"❌ {filename}: {e}"
 
 
