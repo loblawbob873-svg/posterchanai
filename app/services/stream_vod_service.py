@@ -20,9 +20,12 @@ per-session VODs come from an **authoritative go-live marker**:
 Detection is trigger-independent and reconnect-safe: `process_pending()` (spawned by the stream-end reaper,
 ~30s) runs `_claim_ended_sessions()`, which for each marked dir whose newest segment has been idle for
 `_END_QUIET_S` (past any OBS reconnect) AND which MediaMTX confirms is no longer publishing, claims the
-session (or clears a stale marker that produced no footage). `_process()` then uploads — kill-switch +
-opt-in re-checked, concurrency-capped, and holding NO DB transaction across the multi-GB concat/hash/upload —
-and indexes a StreamVOD row, retrying failed jobs until `_MAX_JOB_AGE_S`. Never raises into the end path.
+session (or clears a stale marker that produced no footage). `_process()` then joins and COMPRESSES the
+segments (`_prepare_upload` — the same `media_service.compress_video*` pass every other upload gets; the
+raw source is what OBS happened to send, which is both huge and higher quality than any viewer was served)
+and uploads — kill-switch + opt-in re-checked, concurrency-capped, and holding NO DB transaction across the
+multi-GB transcode/hash/upload — then indexes a StreamVOD row, retrying failed jobs until `_MAX_JOB_AGE_S`.
+Never raises into the end path.
 """
 from __future__ import annotations
 
@@ -55,6 +58,10 @@ _STALE_S = 6 * 3600
 _MAX_JOB_AGE_S = 24 * 3600
 # Cap concurrent VOD uploads so an outage-recovery backlog can't exhaust the DB pool / storage node.
 _MAX_CONCURRENT_UPLOADS = 3
+# Ceiling on the compression pass (see _prepare_upload). Generous because it scales with stream LENGTH and
+# the fallback encoder is CPU libx264: a multi-hour stream can legitimately take hours. Overrunning is not
+# a data-loss event — it falls back to the -c copy concat — but it must stay well under _MAX_JOB_AGE_S.
+_COMPRESS_TIMEOUT_S = 6 * 3600
 
 _JOBS_SUBDIR = ".jobs"
 _GOLIVE_NAME = ".golive"
@@ -212,13 +219,19 @@ def _ffprobe_bin() -> str:
     return "ffprobe"
 
 
-async def _concat(files: list[str], staging: str) -> str:
-    """Join fmp4 segments with -c copy (no re-encode). Output is dot-prefixed so a retry's *.mp4 glob
-    never re-ingests it. Stays in the (tmpfs) staging dir, removed with it."""
+def _concat_list(files: list[str], staging: str) -> str:
+    """Write the ffmpeg concat-demuxer listing (dot-prefixed; never matched by the *.mp4 retry glob)."""
     listing = os.path.join(staging, ".concat.txt")
     with open(listing, "w") as f:
         for p in sorted(files):
             f.write("file '%s'\n" % p.replace("'", "'\\''"))
+    return listing
+
+
+async def _concat(files: list[str], staging: str) -> str:
+    """Join fmp4 segments with -c copy (no re-encode). Output is dot-prefixed so a retry's *.mp4 glob
+    never re-ingests it. Stays in the (tmpfs) staging dir, removed with it."""
+    listing = _concat_list(files, staging)
     out = os.path.join(staging, ".joined.mp4")
     ff = media_service.resolve_ffmpeg()
     proc = await asyncio.create_subprocess_exec(
@@ -230,6 +243,61 @@ async def _concat(files: list[str], staging: str) -> str:
     if proc.returncode != 0 or not os.path.exists(out):
         raise RuntimeError(f"ffmpeg concat failed (rc={proc.returncode}): {err[-300:].decode('utf-8', 'replace')}")
     return out
+
+
+async def _prepare_upload(files: list[str], staging: str) -> str:
+    """Produce the single MP4 to upload: the session's segments joined AND compressed.
+
+    Without this a VOD is whatever the streamer's encoder happened to send — a 2h 1080p60 @ 6 Mbps OBS
+    stream is ~5.4 GB parked in that user's Blossom drive forever. It's also quality NOBODY EVER SAW:
+    the bitrate clamp means viewers were served the 720p30 transcode, not the source. So the recording
+    runs through the SAME pass every other upload gets (`media_service.compress_video*` — H.264/AAC,
+    CRF, ≤1080p, NVENC → VAAPI → libx264 autodetect).
+
+    Two things this deliberately does NOT do:
+      * It does not concat first and then compress. The concat demuxer IS the compressor's input
+        (`input_args`), so one pass reads the segments and writes the final file — concat-then-encode
+        would materialise a full-size intermediate in a staging dir that is often tmpfs (RAM).
+      * It does not take GPUResourceLock. Same reasoning as the live clamp: H.264 encoding runs on the
+        GPU's media engine, separate silicon from the compute cores, so it doesn't contend with
+        LLM/image/music/video generation — and a multi-hour stream would hold the lock for hours.
+        Concurrency is already bounded by _upload_sem.
+
+    Compression must never cost the user their recording, so ANY failure — every encoder failing, the
+    timeout, or a result that came out BIGGER — falls back to the plain -c copy concat. That last case
+    is real, not defensive padding: re-encoding an already-thin source inflates it (a 304 kbit/s phone
+    publish measured 1447 kbit/s out through the live clamp), and a phone WHIP stream is exactly the
+    kind of source that lands here.
+    """
+    raw = 0
+    for f in files:
+        try:
+            raw += os.path.getsize(f)
+        except OSError:
+            pass
+    out = os.path.join(staging, ".compressed.mp4")
+    try:
+        await asyncio.to_thread(
+            media_service.compress_video_file,
+            _concat_list(files, staging), out,
+            input_args=["-f", "concat", "-safe", "0"],
+            timeout=_COMPRESS_TIMEOUT_S,
+        )
+        size = os.path.getsize(out)
+        if raw and size >= raw:
+            logger.info("[stream-vod] compression inflated %s (%d → %d bytes) — keeping the original",
+                        os.path.basename(staging), raw, size)
+        else:
+            logger.info("[stream-vod] compressed %s: %d → %d bytes", os.path.basename(staging), raw, size)
+            return out
+    except Exception as e:
+        logger.warning("[stream-vod] compression failed for %s (%s) — uploading the original",
+                       os.path.basename(staging), e)
+    try:
+        os.remove(out)
+    except OSError:
+        pass
+    return files[0] if len(files) == 1 else await _concat(files, staging)
 
 
 async def _duration_s(path: str) -> Optional[int]:
@@ -321,8 +389,8 @@ async def _process(staging: str) -> None:
             logger.warning("[stream-vod] Blossom backend is not a storage proxy — this VOD is written to "
                            "LOCAL disk (defeats the RAM→storage-node design). Configure a storage server.")
 
-        async with _upload_sem:            # bound concurrent uploads (pool / storage protection)
-            out = files[0] if len(files) == 1 else await _concat(files, staging)
+        async with _upload_sem:            # bound concurrent uploads + transcodes (pool / storage protection)
+            out = await _prepare_upload(files, staging)
             duration = await _duration_s(out)
             db2 = SessionLocal()           # fresh session for the write phase (save_blob_file manages its txn)
             try:

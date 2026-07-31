@@ -631,6 +631,102 @@ async def client_stt(audio: UploadFile = File(...), language: str = Form("auto")
     return JSONResponse({"text": text or "", "lang": lang or ""})
 
 
+# Bound concurrent transcodes. This is an unauthenticated same-origin helper (same call as /stt and
+# /narrate), and unlike those a video re-encode can run for minutes — without a cap a handful of tabs
+# could pin every core. It deliberately does NOT take GPUResourceLock: H.264 encoding runs on the GPU's
+# media engine, separate silicon from the compute cores, so it doesn't contend with LLM/image/music/video
+# generation (same reasoning as the live stream clamp).
+_COMPRESS_VIDEO_SEM = asyncio.Semaphore(2)
+# Hard ceiling on one upload. The realistic case is a phone clip; a multi-GB file can't reach here anyway
+# (Cloudflare caps the public path well below this), and streaming it to disk first would only turn a fast
+# rejection into a slow one. Note the scratch files land in TMPDIR, which is tmpfs (RAM) on these nodes —
+# so the real cost of this number is `_COMPRESS_VIDEO_SEM * 2 * MAX` of RAM in the worst case.
+_COMPRESS_VIDEO_MAX = 512 * 1024 * 1024
+
+
+@router.post("/media/compress-video")
+async def client_compress_video(file: UploadFile = File(...)):
+    """Compress a video before it's uploaded to a media server — the video half of what `compressImage`
+    does in the browser for stills, which returns non-images untouched (so posted clips went up at full
+    size). The client uploads here, gets the smaller file back, and it's THAT it hashes and pushes to
+    Blossom — the blob is addressed by its sha256, so the server can't re-encode after the fact without
+    invalidating the URL already written into the note.
+
+    Same-origin helper, no app-user auth (matches /stt and /narrate).
+
+    The upload is streamed to disk in chunks and handed to `compress_video_file` as a PATH: reading a
+    video into memory costs its full size several times over, which is exactly the trap that made the
+    base64/WebSocket path fail on large files.
+    """
+    import shutil as _shutil
+    import tempfile as _tempfile
+    from starlette.background import BackgroundTask
+    from app.services import media_service
+
+    if not media_service.ffmpeg_available():
+        return JSONResponse({"error": "video compression unavailable"}, status_code=503)
+
+    # Keep the client's extension (ffmpeg picks its demuxer from it) but only the shape of one — the
+    # filename is client-supplied and gets joined into a path here.
+    _ext = os.path.splitext(file.filename or "")[1][:8].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{2,7}", _ext or ""):
+        _ext = ".mp4"
+    tmp_dir = _tempfile.mkdtemp(prefix="client_compress_")
+    in_path = os.path.join(tmp_dir, "input" + _ext)
+    out_path = os.path.join(tmp_dir, "output.mp4")
+    keep_tmp = False   # set only when the response STREAMS out of tmp_dir and cleans up after itself
+    try:
+        size = 0
+        try:
+            with open(in_path, "wb") as fh:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > _COMPRESS_VIDEO_MAX:
+                        return JSONResponse(
+                            {"error": "that video is too large to compress here "
+                                      f"({_COMPRESS_VIDEO_MAX // (1024 * 1024)} MB max)"},
+                            status_code=413)
+                    fh.write(chunk)
+        except Exception as e:
+            logger.warning(f"[client] compress-video upload failed: {e}")
+            return JSONResponse({"error": "bad upload"}, status_code=400)
+        if not size:
+            return JSONResponse({"error": "empty upload"}, status_code=400)
+
+        async with _COMPRESS_VIDEO_SEM:
+            try:
+                await asyncio.to_thread(media_service.compress_video_file, in_path, out_path)
+            except Exception as e:
+                logger.warning(f"[client] compress-video failed: {e}")
+                return JSONResponse({"error": "compression failed"}, status_code=503)
+
+        out_size = os.path.getsize(out_path)
+        # Never hand back something BIGGER. Re-encoding an already-thin clip inflates it (the same trap
+        # the live clamp and the stream-VOD path both guard against), and the client would then upload
+        # the worse file. 204 = "nothing better to offer, keep your original".
+        if out_size >= size:
+            logger.info("[client] compress-video: %d → %d bytes (inflated) — keeping the original",
+                        size, out_size)
+            return Response(status_code=204)
+        logger.info("[client] compress-video: %d → %d bytes", size, out_size)
+        # STREAM it back rather than reading it into memory: the result can be hundreds of MB, and with
+        # two of these allowed at once that would be a GB of transient RAM on a box that is also holding
+        # LLM/image models. The temp dir therefore can't be torn down in `finally` — the file is still
+        # being read as the response is sent — so cleanup rides along as a background task instead.
+        keep_tmp = True
+        return FileResponse(
+            out_path, media_type="video/mp4", filename="compressed.mp4",
+            headers={"X-Original-Size": str(size), "X-Compressed-Size": str(out_size)},
+            background=BackgroundTask(_shutil.rmtree, tmp_dir, ignore_errors=True),
+        )
+    finally:
+        if not keep_tmp:
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @router.post("/summarize")
 async def client_summarize(request: Request, db: Session = Depends(get_db)):
     """Summarize a post/thread via the node's own LLM — powers the timeline 'Summary' action. The

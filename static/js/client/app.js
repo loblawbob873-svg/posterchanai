@@ -10057,6 +10057,47 @@
       return new File([blob], (file.name||'image').replace(/\.\w+$/,'')+'.'+ext, {type:outType});
     }catch(_){ return file; }
   }
+  // The video half of compressImage, which returns any NON-image untouched — so a phone clip attached to
+  // a post uploaded at full size (a few hundred MB is normal for a modern phone). The browser can't do
+  // this itself: there's no ffmpeg.wasm in this app (and the CSP/self-hosting rules out pulling one from
+  // a CDN), so it hands the file to the node's GPU ffmpeg and uploads what comes back.
+  // ALWAYS returns a File. Every failure path — offline, 503, too large, or a result that came out BIGGER
+  // (re-encoding an already-thin clip inflates it) — keeps the original, because compression must never
+  // cost the user their post.
+  // Type OR extension: a browser hands over .mkv/.avi with an EMPTY type often enough that a type-only
+  // test would quietly skip exactly the chunky files this exists for. Same predicate everywhere, so the
+  // post composer and the AI chat can't disagree about what counts as a video.
+  function _isVideoFile(file){
+    if(/^video\//.test((file.type||'').toLowerCase())) return true;
+    return /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(file.name||'');
+  }
+  async function compressVideo(file){
+    try{
+      if(!_isVideoFile(file)) return file;
+      if(file.size <= 2*1024*1024) return file;      // already small — not worth the round trip
+      if(file.size > 512*1024*1024) return file;     // over the server's cap; don't spend the upload to be told
+      const fd=new FormData(); fd.append('file', file, file.name||'video.mp4');
+      const r=await fetch('/client/media/compress-video',{method:'POST',body:fd});
+      if(r.status===204 || !r.ok) return file;       // 204 = server had nothing smaller to offer
+      const blob=await r.blob();
+      if(!blob || !blob.size || blob.size>=file.size) return file;
+      return new File([blob], (file.name||'video').replace(/\.\w+$/,'')+'.mp4', {type:'video/mp4'});
+    }catch(_){ return file; }
+  }
+  // Files that have already been through compressMedia. _signUploadBatch runs the pass to hash what it
+  // will send, hands the RESULT to uploadBlob, and uploadBlob runs the pass again — harmless for images
+  // (the second call early-returns on an already-small file) but for VIDEO that would be a second upload
+  // to the node and a second re-encode: double the wait, and a needless extra generation of quality loss.
+  const _preparedForUpload = new WeakSet();
+  // ONE entry point for "prepare this file for upload", so THE BYTES WE HASH ARE THE BYTES WE SEND.
+  // uploadBlob and _signUploadBatch must run the identical pass or the batch auth's `x` tags won't match
+  // the uploaded blob, and every file falls back to its own signature — one Amber prompt per clip.
+  async function compressMedia(file){
+    if(_preparedForUpload.has(file)) return file;
+    const out = _isVideoFile(file) ? await compressVideo(file) : await compressImage(file);
+    try{ _preparedForUpload.add(out); }catch(_){}
+    return out;
+  }
   // NIP-96 upload (nostr.build et al.): discover the endpoint from /.well-known/nostr/nip96.json,
   // POST multipart with a NIP-98 (kind-27235) Authorization header, and read the file URL out of the
   // returned nip94_event tags. Used when the target proto is 'nip96' (Blossom uploadBlob can't talk to it).
@@ -10089,7 +10130,7 @@
       const hashes=[];
       const prepped=[];
       for(const f of files){
-        const c=await compressImage(f);            // hash what we will ACTUALLY send
+        const c=await compressMedia(f);            // hash what we will ACTUALLY send (images AND video)
         const buf=await c.arrayBuffer();
         hashes.push(await sha256hex(buf)); prepped.push(c);
       }
@@ -10121,7 +10162,7 @@
     // auto-fallback — keep it on the built-in server even if that surfaces a permission error.
     if(opts&&opts.noMirror && tgt.proto==='nip96' && !ClientSettings.get('blossomEnabled')) tgt=_blossomBuiltin();
     const server=tgt.url; if(!server) throw new Error('no media server set');
-    file=await compressImage(file);   // auto-compress images (no-op for video/gif/already-small)
+    file=await compressMedia(file);   // auto-compress images AND video (no-op for gif/svg/already-small)
     if(tgt.proto==='nip96') return await uploadNip96(file, server);
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
@@ -14964,6 +15005,13 @@
       toast('attached');
     }catch(e){ toast('couldn\'t attach: '+((e&&e.message)||e)); }
   }
+  // Ceiling on ONE AI-chat attachment. The file travels base64 (4/3 the raw size) inside a JSON frame on
+  // the chat WebSocket, and run.py caps a frame at 64 MB (ws_max_size) — so ~44 MB raw is the real limit.
+  // Long before that, readAsDataURL itself throws: a 1.28 GB stream recording becomes a ~1.7 GB string,
+  // past V8's ~512 MB maximum string length. That throw used to be swallowed by a bare `catch(_){}`, so
+  // the file silently never attached and `compress` answered "attach an image, video or PDF" — which read
+  // as "we don't compress video" when the bytes had simply never left the browser.
+  const AI_MAX_ATTACH = 44*1024*1024;
   async function aiAddFiles(files){
     for(const f of files){
       const ext=(f.name.split('.').pop()||'').toLowerCase();
@@ -14979,11 +15027,21 @@
           // SOCIAL uploads only.) Safety cap ONLY: a truly huge photo (>8MB) would make a multi-MB base64 WS
           // payload that stalls the send, so those get a GENTLE reduce (high quality 0.85, 6MB cap); anything
           // ≤8MB passes through untouched.
-          const src = (kind==='image' && f.size > 8*1024*1024) ? await compressImage(f, {maxBytes: 6*1024*1024, minQ: 0.85}) : f;
+          let src = (kind==='image' && f.size > 8*1024*1024) ? await compressImage(f, {maxBytes: 6*1024*1024, minQ: 0.85}) : f;
+          // An over-size VIDEO gets one chance to fit: shrink it on the node first. That's what `compress`
+          // would have done to it anyway, so a clip that's merely chunky now works instead of being refused.
+          if(kind==='video' && src.size > AI_MAX_ATTACH){
+            toast('🗜 compressing '+f.name+'…');
+            src = await compressVideo(src);
+          }
+          if(src.size > AI_MAX_ATTACH){
+            toast(`${f.name} is too big to attach (${Math.round(src.size/1048576)} MB — ${Math.round(AI_MAX_ATTACH/1048576)} MB max)`);
+            continue;
+          }
           const b64=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]||''); r.onerror=rej; r.readAsDataURL(src); });
           _ai.attach.push({kind, name:f.name, ext, b64});
         }
-      }catch(_){}
+      }catch(e){ toast(`couldn't attach ${f.name}: ${(e&&e.message)||e}`); }   // never swallow — a silent drop looks like a broken command
     }
     aiRenderAttach();
   }

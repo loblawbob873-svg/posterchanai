@@ -350,8 +350,13 @@ def _video_encoder_candidates(ffmpeg: str) -> list:
     return cands
 
 
-def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset):
-    """Build the ffmpeg command for a specific H.264 encoder."""
+def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args=None):
+    """Build the ffmpeg command for a specific H.264 encoder.
+
+    `input_args` goes immediately before `-i` for callers whose input isn't a plain file — the only
+    user today is the concat demuxer (`-f concat -safe 0`), which lets a multi-segment live-stream
+    recording be joined and compressed in ONE pass instead of writing a full-size intermediate.
+    """
     pre, vf = [], scale_filter
     if encoder == "h264_nvenc":
         venc = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', str(crf)]
@@ -363,10 +368,63 @@ def _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, pre
         venc = ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', str(crf), '-qp_p', str(crf)]
     else:  # libx264
         venc = ['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)]
-    return [ffmpeg] + pre + ['-i', in_path, '-vf', vf] + venc + [
+    return [ffmpeg] + pre + list(input_args or []) + ['-i', in_path, '-vf', vf] + venc + [
         '-c:a', 'aac', '-b:a', VIDEO_AUDIO_BITRATE,
         '-movflags', '+faststart', '-y', out_path,
     ]
+
+
+def compress_video_file(
+    in_path: str,
+    out_path: str,
+    crf: int = VIDEO_CRF,
+    preset: str = VIDEO_PRESET,
+    max_resolution: Tuple[int, int] = VIDEO_MAX_RESOLUTION,
+    input_args=None,
+    timeout: int = 3600,
+) -> str:
+    """Compress a video FILE→FILE (H.264/AAC, downscaled). Returns `out_path`.
+
+    This is the actual compression pass; `compress_video` is a bytes-in/bytes-out wrapper over it.
+    Multi-GB inputs (a live-stream recording) must use this path — the bytes API holds the whole
+    file, its temp copy AND the result in memory, which for a 2h 1080p60 stream is several GB each.
+
+    Uses GPU acceleration when available (NVENC on NVIDIA, VAAPI on Intel Arc/AMD) and falls back to
+    libx264 (CPU) if the GPU encoder is unavailable or fails. Raises RuntimeError if ffmpeg is
+    unavailable or every encoder fails. Blocking — call it via asyncio.to_thread from async code.
+    """
+    global _video_encoder_cache
+    ffmpeg = resolve_ffmpeg()
+    if not ffmpeg_available():
+        raise RuntimeError("ffmpeg is not installed on the server")
+
+    max_w, max_h = max_resolution
+    # Scale down to fit within max resolution, keep aspect ratio, even dims.
+    scale_filter = (
+        f"scale='min({max_w},iw)':'min({max_h},ih)':"
+        f"force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    )
+
+    candidates = _video_encoder_candidates(ffmpeg)
+    # Try the previously-working encoder first to avoid re-failing GPU probes.
+    if _video_encoder_cache and _video_encoder_cache in candidates:
+        candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
+
+    last_err = ""
+    for encoder in candidates:
+        cmd = _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset, input_args)
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout, text=True)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            if encoder != "libx264":
+                logger.info(f"Video compressed with GPU encoder: {encoder}")
+            _video_encoder_cache = encoder
+            return out_path
+        last_err = (result.stderr or "")[-300:]
+        logger.warning(f"Video encoder {encoder} failed, trying next: {last_err}")
+        if os.path.exists(out_path):
+            os.unlink(out_path)
+
+    raise RuntimeError(f"video compression failed (tried {candidates}): {last_err}")
 
 
 def compress_video(
@@ -378,15 +436,9 @@ def compress_video(
 ) -> bytes:
     """Compress a video with ffmpeg (H.264/AAC, downscaled). Returns MP4 bytes.
 
-    Uses GPU acceleration when available (NVENC on NVIDIA, VAAPI on Intel Arc/AMD)
-    and falls back to libx264 (CPU) if the GPU encoder is unavailable or fails.
-    Raises RuntimeError if ffmpeg is unavailable or every encoder fails.
+    Thin bytes wrapper over `compress_video_file` — see there for the encoder fallback chain. For a
+    file already on disk (especially a large one) call that directly instead.
     """
-    global _video_encoder_cache
-    ffmpeg = resolve_ffmpeg()
-    if not ffmpeg_available():
-        raise RuntimeError("ffmpeg is not installed on the server")
-
     tmp_dir = tempfile.mkdtemp(prefix="media_compress_")
     in_suffix = _ext(source_filename) or ".mp4"
     in_path = os.path.join(tmp_dir, f"input{in_suffix}")
@@ -394,35 +446,9 @@ def compress_video(
     try:
         with open(in_path, "wb") as f:
             f.write(data)
-
-        max_w, max_h = max_resolution
-        # Scale down to fit within max resolution, keep aspect ratio, even dims.
-        scale_filter = (
-            f"scale='min({max_w},iw)':'min({max_h},ih)':"
-            f"force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
-        )
-
-        candidates = _video_encoder_candidates(ffmpeg)
-        # Try the previously-working encoder first to avoid re-failing GPU probes.
-        if _video_encoder_cache and _video_encoder_cache in candidates:
-            candidates = [_video_encoder_cache] + [c for c in candidates if c != _video_encoder_cache]
-
-        last_err = ""
-        for encoder in candidates:
-            cmd = _video_encode_cmd(ffmpeg, encoder, in_path, out_path, scale_filter, crf, preset)
-            result = subprocess.run(cmd, capture_output=True, timeout=3600, text=True)
-            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                if encoder != "libx264":
-                    logger.info(f"Video compressed with GPU encoder: {encoder}")
-                _video_encoder_cache = encoder
-                with open(out_path, "rb") as f:
-                    return f.read()
-            last_err = (result.stderr or "")[-300:]
-            logger.warning(f"Video encoder {encoder} failed, trying next: {last_err}")
-            if os.path.exists(out_path):
-                os.unlink(out_path)
-
-        raise RuntimeError(f"video compression failed (tried {candidates}): {last_err}")
+        compress_video_file(in_path, out_path, crf=crf, preset=preset, max_resolution=max_resolution)
+        with open(out_path, "rb") as f:
+            return f.read()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
