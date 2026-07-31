@@ -170,16 +170,27 @@ async def generate_voice(db: Session, text: str, reference: bytes,
 
     order = await _rotated(candidates)
 
-    # Busy-aware: probe the remote candidates concurrently and put the idle ones first. Probing is
-    # best-effort and bounded — a slow probe must never cost more than it saves.
+    # Busy-aware, WITHOUT becoming "always prefer the remote". Two things this gets right that the
+    # first cut did not:
+    #
+    #   * It probes whenever there is ANY remote, not only 2+. The common deployment is exactly one
+    #     other node, and skipping the probe there is skipping it in practice: a busy node still won
+    #     its turn and the request queued behind a job that can run for minutes.
+    #   * It only ever DEMOTES a node it knows is busy — it does not promote idle ones. Promoting
+    #     would mean the single remote goes first every time it is free, which is not round-robin any
+    #     more; the shared load_balancer is round-robin + health, and voice has no business inventing
+    #     a different policy for the same node list.
+    #
+    # `None` (can't tell — unreachable, or an older build with no status endpoint) counts as NOT busy,
+    # so an unreachable status endpoint is never mistaken for evidence of a busy GPU.
     remote = [c for c in order if c != "local"]
-    if len(remote) > 1:
+    if remote:
         try:
-            busy = await asyncio.wait_for(
+            probed = await asyncio.wait_for(
                 asyncio.gather(*[is_busy(u) for u in remote], return_exceptions=True), timeout=4.0)
-            idle = [u for u, b in zip(remote, busy) if b is False]
-            rest = [u for u in order if u not in idle]
-            order = idle + rest
+            busy = {u for u, b in zip(remote, probed) if b is True}
+            if busy:
+                order = [c for c in order if c not in busy] + [c for c in order if c in busy]
         except Exception:
             pass
 
