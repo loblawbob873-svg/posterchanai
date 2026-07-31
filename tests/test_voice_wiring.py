@@ -258,6 +258,16 @@ class VoiceClientUI(unittest.TestCase):
                       "read empty for a moment (EOSE racing the event), and acting on that first look "
                       "replaces a real library with one entry")
 
+    def test_voice_speak_receives_the_opts_it_reads(self):
+        """voiceSpeak reads opts.onTake, but opts belongs to openVoiceStudio and this is a SIBLING
+        function — so without a parameter it is a ReferenceError that only fires once the generation
+        has finished, i.e. after ~2 minutes of GPU ("voice failed: opts is not defined"). node --check
+        cannot see this: it parses fine."""
+        js = _read("static/js/client/app.js")
+        self.assertIn("async function voiceSpeak(voice, text, root, opts)", js)
+        self.assertIn("voiceSpeak(v, t, root, opts)", js,
+                      "the call site must pass opts through, or the parameter is always undefined")
+
     def test_a_take_survives_the_modal_closing(self):
         """The modal is dismissed by tapping the backdrop, and a generation runs for a minute or more —
         so the modal is very often gone by the time the audio arrives. Appending into a detached node

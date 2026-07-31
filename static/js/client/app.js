@@ -14139,7 +14139,10 @@
     }catch(e){ toast('couldn’t save that voice: '+((e&&e.message)||e)); }
   }
 
-  async function voiceSpeak(voice, text, root){
+  // `opts` is threaded in EXPLICITLY. It belongs to openVoiceStudio, and this is a sibling function —
+  // reading it here without a parameter is a ReferenceError that only fires once a generation has
+  // already finished, i.e. after ~2 minutes of GPU, reported as "voice failed: opts is not defined".
+  async function voiceSpeak(voice, text, root, opts){
     const st = root && root.querySelector('#vs-status');
     const say = (m)=>{ if(st) st.textContent = m; };
     try{
@@ -14327,7 +14330,7 @@
         if(!v){ toast('add a voice first'); return; }
         const t=(root.querySelector('#vs-text').value||'').trim();
         if(!t){ toast('type what it should say'); return; }
-        voiceSpeak(v, t, root);
+        voiceSpeak(v, t, root, opts);
       };
       root.querySelector('#vs-go').onclick=go;
       // Ctrl/Cmd+Enter sends, like every other composer here. Plain Enter must NOT — this box holds
