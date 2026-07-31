@@ -14157,15 +14157,30 @@
       fd.append('text', text);
       fd.append('pubkey', ME.pubkey);
       fd.append('auth', auth);
-      // A generation runs at roughly 10x realtime and queues behind every other GPU task on the
-      // node, so say so. Silence here reads as a hung app, which is how people end up firing three
-      // more requests at a GPU that is already busy with the first.
-      say('generating… this holds the server’s GPU, so it can take a minute');
-      const r = await fetch('/client/voice/speak', { method:'POST', body: fd });
+      // A generation runs at roughly 10x realtime — 91 characters measured 138s on the Arc, about
+      // half that on the CUDA node — and queues behind every other GPU task. A STATIC line reads as
+      // hung at that length, which is how people end up firing more requests at a GPU already busy
+      // with the first (and collecting 429s). So count UP, and give a length-based estimate so the
+      // number has something to be measured against.
+      const started = Date.now();
+      const est = Math.max(20, Math.round(text.length * 1.2));   // ~1.2s/char, the slower node
+      let tick = setInterval(()=>{
+        const el = Math.round((Date.now()-started)/1000);
+        say(el > est * 1.5
+          ? `still going — ${el}s. Long lines really do take this long; it is not stuck.`
+          : `speaking… ${el}s of about ${est}s. This holds the server’s GPU, so one at a time.`);
+      }, 1000);
+      let r;
+      try{ r = await fetch('/client/voice/speak', { method:'POST', body: fd }); }
+      finally{ clearInterval(tick); }
       if(!r.ok){
         let msg = 'HTTP '+r.status;
         try{ const j = await r.json(); msg = j.detail || j.error || msg; }catch(_){}
-        say(''); toast(msg); return;
+        // 429 is the one-at-a-time guard, not a failure — a voice generation holds the node's GPU
+        // outright. Saying so in the status line (not just a toast that vanishes) is what stops
+        // someone pressing Speak repeatedly and collecting more of them.
+        say(r.status === 429 ? msg : '');
+        toast(msg); return;
       }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
@@ -14257,6 +14272,8 @@
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Voices</h3>
       <p class="muted small">Give it a few seconds of someone speaking and it can say anything in that
         voice. Nothing is trained — the clip itself is the voice, so you can add one in a minute.</p>
+      <p class="muted small">Speaking runs on the server's GPU at roughly ten times realtime: a short
+        phrase takes half a minute, a couple of sentences a few minutes. One at a time.</p>
       ${q}
       <div class="vs-list">${rows}</div>
       <div class="fx-row" style="display:flex;gap:6px;margin:10px 0">
