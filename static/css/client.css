@@ -4291,7 +4291,9 @@ svg.mb-e{margin-right:0}
 .mb-tlf{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--muted)}
 .mb-tlf .input{width:auto;min-width:74px;margin:0;padding:5px 8px}
 .mb-zoom{display:inline-flex;align-items:center;gap:6px}
-.mb-zoom b{min-width:30px;text-align:center;font-size:12px;color:var(--cyan)}
+/* Wide enough for "0.13×" as well as "1×": the label sits BETWEEN the steppers, so a label that
+   changes width shoves the buttons sideways under the thumb that is pressing them. */
+.mb-zoom b{min-width:44px;text-align:center;font-size:12px;color:var(--cyan)}
 .mb-zb{width:30px;height:28px;line-height:1;padding:0;font-size:15px;cursor:pointer;color:var(--muted);
   background:var(--panel2);border:1px solid var(--line);border-radius:7px}
 .mb-zb:hover{color:var(--fg);border-color:var(--neon)}

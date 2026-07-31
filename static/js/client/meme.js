@@ -26,11 +26,11 @@
     ({ toast, uploadBlob, selfProof, uiConfirm, uiPrompt } = PC);
     bindKeys();          // ONCE, on the document — see bindKeys for why not per render()
     window.PCMeme = {
-      render(){ ME = PC.ME; P = load(); render(); },
+      render(){ ME = PC.ME; P = load(); _fitNext = true; render(); },
       // Persist on the way OUT too. Every edit already saves, but leaving the view is exactly when a
       // missed save becomes 'my project came back different', so make it unconditional.
       unmount(){ try{ stopPlay(false); }catch(_){ if(_playT){ clearInterval(_playT); _playT=null; } } try{ if(P) save(); }catch(_){ } },
-      reset(){ P = blank(); sel=null; save(); render(); },
+      reset(){ P = blank(); sel=null; _fitNext = true; save(); render(); },
       // Seed a layer from a URL — how a post gets "opened in" the Meme Builder. Mirrors what the
       // Blossom picker does (addLayer takes the url directly), but callable from outside the module.
       // ME/P are loaded first because this can arrive before render() has ever run for this session.
@@ -776,8 +776,11 @@
         <span class="mb-spacer"></span>
         <span class="mb-zoom">
           <button class="mb-zb" id="mb-zoomout" title="Zoom out" aria-label="Zoom the timeline out">−</button>
-          <b id="mb-zoomlbl">${_zoom()%1?_zoom().toFixed(1):_zoom()}×</b>
+          <b id="mb-zoomlbl">${_zoomLbl(_zoom())}</b>
           <button class="mb-zb" id="mb-zoomin" title="Zoom in — a long build is unreadable at 1×" aria-label="Zoom the timeline in">+</button>
+          ${/* One click back to "show me the whole thing". A fixed px/second lane means a long build runs
+                off the side, and hunting for how many times to press − to get it back is the tedious part. */''}
+          <button class="mb-zb mb-zfit" id="mb-zoomfit" title="Fit the whole build in the timeline" aria-label="Fit the timeline to the build">⤢</button>
         </span>
         <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead.</span>
       </div>` : ''}
@@ -822,18 +825,22 @@
   // Implemented as the WIDTH of the scrolling content — every clip bar and ruler tick is positioned in %,
   // and the playhead measures a real lane, so they all scale from this one number with no other maths.
   // A LADDER rather than a multiplier, so the label is always a round number you can aim back at.
-  const _ZOOMS = [1, 2, 3, 4, 6, 8, 12];
-  const _zoom = () => clamp(P.zoom == null ? 1 : P.zoom, 1, 12);
+  // Below 1x matters now: the lane is a fixed px/second, so 1x is a SCALE, not "the whole project".
+  // Without these a long build could not be seen end to end at all — you could only scroll it.
+  const _ZOOMS = [0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12];
+  const ZOOM_MIN = 0.05, ZOOM_MAX = 12;
+  const _zoom = () => clamp(P.zoom == null ? 1 : P.zoom, ZOOM_MIN, ZOOM_MAX);
+  const _zoomLbl = (z) => (+(+z).toFixed(2)) + '\u00d7';
   function setZoom(z){
     const prev = _zoom();
-    P.zoom = clamp(z, 1, 12);
+    P.zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
     if(P.zoom === prev) return;
     save();
     const port = document.getElementById('mb-timeline');
     const s = document.getElementById('mb-scrub');
     repaint('timeline');          // rebuilds the lanes; the toolbar (and its listeners) survives
     const lbl = document.getElementById('mb-zoomlbl');
-    if(lbl) lbl.textContent = (P.zoom % 1 ? P.zoom.toFixed(1) : P.zoom) + '×';
+    if(lbl) lbl.textContent = _zoomLbl(P.zoom);
     // Keep the playhead on screen. Zooming in on a timeline and being left looking at second 0 while the
     // playhead is off to the right is the thing that makes editor zoom feel broken.
     if(port){
@@ -855,6 +862,38 @@
   // clip TO — the trailing empty space grows and shrinks, which is the only thing an edit now moves.
   const TL_MIN_SPAN = 8, TL_TAIL = 2;
   const tlSpan = () => Math.max(TL_MIN_SPAN, projEnd() + TL_TAIL);
+  // The zoom at which the WHOLE build just fits the timeline panel. Read back from the live element and
+  // the same custom properties the lane is sized from, so it cannot drift from the CSS (or from whichever
+  // breakpoint is in force). Returns null before the timeline exists — callers just do nothing.
+  //
+  // Applied only when ENTERING the builder and on an explicit ⤢. Never on an edit: re-fitting as you work
+  // is precisely the rescale-on-every-change that made every other bar move when you re-timed one clip,
+  // and it would undo the whole point of the fixed scale. Deliberately NOT on resize either — a phone
+  // fires one every time the keyboard opens, so the scale would jump out from under a value being typed.
+  function fitZoom(){
+    const port = document.getElementById('mb-timeline');
+    const inner = document.getElementById('mb-tlinner');
+    if(!port || !inner) return null;
+    const pcs = getComputedStyle(port), ics = getComputedStyle(inner);
+    const avail = port.clientWidth - parseFloat(pcs.paddingLeft || 0) - parseFloat(pcs.paddingRight || 0);
+    const nameW = parseFloat(ics.getPropertyValue('--mb-name-w')) || 72;
+    const pps = parseFloat(ics.getPropertyValue('--mb-pps')) || 56;
+    const lane = avail - nameW;
+    if(!(lane > 40) || !(pps > 0)) return null;
+    return clamp(lane / (tlSpan() * pps), ZOOM_MIN, ZOOM_MAX);
+  }
+  // Set by the entry points below, consumed once by render(). A flag rather than a call inside render()
+  // because render() is the FULL rebuild that most edits trigger — fitting there would re-fit on every
+  // delete, Fill, restack and template, which is the jitter this whole design removes.
+  let _fitNext = true;
+  function _applyFitIfPending(){
+    if(!_fitNext) return;
+    _fitNext = false;
+    const z = fitZoom();
+    // Only ever zoom OUT to fit on entry. Blowing a two-second meme up to 6x because it "fits" is not what
+    // fit means to anyone — the point is that nothing is off-screen, not that everything is huge.
+    if(z && z < _zoom() - 0.01) setZoom(z);
+  }
   // The NARROWEST --mb-pps in client.css (the phone value). Only the ruler needs a number here, and only
   // to decide tick spacing — picking the smallest means labels that clear each other on a phone clear
   // each other everywhere, so this cannot go subtly wrong on one breakpoint. The LAYOUT never reads it:
@@ -2742,6 +2781,9 @@
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
     bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root);
+    // After the lanes exist (fitZoom measures them) and before the toolbar is wired, so the ⤢/± buttons
+    // bound below already show the zoom that was applied. No-op unless something asked to fit.
+    _applyFitIfPending();
     const on=(id,ev,fn)=>{ const e=root.querySelector('#'+id); if(e) e.addEventListener(ev,fn); };
     root.querySelectorAll('.mb-tab').forEach(b=>b.addEventListener('click',()=>_showTab(b.dataset.tab)));
     on('mb-add-media','click',pickMedia);
@@ -2763,8 +2805,11 @@
       save(); render();
       toast(_xfade() ? `${_xfade()}s crossfade — clips now overlap` : 'hard cuts — clips laid back-to-back');
     });
-    on('mb-zoomin','click',()=>setZoom(_ZOOMS[Math.min(_ZOOMS.length-1, _ZOOMS.indexOf(_zoom())+1)] || _zoom()*2));
-    on('mb-zoomout','click',()=>{ const i=_ZOOMS.indexOf(_zoom()); setZoom(i>0 ? _ZOOMS[i-1] : 1); });
+    // Walk to the next ladder rung in that direction from wherever we are — indexOf is no good once Fit
+    // has set an off-ladder zoom like 0.37x, which is exactly when you most want to step out of it.
+    on('mb-zoomin','click',()=>setZoom(_ZOOMS.find(z=>z>_zoom()+1e-6) || ZOOM_MAX));
+    on('mb-zoomout','click',()=>setZoom([..._ZOOMS].reverse().find(z=>z<_zoom()-1e-6) || ZOOM_MIN));
+    on('mb-zoomfit','click',()=>{ const z=fitZoom(); if(z) setZoom(z); });
     on('mb-render','click',doRender);
     on('mb-play','click',()=>togglePlay());
     on('mb-scrub','input',(e)=>seek(+e.target.value));
