@@ -218,8 +218,10 @@ class VoiceClientUI(unittest.TestCase):
         block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
         self.assertIn("Relay.ready(", block,
                       "voicesRead must ask the CONNECTION whether it is live")
-        self.assertIn("return [];", block,
-                      "connected + nothing found must mean an empty library, not a failed read")
+        self.assertIn("Three live reads, nothing there", block,
+                      "an empty result must be RETRIED before being called empty — a live socket can "
+                      "read empty for a moment (EOSE racing the event), and acting on that first look "
+                      "replaces a real library with one entry")
 
     def test_library_write_refuses_on_a_failed_read(self):
         """kind-30078 is REPLACEABLE: writing a list built on an empty/failed read replaces the whole

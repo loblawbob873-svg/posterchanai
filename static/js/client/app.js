@@ -13652,7 +13652,7 @@
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
         <button class="mini" id="ai-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><input type="file" id="ai-file" multiple hidden>
-        <button class="mini" id="ai-make" title="Make something (image, song, video…)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
+        <button class="mini" id="ai-make" title="Make something (image, song, video, a cloned voice…)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button>
         <button class="mini" id="ai-mic" title="Voice input (speech-to-text)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
         <textarea id="ai-input" class="input" rows="1" placeholder="Message PosterChan AI…  (try: geni a neon city, or /help)"></textarea>
         <button class="btn btn-neon" id="ai-send" aria-label="Send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
@@ -14039,16 +14039,20 @@
     let live = false;
     try{ live = await Relay.ready(3000); }catch(_){ live = false; }
     if(!live) return null;
+    // Retry on EMPTY as well as on error, and only call it empty once the retries are spent. A socket
+    // can be live and still read empty for a moment — freshly connected, EOSE racing the event — and
+    // returning [] on that first look would let the next save replace a real library with one entry.
+    // The cost is ~1.4s on a genuinely first save; the alternative is silently losing someone's voices.
     for(let a=0; a<3; a++){
       if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{
         const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[VOICES_D], limit:1 }]);
         const ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
-        if(!ev) return [];        // connected and nothing there → a genuinely empty library
-        try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; }
-      }catch(_){}                 // the QUERY failed (not "found nothing") → retry, then give up
+        if(ev){ try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; } }
+      }catch(_){}                 // the QUERY failed (not "found nothing") → retry
     }
-    return null;
+    // Three live reads, nothing there. Now it is genuinely an empty library, so a first save can start.
+    return [];
   }
   let _voicesChain = Promise.resolve();
   // Serialised read-modify-write, and it REFUSES to write when the read failed. This doc is
