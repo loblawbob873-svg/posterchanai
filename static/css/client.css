@@ -4193,10 +4193,19 @@ svg.mb-e{margin-right:0}
 .mb-bgrow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
 .mb-bgrow input[type=color]{flex:0 0 auto;width:46px;height:36px;padding:2px;background:var(--panel2);
   border:1px solid var(--line);border-radius:8px;cursor:pointer}
-/* ➕ More sheet: each source gets a line saying what it is — the room the toolbar buttons never had. */
+/* "Add to the meme" sheet: each source gets a line saying what it is — the room the toolbar buttons
+   never had. One sheet now holds everything the old 🖼️ Media and ➕ More buttons split between them. */
 .mb-addb{display:block;text-align:left;line-height:1.35}
 .mb-addb b{display:block;font-size:14px}
 .mb-addb i{display:block;font-style:normal;font-size:12px;opacity:.72;font-weight:400}
+/* Group headings in the one "Add to the meme" sheet. Seven entries in a flat list is a wall you have to
+   read end to end; two labelled runs of three or four you can skip to. Cheap in height (one small line
+   each) because that is the whole budget on a phone — the sheet is capped at 92vh and scrolls, and the
+   goal is that on a normal handset it does not have to. First one loses its top margin so the heading
+   sits under the <h3> at the same rhythm as the buttons. */
+.mb-addgrp{margin:14px 2px 6px;font-size:11.5px;letter-spacing:.8px;text-transform:uppercase;
+  font-weight:700;color:var(--neon);opacity:.85}
+.mb-addgrp:first-of-type{margin-top:2px}
 .mb-insp-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .mb-insp-hd .btn{margin:0}
 /* Duplicate + Delete stay together on the right — space-between with three loose children would strand

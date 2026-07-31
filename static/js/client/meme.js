@@ -655,17 +655,18 @@
     return `
     <div class="mb-wrap">
       <!-- ONE row, on every width. The two wrapped rows this replaces cost ~6 rows of a phone screen before
-           you saw any of the meme. The five rarer sources moved behind ➕ More (a sheet with room to say what
-           each one does), and everything that configures the PROJECT moved into the ⚙︎ Canvas pane. What is
-           left is the three things you actually do: add, undo, render. -->
+           you saw any of the meme, and everything that configures the PROJECT moved into the ⚙︎ Canvas pane.
+           What is left is the three things you actually do: add, undo, render.
+           There is ONE add button, not two. 🖼️ Media and ➕ More split the sources down a line only the
+           person who wrote it could see — a sticker, a backing track and a layout were behind More, a photo
+           and the Blossom drive behind Media — so finding anything meant opening one, closing it, and
+           opening the other. They are one sheet now, still visibly grouped inside it. -->
       <div class="mb-bar">
         <div class="mb-barmain">
-          <!-- The emoji is in its own span so a narrow phone can drop it and keep the WORD: three icons plus
-               two arrows fit where "🖼️ Media 🅣 Text ➕ More ↶ ↷" is 58px too wide, and a labelled button
-               beats a pictogram nobody has to guess at. -->
-          <button class="btn btn-neon small" id="mb-add-media"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
+          <!-- The emoji is in its own span so a narrow phone can drop it and keep the WORD: a labelled
+               button beats a pictogram nobody has to guess at. -->
+          <button class="btn btn-neon small" id="mb-add-media" title="A photo, a clip, music, a sticker, an effect or a ready-made layout"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-image"></use></svg>Media</button>
           <button class="btn btn-cyan small" id="mb-add-text"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-text"></use></svg>Text</button>
-          <button class="btn btn-cyan small" id="mb-more" title="Music, a voice-over, stickers, effects, your Blossom drive, ready-made layouts"><svg class="ic b-ic mb-e" aria-hidden="true"><use href="#i-menu"></use></svg>More</button>
           <button class="btn btn-cyan small mb-icon" id="mb-undo" title="Undo (Ctrl+Z)" aria-label="Undo" ${_hist.length?'':'disabled'}>↶</button>
           <button class="btn btn-cyan small mb-icon" id="mb-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" ${_future.length?'':'disabled'}>↷</button>
         </div>
@@ -772,24 +773,6 @@
       <button class="btn btn-cyan small full" id="mb-proj">📂 Save, open, rename, start new…</button>`;
   }
 
-  // ➕ More — the sources that are not "a picture" or "some words". A sheet rather than four buttons in the
-  // toolbar: each one gets a line saying what it is, which is what those buttons never had room for.
-  // Blossom is NOT here — it is one of the two answers to 🖼️ Media, which is where you look for a photo.
-  function addMenu(anchor){
-    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add to the meme</h3>
-      <button class="btn btn-cyan full mb-addb" id="mba-audio"><b>🎵 Music or a voice-over</b><i>A track under the whole meme, or talk over it</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mba-tpl"><b>📐 Ready-made layout</b><i>Top/bottom captions, a two-panel split, a caption bar</i></button>`, root=>{
-      const go = (id, fn) => { const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
-      go('mba-audio', pickAudio);
-      // The emoji picker is a POPOVER and anchors to an element — the sheet's own button is gone by the time
-      // it opens, so anchor it to ➕ More, which is still there.
-      go('mba-sticker', ()=>pickSticker(anchor || document.getElementById('mb-more')));
-      go('mba-effect', pickEffect);
-      go('mba-tpl', pickTemplate);
-    });
-  }
 
   // The timeline's scrolling CONTENT. Everything that has to line up with a clip lane — the ruler and the
   // playhead — lives in here rather than over the .mb-timeline box, because on a phone the box scrolls
@@ -1723,18 +1706,38 @@
     return added;
   }
 
-  // 🖼️ Media asks WHERE from — the places a picture can come from, on one sheet. Blossom used to be
-  // buried in ➕ More next to stickers and templates, which is not where you look for "a photo"; and
-  // "one that doesn't exist yet" belongs on the same sheet for the same reason.
+  // EVERYTHING you can add, on one sheet — what 🖼️ Media and ➕ More held between them. Two groups, and
+  // the order is the answer to two different questions: the top three are WHERE a file comes from, the
+  // rest are things the builder makes for you. Each keeps the line saying what it is, which is what the
+  // toolbar buttons never had room for.
+  //
+  // "🎵 Music or a voice-over" is deliberately NOT one of these entries any more. It opened a THIRD sheet
+  // whose own options were "from this device" / "from my Blossom drive" / "record" — and the first two are
+  // the first two entries here, hitting the identical upload path (addMediaFiles takes audio, and
+  // pickBlossom's filter already allows it). So music is where every other file is, and only the part that
+  // was genuinely its own thing — recording one — is still a separate entry. That is one whole level of
+  // sheet gone from the way to a backing track.
   function pickMedia(){
-    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Add media</h3>
-      <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo, a video or a track off your phone or computer</i></button>
+    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add to the meme</h3>
+      <div class="mb-addgrp">A picture, clip or track</div>
+      <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo, a video or a music track off your phone or computer</i></button>
       <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>A picture, a clip or a track you already uploaded</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>`, root=>{
+      <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>
+      <div class="mb-addgrp">Made here</div>
+      <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-tpl"><b>📐 Ready-made layout</b><i>Top/bottom captions, a two-panel split, a caption bar</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-rec"><b>🎙️ Record a voice-over</b><i>Talk over the meme with your microphone</i></button>`, root=>{
       const go=(id,fn)=>{ const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
       go('mbm-local', pickLocalMedia);
       go('mbm-blossom', pickBlossom);
       go('mbm-ai', pickAiImage);
+      // The emoji picker is a POPOVER and anchors to an element — the sheet's own button is gone by the
+      // time it opens, so anchor it to the toolbar button, which is still there.
+      go('mba-sticker', ()=>pickSticker(document.getElementById('mb-add-media')));
+      go('mba-effect', pickEffect);
+      go('mba-tpl', pickTemplate);
+      go('mba-rec', recordVoice);
     });
   }
   // 🎨 The prompt sheet is AI Chat's OWN "Make an image" studio (PC.openGenStudio), borrowed with a
@@ -1862,39 +1865,6 @@
   // Music: a local mp3/m4a/ogg/wav (uploaded to Blossom first, like every other layer source) or a track
   // already on your drive. One button, both paths — a separate "from Blossom" for audio would be a fourth
   // add-button in a bar that is already full on a phone.
-  async function pickAudio(){
-    const st=document.getElementById('mb-status');
-    PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Add audio</h3>
-      <button class="btn btn-neon full" id="mba-file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Upload a file from this device</button>
-      <button class="btn btn-cyan full" id="mba-blossom">🌸 Pick from my Blossom drive</button>
-      <button class="btn btn-cyan full" id="mba-rec">🎙️ Record a voice-over</button>`, root=>{
-      root.querySelector('#mba-rec').onclick=()=>{ PC.closeModal(); recordVoice(); };
-      root.querySelector('#mba-blossom').onclick=()=>{
-        PC.closeModal();
-        PC.blossomPicker(null, ({url})=>{ addLayer('audio', url); render(); }, {
-          title: '🎵 Add music from Blossom',
-          filter: b => /^audio\//.test(b.type||''),
-          empty: 'No audio on your Blossom drive yet — upload some in the Files tab.',
-        });
-      };
-      root.querySelector('#mba-file').onclick=()=>{
-        PC.closeModal();
-        const inp=document.createElement('input'); inp.type='file'; inp.accept='audio/*';
-        inp.onchange=async()=>{
-          const f=(inp.files||[])[0]; if(!f) return;
-          try{
-            if(st) st.textContent='uploading '+f.name+'…';
-            const url=await uploadBlob(f);
-            addLayer('audio', url, { name:f.name.slice(0,24) });
-            if(st) st.textContent='';
-            render();
-          }catch(err){ if(st) st.textContent='upload failed: '+((err&&err.message)||err); }
-        };
-        inp.click();
-      };
-    });
-  }
-
   // ---------- stickers ----------
   // An emoji as a LAYER. Not as a text layer: the caption font is Liberation Sans (that is deliberate —
   // it is the font ffmpeg draws with), which has no emoji glyphs at all, so a 🔥 in a caption renders as a
@@ -2617,7 +2587,6 @@
     root.querySelectorAll('.mb-tab').forEach(b=>b.addEventListener('click',()=>_showTab(b.dataset.tab)));
     on('mb-add-media','click',pickMedia);
     on('mb-add-text','click',()=>{ addLayer('text'); render(); });
-    on('mb-more','click',(e)=>addMenu(e.currentTarget));
     root.querySelectorAll('.mb-szb').forEach(b=>b.addEventListener('click',()=>{
       const [w,h]=String(b.dataset.size||'').split('x').map(Number); if(w&&h) _resizeCanvas(w,h);
     }));
