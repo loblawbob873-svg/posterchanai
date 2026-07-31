@@ -768,10 +768,21 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .usercount .stream-ico{width:15px;height:15px;color:#ff3b5c;vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(255,59,92,.7))}
 .usercount .uc-live{color:#ffd7de}
 .usercount .call-ico{width:14px;height:14px;color:var(--neon,#0ff);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.5))}
-/* the 'on relay' + activity glyphs in the mobile More-sheet stats line (inherits more-stats muted colour). */
-.more-stats .relay-ico{width:13px;height:13px;color:var(--green);vertical-align:-2px;margin-right:2px}
-.more-stats .stream-ico{width:13px;height:13px;color:#ff3b5c;vertical-align:-2px;margin-right:2px}
-.more-stats .call-ico{width:12px;height:12px;color:var(--neon,#0ff);vertical-align:-2px;margin-right:2px}
+/* The mobile More-sheet stats line (inherits more-stats muted colour). Left-aligned to the "More"
+   heading and the icon grid under it — centred, it was the one thing in the sheet that lined up with
+   nothing. Each stat is its own centred flex row, so the glyph is aligned against its number by layout
+   rather than by a per-icon `vertical-align` fudge.
+   THE SIZES ARE NOT OPTIONAL: `svg.ic{width:20px;height:20px}` is (0,1,1), so it beats the bare
+   `.wot-ico,.relay-ico,…{width:13px}` defaults — which is why WoT and "online" were the only two
+   glyphs here without a `.more-stats` rule and rendered at 20px next to three 12-13px ones, throwing
+   the row's baselines out. Anything added to this line needs an entry here. */
+.more-stats{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;margin:2px 0 12px}
+.more-stats > span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.more-stats .wot-ico{width:14px;height:14px}
+.more-stats .live-ico{width:12px;height:12px;color:var(--neon2)}
+.more-stats .relay-ico{width:13px;height:13px;color:var(--green)}
+.more-stats .stream-ico{width:13px;height:13px;color:#ff3b5c}
+.more-stats .call-ico{width:12px;height:12px;color:var(--neon,#0ff)}
 /* media-server destination choice (Settings → Media): stacked radio cards. */
 .media-modes{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px}
 .media-mode{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border:1px solid var(--border,rgba(255,255,255,.14));border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
@@ -1427,12 +1438,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    svg.ic (20px, fill:none, stroke:currentColor) and match every other icon on the card — they used to
    be visibly heavier than their neighbours. These rules keep only what is genuinely per-icon: the sizes
    the old constants set inline, which svg.ic would otherwise flatten to a uniform 20px. */
-/* The five sidebar status glyphs come from the sprite now, but render FILLED: at 11-13px a stroke
-   icon is under a pixel wide and disappears. Single source, two rendering modes. */
-.wot-ico,.live-ico,.relay-ico,.stream-ico,.call-ico{fill:currentColor;stroke:none}
-.wot-ico,.relay-ico,.stream-ico{width:13px;height:13px}
-.live-ico{width:11px;height:11px}
-.call-ico{width:12px;height:12px}
+/* The five status glyphs (WoT / online / on relay / live / in call) are sized ONLY by their container:
+   `.usercount .x-ico` for the sidebar, `.more-stats .x-ico` for the mobile More sheet.
+   There used to be bare `.wot-ico{width:13px}`-style defaults here as well. They never applied to
+   anything: `svg.ic{width:20px;height:20px;fill:none;stroke:currentColor}` is (0,1,1) and a lone class
+   is (0,1,0), so svg.ic won every time. That was invisible while both containers listed all five —
+   until the More sheet listed only three, and WoT + online quietly rendered at 20px beside three 13px
+   glyphs, which is what knocked that row's baselines out of line. Size them per container, or not at all. */
 .rt-ico{vertical-align:-3px;flex:none}
 .react-ico,.zap-ico{flex:none}
 .repost-tag .rt-ico{filter:drop-shadow(0 0 5px rgba(57,255,139,.45))}
@@ -1562,11 +1574,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    Buttons size to their own label here and never stretch, at any width. The tools are also all
    LABELLED now — a row that mixed "Attach"/"React" pills with two bare icon pills read as broken. */
 .cmp-tools{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-2)}
-.cmp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-top:var(--sp-3)}
+/* Only Schedule + Post live here — Draft sits with the tools, because it saves rather than submits.
+   Two buttons read as a submit bar, so they are CENTRED rather than split left/right; on a phone that
+   leaves Draft on the middle tool row and the two submit buttons alone across the bottom. */
+.cmp-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:var(--sp-2);margin-top:var(--sp-3)}
 .cmp-tools .btn,.cmp-actions .btn{flex:0 0 auto;margin:0;white-space:nowrap;vertical-align:middle}
-/* id, so it outranks the .btn reset above without another specificity puzzle. Post keeps the right
-   edge even when a narrow phone wraps it onto a line of its own. */
-#cmp-send{margin-left:auto;min-width:120px;justify-content:center}   /* the primary stays the widest control in its row */
+#cmp-send{min-width:120px;justify-content:center}   /* the primary stays the widest control in its row */
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
@@ -2086,10 +2099,6 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 @media(max-width:359px){
   .note,.tl-cmp{padding:12px 10px;gap:8px}
   .note .av,.tl-cmp-av{width:34px;height:34px}
-  /* Draft + Schedule + Post need 294px and a 320px screen gives the modal 273, so Post would wrap to a
-     line of its own. Share the row as thirds instead — the only width where that is necessary. */
-  .cmp-actions{flex-wrap:nowrap}
-  .cmp-actions .btn{flex:1 1 0;min-width:0;padding-left:6px;padding-right:6px}
 }
 
 /* ===== More sheet (mobile overflow) — flat icon tiles =====
@@ -3940,7 +3949,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media (max-width:520px){
   .cmp-tools .btn{padding:8px 10px;font-size:13.5px}
   .cmp-tools,.cmp-actions{gap:6px}
-  #cmp-send{min-width:88px}
 }
 body.modal-open .mobilenav{display:none}
 /* …and the same while the LOGIN GATE is up: that bar belongs to the app behind it, and showAuth only
