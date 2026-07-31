@@ -901,34 +901,46 @@
     if(l.type==='audio' && left + wid > 100){
       left = Math.min(left, 97); wid = Math.max(3, 100 - left); cut = true;
     }
-    // Show the CLIP ITSELF, not its filename — a hashed Blossom URL says nothing about what the clip is, so a
-    // row of thumbnails is the only way to read the timeline at a glance. Text layers show their words (that
-    // IS their content). The full name stays as the tooltip.
-    const label = l.type==='text' ? ('🅣 ' + (l.text||'text')) : (l.name || srcName(l.src));
-    const thumb = l.type==='text'
-      ? `<span class="mb-ttxt">🅣 ${enc((l.text||'text').slice(0,16))}</span>`
+    // Every row is [grip][tile][bar], in that order, whatever the layer is. The tile is the SAME 52x34 box
+    // for all four types — a frame for a picture or clip, a glyph for text and music — because the previous
+    // mix (media showed a thumbnail, text and music showed a truncated string) meant no two rows lined up
+    // and the list read as four different widgets stacked up.
+    const name = l.type==='text' ? (l.text||'text').replace(/\s+/g,' ').trim() : (l.name || srcName(l.src));
+    // Is the bar too short to hold a name as well as its duration? wid is a % of the lane and the lane
+    // grows with the zoom, so the zoom has to be in the test — otherwise a clip that is genuinely wide at
+    // 8x would still be treated as a sliver and hide a name it has ample room for.
+    const narrow = wid * _zoom() < 15;
+    // Sprite icons, not text glyphs. ⇅ / ▶ / ♪ are exactly the characters a device is free not to have —
+    // they render as ☐ (or worse, as a colour emoji that fights the theme) — and the row is the one place
+    // in the builder where a missing glyph reads as a broken layer rather than a missing decoration.
+    const ic = n => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"></use></svg>`;
+    const tile = l.type==='text'
+      ? `<span class="mb-tile mb-tile-gl" aria-hidden="true">${ic('text')}</span>`
       : (l.type==='audio'
-        ? `<span class="mb-ttxt mb-taud">🎵 ${enc((l.name || srcName(l.src)).slice(0,16))}</span>`
+        ? `<span class="mb-tile mb-tile-gl mb-tile-aud" aria-hidden="true">${ic('music')}</span>`
         : l.type==='video'
-          ? `<video class="mb-tthumb" src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">▶︎</i>`
-          : `<img class="mb-tthumb" src="${enc(l.src)}" alt="" loading="lazy">`);
+          ? `<span class="mb-tile"><video src="${enc(l.src)}#t=0.1" muted playsinline preload="metadata"></video><i class="mb-tvid">${ic('play')}</i></span>`
+          : `<span class="mb-tile"><img src="${enc(l.src)}" alt="" loading="lazy"></span>`);
     return `<div class="mb-track${l.id===sel?' sel':''}${l.type==='audio'?' mb-track-aud':''}" data-id="${l.id}">
-      <div class="mb-trackname" title="${enc(label)}">${l.type==='audio' ? '' :
-        // Its OWN handle, not the whole row: the drag surface needs touch-action:none to be a drag at all
-        // on a phone, and putting that on the thumbnail would eat vertical PAGE scrolling every time a
-        // finger happened to start there — an accidental restack instead of a scroll. A narrow grip is the
-        // affordance every reorderable list uses, and it costs less width than the ⬆︎/⬇︎ pair it stands in
-        // for on mobile. Audio has no stacking order, so it gets no grip.
-        `<i class="mb-rgrip" title="Drag to restack — what is drawn on top of what" aria-hidden="true">⇅</i>`}${thumb}
-        ${l.type==='audio' ? '' : `<span class="mb-zbtns">
-          <button class="mb-z" data-z="front" data-id="${l.id}" title="Bring to front"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg></button>
-          <button class="mb-z" data-z="back" data-id="${l.id}" title="Send to back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>
-        </span>`}
+      <div class="mb-trackname" title="${enc(name)}">
+        ${/* Its OWN handle, not the whole row: the drag surface needs touch-action:none to be a drag at all
+             on a phone, and putting that on the tile would eat vertical PAGE scrolling every time a finger
+             happened to start there — an accidental restack instead of a scroll. Music has no stacking
+             order, so its grip is present but INERT: removing the element instead would slide that row's
+             tile 20px left of every other one, and a list whose rows don't share a left edge is the thing
+             that reads as untidy no matter how good the rest of it looks. */''}
+        <i class="mb-rgrip${l.type==='audio'?' mb-rgrip-off':''}"${l.type==='audio'?' aria-hidden="true"':' title="Drag to restack — what is drawn on top of what" aria-hidden="true"'}>${ic('menu')}</i>${tile}
       </div>
       <div class="mb-lane">
-        <div class="mb-clip${cut?' mb-cut':''}" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%"${cut?` title="${l.dur.toFixed(1)}s of music — cut off at ${total.toFixed(1)}s"`:''}>
+        <div class="mb-clip${cut?' mb-cut':''}${narrow?' mb-clip-sm':''}" data-id="${l.id}" style="left:${left.toFixed(3)}%;width:${wid.toFixed(3)}%"${cut?` title="${l.dur.toFixed(1)}s of music — cut off at ${total.toFixed(1)}s"`:''}>
           <i class="mb-grip mb-grip-l" data-grip="l"></i>
-          <span>${cut ? '✂ '+total.toFixed(1)+'s' : l.dur.toFixed(1)+'s'}</span>
+          ${/* The NAME goes in the bar, not the left column. The bar is the widest thing in the row and was
+               carrying one number; the column was 132px of truncated filename that collapsed to nothing on
+               a phone, so two similar photos were two identical rows. A bar too short to hold both drops
+               the name outright rather than ellipsising it to "b…" — the duration is the part you still
+               need, and it is the part the grips would otherwise sit on top of. */''}
+          ${narrow ? '' : `<span class="mb-cname">${enc(name)}</span>`}
+          <span class="mb-cdur">${cut ? '✂ '+total.toFixed(1)+'s' : l.dur.toFixed(1)+'s'}</span>
           <i class="mb-grip mb-grip-r" data-grip="r"></i>
         </div>
       </div>
@@ -1443,31 +1455,21 @@
 
   function bindTimeline(root){
     const tl = root.querySelector('#mb-timeline'); if(!tl) return;
-    // z-order right on the layer row, next to its thumbnail — that's where you're already looking when you
-    // decide what should sit on top. Bound on the timeline (not the inspector) so it works without selecting
-    // the layer first. stopPropagation: these live inside the row, which is also the drag surface.
     // EVERY timeline gesture is delegated on #mb-timeline, which survives repaint('timeline') replacing its
     // children. Bound per row instead, selecting a layer by tapping its row silently stopped working after
     // the first trim or drag — the listeners went with the old innerHTML.
+    //
+    // The row used to carry its own ⬆︎/⬇︎ restack pair here, 22x16px stacked in the name column. They were
+    // the most cramped thing in the builder, they were already hidden below 820px (the lane needs the
+    // width), and they made desktop and mobile two different layouts. Restacking is unchanged and still
+    // has two homes that work everywhere: DRAG the row by its ⇅ grip, or ⬇︎ Send back / ⬆︎ Bring front in
+    // the layer panel.
     tl.addEventListener('click', (e)=>{
-      const zb = e.target.closest('.mb-z');
-      if(!zb){
-        // Tapping the row (its thumbnail/name, not its clip bar) selects that layer.
-        const row = e.target.closest('.mb-track[data-id]');
-        if(row && !e.target.closest('.mb-clip')) selectLayer(row.dataset.id, 'timeline');
-        return;
-      }
-      e.preventDefault(); e.stopPropagation();
-      const l = P.layers.find(x=>x.id===zb.dataset.id); if(!l) return;
-      // ONE step, not all the way to the extreme. Jumping straight to front/back meant putting a layer
-      // just under the one above it took two moves (down to the very bottom, then back up) — swap with the
-      // neighbour instead, which is what "move it under that one" actually means.
-      snap();
-      if(!restackOne(l, zb.dataset.z==='front' ? 'up' : 'down')){ unsnapIfUnchanged(); return; }
-      save(); render();
+      // Tapping the row (its tile, not its clip bar) selects that layer.
+      const row = e.target.closest('.mb-track[data-id]');
+      if(row && !e.target.closest('.mb-clip')) selectLayer(row.dataset.id, 'timeline');
     });
     tl.addEventListener('pointerdown', (e)=>{
-      if(e.target.closest('.mb-z')) return;   // a z-order tap is not the start of a drag
       // Drag a row by its ⇅ grip to restack it. Reordering by dragging the layer list is what everyone
       // tries first, and nothing listened for it — on a phone that mattered most, because the row's ⬆︎/⬇︎
       // buttons are hidden there (the lane needs the width) and the panel's pair lives in a DIFFERENT TAB,
