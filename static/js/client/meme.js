@@ -181,6 +181,10 @@
   // Blossom save — which is the only copy that survives this browser anyway.
   let _saveWarned = false;
   function save(){
+    // Every mutation in the editor lands here, which is exactly why the full-length-bed rule is applied
+    // here too: attaching it to the handful of call sites that happen to change the length today is how it
+    // came to fire on "add a layer" and nothing else. A new way to re-time a clip now gets it for free.
+    _syncMusicBeds();
     try{ localStorage.setItem('pc_meme_project', JSON.stringify(P)); _saveWarned = false; }
     catch(err){
       if(!_saveWarned){ _saveWarned = true;
@@ -364,10 +368,37 @@
   //
   // So the render length covers audio as well, while projEnd() stays as it is: the editing timeline, the
   // ruler and the reflow all keep behaving the way they do today, and only the exported length changes.
-  // Music still can't run away with the project — a bed is added with dur = the current project length,
+  // Music still can't run away with the project — a full-length bed tracks the timeline (_syncMusicBeds),
   // so it reaches exactly this far and no further; it is a line LONGER than the visuals that grows it.
   const renderEnd = () => P.layers.reduce(
     (m,l)=>Math.max(m, (+l.start||0)+(+l.dur||0)), 0) || projEnd();
+
+  // Keep a FULL-LENGTH music bed full-length, whatever changed the length.
+  //
+  // This rule used to live inside addLayer(), so it only fired when a layer was ADDED — and every other
+  // way the timeline can get shorter or longer (the inspector's Length field, dragging a clip's edge, the
+  // speed control, an effect re-timing a clip, deleting a layer) left the bed at the length it happened to
+  // have when it was dropped in. Because renderEnd() deliberately counts audio, that stale bed then PINNED
+  // the export: you could shorten every clip in the project and the rendered video came back the length it
+  // always was. "I keep changing the length of all the layers but the rendered never changes."
+  //
+  // Comparing against the project end as of the LAST save is what keeps "full-length" meaning full-length
+  // rather than "long": a bed that spanned the old timeline is re-spanned to the new one, and a bed you
+  // deliberately trimmed short — or a spoken line you deliberately ran PAST the visuals, which is the whole
+  // reason renderEnd() counts audio — matches neither and is left exactly alone.
+  //
+  // The mark rides on P rather than in a module variable so that loading, importing, undo/redo and New
+  // Project all carry (or correctly lack) it without five separate resets to keep in step. Absent = adopt
+  // the current end and change nothing, which is right for a project we are seeing for the first time.
+  function _syncMusicBeds(){
+    const end = projEnd();
+    const was = (P._spanEnd == null) ? end : +P._spanEnd;
+    if(Math.abs(end - was) >= 0.005){
+      P.layers.forEach(a=>{ if(a.type==='audio' && !(+a.start||0) && Math.abs((+a.dur||0) - was) < 0.06)
+        a.dur = +end.toFixed(2); });
+    }
+    P._spanEnd = end;
+  }
 
   // ---------- the MASTER TIMELINE ----------
   // Media clips (image/video) form ONE ordered sequence that plays back-to-back — the way every video editor
@@ -584,15 +615,11 @@
       if(firstText < 0) P.layers.push(l); else P.layers.splice(firstText, 0, l);
     }
     sel = l.id;
-    if(_isVisual(l)){
-      resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
-      // Keep a FULL-LENGTH music bed full-length. Adding a clip makes the meme longer, and a soundtrack
-      // that was covering the whole thing would otherwise stop early — reported as "the music cuts out".
-      // Only a track that spans exactly the old timeline is grown; one you deliberately trimmed is left alone.
-      const end = projEnd();
-      P.layers.forEach(a=>{ if(a.type==='audio' && !(+a.start||0) && Math.abs((+a.dur||0) - wasEnd) < 0.06)
-        a.dur = +end.toFixed(2); });
-    }
+    if(_isVisual(l)) resequence();   // join the master timeline exactly back-to-back (no drift from `tail`)
+    // Adding a clip makes the meme longer, and a soundtrack that was covering the whole thing would
+    // otherwise stop early — reported as "the music cuts out". save() re-spans it (see _syncMusicBeds),
+    // along with every other way the length changes; this used to be a copy of that rule living here,
+    // which is precisely why only ADDING a layer ever kept the bed honest.
     save(); return l;
   }
 
@@ -2578,15 +2605,33 @@
       dimL.style.width=a+'%'; dimR.style.left=b+'%'; dimR.style.width=Math.max(0,100-b)+'%';
       if(tin) tin.textContent=fmt(inT);
       if(tout) tout.textContent=fmt(outT);
-      if(tlen) tlen.textContent=(outT-inT).toFixed(1)+'s';
+      // The handles can only ever point INSIDE the source, so when the slot is longer than the footage
+      // left after the in-point, (outT-inT) is the footage — not the slot. Say both, rather than showing
+      // a number that contradicts the Length box right above it.
+      if(tlen){
+        const held = (+l.dur||0) - (outT-inT)/sp();
+        tlen.textContent = (outT-inT).toFixed(1)+'s' + (held > 0.05 ? ` +${held.toFixed(1)}s held` : '');
+      }
     }
     function ready(){
       D=vid.duration||0;
       if(!D || !isFinite(D)) return;
-      // A trim/length carried over from a different (or mis-measured) source can point past the end — pull it
-      // back into range so the handles are always on the bar and the render can't ask ffmpeg for empty frames.
-      if((+l.trim||0)>=D){ l.trim=0; }
-      if(outAt()>D || !(+l.dur>0)){ l.dur=+((D-(+l.trim||0))/sp()).toFixed(2); save(); }
+      // Repair ONLY what is genuinely unusable, and never a length the user chose.
+      //
+      // This used to also rewrite `dur` whenever the slot ran past the end of the source — which meant
+      // typing a Length longer than the clip's own footage was silently undone, and SAVED that way, the
+      // next time anything rebuilt the inspector. Renaming the project, adding a layer, an undo: all of
+      // them rebuild, so the length "went back to what it was before" with no message and no undo entry,
+      // and the export kept the old length however many times you retyped it.
+      //
+      // A longer slot is a legitimate edit: the preview has always held the last frame for the remainder,
+      // and the renderer now pads the same way (see meme_builder_service, tpad=stop_mode=clone), so what
+      // the timeline says is what comes out. An in-point past the end of the source, or a slot with no
+      // length at all, are the only states that cannot be rendered at all — repair those.
+      let fixed = false;
+      if((+l.trim||0)>=D){ l.trim=0; fixed=true; }
+      if(!(+l.dur>0)){ l.dur=+((D-(+l.trim||0))/sp()).toFixed(2); fixed=true; }
+      if(fixed) save();
       paint();
     }
     if(vid.readyState>=1 && vid.duration) ready();

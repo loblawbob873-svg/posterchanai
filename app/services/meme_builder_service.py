@@ -373,6 +373,21 @@ def _has_audio(path: str) -> bool:
         return False
 
 
+def _source_duration(path: str) -> float:
+    """Length of a video source in seconds, or 0.0 when it can't be determined.
+
+    Used only to decide whether a layer's slot outruns its own footage; a 0.0 (unprobeable) answer means
+    "assume it fits" and changes nothing, so a probe failure can never break a render that worked before.
+    """
+    try:
+        p = subprocess.run(["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                            "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                           capture_output=True, text=True, timeout=20)
+        return max(0.0, float((p.stdout or "").strip().splitlines()[0]))
+    except Exception:
+        return 0.0
+
+
 def _mp4_to_gif(mp4: bytes, w: int, h: int) -> bytes:
     """MP4 bytes -> looping GIF bytes, via the two-pass palette (palettegen to a PNG, then paletteuse
     against it).
@@ -669,6 +684,17 @@ def render(edit: dict, sources: dict) -> tuple:
             # frame-dropping/duplicating and everything after sees a normal stream at the project rate.
             if speed != 1.0:
                 chain.insert(0, f"setpts=PTS/{speed:.4f}")
+            # A slot LONGER than the footage left after the in-point: hold the last frame for the rest of it.
+            # Without this the layer's stream simply ends, overlay's eof_action=pass lets the composite show
+            # through, and the tail of the slot is background — while the EDITOR's preview holds the last
+            # frame, because an HTML video element clamps to its duration. The two disagreeing is what made a
+            # deliberately-long slot look broken, and it is why the builder used to silently shorten `dur`
+            # back to the source length instead (see bindTrim's ready() in meme.js). Padding here is what
+            # makes the length the user typed the length they get.
+            if kind == "video":
+                _sdur = _source_duration(path)
+                if _sdur and trim + src_dur > _sdur + 0.05:
+                    chain.append(f"tpad=stop_mode=clone:stop_duration={dur:.3f}")
             # MIRROR before the effect (hflip/vflip preserve the frame size, so the effect chain still
             # sees the lw x lh box it was built for) and ROTATE after it — so a spin/zoom animates the
             # upright artwork and the whole result is then turned, rather than the effect's own geometry
