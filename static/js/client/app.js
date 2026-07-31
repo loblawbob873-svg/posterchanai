@@ -14,7 +14,9 @@
   const REPLY_ICON = '<svg class="ic rp-ico" aria-hidden="true"><use href="#i-reply"></use></svg>';
   // Quote-post glyph as an SVG (themes cyan + glow, and sizes like the repost icon) — the old ❝
   // text glyph floated high in its line box and couldn't be size-matched to the emoji actions.
-  const QUOTE_ICON = '<svg class="ic q-ico" aria-hidden="true"><use href="#i-quote"></use></svg>';
+  // #i-quotes (quotation marks), NOT #i-quote (a speech bubble): the bubble is the same silhouette as
+  // the comment icon two buttons along the same action row, so the quote action read as a second reply.
+  const QUOTE_ICON = '<svg class="ic q-ico" aria-hidden="true"><use href="#i-quotes"></use></svg>';
   // Web-of-trust shield — SVG so it takes the neon cyan colour + glow (emoji can't be recoloured).
   const WOT_ICON = '<svg class="ic wot-ico" aria-hidden="true"><use href="#i-wot"></use></svg>';
   // "online now" pulse — magenta neon (distinct from the green ONLINE dot above), not another 🟢.
@@ -2510,15 +2512,7 @@
   }
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
-    // Hide replies, on EVERY timeline. A reply reads as an orphan in a firehose — you get one side of
-    // a conversation whose other half you cannot see — and on a busy follow list they crowd out the
-    // posts. Read once per render and folded into the SAME predicate the live-prepend path uses
-    // (_bufferLive(ev, fn)), so a reply cannot slip in through the live socket after the first draw.
-    const _hideR = ClientSettings.get('hideReplies', false);
-    const _follows = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
-    const fn = (_follows || _hideR)
-      ? (ev => (!_follows || _follows(ev)) && !(_hideR && ev.kind===1 && isReply(ev)))
-      : null;
+    const fn = _tlFilter(view);
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
@@ -3030,12 +3024,21 @@
           else if(a==='sched') toggleSched();
           else if(a==='cw') toggleCw(); }); }; }
   }
+  // THE timeline predicate — who gets to appear in Home/Global. There used to be two copies of this,
+  // one here and one in renderTimeline, and they drifted the moment anything was added: "hide replies"
+  // shipped filtering only the live-prepend path, so replies vanished from the socket and stayed in the
+  // drawn list. Same two-render-paths trap as the AI-chat media rows. One function, both callers.
+  function _tlFilter(view){
+    const hideR = ClientSettings.get('hideReplies', false);
+    const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
+    return ev => (!follows || follows(ev)) && !(hideR && ev.kind===1 && isReply(ev));
+  }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
     const feed=$('#feed'); if(!feed) return;
     const top=preserveScroll?feed.scrollTop:0;
-    const fn = VIEW==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    const notes = Store.feed(e=>(!fn||fn(e))&&!isMutedView(e)).slice(0,200);
+    const fn = _tlFilter(VIEW);
+    const notes = Store.feed(e=>fn(e)&&!isMutedView(e)).slice(0,200);
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
     if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
