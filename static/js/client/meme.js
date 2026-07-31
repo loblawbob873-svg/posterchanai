@@ -1244,14 +1244,19 @@
   // Meme Builder showed a FLAT drive while every other picker in the client showed your folders — and
   // a drive with a few hundred blobs is unusable flat. Reusing blossomPicker also inherits the folder
   // bar, the encrypted-blob hygiene and the server-side video thumbnails for free.
+  // AUDIO belongs here too. It used to be image|video only, so a drive with mp3s on it opened as a
+  // grid that simply did not contain them — the same drive showing different contents depending on
+  // which button you arrived from, with nothing on screen to say why. Music has its own entry under
+  // ➕ (with record-a-voice-over beside it), but nobody hunting for a track they already uploaded
+  // should have to find that first. Route by the blob's type, exactly as the local-file path does.
   function pickBlossom(){
     PC.blossomPicker(null, ({ url, type }) => {
-      addLayer(/^video\//.test(type||'') ? 'video' : 'image', url);
+      addLayer(/^audio\//.test(type||'') ? 'audio' : /^video\//.test(type||'') ? 'video' : 'image', url);
       render();
     }, {
       title: '🌸 Add from Blossom',
-      filter: b => /^(image|video)\//.test(b.type||''),
-      empty: 'No images or videos on your Blossom drive yet — upload some in the Files tab.',
+      filter: b => /^(image|video|audio)\//.test(b.type||''),
+      empty: 'Nothing on your Blossom drive yet — upload some in the Files tab.',
     });
   }
 
@@ -1699,11 +1704,14 @@
     const st=document.getElementById('mb-status');
     let added=0;
     for(const f of Array.from(files||[])){
-      if(!/^(image|video)\//.test(f.type||'')) continue;   // audio has its own button (it spans the meme)
+      // AUDIO is accepted here too. It has its own ➕ entry (with record-a-voice-over beside it), but a
+      // dropped or picked mp3 used to be silently SKIPPED by this line — no layer, no error, nothing on
+      // screen to say the file was ignored. It becomes an audio layer, exactly as that entry makes one.
+      if(!/^(image|video|audio)\//.test(f.type||'')) continue;
       try{
         if(st) st.textContent='uploading '+f.name+'…';
         const url=await uploadBlob(f);
-        addLayer(f.type.startsWith('video')?'video':'image', url, { name:(f.name||'').slice(0,24) });
+        addLayer(f.type.startsWith('audio')?'audio':f.type.startsWith('video')?'video':'image', url, { name:(f.name||'').slice(0,24) });
         added++;
         render();
       }catch(err){
@@ -1720,8 +1728,8 @@
   // "one that doesn't exist yet" belongs on the same sheet for the same reason.
   function pickMedia(){
     PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-image"></use></svg>Add media</h3>
-      <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo or video off your phone or computer</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>Something you already uploaded</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo, a video or a track off your phone or computer</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>A picture, a clip or a track you already uploaded</i></button>
       <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>`, root=>{
       const go=(id,fn)=>{ const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
       go('mbm-local', pickLocalMedia);
@@ -1772,7 +1780,7 @@
   function pickLocalMedia(){
     // Local files upload to Blossom first, so the render service only ever fetches things that exist.
     const inp=document.createElement('input'); inp.type='file';
-    inp.accept='image/*,video/*'; inp.multiple=true;
+    inp.accept='image/*,video/*,audio/*'; inp.multiple=true;
     inp.onchange=()=>addMediaFiles(inp.files);
     inp.click();
   }
@@ -1796,23 +1804,38 @@
     const txt=(dt.getData('text/plain')||'').trim();
     return _URL_RE.test(txt) ? txt : '';
   }
+  // What a URL says it is, by extension. Only the containers the builder can actually place.
+  const _EXT_TYPE={ png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp',
+                    avif:'image/avif', bmp:'image/bmp', svg:'image/svg+xml',
+                    mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', m4v:'video/mp4',
+                    mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac', ogg:'audio/ogg',
+                    oga:'audio/ogg', opus:'audio/ogg', wav:'audio/wav', flac:'audio/flac' };
+  const _typeFromUrl=u=>{
+    const m=/\.([a-z0-9]{2,5})(?:[?#]|$)/i.exec(String(u||''));
+    return (m && _EXT_TYPE[m[1].toLowerCase()]) || '';
+  };
   async function addMediaUrl(u){
     const st=document.getElementById('mb-status');
-    if(st) st.textContent='fetching the image…';
+    if(st) st.textContent='fetching it…';
     let blob=null;
     try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(u)).then(r=>r.ok?r.blob():null); }catch(_){}
     // Direct fetch as the fallback, exactly like the Effects studio: the proxy is the reliable path
     // (CORS + private-address guard), but a CORS-friendly host still works without it.
     if(!blob){ try{ blob=await fetch(u).then(r=>r.ok?r.blob():null); }catch(_){} }
-    if(!blob || !/^(image|video)\//.test(blob.type||'')){
+    // The node's image proxy relabels ANY non-image body as `image/png` (chat._proxy_fetch), so the
+    // blob's own type cannot be trusted to say what a dropped link actually is — a dropped .mp4 came
+    // back "image/png" and landed as a broken image layer. Believe the URL's extension when it
+    // disagrees, and only fall back to the reported type when the URL carries no extension.
+    const type=_typeFromUrl(u) || blob && blob.type || '';
+    if(!blob || !/^(image|video|audio)\//.test(type)){
       if(st) st.textContent='';
-      toast(blob ? 'that link isn’t an image or video' : 'could not fetch that image');
+      toast(blob ? 'that link isn’t an image, video or audio file' : 'could not fetch that link');
       return 0;
     }
     const base=(u.split(/[?#]/)[0].split('/').pop()||'dropped').slice(0,24);
-    const ext=(blob.type.split('/')[1]||'jpg').split('+')[0];
+    const ext=(type.split('/')[1]||'jpg').split('+')[0];
     const name=/\.\w{2,4}$/.test(base) ? base : base+'.'+ext;
-    return await addMediaFiles([new File([blob], name, { type:blob.type })]);
+    return await addMediaFiles([new File([blob], name, { type })]);
   }
   function bindDrop(root){
     const wrap=root.querySelector('.mb-wrap'); if(!wrap) return;
@@ -1828,10 +1851,10 @@
     wrap.addEventListener('drop', async e=>{
       const dt=e.dataTransfer; if(!carries(dt)) return;
       e.preventDefault(); depth=0; wrap.classList.remove('mb-dropping');
-      const files=Array.from(dt.files||[]).filter(f=>/^(image|video)\//.test(f.type||''));
+      const files=Array.from(dt.files||[]).filter(f=>/^(image|video|audio)\//.test(f.type||''));
       let n=0;
       if(files.length) n=await addMediaFiles(files);
-      else { const u=_dropUrl(dt); if(u) n=await addMediaUrl(u); else toast('drop an image, a video, or a link to one'); }
+      else { const u=_dropUrl(dt); if(u) n=await addMediaUrl(u); else toast('drop an image, a video, a track, or a link to one'); }
       if(n) toast(n===1 ? 'added as a new layer' : n+' layers added');
     });
   }
