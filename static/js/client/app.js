@@ -8967,7 +8967,16 @@
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
     // Live streams / calls ALWAYS show (even 0) so the counts are visible on phone too — matches the
     // desktop ticker. users/online/on-relay stay gated (they read "0" only before the first stats fetch).
-    const _stat=`<div class="more-stats muted small">${_wot?`<span title="People in this relay’s web of trust">${WOT_ICON} ${_wot.toLocaleString()} WoT</span>`:''}${_lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:''}${_lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:''}<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span></div>`;
+    // TWO explicit centred rows — headcounts, then live activity. They used to be one wrapping row, so
+    // where the break fell was whatever the viewport happened to allow (4+1 on a 390px phone, splitting
+    // "live" off from "in call" for no reason). Two rows say which stats belong together.
+    const _net=[
+      _wot?`<span title="People in this relay’s web of trust">${WOT_ICON} ${_wot.toLocaleString()} WoT</span>`:'',
+      _lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:'',
+      _lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:'',
+    ].join('');
+    const _act=`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`;
+    const _stat=`<div class="more-stats muted small">${_net?`<div class="ms-row">${_net}</div>`:''}<div class="ms-row">${_act}</div></div>`;
     modal(`<h3>More</h3>${_stat}<div class="more-grid">${items.map(([v,ic,lbl])=>{const c=counts[v]||0;return `<button class="more-item${v==='logout'?' more-logout':''}" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${c?` <i class="badge">${c>99?'99+':c}</i>`:''}</span></button>`;}).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ const v=b.dataset.v; if(v==='__discover'){ closeModal(); discoverMenu(); return; } if(v==='__games'){ closeModal(); gamesMenu(); return; } if(v==='__files'){ closeModal(); filesMenu(); return; } if(v==='__golive'){ closeModal(); _goLive(); return; } closeModal(); if(v==='logout') logout(); else if(v==='profile') renderProfileView(ME.pubkey); else switchView(v); });
     });

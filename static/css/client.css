@@ -768,16 +768,16 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .usercount .stream-ico{width:15px;height:15px;color:#ff3b5c;vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(255,59,92,.7))}
 .usercount .uc-live{color:#ffd7de}
 .usercount .call-ico{width:14px;height:14px;color:var(--neon,#0ff);vertical-align:-2px;margin-right:3px;filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.5))}
-/* The mobile More-sheet stats line (inherits more-stats muted colour). Left-aligned to the "More"
-   heading and the icon grid under it — centred, it was the one thing in the sheet that lined up with
-   nothing. Each stat is its own centred flex row, so the glyph is aligned against its number by layout
-   rather than by a per-icon `vertical-align` fudge.
+/* The mobile More-sheet stats: two centred rows (.ms-row) — headcounts, then live activity. Each stat
+   is itself a centred flex row, so its glyph aligns against its number by layout rather than by a
+   per-icon `vertical-align` fudge.
    THE SIZES ARE NOT OPTIONAL: `svg.ic{width:20px;height:20px}` is (0,1,1), so it beats the bare
    `.wot-ico,.relay-ico,…{width:13px}` defaults — which is why WoT and "online" were the only two
    glyphs here without a `.more-stats` rule and rendered at 20px next to three 12-13px ones, throwing
    the row's baselines out. Anything added to this line needs an entry here. */
-.more-stats{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;margin:2px 0 12px}
-.more-stats > span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.more-stats{display:flex;flex-direction:column;align-items:center;gap:6px;margin:2px 0 12px}
+.more-stats .ms-row{display:flex;align-items:center;flex-wrap:wrap;justify-content:center;gap:6px 16px}
+.more-stats span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .more-stats .wot-ico{width:14px;height:14px}
 .more-stats .live-ico{width:12px;height:12px;color:var(--neon2)}
 .more-stats .relay-ico{width:13px;height:13px;color:var(--green)}
