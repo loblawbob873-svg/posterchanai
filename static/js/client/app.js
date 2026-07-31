@@ -14184,7 +14184,22 @@
       }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
-      const out = root && root.querySelector('#vs-out');
+
+      // DELIVER TO THE CHAT FIRST, always. The take used to go only into the modal, and the modal is
+      // dismissed by tapping the backdrop — over a 138s generation that is not an edge case, it is
+      // what people do. The result was then appended into a detached node and silently thrown away,
+      // after the GPU had already done all the work: "I can't see the generated result at all".
+      // The transcript is a surface that cannot be dismissed out from under an in-flight request.
+      if(!(opts && opts.onTake)){
+        aiAddMessage('assistant',
+          `<div class="muted small">🗣️ ${enc(voice.name)}</div>`+
+          `<div style="margin:4px 0">${enc(text)}</div>`+
+          `<audio controls src="${url}" style="width:100%"></audio>`);
+      }
+
+      // …and ALSO into the studio, when it is still open — that is what you compare takes in. isConnected
+      // is the test that matters: a stale `root` from a closed modal looks perfectly normal otherwise.
+      const out = (root && root.isConnected) ? root.querySelector('#vs-out') : null;
       if(out){
         // APPEND, don't replace. Getting one line out of a voice is the rare case — you try a
         // reading, change a word, try the other voice, and want to hear them against each other.
@@ -14231,9 +14246,14 @@
         out.appendChild(row);
         row.scrollIntoView({ block:'nearest' });
       }
+      // Borrowed studio (the Meme Builder) with the modal already gone: the "use this" button lives in
+      // the row we could not attach, so nobody could ever reach it. You asked for this line in the
+      // meme — just add it rather than making the GPU work a second time.
+      if(!out && opts && opts.onTake){ opts.onTake(blob, voice.name, text); return; }
+      if(!out && !(opts && opts.onTake)) toast('done — it is in the chat');
       // Clear the box and hand focus back, so the next line is just typing — the whole point of
       // making this a conversation rather than a one-shot form.
-      const ta = root && root.querySelector('#vs-text');
+      const ta = (root && root.isConnected) ? root.querySelector('#vs-text') : null;
       if(ta){ ta.value=''; ta.focus(); }
       say('');
     }catch(e){ say(''); toast('voice failed: '+((e&&e.message)||e)); }

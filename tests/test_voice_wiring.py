@@ -258,6 +258,19 @@ class VoiceClientUI(unittest.TestCase):
                       "read empty for a moment (EOSE racing the event), and acting on that first look "
                       "replaces a real library with one entry")
 
+    def test_a_take_survives_the_modal_closing(self):
+        """The modal is dismissed by tapping the backdrop, and a generation runs for a minute or more —
+        so the modal is very often gone by the time the audio arrives. Appending into a detached node
+        threw the result away AFTER the GPU had done the work. Delivery must not depend on it."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("root.isConnected", block,
+                      "a stale root from a closed modal looks normal — isConnected is the real test")
+        self.assertIn("aiAddMessage('assistant'", block,
+                      "the transcript is the destination that cannot be dismissed mid-request")
+        self.assertIn("opts.onTake(blob, voice.name, text); return;", block,
+                      "a borrowed studio must still get its take when the modal has gone")
+
     def test_library_write_refuses_on_a_failed_read(self):
         """kind-30078 is REPLACEABLE: writing a list built on an empty/failed read replaces the whole
         library. Same wipe that took out mutes, follows and a drive's file index."""
