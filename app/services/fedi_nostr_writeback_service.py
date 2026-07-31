@@ -199,6 +199,23 @@ def _reply_parent_id(ev: dict) -> str | None:
     return unmarked[-1] if unmarked else None
 
 
+def _bridge_on() -> bool:
+    """Is the fediverse bridge switched on?
+
+    NEVER answers False from an UNHYDRATED settings cache. settings_store.get falls back to the
+    literal default when the cache hasn't synced with the relay yet, so `fedi_bridge_enabled` reads
+    "false" on a store holding nothing — indistinguishable from an admin turning it off. That is not
+    theoretical: a re-hydrate returned 0 settings at 12:02:41, the 5-minute resubscribe cycle woke at
+    that exact second, read the default, closed the socket and returned. The bridge then sat silently
+    dead — no error, no rejection, nothing in the log — and every note posted afterwards simply had
+    nothing listening. is_hydrated() is the difference between "off" and "don't know yet", and its own
+    docstring says so.
+    """
+    if not settings_store.is_hydrated():
+        return True          # unknown → keep running; a real "off" survives one cycle and is caught next
+    return str(settings_store.get("fedi_bridge_enabled", "false")).lower() in ("1", "true", "yes", "on")
+
+
 def _is_reply(ev: dict) -> bool:
     """True if this note is a NIP-10 REPLY — so it must NOT cross-post as a standalone fediverse post
     when its parent isn't a bridged note (that leaks the Nostr-side conversation to the fediverse). A
@@ -1039,7 +1056,7 @@ async def _listen_once() -> None:
             # makes recv() raise → _listen_once returns → _run idles instead of federating).
             while True:
                 await asyncio.sleep(_RESUBSCRIBE_SEC)
-                if str(settings_store.get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+                if not _bridge_on():
                     try:
                         await ws.close()
                     except Exception:
@@ -1070,7 +1087,7 @@ async def _listen_once() -> None:
 
 async def _run() -> None:
     while True:
-        if str(settings_store.get("fedi_bridge_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+        if not _bridge_on():
             await asyncio.sleep(30)
             continue
         try:
