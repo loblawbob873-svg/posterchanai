@@ -3028,6 +3028,29 @@
   // one here and one in renderTimeline, and they drifted the moment anything was added: "hide replies"
   // shipped filtering only the live-prepend path, so replies vanished from the socket and stayed in the
   // drawn list. Same two-render-paths trap as the AI-chat media rows. One function, both callers.
+  // Skeleton cards for the cold timeline. A spinner on a blank screen is the most dated loading pattern
+  // there is, and it tells you nothing about what is coming; a skeleton shows the SHAPE of the content
+  // immediately, which reads as faster at identical speed. The .skel shimmer utility already existed in
+  // client.css and had never been used once — 53 bare spinners instead.
+  //
+  // Also fixes a real flash: with zero notes and no EOSE yet, _reconcileNotes showed "No posts yet",
+  // i.e. the empty state was rendered while the feed was still loading. Loading and empty are different
+  // states and now look different.
+  function _skelNotes(n){
+    let out = '';
+    for(let i=0;i<n;i++){
+      const w = 55 + ((i*37) % 40);          // vary the last line so the block doesn't read as a grid
+      out += '<div class="skel-note" aria-hidden="true">'
+           +   '<div class="skel skel-av"></div>'
+           +   '<div class="skel-body">'
+           +     '<div class="skel skel-line skel-name"></div>'
+           +     '<div class="skel skel-line"></div>'
+           +     '<div class="skel skel-line" style="width:' + w + '%"></div>'
+           +   '</div>'
+           + '</div>';
+    }
+    return out;
+  }
   function _tlFilter(view){
     const hideR = ClientSettings.get('hideReplies', false);
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
@@ -3072,6 +3095,8 @@
       return;
     }
     if(_profObs) _profObs.disconnect();   // drop observations on the notes we may replace (hydrate re-observes)
+    // Nothing yet AND the relay has not finished answering: that is LOADING, not empty.
+    if(!notes.length && !_tl.eosed){ notesEl.innerHTML = _skelNotes(6); if(preserveScroll) feed.scrollTop=top; return; }
     _reconcileNotes(notesEl, notes, `No posts yet. ${VIEW==='home'?'Follow people or check Nostrverse.':''}`);
     hydrate(notesEl); if(preserveScroll) feed.scrollTop=top;
   }

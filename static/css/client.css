@@ -3292,6 +3292,20 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .skel{ background:linear-gradient(100deg,var(--panel) 38%,var(--panel2) 50%,var(--panel) 62%);
   background-size:200% 100%; animation: shimmer 1.3s linear infinite; border-radius:8px; }
 @keyframes shimmer{ to{ background-position:-200% 0; } }
+/* Skeleton timeline card — deliberately the same geometry as a real .note (46px avatar, 12px gutter,
+   the same vertical rhythm) so the content lands WHERE the placeholder was instead of shifting the
+   page under the reader. A skeleton that doesn't match its content is worse than a spinner. */
+.skel-note{display:flex;gap:var(--sp-3);padding:var(--sp-4) var(--sp-4) var(--sp-5);
+  border-bottom:1px solid var(--line)}
+.skel-av{width:46px;height:46px;border-radius:50%;flex:none}
+.skel-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:var(--sp-2);padding-top:4px}
+.skel-line{height:11px;width:100%}
+.skel-name{width:38%;height:13px}
+/* Respect the OS setting: a shimmer is decoration, and for someone who asked for less motion it is the
+   kind that provokes symptoms. The placeholder still shows, it just holds still. */
+@media(prefers-reduced-motion:reduce){ .skel{ animation:none } }
+@media(max-width:820px){ .skel-note{padding:var(--sp-3) var(--sp-3) var(--sp-4);gap:var(--sp-2)}
+  .skel-av{width:40px;height:40px} }
 
 @media(prefers-reduced-motion:reduce){
   .note{ animation:none; }
