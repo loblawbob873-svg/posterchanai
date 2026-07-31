@@ -14303,6 +14303,7 @@
         <button class="btn btn-cyan small" id="vs-rec">🎙 Record a voice</button>
         <button class="btn btn-cyan small" id="vs-up">📁 Upload a clip</button>
       </div>
+      <div class="vs-active" id="vs-active"></div>
       <label class="mb-f"><span>What should it say?</span>
         <textarea class="input" id="vs-text" rows="3" maxlength="${(status&&status.max_chars)||800}"
                   placeholder="Type what you want spoken…"></textarea></label>
@@ -14310,7 +14311,15 @@
       <div class="muted small" id="vs-status" style="margin-top:8px"></div>
       <div id="vs-out" class="vs-takes"></div>`, root=>{
       let picked = list[0] ? list[0].id : null;
-      const paint=()=>{ $$('.vs-pick',root).forEach(b=>b.classList.toggle('on', b.dataset.id===picked)); };
+      // Name the active voice in words, right above the box you type into. With a SINGLE saved voice
+      // it is already selected on open, so tapping it changes nothing visible — which reads as "I
+      // can't choose it". A border highlight is not an answer to "which one is it going to use?".
+      const paint=()=>{
+        $$('.vs-pick',root).forEach(b=>b.classList.toggle('on', b.dataset.id===picked));
+        const a=root.querySelector('#vs-active'), v=list.find(x=>x.id===picked);
+        if(a) a.innerHTML = v ? `Speaking as <b>${enc(v.name)}</b>`
+                              : `<span class="muted">Pick a voice above first.</span>`;
+      };
       paint();
       $$('.vs-pick',root).forEach(b=> b.onclick=()=>{ picked=b.dataset.id; paint(); });
       $$('.vs-del',root).forEach(b=> b.onclick=async()=>{

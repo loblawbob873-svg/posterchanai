@@ -4652,3 +4652,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .vs-keep:hover,.vs-dl:hover{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .vs-keep.on{color:var(--neon);cursor:default}
 .vs-keep:disabled{opacity:.5}
+/* "Speaking as X" — the studio's answer to "which voice will it use?". A border highlight alone is
+   invisible when there is only ONE voice, because it is selected from the moment the sheet opens. */
+.vs-active{margin:10px 0 2px;font-size:13px;color:var(--fg)}
+.vs-active b{color:var(--neon)}
