@@ -4612,3 +4612,23 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 @media(max-width:820px){
   .gl-qopt{flex:1 1 auto;justify-content:center}   /* fill the row so every target is thumb-sized */
 }
+
+/* ---- Voice studio (AI Chat → Clone a voice) ------------------------------------------------
+   One row per saved voice: the name is the SELECTOR (not a radio — the whole row target should be
+   thumb-sized), a native <audio preload=none> so previewing costs nothing until tapped, and delete.
+   Wraps on a phone rather than squeezing the player to a sliver. */
+.vs-list{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.vs-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vs-pick{flex:0 0 auto;min-height:38px;padding:6px 12px;border-radius:9px;cursor:pointer;
+  background:var(--panel2);border:1px solid var(--line);color:var(--fg);font:inherit}
+.vs-pick.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon);color:var(--neon)}
+.vs-prev{flex:1 1 180px;min-width:0;height:34px}
+.vs-del{flex:0 0 auto}
+/* .modal textarea forces min-height:220px (right for a post composer, wrong here) — it pushed the
+   Speak button off a phone screen for a box that usually holds one sentence. */
+#vs-text{min-height:84px}
+@media(max-width:480px){
+  /* The player takes its own line on a phone — sharing one with the name and the bin left all three
+     too narrow to hit. */
+  .vs-prev{flex:1 1 100%;order:3}
+}

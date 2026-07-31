@@ -35,6 +35,7 @@ source "$INSTALL_DIR/telegram_botapi.sh"
 source "$INSTALL_DIR/update.sh"
 source "$INSTALL_DIR/music.sh"
 source "$INSTALL_DIR/video.sh"
+source "$INSTALL_DIR/voice.sh"
 source "$INSTALL_DIR/turn.sh"
 source "$INSTALL_DIR/stream.sh"
 source "$INSTALL_DIR/sandbox.sh"
@@ -63,6 +64,12 @@ fi
 # Add-on: install just the video generation (videogeni) deps into the existing image venv.
 if [ "$1" = "--video" ]; then
     setup_video_deps
+    exit $?
+fi
+
+# Add-on: install just the voice-cloning deps into the existing torch venv.
+if [ "$1" = "--voice" ]; then
+    setup_voice_deps
     exit $?
 fi
 

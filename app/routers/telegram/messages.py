@@ -12,7 +12,7 @@ from .senders import User, _has_pleroma, _media_action_cache, _offer_social_post
 # literals keep theirs and the derived effects — all single words, none of them a prefix of a literal —
 # are appended.
 _TG_BASE_COMMANDS = [
-    "help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "mail", "news", "dailynews",
+    "help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "voice", "mail", "news", "dailynews",
     "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share",
     "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert",
     "extractaudio", "circlecrop", "ocr", "flashcards",
@@ -27,6 +27,8 @@ _TG_COMMANDS = _TG_BASE_COMMANDS + sorted(_TG_EFFECT_WORDS - set(_TG_BASE_COMMAN
 # read the text), and an oversized one has to be reported rather than fed to the chat model.
 _TG_RAW_MEDIA_COMMANDS = _TG_EFFECTS | {
     "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "flashcards",
+    # `voice` clones the speaker in the attached clip — it needs the audio BYTES, not OCR'd text.
+    "voice",
 }
 
 

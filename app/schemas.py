@@ -136,6 +136,23 @@ class SettingsResponse(BaseModel):
     music_format: str = "mp3"  # mp3 | wav | flac | opus | aac
     music_timeout: str = "300000"  # music request timeout in ms (mirrors image_timeout)
     music_watermark_enabled: str = "true"  # append the branded end-card outro to the song video
+    # Voice cloning (Chatterbox, zero-shot). The FIRST local speech model in the stack — `tts_voice`
+    # above is edge-tts, i.e. Microsoft's CLOUD voices, which cost no GPU and stay the default for
+    # ordinary narration. This competes for the same single GPU as chat/image/music/video and runs at
+    # roughly 10x realtime, so it is only ever reached by an explicit `voice` request. Web UI +
+    # Telegram only, never the fedi bots: cloning a voice is an impersonation surface, the same
+    # reasoning that keeps music and video off them.
+    voice_enabled: str = "false"        # master switch; OFF by default (6.1GB of weights to fetch first)
+    voice_device: str = "auto"          # "auto"/"cuda"/"xpu"/"cpu" — "cuda" also covers ROCm
+    voice_model: str = "ResembleAI/chatterbox"   # HF id of the zero-shot cloning model
+    voice_server_urls: str = ""         # other nodes to load-balance across; blank = this node only
+    voice_exaggeration: str = "0.5"     # how much emotion carries over from the reference clip
+    voice_cfg_weight: str = "0.5"       # similarity vs stability (higher = closer, more artefacts)
+    voice_temperature: str = "0.8"      # sampling temperature
+    voice_max_chars: str = "800"        # per-request cap: the model degrades on long single passes
+    voice_max_ref_seconds: str = "30"   # longest reference clip accepted (a few seconds is plenty)
+    voice_timeout: str = "600000"       # request timeout in ms (mirrors music_timeout)
+    voice_watermark_enabled: str = "true"  # append the branded end-card outro to the spoken video
     # Voice/video calls (WebRTC, P2P-first, Nostr-signaled) + the built-in Pion TURN/STUN relay. The
     # relay is a bundled Go binary the app supervises (turn_service.py); FastAPI mints short-lived TURN
     # REST creds from turn_shared_secret. TURN is opt-in and needs one open public port + a grey-clouded

@@ -27,6 +27,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "musicgeni": "Generate a song: musicgeni <style prompt> [| lyrics]",
         "videogeni": "Generate a short video: videogeni <prompt>",
         "narrate": "Reply as a spoken (TTS) audio message: narrate <message>",
+        "voice": "Speak in a cloned voice: attach a short clip of the voice, then voice <text>",
         "yt": "YouTube search: yt <query>",
         "ytdl": "Download YouTube, X, or Nitter: ytdl <url> (MP3 default), ytdl mp3/video <url>. For video, add clip <start> <end> and/or compress, e.g. ytdl video <url> clip 0:10 0:30 compress",
         "torrents": "Torrent search: torrents <query>",
@@ -231,6 +232,9 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
     # wants_attachments.
     MEDIA_TOOL_COMMANDS = {
         "bill", "remind", "compress", "removebackground", "clip", "convert", "extractaudio",
+        # `voice` takes the reference clip's raw BYTES — without this it is handed attachments=None
+        # and can only answer "attach a clip", which is the exact defect the alias/effect sets fixed.
+        "voice",
         "circlecrop", "ocr", "post", "translate", "flashcards",
     }
     # The NON-effect commands /meme/apply-effect is allowed to run on a single Meme Builder layer.
@@ -456,6 +460,9 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "geni": ("can_image", "image generation"),
         "musicgeni": ("can_music", "music generation"),
         "videogeni": ("can_video", "video generation"),
+        # Cloning a voice is an impersonation surface, so it is gated like the other GPU features
+        # rather than open to every user. Reuses can_music: both are "may spend the GPU on audio".
+        "voice": ("can_music", "voice cloning"),
         "torrents": ("can_torrent", "torrents"),
         "nyaa": ("can_torrent", "torrents"),
     }
@@ -608,6 +615,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._videogeni_command(arg, stop_check)
         elif command == "narrate":
             return await self._narrate_command(arg, stop_check)
+        elif command == "voice":
+            return await self._voice_command(arg, attachments)
         elif command == "yt":
             return await self._youtube_command(arg)
         elif command == "ytdl":

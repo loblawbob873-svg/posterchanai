@@ -24,7 +24,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Global state
-_current_mode: Optional[Literal["llm", "image", "music", "video"]] = None
+_current_mode: Optional[Literal["llm", "image", "music", "video", "voice"]] = None
 _swap_lock = threading.Lock()
 
 
@@ -71,6 +71,61 @@ def _unload_native_video(db: Session):
             service.unload_model()
     except Exception as e:
         logger.error(f"Error unloading video model: {e}")
+
+
+def _unload_native_voice(db: Session):
+    """Free the in-process voice-cloning model if it's loaded. Called from every other prepare_for_*
+    for the same reason as video: the voice weights are ~6GB resident, which is half of a 12GB card,
+    so leaving them behind turns the next LLM or image load into an OOM rather than a swap."""
+    try:
+        from app.services import voice_local
+        if voice_local.is_available():
+            svc = voice_local.get_voice_service()
+            if svc.is_loaded():
+                logger.info("Unloading voice model to free VRAM...")
+                svc.unload_model()
+    except Exception as e:
+        logger.error(f"Error unloading voice model: {e}")
+
+
+def prepare_for_voice(db: Session) -> bool:
+    """Prepare VRAM for LOCAL voice cloning. Mirrors prepare_for_music/video: in shared mode, unload
+    our OTHER in-process models so the voice model — loaded on demand inside voice_local — has the
+    GPU to itself. Always paired with the shared GPUResourceLock in voice_factory, so chat, image,
+    music, video and voice all queue on ONE GPU."""
+    global _current_mode
+
+    settings = _get_vram_settings(db)
+    if settings["vram_mode"] == "dedicated":
+        _current_mode = "voice"
+        return True
+
+    with _swap_lock:
+        if _current_mode == "voice":
+            return True
+        try:
+            from app.services.llama_service import get_llama_service
+            service = get_llama_service(db)
+            if service._model is not None:
+                logger.info("Unloading LLM to free VRAM for voice generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading LLM for voice: {e}")
+        try:
+            from app.services.diffusers_service import get_diffusers_service
+            service = get_diffusers_service(db)
+            if service.is_loaded():
+                logger.info("Unloading image model to free VRAM for voice generation...")
+                service.unload_model()
+        except Exception as e:
+            logger.error(f"Error unloading image model for voice: {e}")
+        _unload_native_video(db)
+        _unload_native_music(db)
+        # NOT _unload_native_voice — this is the swap TO voice. Dropping it here would throw away the
+        # model we are about to use and pay the reload on every single request.
+        _current_mode = "voice"
+        logger.info("VRAM ready for voice generation")
+        return True
 
 
 def _music_service_ctl(db: Session, action: str):
@@ -181,6 +236,7 @@ def prepare_for_llm(db: Session) -> bool:
 
         _unload_native_video(db)
         _unload_native_music(db)
+        _unload_native_voice(db)
         _ensure_llm_loaded(db)
         _current_mode = "llm"
         logger.info("VRAM ready for LLM")
@@ -231,6 +287,7 @@ def prepare_for_image(db: Session) -> bool:
 
         _unload_native_video(db)
         _unload_native_music(db)
+        _unload_native_voice(db)
         _ensure_image_loaded(db)
         _current_mode = "image"
         logger.info("VRAM ready for image generation")
@@ -284,6 +341,7 @@ def prepare_for_music(db: Session) -> bool:
         except Exception as e:
             logger.error(f"Error unloading image model for music: {e}")
         _unload_native_video(db)
+        _unload_native_voice(db)
         _current_mode = "music"
         logger.info("VRAM ready for music generation")
         return True
@@ -331,6 +389,7 @@ def prepare_for_video(db: Session) -> bool:
                 service.unload_model()
         except Exception as e:
             logger.error(f"Error unloading image model for video: {e}")
+        _unload_native_voice(db)
         _current_mode = "video"
         logger.info("VRAM ready for video generation")
         return True

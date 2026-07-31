@@ -264,6 +264,98 @@ class _GenMixin:
             "prompt": arg.strip(),
         }
 
+    async def _voice_command(self, arg: str, attachments: Optional[list] = None) -> dict:
+        """Speak text in a CLONED voice. `voice <text>` with a short clip of the voice attached.
+
+        The reference travels as an attachment rather than being looked up in a server-side library,
+        which is what lets the same command work identically in the web chat and on Telegram — the
+        voice library is client-side (the studio in AI Chat keeps it on the user's own Blossom drive),
+        and Telegram has no library at all. Reply to a voice note with `voice <text>` and it speaks.
+
+        This is the one local speech model in the stack, and it is deliberately NOT what `narrate`
+        uses: narrate is edge-tts (cloud, free, instant), this holds the node's GPU for ~10x realtime.
+        """
+        import asyncio as _asyncio
+        import base64 as _b64
+        import os
+        import shutil
+        import tempfile
+
+        from app.services import media_service, voice_factory, settings_store
+
+        said = (arg or "").strip()
+        if not said:
+            return {"type": "text",
+                    "content": "Attach a short clip of the voice, then send `voice <what to say>`."}
+        if not attachments:
+            return {"type": "text",
+                    "content": "I need a voice to copy — attach a few seconds of clean audio "
+                               "(or a video with speech in it), then send `voice <what to say>`."}
+        if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+            return {"type": "text", "content": "Voice cloning is switched off on this server."}
+
+        # First attachment with audio in it. A VIDEO is fine — ffmpeg pulls the track out below, which
+        # is what makes "reply to a clip with `voice ...`" work without the user converting anything.
+        ref = None
+        for fn, data, ct in attachments:
+            if not data:
+                continue
+            if (ct or "").startswith(("audio/", "video/")) or media_service.is_video(fn, ct or ""):
+                ref = (fn, data)
+                break
+        if ref is None:
+            return {"type": "text", "content": "That attachment has no audio in it — I need a clip of the voice."}
+
+        tmp = tempfile.mkdtemp(prefix="voice_cmd_")
+        try:
+            src = os.path.join(tmp, ref[0] or "ref")
+            with open(src, "wb") as f:
+                f.write(ref[1])
+            # Normalise to what the model wants: mono 24kHz WAV, trimmed to the reference cap. A long
+            # reference buys nothing (the model uses a few seconds) and costs upload + memory on every
+            # forwarded request, so the cap is enforced HERE, once, before any of that.
+            max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
+            wav_path = os.path.join(tmp, "ref.wav")
+            ff = media_service.resolve_ffmpeg()
+            proc = await _asyncio.create_subprocess_exec(
+                ff, "-y", "-i", src, "-t", str(max_ref), "-ar", "24000", "-ac", "1", wav_path,
+                stdout=_asyncio.subprocess.DEVNULL, stderr=_asyncio.subprocess.PIPE)
+            _, err = await proc.communicate()
+            if proc.returncode != 0 or not os.path.exists(wav_path):
+                return {"type": "text",
+                        "content": "Couldn't read any audio out of that clip: "
+                                   + err[-200:].decode("utf-8", "replace")}
+            with open(wav_path, "rb") as f:
+                ref_bytes = f.read()
+
+            try:
+                wav, where = await voice_factory.generate_voice(
+                    self.db, said, ref_bytes, reference_path=wav_path)
+            except Exception as e:
+                return {"type": "text", "content": f"Voice generation failed: {e}"}
+            logger.info("[voice] command spoke %d chars on %s", len(said), where)
+
+            # Deliver as a branded MP4, exactly like musicgeni/narrate — one delivery shape for every
+            # generated-audio feature, so the players, the MP3 extraction and the outro all already
+            # work. make_music_video takes the EXTENSION and hands the file to ffmpeg, so the WAV goes
+            # in as-is; converting it to mp3 first would be a second encode for no one's benefit.
+            wrap = str(settings_store.get("voice_watermark_enabled", "true")).lower() in ("1", "true", "yes", "on")
+            video_bytes = b""
+            if wrap:
+                try:
+                    video_bytes = await _asyncio.to_thread(
+                        media_service.make_music_video, wav, "wav", "", 1280, 720, True)
+                except Exception as e:
+                    logger.warning("voice video wrap failed, sending audio: %s", e)
+            if video_bytes:
+                return {"type": "generated_video", "content": said,
+                        "video": _b64.b64encode(video_bytes).decode(), "format": "mp4",
+                        "prompt": said, "has_audio": True}
+            return {"type": "generated_audio", "content": said,
+                    "audio": _b64.b64encode(wav).decode(), "format": "wav", "prompt": said}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     async def _videogeni_command(self, arg: str, stop_check: Optional[callable] = None) -> dict:
         """Generate a short video via the native diffusers Wan pipeline. `videogeni <prompt>`.
 

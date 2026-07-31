@@ -727,6 +727,105 @@ async def client_compress_video(file: UploadFile = File(...)):
             _shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# ---- voice cloning -----------------------------------------------------------------------------
+# Per-user gate with the same shape as /meme/generate-image, and for the same reason: a generation
+# holds this node's GPUResourceLock for its whole run (~10x realtime), so it stalls chat, image, music
+# and video behind it. The cooldown is longer than the image one because the job is longer.
+_voice_cooldown: dict = {}
+_voice_busy: set = set()
+_VOICE_COOLDOWN_S = 15.0
+
+
+@router.get("/voice/status")
+async def client_voice_status(db: Session = Depends(get_db)):
+    """What the studio shows before you press anything: whether this node can speak at all, whether
+    the weights are down, and how many jobs are already queued for the GPU."""
+    from app.services import voice_local, voice_factory
+    enabled = str(settings_store.get("voice_enabled", "false")).lower() in ("1", "true", "yes", "on")
+    installed = voice_local.is_available()
+    return JSONResponse({
+        "enabled": enabled,
+        "installed": installed,
+        "downloaded": voice_local.is_downloaded() if installed else False,
+        "ready": bool(enabled and installed and voice_local.is_downloaded()),
+        "queue": voice_factory.queue_depth(),
+        "max_chars": int(float(settings_store.get("voice_max_chars", "800") or 800)),
+        "max_ref_seconds": int(float(settings_store.get("voice_max_ref_seconds", "30") or 30)),
+    })
+
+
+@router.post("/voice/speak")
+async def client_voice_speak(
+    reference: UploadFile = File(...),
+    text: str = Form(...),
+    pubkey: str = Form(...),
+    auth: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Speak `text` in the voice of the uploaded reference clip. Returns WAV bytes.
+
+    The clip is uploaded WITH each request rather than referenced by URL. That costs a couple of
+    hundred KB next to a ~45s GPU job, and buys two things worth more than that: the server never
+    fetches a URL on a user's say-so (no SSRF surface on an endpoint that burns GPU), and the studio
+    works identically for a saved voice and a clip you just recorded — the browser already holds the
+    bytes in both cases.
+    """
+    import os
+    import tempfile
+    import shutil
+    import time as _time
+    from app.services import voice_local, voice_factory
+
+    pk = nostr_service.to_pubkey_hex(pubkey or "")
+    if not pk or not _verify_self_auth(auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=503, detail="voice cloning is switched off on this server")
+    if not voice_local.is_available() and not voice_factory.parse_voice_server_urls(
+            settings_store.get("voice_server_urls", "")):
+        raise HTTPException(status_code=503, detail="the voice model isn't installed on this server")
+
+    said = (text or "").strip()
+    if not said:
+        raise HTTPException(status_code=400, detail="type something for it to say")
+    max_chars = int(float(settings_store.get("voice_max_chars", "800") or 800))
+    if len(said) > max_chars:
+        said = said[:max_chars]
+
+    if pk in _voice_busy:
+        raise HTTPException(status_code=429, detail="your last one is still generating")
+    last = _voice_cooldown.get(pk, 0.0)
+    if _time.monotonic() - last < _VOICE_COOLDOWN_S:
+        wait = int(_VOICE_COOLDOWN_S - (_time.monotonic() - last)) + 1
+        raise HTTPException(status_code=429, detail=f"hang on {wait}s — voice generation holds the GPU")
+
+    data = await reference.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="the reference clip is empty")
+    if len(data) > 16 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="that reference clip is too long")
+
+    tmp = tempfile.mkdtemp(prefix="voice_ref_")
+    path = os.path.join(tmp, "ref.wav")
+    _voice_busy.add(pk)
+    try:
+        with open(path, "wb") as f:
+            f.write(data)
+        wav, where = await voice_factory.generate_voice(db, said, data, reference_path=path)
+        logger.info("[voice] spoke %d chars for %s on %s", len(said), pk[:8], where)
+        return Response(content=wav, media_type="audio/wav",
+                        headers={"X-Generated-On": where})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("[voice] speak failed: %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
+    finally:
+        _voice_busy.discard(pk)
+        _voice_cooldown[pk] = _time.monotonic()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @router.post("/summarize")
 async def client_summarize(request: Request, db: Session = Depends(get_db)):
     """Summarize a post/thread via the node's own LLM — powers the timeline 'Summary' action. The

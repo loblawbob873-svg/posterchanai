@@ -164,6 +164,21 @@ einops>=0.8.1
 einx
 vector-quantize-pytorch>=1.27.15
 
+# Voice cloning (the `voice` command) also runs IN-PROCESS on that same torch. Chatterbox IS on PyPI,
+# but `chatterbox-tts` is deliberately NOT listed here, because a plain `pip install -r` of it would
+# be destructive: it pins torch==2.6.0, torchaudio==2.6.0, transformers==5.2.0, diffusers==0.29.0 and
+# gradio. That single line would replace the GPU torch, drag transformers past the <5 pin above (so
+# music stops loading) and drop diffusers below what video gen needs — three features broken by one
+# resolve, which is exactly the failure mode the comment above describes. `./install.sh --voice`
+# installs it with --no-deps behind a constraints file, and verifies the stack afterwards.
+# s3tokenizer + resemble-perth are --no-deps for the same reason (s3tokenizer declares pre-commit,
+# virtualenv and nodeenv as RUNTIME deps). These are the leftovers that ARE safe to resolve normally:
+librosa>=0.11.0
+conformer>=0.3.2
+pykakasi>=2.3.0
+pyloudnorm>=0.2.0
+omegaconf>=2.3.0
+
 # PWA Web Push notifications (mentions/zaps/replies delivered when the client is closed). Pulls in
 # py-vapid + cryptography (already present) + http-ece. Server-side only; the client uses the browser
 # PushManager. See app/services/push_service.py + nostr_push_service.py.

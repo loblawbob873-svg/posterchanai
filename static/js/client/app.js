@@ -13765,7 +13765,9 @@
     });
     $('#ai-msgs').addEventListener('click',async e=>{
       // Guided card → open the studio for that command (no syntax to remember).
-      const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); if(gc.dataset.open==='nodes'){ openNodePanel(); } else { openGenStudio(gc.dataset.gen); } return; }
+      const gc=e.target.closest('.aw-card'); if(gc){ e.preventDefault(); if(gc.dataset.open==='nodes'){ openNodePanel(); }
+        else if(gc.dataset.gen==='voice'){ openVoiceStudio(); }   // its own studio: a voice is a saved CLIP, not a prompt
+        else { openGenStudio(gc.dataset.gen); } return; }
       const eg=e.target.closest('.ai-eg'); if(eg){ e.preventDefault(); const ta=$('#ai-input'); if(ta){ ta.value=eg.dataset.cmd; ta.focus(); ta.dispatchEvent(new Event('input')); } return; }   // welcome example → prefill, let the user type
       const bno=e.target.closest('.ai-billno'); if(bno){ e.preventDefault();
         const row=bno.closest('.ai-budget-btns'); if(row) row.innerHTML='<span class="muted small">Not added.</span>'; return; }
@@ -13901,6 +13903,10 @@
   // footer, hit Generate. The command is still what gets sent, so the chat/Telegram paths are
   // untouched and anyone who prefers typing keeps working exactly as before.
   const _GEN = {
+    // Voice has no prompt sheet — a voice is a saved CLIP, not a description — so it carries only
+    // what the picker renders and is routed to its own studio at both call sites.
+    voice: { cmd:'voice', icon:'🎙️', title:'Clone a voice',
+      blurb:'A few seconds of someone speaking, then it can say anything.' },
     image: { cmd:'geni', icon:'🎨', title:'Generate an image',
       blurb:'Describe what you want to see. Add a style if you like.',
       ph:'a neon city street in the rain, a lone figure with an umbrella',
@@ -13993,6 +13999,7 @@
   // The ✨ button: which guided action? (the splash shows these as cards; this is the mid-chat route)
   function openGenPicker(){
     const items=[['image','Make an image'],['music','Make a song'],['video','Make a video'],
+                 ['voice','Clone a voice'],
                  ['audio','Get the audio from a link'],['videodl','Download a video'],
                  ['shot','Screenshot a page'],['translate','Translate text'],
                  ['search','Search the web'],['images','Find images'],
@@ -14005,13 +14012,206 @@
       <div class="gen-picker">${items.map(([k,label])=>{ const G=_GEN[k];
         return `<button class="gen-pick" data-gen="${k}"><span class="awc-ic">${G.icon}</span>
           <span><b>${enc(label)}</b><span class="muted small">${enc(G.blurb)}</span></span></button>`; }).join('')}</div>`,
-      root=>{ $$('.gen-pick',root).forEach(b=> b.onclick=()=>{ closeModal(); openGenStudio(b.dataset.gen); }); });
+      root=>{ $$('.gen-pick',root).forEach(b=> b.onclick=()=>{ closeModal();
+        if(b.dataset.gen==='voice') openVoiceStudio(); else openGenStudio(b.dataset.gen); }); });
   }
 
   // `opts` lets ANOTHER part of the app borrow this sheet without borrowing the chat: `over` patches the
   // wording (title/blurb/button) and `onSubmit` takes the result instead of sending the command. That is
   // how the Meme Builder generates an image layer — same chips, same live command preview, same mobile
   // layout, one implementation. Without it the builder would need a second prompt UI that drifts.
+  // ---- Voice studio ------------------------------------------------------------------------
+  // A "voice" is a NAME plus a short reference clip on your own Blossom drive — there is no training
+  // and no per-voice model, so the whole library is a few hundred bytes of JSON. It lives in a
+  // kind-30078 doc so it follows you across devices, exactly like the client prefs above.
+  const VOICES_D = 'pcai:voices';
+  let _voices = null;              // array, or null = NOT LOADED (which is not the same as empty)
+  async function voicesRead(){
+    let ev = null;
+    for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
+      try{ const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[VOICES_D], limit:1 }]);
+        ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null; }catch(_){}
+    }
+    if(!ev) return null;           // null, NOT [] — see voicesSave
+    try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; }
+  }
+  let _voicesChain = Promise.resolve();
+  // Serialised read-modify-write, and it REFUSES to write when the read failed. This doc is
+  // replaceable: publishing a list built on top of "I couldn't read anything" replaces the user's
+  // whole library with whatever this one tab happened to hold — the same wipe that took out mutes,
+  // follows and a drive's file index. A retry costs nothing; a wipe is unrecoverable.
+  function voicesSave(mutate){
+    _voicesChain = _voicesChain.catch(()=>{}).then(async()=>{
+      const cur = await voicesRead();
+      if(cur === null) throw new Error('couldn’t reach your relay — not saving, so nothing is lost');
+      const next = mutate(cur.slice());
+      await publish(30078, JSON.stringify({ voices: next }), [['d', VOICES_D]]);
+      _voices = next;
+      return next;
+    });
+    return _voicesChain;
+  }
+
+  async function voiceStatus(){
+    try{ const r = await fetch('/client/voice/status'); return r.ok ? await r.json() : null; }
+    catch(_){ return null; }
+  }
+
+  // Record a reference clip with the mic. Same MediaRecorder shape as the Meme Builder's voice-over.
+  async function voiceRecord(onDone){
+    if(!navigator.mediaDevices || typeof MediaRecorder==='undefined'){
+      toast('recording isn’t available in this browser — upload a clip instead'); return; }
+    let stream;
+    try{ stream = await navigator.mediaDevices.getUserMedia({ audio:true }); }
+    catch(_){ toast('microphone permission denied'); return; }
+    const mimes=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
+    const mime=mimes.find(m=>{ try{ return MediaRecorder.isTypeSupported(m); }catch(_){ return false; } })||'';
+    const rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
+    const chunks=[]; rec.ondataavailable=e=>{ if(e.data&&e.data.size) chunks.push(e.data); };
+    let secs=0, tick=null;
+    modal(`<h3>Record a voice</h3>
+      <p class="muted small">Read a couple of sentences in a normal speaking voice, somewhere quiet.
+        Five to fifteen seconds is plenty — more doesn’t make the copy better.</p>
+      <div class="mb-rec"><span class="mb-recdot on"></span><b id="vr-clock">0:00</b></div>
+      <button class="btn btn-neon full" id="vr-stop">Stop and use this</button>`, root=>{
+      tick=setInterval(()=>{ secs++; const el=root.querySelector('#vr-clock');
+        if(el) el.textContent=`${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`; }, 1000);
+      root.querySelector('#vr-stop').onclick=()=>{ try{ rec.stop(); }catch(_){} };
+    });
+    rec.onstop=()=>{
+      clearInterval(tick);
+      try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+      closeModal();
+      const blob=new Blob(chunks,{type:mime||'audio/webm'});
+      if(!blob.size){ toast('nothing was recorded'); return; }
+      onDone(new File([blob], 'voice-sample.webm', {type: blob.type}));
+    };
+    rec.start();
+  }
+
+  // Take a clip (recorded or picked), put it on Blossom, and add it to the library.
+  async function voiceAdd(file){
+    const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
+    if(name === null) return;
+    const nm = (name||'').trim().slice(0,40) || 'untitled';
+    try{
+      toast('uploading the sample…');
+      const url = await uploadBlob(file);
+      await voicesSave(list => {
+        list.push({ id: 'v'+Date.now().toString(36), name: nm, url, created: Math.floor(Date.now()/1000) });
+        return list;
+      });
+      toast('voice saved');
+      openVoiceStudio();
+    }catch(e){ toast('couldn’t save that voice: '+((e&&e.message)||e)); }
+  }
+
+  async function voiceSpeak(voice, text, root){
+    const st = root && root.querySelector('#vs-status');
+    const say = (m)=>{ if(st) st.textContent = m; };
+    try{
+      say('fetching the voice…');
+      // Check the fetch. A dead/expired Blossom URL returns an HTML error page with a 200-ish shape
+      // in some setups, and posting THAT as the reference gives a baffling "couldn't read audio"
+      // from the far end instead of "your sample is gone".
+      const rr = await fetch(voice.url);
+      if(!rr.ok){ say(''); toast('that voice’s sample is missing from your drive — re-record it'); return; }
+      const ref = await rr.blob();
+      if(!ref || !ref.size){ say(''); toast('that voice’s sample is empty — re-record it'); return; }
+      const auth = await selfProof();
+      const fd = new FormData();
+      fd.append('reference', ref, 'ref.wav');
+      fd.append('text', text);
+      fd.append('pubkey', ME.pubkey);
+      fd.append('auth', auth);
+      // A generation runs at roughly 10x realtime and queues behind every other GPU task on the
+      // node, so say so. Silence here reads as a hung app, which is how people end up firing three
+      // more requests at a GPU that is already busy with the first.
+      say('generating… this holds the server’s GPU, so it can take a minute');
+      const r = await fetch('/client/voice/speak', { method:'POST', body: fd });
+      if(!r.ok){
+        let msg = 'HTTP '+r.status;
+        try{ const j = await r.json(); msg = j.detail || j.error || msg; }catch(_){}
+        say(''); toast(msg); return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const out = root && root.querySelector('#vs-out');
+      if(out){
+        out.innerHTML = `<audio controls autoplay src="${url}" style="width:100%"></audio>
+          <a class="btn btn-cyan small full" download="voice.wav" href="${url}">⬇ Save the audio file</a>`;
+      }
+      say('');
+    }catch(e){ say(''); toast('voice failed: '+((e&&e.message)||e)); }
+  }
+
+  async function openVoiceStudio(){
+    const status = await voiceStatus();
+    if(status && !status.installed){
+      modal(`<h3>Voice cloning</h3><p class="muted">This server hasn’t got the voice model
+        installed. An admin can add it with <code>./install.sh --voice</code>, then switch it on in
+        Admin → Voice.</p>`); return;
+    }
+    if(status && !status.enabled){
+      modal(`<h3>Voice cloning</h3><p class="muted">Voice cloning is switched off on this server
+        (Admin → Voice).</p>`); return;
+    }
+    if(_voices === null) _voices = await voicesRead();
+    const list = _voices || [];
+    const unreachable = _voices === null;
+    const rows = list.length ? list.map(v=>`
+      <div class="vs-row" data-id="${enc(v.id)}">
+        <button class="vs-pick" data-id="${enc(v.id)}"><b>${enc(v.name)}</b></button>
+        <audio class="vs-prev" controls preload="none" src="${enc(v.url)}"></audio>
+        <button class="vs-del btn btn-ghost small" data-id="${enc(v.id)}" aria-label="Delete ${enc(v.name)}">
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+      </div>`).join('')
+      : `<p class="muted small">${unreachable
+          ? 'Couldn’t reach your relay, so your saved voices aren’t showing. Try again in a moment.'
+          : 'No voices yet. Record a few seconds of someone speaking and give it a name.'}</p>`;
+    const q = status && status.queue ? `<p class="muted small">${status.queue} job(s) already queued on this server’s GPU.</p>` : '';
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Voices</h3>
+      <p class="muted small">Give it a few seconds of someone speaking and it can say anything in that
+        voice. Nothing is trained — the clip itself is the voice, so you can add one in a minute.</p>
+      ${q}
+      <div class="vs-list">${rows}</div>
+      <div class="fx-row" style="display:flex;gap:6px;margin:10px 0">
+        <button class="btn btn-cyan small" id="vs-rec">🎙 Record a voice</button>
+        <button class="btn btn-cyan small" id="vs-up">📁 Upload a clip</button>
+      </div>
+      <label class="mb-f"><span>What should it say?</span>
+        <textarea class="input" id="vs-text" rows="3" maxlength="${(status&&status.max_chars)||800}"
+                  placeholder="Type what you want spoken…"></textarea></label>
+      <button class="btn btn-neon full" id="vs-go">🔊 Speak it</button>
+      <div class="muted small" id="vs-status" style="margin-top:8px"></div>
+      <div id="vs-out" style="margin-top:8px"></div>`, root=>{
+      let picked = list[0] ? list[0].id : null;
+      const paint=()=>{ $$('.vs-pick',root).forEach(b=>b.classList.toggle('on', b.dataset.id===picked)); };
+      paint();
+      $$('.vs-pick',root).forEach(b=> b.onclick=()=>{ picked=b.dataset.id; paint(); });
+      $$('.vs-del',root).forEach(b=> b.onclick=async()=>{
+        const v=list.find(x=>x.id===b.dataset.id); if(!v) return;
+        if(!await uiConfirm(`Delete the voice “${v.name}”?`)) return;
+        try{ await voicesSave(cur=>cur.filter(x=>x.id!==v.id)); closeModal(); openVoiceStudio(); }
+        catch(e){ toast((e&&e.message)||'couldn’t delete that'); }
+      });
+      root.querySelector('#vs-rec').onclick=()=>{ closeModal(); voiceRecord(f=>voiceAdd(f)); };
+      root.querySelector('#vs-up').onclick=()=>{
+        const inp=document.createElement('input'); inp.type='file'; inp.accept='audio/*,video/*';
+        inp.onchange=()=>{ const f=(inp.files||[])[0]; if(f){ closeModal(); voiceAdd(f); } };
+        inp.click();
+      };
+      root.querySelector('#vs-go').onclick=()=>{
+        const v=list.find(x=>x.id===picked);
+        if(!v){ toast('add a voice first'); return; }
+        const t=(root.querySelector('#vs-text').value||'').trim();
+        if(!t){ toast('type what it should say'); return; }
+        voiceSpeak(v, t, root);
+      };
+    });
+  }
+  window.__openVoiceStudio = openVoiceStudio;
+
   function openGenStudio(kind, opts){
     opts = opts || {};
     const base0 = _GEN[kind]; if(!base0) return;
@@ -14173,6 +14373,7 @@
         <button class="aw-card" data-gen="music"><span class="awc-ic">🎵</span><b>Make a song</b><span>genre, mood, lyrics optional</span></button>
         <button class="aw-card" id="aw-nodes" data-open="nodes" style="display:none"><span class="awc-ic">🤖</span><b>Agents</b><span>run tasks on your servers</span></button>
         <button class="aw-card" data-gen="video"><span class="awc-ic">🎬</span><b>Make a video</b><span>a short clip from a prompt</span></button>
+        <button class="aw-card" data-gen="voice"><span class="awc-ic">🎙️</span><b>Clone a voice</b><span>a short clip → say anything</span></button>
       </div>
       <p class="muted small aw-or">…or grab something from the web:</p>
       <div class="aw-make">

@@ -1,0 +1,107 @@
+<!-- Voice Cloning Tab -->
+<div class="tab-content" id="tab-voice">
+    <fieldset>
+        <legend>Voice Cloning (Chatterbox)</legend>
+        <p class="vram-info">
+            Zero-shot voice cloning: a few seconds of reference audio, then arbitrary text in that
+            voice. It runs <strong>in-process</strong> on this app's own torch stack and GPU lock, the
+            same as image, music and video — no sidecar and no second virtualenv. Install it once with
+            <code>./install.sh --voice</code>, then press Download below. Available in the web UI
+            (AI Chat → Voices) and Telegram via <code>voice &lt;text&gt;</code> with a clip attached.
+        </p>
+        <p class="vram-info">
+            <strong>This is not the same thing as narration.</strong> The Text-to-Speech voice under
+            Tools is <em>edge-tts</em> — Microsoft's cloud voices, instant and free of GPU. Cloning is
+            a local model that holds this node's GPU for roughly <strong>10× realtime</strong> (a 30s
+            clip ≈ 5 minutes), during which chat, image, music and video all queue behind it. Leave it
+            off unless you want that trade.
+        </p>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="voice_enabled" name="voice_enabled">
+                <span>Enable voice cloning</span>
+            </label>
+            <small>Off by default. When off, <code>voice</code> and the studio return a friendly notice.</small>
+        </div>
+        <div class="form-group">
+            <button type="button" class="btn-secondary" id="dl-voice-btn" onclick="downloadModel('voice','dl-voice-btn','dl-voice-st')">⬇ Download voice model</button>
+            <span id="dl-voice-st" style="margin-left:10px;font-size:13px"></span>
+            <small>Fetches ~6&nbsp;GB and then loads it once on the CPU to prove the checkpoint is
+                intact and works with this node's pinned torch. It takes <em>no</em> GPU lock, so it is
+                safe to press while people are chatting — but the first <code>voice</code> request
+                would otherwise stall for the whole download with nothing on screen.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_device">Local GPU Device</label>
+            <select id="voice_device" name="voice_device">
+                <option value="auto">Auto-detect</option>
+                <option value="cuda">CUDA (NVIDIA / AMD ROCm)</option>
+                <option value="xpu">XPU (Intel Arc)</option>
+                <option value="cpu">CPU</option>
+            </select>
+            <small>Which lock voice takes (GPU vs CPU). Auto works on all three backends — ROCm
+                reports itself as CUDA to torch, and the loader forces a CPU map_location so the
+                CUDA-tagged checkpoints load on Arc too.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_model">Voice Model</label>
+            <input type="text" id="voice_model" name="voice_model" placeholder="ResembleAI/chatterbox">
+            <small>Hugging Face id of the zero-shot cloning model. Changing this invalidates the
+                downloaded weights — press Download again afterwards.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_server_urls">Voice Server URLs</label>
+            <textarea id="voice_server_urls" name="voice_server_urls" rows="2"
+                      placeholder="http://nas.lan:3051, http://other.lan:3051"></textarea>
+            <small>Other nodes to load-balance voice requests across, comma or newline separated.
+                Blank = this node only. A node that hasn't got the model installed answers 404 and is
+                skipped rather than counted as a failure, so it is safe to list every node.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Quality &amp; Limits</legend>
+        <div class="form-group">
+            <label for="voice_exaggeration">Exaggeration</label>
+            <input type="number" id="voice_exaggeration" name="voice_exaggeration" step="0.05" min="0" max="2">
+            <small>How much of the reference clip's emotion carries into the result. 0.5 is neutral;
+                higher is more theatrical.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_cfg_weight">Similarity (CFG weight)</label>
+            <input type="number" id="voice_cfg_weight" name="voice_cfg_weight" step="0.05" min="0" max="1">
+            <small>Trades likeness against stability. Higher sticks closer to the reference voice but
+                is more prone to artefacts.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_temperature">Temperature</label>
+            <input type="number" id="voice_temperature" name="voice_temperature" step="0.05" min="0" max="2">
+            <small>Sampling randomness. Lower is flatter and more repeatable.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_max_chars">Max characters per request</label>
+            <input type="number" id="voice_max_chars" name="voice_max_chars" min="50" max="5000">
+            <small>A cap, not a splitter — anything longer is truncated. The model degrades over long
+                single passes, and every extra character is more time holding the GPU.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_max_ref_seconds">Max reference length (seconds)</label>
+            <input type="number" id="voice_max_ref_seconds" name="voice_max_ref_seconds" min="3" max="120">
+            <small>Reference clips are trimmed to this before use. A few seconds is all the model
+                reads; the rest is upload and memory for nothing.</small>
+        </div>
+        <div class="form-group">
+            <label for="voice_timeout">Request timeout (ms)</label>
+            <input type="number" id="voice_timeout" name="voice_timeout" min="30000" max="3600000">
+            <small>How long to wait for another node before giving up on it and trying the next.</small>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="voice_watermark_enabled" name="voice_watermark_enabled">
+                <span>Append the branded end-card to spoken clips</span>
+            </label>
+            <small>Wraps the speech in the same branded MP4 as <code>musicgeni</code> and
+                <code>narrate</code>. Off delivers the raw audio.</small>
+        </div>
+    </fieldset>
+</div>

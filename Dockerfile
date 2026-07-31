@@ -258,6 +258,26 @@ RUN if [ "$INSTALL_MUSIC" = "1" ] && [ "$GPU" != "nostr" ]; then \
     fi
 ENV ACESTEP_ROOT=/opt/ace-step
 
+# --- voice cloning (the `voice` command), IN-PROCESS --------------------------
+# Zero-shot cloning via Chatterbox, on the torch installed above. Opt in with
+# --build-arg INSTALL_VOICE=1; the ~6GB of weights download on first use (or from Admin → Voice)
+# into the HF cache volume.
+#
+# --no-deps is LOAD-BEARING here for the SAME reason as ACE-Step, and it is worse: chatterbox-tts
+# pins torch==2.6.0, torchaudio==2.6.0, transformers==5.2.0, diffusers==0.29.0 AND gradio. Resolving
+# those would replace the GPU torch above, downgrade transformers past what ACE-Step needs
+# (`transformers<5`) and downgrade diffusers past what video gen needs — one `pip install` breaking
+# image, music and video at once. The API it actually uses (LlamaModel/GPT2Model/AutoTokenizer/
+# GenerationMixin, and diffusers' Attention + LoRACompatibleLinear) is present in the pinned versions.
+# s3tokenizer is also --no-deps: it declares pre-commit/virtualenv as RUNTIME deps.
+ARG INSTALL_VOICE=0
+RUN if [ "$INSTALL_VOICE" = "1" ] && [ "$GPU" != "nostr" ]; then \
+      set -eu; \
+      pip install --no-deps chatterbox-tts==0.1.7 s3tokenizer resemble-perth; \
+      pip install librosa==0.11.0 conformer==0.3.2 pykakasi==2.3.0 pyloudnorm omegaconf; \
+      python3 -c 'import chatterbox.tts' ; \
+    fi
+
 # --- app source ---------------------------------------------------------------
 COPY . /app
 

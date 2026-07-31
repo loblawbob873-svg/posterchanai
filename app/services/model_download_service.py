@@ -194,7 +194,39 @@ def _download_music(db):
     _set("music", "done", "Music model downloaded and verified.")
 
 
-_FNS = {"chat": _download_chat, "tools": _download_tools, "image": _download_image, "music": _download_music}
+def _download_voice(db):
+    """Fetch the voice-cloning weights (~6GB), then prove they load on THIS box.
+
+    Deliberately downloads on the CPU and takes NO GPU lock. That is the difference from the music
+    button: chatterbox's fetch-and-load is separable, so the expensive part (pulling several GB over
+    the network) can happen while someone else is chatting or rendering, instead of holding the GPU
+    for the length of a download. Loading on the CPU still proves the checkpoint is intact and that
+    the pinned torch/transformers can construct the model — the two things that actually go wrong —
+    without ever putting a second model on a shared card.
+
+    It also proves the portability fix: from_pretrained goes through voice_local, which forces a CPU
+    map_location, so a node that would have died on CUDA-tagged storages reports success here.
+    """
+    from app.services import voice_local
+    if not voice_local.is_available():
+        _set("voice", "error", "chatterbox-tts isn't installed on this node — run ./install.sh --voice")
+        return
+    model_id = voice_local._get_settings(db)["model"]
+    if voice_local.is_downloaded():
+        _set("voice", "running", f"{model_id} already cached — verifying it loads…")
+    else:
+        _set("voice", "running", f"downloading {model_id} (~6GB on first run)…")
+    try:
+        info = voice_local.download_model(db, model_id)
+    except Exception as e:
+        _set("voice", "error", f"{e}"[:300])
+        return
+    mb = int(info.get("bytes", 0) / (1024 * 1024))
+    _set("voice", "done", f"Voice model ready ({mb} MB cached, loads cleanly).")
+
+
+_FNS = {"chat": _download_chat, "tools": _download_tools, "image": _download_image,
+        "music": _download_music, "voice": _download_voice}
 
 
 def start(kind: str, db_factory) -> bool:
