@@ -13,11 +13,14 @@ one GPU, several nodes — and the bugs are the same bugs. What that means concr
   realtime, which is long enough that "nothing is happening" is the wrong thing to show a user.
 * **VRAM.** `prepare_for_voice` unloads our LLM/image/music/video first. Paired with the lock, that
   means exactly one model is resident at a time on a shared 12/16GB card.
-* **Load balancing.** Round-robin over the OTHER nodes plus this one. The four recurring LB bugs this
-  file is written to avoid: advancing the round-robin index without `% len` (which pins every request
-  to node 0 once the list shrinks), forgetting to exclude ourselves (a node proxying to itself
-  deadlocks on its own GPU lock), not being busy-aware, and treating a node that 404s the endpoint as
-  a hard failure instead of "that node hasn't got voice installed".
+* **Load balancing.** Round-robin over the OTHER nodes plus this one, taken from the ONE unified
+  `chat_server_urls` list that chat, image, music and video all share — there is no per-feature
+  server setting, because a second list is a second thing to keep in step and the node missing from
+  it fails by quietly never being asked. The four recurring LB bugs this file is written to avoid:
+  advancing the round-robin index without `% len` (which pins every request to node 0 once the list
+  shrinks), forgetting to exclude ourselves (a node proxying to itself deadlocks on its own GPU
+  lock), not being busy-aware, and treating a node that 404s the endpoint as a hard failure instead
+  of "that node hasn't got voice installed".
 """
 from __future__ import annotations
 
@@ -46,15 +49,14 @@ def queue_depth() -> int:
     return _queued
 
 
-def parse_voice_server_urls(raw: str) -> List[str]:
-    """Split the `voice_server_urls` setting. Accepts comma or newline separated, trims trailing
-    slashes, drops blanks."""
-    out = []
-    for chunk in (raw or "").replace("\n", ",").split(","):
-        u = chunk.strip().rstrip("/")
-        if u:
-            out.append(u)
-    return out
+def other_nodes(raw: str) -> List[str]:
+    """The OTHER nodes, from the ONE unified `chat_server_urls` list — the same list chat, image,
+    music and video use. There is deliberately no per-feature server setting: a second list is a
+    second thing to keep in step, and the node you forgot to add to it fails by quietly never being
+    asked. `exclude_self=True` is what stops a node HTTPing its own /api/generate-voice and
+    deadlocking on the GPU lock it is already holding."""
+    from app.services.load_balancer import parse_server_urls
+    return parse_server_urls(raw, exclude_self=True)
 
 
 async def _rotated(candidates: List[str]) -> List[str]:
@@ -81,7 +83,8 @@ def _cfg() -> dict:
     return {
         "enabled": str(s.get("voice_enabled", "false")).lower() in ("1", "true", "yes", "on"),
         "device": (s.get("voice_device") or "auto").strip(),
-        "servers": parse_voice_server_urls(s.get("voice_server_urls", "")),
+        # The unified list, exactly like music/video/image — voice has no server list of its own.
+        "servers": other_nodes(s.get("chat_server_urls", "")),
         "timeout": _i("voice_timeout", 600000) / 1000.0,
     }
 

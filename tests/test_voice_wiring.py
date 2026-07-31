@@ -161,11 +161,22 @@ class VoiceLoadBalancing(unittest.TestCase):
         src = _read("app/services/voice_factory.py")
         self.assertIn('candidates.append("local")', src)
 
-    def test_parse_urls(self):
-        from app.services.voice_factory import parse_voice_server_urls
-        self.assertEqual(parse_voice_server_urls("http://a/, http://b\nhttp://c/"),
-                         ["http://a", "http://b", "http://c"])
-        self.assertEqual(parse_voice_server_urls(""), [])
+    def test_uses_the_unified_server_list(self):
+        """One chat_server_urls drives chat, image, music, video AND voice. A per-feature list is a
+        second thing to keep in step, and the node missing from it fails by never being asked."""
+        src = _read("app/services/voice_factory.py")
+        self.assertIn('s.get("chat_server_urls"', src)
+        self.assertNotIn("voice_server_urls", src)
+        from app.schemas import SettingsResponse
+        self.assertNotIn("voice_server_urls", SettingsResponse.model_fields,
+                         "voice must not have a server list of its own")
+        self.assertNotIn("voice_server_urls", _read("templates/admin/tabs/voice_generation.html"))
+
+    def test_parse_excludes_self(self):
+        from app.services.voice_factory import other_nodes
+        self.assertEqual(other_nodes(""), [])
+        # exclude_self is what stops a node proxying to itself and deadlocking on its own GPU lock.
+        self.assertNotIn("http://127.0.0.1:3051", other_nodes("http://127.0.0.1:3051"))
 
     def test_node_endpoint_does_not_forward_again(self):
         """/api/generate-voice must call _generate_local, not the public entry point — otherwise a

@@ -145,7 +145,6 @@ class SettingsResponse(BaseModel):
     voice_enabled: str = "false"        # master switch; OFF by default (6.1GB of weights to fetch first)
     voice_device: str = "auto"          # "auto"/"cuda"/"xpu"/"cpu" — "cuda" also covers ROCm
     voice_model: str = "ResembleAI/chatterbox"   # HF id of the zero-shot cloning model
-    voice_server_urls: str = ""         # other nodes to load-balance across; blank = this node only
     voice_exaggeration: str = "0.5"     # how much emotion carries over from the reference clip
     voice_cfg_weight: str = "0.5"       # similarity vs stability (higher = closer, more artefacts)
     voice_temperature: str = "0.8"      # sampling temperature

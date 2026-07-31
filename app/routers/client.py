@@ -781,8 +781,8 @@ async def client_voice_speak(
         raise HTTPException(status_code=401, detail="bad auth")
     if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
         raise HTTPException(status_code=503, detail="voice cloning is switched off on this server")
-    if not voice_local.is_available() and not voice_factory.parse_voice_server_urls(
-            settings_store.get("voice_server_urls", "")):
+    if not voice_local.is_available() and not voice_factory.other_nodes(
+            settings_store.get("chat_server_urls", "")):
         raise HTTPException(status_code=503, detail="the voice model isn't installed on this server")
 
     said = (text or "").strip()

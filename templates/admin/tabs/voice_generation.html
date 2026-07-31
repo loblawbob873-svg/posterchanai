@@ -49,14 +49,13 @@
             <small>Hugging Face id of the zero-shot cloning model. Changing this invalidates the
                 downloaded weights — press Download again afterwards.</small>
         </div>
-        <div class="form-group">
-            <label for="voice_server_urls">Voice Server URLs</label>
-            <textarea id="voice_server_urls" name="voice_server_urls" rows="2"
-                      placeholder="http://nas.lan:3051, http://other.lan:3051"></textarea>
-            <small>Other nodes to load-balance voice requests across, comma or newline separated.
-                Blank = this node only. A node that hasn't got the model installed answers 404 and is
-                skipped rather than counted as a failure, so it is safe to list every node.</small>
-        </div>
+        <p class="vram-info">
+            Cross-node load balancing uses the single
+            <strong>Site → Load Balancing → Server URLs</strong> list — no per-feature server config
+            here, the same as image, chat, music and video. A node that hasn't got the voice model
+            installed answers 404 and is skipped rather than counted as a failure, so every node can
+            stay on that one list.
+        </p>
     </fieldset>
 
     <fieldset>
