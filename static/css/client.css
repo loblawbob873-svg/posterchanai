@@ -1549,17 +1549,24 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note-preview a.mention{color:var(--cyan)}
 .row{display:flex;gap:8px;align-items:center}
 .spacer{flex:1}
-.cmp-tools{flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-2);justify-content:center}   /* center the tool-button row to match the Draft/Post row below (was space-between → left-stuck the lone .cmp-left) */
-.cmp-left,.cmp-right{display:flex;gap:var(--sp-2);flex-wrap:wrap;align-items:center;justify-content:center}
-.cmp-right{margin-left:auto}
-/* Draft + Post on their own centered row beneath the tool buttons */
-/* Draft/Post row. The centering USED to be duplicated as inline styles on the markup, for cache-
-   proofing. That backfired twice: an inline `display` cannot be overridden, so it beat the icon-gap
-   rule (the icon sat flush against "Draft") AND it beat the ≤520px rule below — meaning the phone fix
-   that puts Draft and Post on ONE row had never actually applied since the day it was written. The
-   class owns the layout now; a stale stylesheet would break far more than this row anyway. */
-.cmp-actions{display:flex;flex-wrap:wrap;gap:var(--sp-2);justify-content:center;align-items:center;margin-top:var(--sp-3)}
-.cmp-actions .btn{min-width:120px;margin:0;vertical-align:middle}
+/* Composer footer: tools on one wrapping row, then Draft/Schedule left and Post anchored RIGHT — the
+   same shape as the inline timeline composer (.tl-cmp-tools) and as every other client.
+   It replaces a CENTRED layout that three separate media queries were still trying to rescue, and each
+   of those rescues is now deleted rather than re-tuned:
+     - `justify-content:center` on both rows left the primary action floating in mid-air with nothing
+       to anchor it, and Post reading as just another pill.
+     - `.cmp-actions .btn{min-width:120px}` is what pushed Draft and Post onto two lonely centred rows
+       on a phone — the "distorted" look the ≤520px block below was written to undo.
+     - `.cmp-left > .btn{flex:1 1 calc(50% - 4px)}` (≤820px) stretched whatever button landed alone on
+       a line: that is how 🔞 became a 298px-wide pill with one small glyph floating in the middle.
+   Buttons size to their own label here and never stretch, at any width. The tools are also all
+   LABELLED now — a row that mixed "Attach"/"React" pills with two bare icon pills read as broken. */
+.cmp-tools{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-2)}
+.cmp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-top:var(--sp-3)}
+.cmp-tools .btn,.cmp-actions .btn{flex:0 0 auto;margin:0;white-space:nowrap;vertical-align:middle}
+/* id, so it outranks the .btn reset above without another specificity puzzle. Post keeps the right
+   edge even when a narrow phone wraps it onto a line of its own. */
+#cmp-send{margin-left:auto;min-width:120px;justify-content:center}   /* the primary stays the widest control in its row */
 /* YouTube inline embed (click the thumbnail facade to load the player) */
 .yt-embed{position:relative;display:block;max-width:480px;width:100%;margin-top:8px;cursor:pointer;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
 .yt-thumb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
@@ -1591,14 +1598,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .draft-actions{display:flex;gap:8px;flex:0 0 auto;flex-wrap:nowrap}
 .draft-foot .df-meta{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ⏰ Schedule composer row — wraps cleanly on narrow/mobile/app widths */
-.cmp-sched-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin:8px 0 2px}
+/* Left-aligned with the confirm button on the right — the same rhythm as the tools/actions rows above,
+   so the panel doesn't switch to centred halfway down the sheet. */
+.cmp-sched-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 2px}
 .cmp-sched-row.hidden{display:none}
 .cmp-sched-row .input{margin:0;max-width:230px;flex:0 1 auto}
 .cmp-sched-row .btn{margin:0}
+#cmp-sched-go,#tl-cmp-sched-go{margin-left:auto}
 .sched-chips{display:flex;gap:6px;flex-wrap:wrap}
 .sched-chip{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--neon);border-radius:999px;padding:4px 11px;font-size:13px;line-height:1}
 .sched-chip:hover{background:color-mix(in srgb, var(--neon) 20%, var(--panel2))}
-.sched-when{width:100%;text-align:center;margin-top:4px}
+.sched-when{width:100%;margin-top:4px}
 #cmp-sched-btn.on{background:color-mix(in srgb, var(--neon) 30%, var(--panel2));border-color:var(--neon)}
 /* Scheduled-posts section in the Drafts view */
 .sched-head{font-weight:700;color:var(--neon);margin:2px 4px 8px;font-size:15px}
@@ -2070,18 +2080,16 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   /* mobile: top-align the modal so the on-screen keyboard doesn't shove it off-center */
   .modal-bg{place-items:start center;padding:6vh 12px}
   .auth-card{padding:22px}
-  /* compose: on the narrow modal lay the tool buttons out 2-per-row (tap-friendly, no ragged
-     gaps) and drop the action group (Draft/Post) onto its own full-width row, right-aligned. */
-  .cmp-tools{justify-content:flex-start}
-  .cmp-left{flex:1 1 100%}
-  .cmp-left > .btn{flex:1 1 calc(50% - 4px)}   /* every tool button (incl. 🤖 AI ▾, now a plain button) equal-width, 2 per row */
-  .cmp-right{width:100%;justify-content:flex-end}
 }
 /* Tiny phones (≤359px: SE, Fold cover screen): buy the action row ~16px by tightening the card so a
    post with four big counts still shows them in full instead of eliding to "2…". */
 @media(max-width:359px){
   .note,.tl-cmp{padding:12px 10px;gap:8px}
   .note .av,.tl-cmp-av{width:34px;height:34px}
+  /* Draft + Schedule + Post need 294px and a 320px screen gives the modal 273, so Post would wrap to a
+     line of its own. Share the row as thirds instead — the only width where that is necessary. */
+  .cmp-actions{flex-wrap:nowrap}
+  .cmp-actions .btn{flex:1 1 0;min-width:0;padding-left:6px;padding-right:6px}
 }
 
 /* ===== More sheet (mobile overflow) — flat icon tiles =====
@@ -2620,6 +2628,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 /* live "mentioning @name" hint under the composer */
 .mention-hint{color:var(--cyan);font-size:13.5px;margin:2px 2px 8px;letter-spacing:.2px}
+.mention-hint,#cmp-status{overflow-wrap:anywhere}   /* a long @handle / URL must not widen the modal */
 
 /* ===== settings view ===== */
 .settings{padding:22px 32px 70px;max-width:none;margin:0;animation:fade .25s;font-size:16.5px}
@@ -3374,7 +3383,6 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* ===== 🎨 Background posts (Facebook-style): a scrollable swatch strip + a live composer preview.
    Mobile-first — the strip scrolls horizontally, swatches are touch-sized, and the tools row wraps so
    the extra 🎨 button never overflows a narrow phone. The final post is a rendered IMAGE (canvas). ===== */
-.cmp-tools .cmp-left{ flex-wrap:wrap; }
 .cmp-bg-strip{ display:flex; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; padding:8px 2px; margin:2px 0 0; scrollbar-width:thin; }
 .cmp-swatch{ flex:0 0 auto; width:38px; height:38px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0;
   display:flex; align-items:center; justify-content:center; font-size:18px; line-height:1; box-shadow:0 1px 4px rgba(0,0,0,.25); transition:transform .12s; }
@@ -3924,16 +3932,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .dm-msgs::-webkit-scrollbar,.dm-list::-webkit-scrollbar,.dm-rows::-webkit-scrollbar{width:0;height:0}
 
 /* ---- Composer on phones (reply/quote especially) --------------------------------------------
-   .cmp-actions .btn has min-width:120px + 5px side margins, which on a phone forced Draft and Post
-   onto SEPARATE centred rows — two lonely pills stacked, which is the "distorted" look. Below 520px
-   they share one row as equal halves instead. The tool row gets tighter padding for the same reason.
-   And the fixed bottom nav is hidden while a modal is open: a dialog owns the screen, and leaving the
-   bar visible under the backdrop is what made the hamburger look squashed against the sheet. */
+   Only a density tweak now — tighter tool buttons so six labelled pills wrap into two neat rows
+   instead of three. The row LAYOUT itself is the same at every width (see .cmp-tools/.cmp-actions);
+   the ≤520px overrides that used to live here were undoing a centred design that no longer exists.
+   The fixed bottom nav is hidden while a modal is open: a dialog owns the screen, and leaving the bar
+   visible under the backdrop is what made the hamburger look squashed against the sheet. */
 @media (max-width:520px){
-  .cmp-actions{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:nowrap}
-  .cmp-actions .btn{flex:1 1 0;min-width:0;margin:0;white-space:nowrap;padding-left:6px;padding-right:6px}
   .cmp-tools .btn{padding:8px 10px;font-size:13.5px}
-  .cmp-tools,.cmp-left{gap:6px}
+  .cmp-tools,.cmp-actions{gap:6px}
+  #cmp-send{min-width:88px}
 }
 body.modal-open .mobilenav{display:none}
 /* …and the same while the LOGIN GATE is up: that bar belongs to the app behind it, and showAuth only
