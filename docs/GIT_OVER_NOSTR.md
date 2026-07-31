@@ -65,6 +65,20 @@ maintainer's path segment back to the hosting owner (300s cache, `ghs.owners_hos
 the **owner-only** delete gate all still resolve against the canonical owner. Fail-closed — no DSN, no
 candidate, or two hosted repos sharing the id all stay a 404.
 
+PUSH authorization is immune to the URL spelling by construction, not by the alias being careful:
+`pre_receive._owner_repo_from_gitdir` derives `<owner>` from **`GIT_DIR`'s parent directory on disk**
+and re-validates it through `repo_dir()`, so the ACL coordinate is always `30617:<hosting-owner>:<id>`
+however the request was addressed. The NIP-98 push needle (`<id>.git/git-receive-pack`) carries no
+owner segment, so a maintainer-signed header works through either URL while cross-repo replay stays
+blocked.
+
+The alias lookup runs BEFORE any auth gate, so its cache is keyed on the **repo**, never on the
+caller's npub — keyed on the caller, an anonymous client could mint a Postgres connection per made-up
+npub and evict the real entries on the way. Per repo the ACL is read once per 300s TTL; an unknown
+npub is a dict miss. A Postgres blip caches an empty map for that TTL, so the cosmetic `failed to
+list` warning can return for up to 5 minutes after one — degrading to the old behaviour, never worse.
+Private repos never alias at all: `create` never announces them, so there is no 30617 to read.
+
 ## Browse + write API (what the web UI renders from)
 
 Beyond the three smart-HTTP endpoints, `git_host_main.py` serves a small read API — all **read-gated
