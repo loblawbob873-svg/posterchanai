@@ -14194,10 +14194,14 @@
       // after the GPU had already done all the work: "I can't see the generated result at all".
       // The transcript is a surface that cannot be dismissed out from under an in-flight request.
       if(!(opts && opts.onTake)){
+        // Its OWN object URL. The take row's dismiss button revokes `url`, and the transcript bubble
+        // outlives the modal — sharing one URL means dropping a take silently kills the audio in the
+        // chat, which is the copy the user was told is the durable one.
+        const chatUrl = URL.createObjectURL(blob);
         aiAddMessage('assistant',
           `<div class="muted small">🗣️ ${enc(voice.name)}</div>`+
           `<div style="margin:4px 0">${enc(text)}</div>`+
-          `<audio controls src="${url}" style="width:100%"></audio>`);
+          `<audio controls src="${chatUrl}" style="width:100%"></audio>`);
       }
 
       // …and ALSO into the studio, when it is still open — that is what you compare takes in. isConnected
@@ -14216,6 +14220,8 @@
                 <svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg></button>
               <a class="vs-dl" download="${enc(voice.name)}.wav" href="${url}" title="Download this take">
                 <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></a>
+              <button class="vs-drop" title="Remove this take">
+                <svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </span></div>
           <div class="vs-said">${enc(text)}</div>
           <audio controls autoplay src="${url}"></audio>`;
@@ -14229,6 +14235,10 @@
           use.onclick=()=>{ closeModal(); opts.onTake(blob, voice.name, text); };
           row.appendChild(use);
         }
+        // Takes pile up over a session with no way to clear one. Revoke the blob URL as it goes, or the
+        // audio stays in memory for the life of the page.
+        const drop = row.querySelector('.vs-drop');
+        if(drop) drop.onclick=()=>{ try{ URL.revokeObjectURL(url); }catch(_){} row.remove(); };
         const keep = row.querySelector('.vs-keep');
         if(keep) keep.onclick = async ()=>{
           keep.disabled = true;
@@ -14254,10 +14264,11 @@
       // meme — just add it rather than making the GPU work a second time.
       if(!out && opts && opts.onTake){ opts.onTake(blob, voice.name, text); return; }
       if(!out && !(opts && opts.onTake)) toast('done — it is in the chat');
-      // Clear the box and hand focus back, so the next line is just typing — the whole point of
-      // making this a conversation rather than a one-shot form.
+      // Clear the box and hand focus back, so the next line is just typing. ONLY if it still holds the
+      // line we just spoke: a generation runs for minutes, and wiping whatever the user typed while
+      // waiting is destroying work, not tidying up.
       const ta = (root && root.isConnected) ? root.querySelector('#vs-text') : null;
-      if(ta){ ta.value=''; ta.focus(); }
+      if(ta && ta.value.trim() === text.trim()){ ta.value=''; ta.focus(); }
       say('');
     }catch(e){ say(''); toast('voice failed: '+((e&&e.message)||e)); }
   }
@@ -14334,12 +14345,22 @@
         inp.onchange=()=>{ const f=(inp.files||[])[0]; if(f){ closeModal(); voiceAdd(f); } };
         inp.click();
       };
-      const go=()=>{
+      const goBtn = root.querySelector('#vs-go');
+      const go=async()=>{
         const v=list.find(x=>x.id===picked);
         if(!v){ toast('add a voice first'); return; }
         const t=(root.querySelector('#vs-text').value||'').trim();
         if(!t){ toast('type what it should say'); return; }
-        voiceSpeak(v, t, root, opts);
+        // One at a time, enforced HERE and not only by the server's 429. Pressing Speak again during a
+        // run was rejected, and then the FIRST take arrived seconds later carrying the earlier line —
+        // which reads as "it spoke the old thing instead of what I just typed". The button being dead
+        // says "still working" far better than a toast that arrives and leaves.
+        if(goBtn.disabled) return;
+        goBtn.disabled = true;
+        const label = goBtn.textContent;
+        goBtn.textContent = '🔊 Speaking…';
+        try{ await voiceSpeak(v, t, root, opts); }
+        finally{ if(goBtn.isConnected){ goBtn.disabled = false; goBtn.textContent = label; } }
       };
       root.querySelector('#vs-go').onclick=go;
       // Ctrl/Cmd+Enter sends, like every other composer here. Plain Enter must NOT — this box holds

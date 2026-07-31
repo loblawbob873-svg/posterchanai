@@ -4647,9 +4647,9 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
    they came out 21x19 and 24x24 before this. -6px margin keeps the header the same HEIGHT while the
    hit area grows, so the takes list doesn't get taller on every row. */
 .vs-take-acts{display:flex;align-items:center;gap:2px;margin:-6px -4px -6px 0}
-.vs-keep,.vs-dl{display:flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;
+.vs-keep,.vs-dl,.vs-drop{display:flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;
   background:none;border:0;padding:0;color:var(--muted);cursor:pointer;border-radius:8px}
-.vs-keep:hover,.vs-dl:hover{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
+.vs-keep:hover,.vs-dl:hover,.vs-drop:hover{color:var(--neon);background:rgba(var(--accent-rgb),.12)}
 .vs-keep.on{color:var(--neon);cursor:default}
 .vs-keep:disabled{opacity:.5}
 /* "Speaking as X" — the studio's answer to "which voice will it use?". A border highlight alone is

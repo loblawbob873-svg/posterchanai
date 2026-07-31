@@ -268,6 +268,30 @@ class VoiceClientUI(unittest.TestCase):
         self.assertIn("voiceSpeak(v, t, root, opts)", js,
                       "the call site must pass opts through, or the parameter is always undefined")
 
+    def test_speak_cannot_be_fired_twice(self):
+        """Pressing Speak during a run was rejected by the server's 429, and then the FIRST take
+        arrived carrying the earlier line — which reads as "it spoke the old thing instead of what I
+        just typed". The button must be dead while one is in flight."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("goBtn.disabled = true", block)
+        self.assertIn("if(goBtn.disabled) return;", block)
+
+    def test_a_long_wait_does_not_eat_typed_text(self):
+        """The box is cleared when a take lands, but a generation runs for minutes — clearing text the
+        user typed while waiting is destroying work."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("ta.value.trim() === text.trim()", block)
+
+    def test_take_and_chat_bubble_have_separate_blob_urls(self):
+        """Dismissing a take revokes its object URL. Sharing one with the transcript bubble would kill
+        the audio in the chat — the copy the user is told outlives the modal."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("const chatUrl = URL.createObjectURL(blob)", block)
+        self.assertIn("src=\"${chatUrl}\"", block)
+
     def test_a_take_survives_the_modal_closing(self):
         """The modal is dismissed by tapping the backdrop, and a generation runs for a minute or more —
         so the modal is very often gone by the time the audio arrives. Appending into a detached node
