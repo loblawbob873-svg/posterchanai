@@ -268,6 +268,17 @@ class VoiceClientUI(unittest.TestCase):
         self.assertIn("voiceSpeak(v, t, root, opts)", js,
                       "the call site must pass opts through, or the parameter is always undefined")
 
+    def test_blossom_is_a_voice_source_and_does_not_re_upload(self):
+        """A clip already on the drive is a name plus a URL — routing it through voiceAdd would upload
+        the same bytes again and leave two copies of one clip on Blossom."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("function voiceAddFromBlossom", block)
+        self.assertIn("blossomPicker(null", block)
+        self.assertIn('id="vs-blossom"', block, "the source row needs the button")
+        add = block.split("function voiceAddFromBlossom")[1].split("async function voiceAdd")[0]
+        self.assertNotIn("uploadBlob", add, "must NOT re-upload a blob that is already on the drive")
+
     def test_speak_cannot_be_fired_twice(self):
         """Pressing Speak during a run was rejected by the server's 429, and then the FIRST take
         arrived carrying the earlier line — which reads as "it spoke the old thing instead of what I

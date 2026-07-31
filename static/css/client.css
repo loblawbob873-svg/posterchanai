@@ -4656,3 +4656,8 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
    invisible when there is only ONE voice, because it is selected from the moment the sheet opens. */
 .vs-active{margin:10px 0 2px;font-size:13px;color:var(--fg)}
 .vs-active b{color:var(--neon)}
+/* The three ways to add a voice. flex:1 so they FILL the row as equal, properly-sized targets rather
+   than three shrink-wrapped pills with dead space after them; they wrap to two lines on a narrow
+   phone instead of squeezing the labels away. */
+.vs-src{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.vs-src .btn{flex:1 1 30%;min-width:104px;min-height:38px;margin:0}

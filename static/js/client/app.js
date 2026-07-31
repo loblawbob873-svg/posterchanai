@@ -14110,6 +14110,32 @@
 
   // Take a clip (recorded or picked), put it on Blossom, and add it to the library.
   let _voiceOpts = null;   // remembered across the add-a-voice detour so a borrowed studio comes back borrowed
+  // Pick a clip you ALREADY have on your drive. Deliberately not routed through voiceAdd: that
+  // uploads, and re-uploading a blob that is already on Blossom would store the same bytes under a
+  // second name and leave the drive with two copies of one clip. A voice is a name plus a URL, and
+  // we already have the URL.
+  function voiceAddFromBlossom(){
+    blossomPicker(null, async ({ url }) => {
+      if(!url) return;
+      const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
+      if(name === null) return;
+      const nm = (name||'').trim().slice(0,40) || 'untitled';
+      try{
+        await voicesSave(list => {
+          list.push({ id:'v'+Date.now().toString(36), name:nm, url, created:Math.floor(Date.now()/1000) });
+          return list;
+        });
+        toast('voice saved');
+        openVoiceStudio(_voiceOpts);
+      }catch(e){ toast('couldn’t save that voice: '+((e&&e.message)||e)); }
+    }, {
+      title: '🌸 Pick a voice clip',
+      // Video counts: a phone recording is mp4/webm, and the server pulls the audio out of it.
+      filter: b => /^(audio|video)\//.test(b.type||''),
+      empty: 'No audio or video on your drive yet — record one, or upload a clip in Files.',
+    });
+  }
+
   async function voiceAdd(file){
     const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
     if(name === null) return;
@@ -14310,9 +14336,10 @@
         phrase takes half a minute, a couple of sentences a few minutes. One at a time.</p>
       ${q}
       <div class="vs-list">${rows}</div>
-      <div class="fx-row" style="display:flex;gap:6px;margin:10px 0">
-        <button class="btn btn-cyan small" id="vs-rec">🎙 Record a voice</button>
-        <button class="btn btn-cyan small" id="vs-up">📁 Upload a clip</button>
+      <div class="vs-src">
+        <button class="btn btn-cyan small" id="vs-rec">🎙 Record</button>
+        <button class="btn btn-cyan small" id="vs-up">📁 Upload</button>
+        <button class="btn btn-cyan small" id="vs-blossom">🌸 My drive</button>
       </div>
       <div class="vs-active" id="vs-active"></div>
       <label class="mb-f"><span>What should it say?</span>
@@ -14340,6 +14367,7 @@
         catch(e){ toast((e&&e.message)||'couldn’t delete that'); }
       });
       root.querySelector('#vs-rec').onclick=()=>{ closeModal(); voiceRecord(f=>voiceAdd(f)); };
+      root.querySelector('#vs-blossom').onclick=()=>{ closeModal(); voiceAddFromBlossom(); };
       root.querySelector('#vs-up').onclick=()=>{
         const inp=document.createElement('input'); inp.type='file'; inp.accept='audio/*,video/*';
         inp.onchange=()=>{ const f=(inp.files||[])[0]; if(f){ closeModal(); voiceAdd(f); } };
