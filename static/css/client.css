@@ -4642,3 +4642,10 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .vs-dl:hover{color:var(--neon)}
 .vs-said{font-size:13px;opacity:.85;margin-bottom:6px;overflow-wrap:anywhere}
 .vs-take audio{width:100%;height:34px}
+/* Keep / download on a take. A generated take is a blob: URL that dies with the modal — "keep" is what
+   makes it outlive the session without spending the GPU again. */
+.vs-take-acts{display:flex;align-items:center;gap:4px}
+.vs-keep{background:none;border:0;padding:2px;color:var(--muted);cursor:pointer;display:flex}
+.vs-keep:hover{color:var(--neon)}
+.vs-keep.on{color:var(--neon);cursor:default}
+.vs-keep:disabled{opacity:.5}

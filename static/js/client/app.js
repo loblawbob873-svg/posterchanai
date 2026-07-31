@@ -14026,14 +14026,29 @@
   // kind-30078 doc so it follows you across devices, exactly like the client prefs above.
   const VOICES_D = 'pcai:voices';
   let _voices = null;              // array, or null = NOT LOADED (which is not the same as empty)
+  // Returns the saved list, or null meaning "could not reach a relay".
+  //
+  // "No document yet" and "relay unreachable" look IDENTICAL at the query layer — both are an empty
+  // result — and conflating them is a bug in either direction. Treat unreachable as empty and the
+  // first save replaces a real library with one entry (this doc is replaceable). Treat empty as
+  // unreachable and the FIRST voice can never be saved at all, because a user who has never saved one
+  // has no document to find: that is what shipped, and it is why adding a clip complained about
+  // relays. So ask the connection directly — Relay.ready() resolves true only for a socket that is
+  // actually OPEN and not a zombie — and only then is an empty result allowed to mean empty.
   async function voicesRead(){
-    let ev = null;
-    for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
-      try{ const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[VOICES_D], limit:1 }]);
-        ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null; }catch(_){}
+    let live = false;
+    try{ live = await Relay.ready(3000); }catch(_){ live = false; }
+    if(!live) return null;
+    for(let a=0; a<3; a++){
+      if(a) await new Promise(r=>setTimeout(r, 450*a));
+      try{
+        const evs = await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':[VOICES_D], limit:1 }]);
+        const ev = (evs||[]).sort((x,y)=>y.created_at-x.created_at)[0] || null;
+        if(!ev) return [];        // connected and nothing there → a genuinely empty library
+        try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; }
+      }catch(_){}                 // the QUERY failed (not "found nothing") → retry, then give up
     }
-    if(!ev) return null;           // null, NOT [] — see voicesSave
-    try{ return (JSON.parse(ev.content||'{}').voices)||[]; }catch(_){ return []; }
+    return null;
   }
   let _voicesChain = Promise.resolve();
   // Serialised read-modify-write, and it REFUSES to write when the read failed. This doc is
@@ -14097,6 +14112,19 @@
     try{
       toast('uploading the sample…');
       const url = await uploadBlob(file);
+      // Register the clip in the FILE INDEX, not just in the voice list. Without this the sample is a
+      // blob nothing on screen accounts for: invisible in Files, so the user can neither see what a
+      // voice is costing them nor tidy one up, and anything that ever sweeps unreferenced blobs would
+      // take it and leave a voice pointing at nothing. It also gives them a way to re-download the
+      // original sample, which the voice list alone does not.
+      try{
+        const sha=(String(url).split('/').pop()||'').split('.')[0].split('?')[0];
+        if(/^[0-9a-f]{64}$/i.test(sha)){
+          if(!FilesIdx.folders().includes('Voices')) FilesIdx.addFolder('Voices');
+          FilesIdx.setFile(sha, { name:nm+' (voice sample)', folder:'Voices',
+            mime:file.type||'audio/webm', size:file.size, ts:Math.floor(Date.now()/1000) });
+        }
+      }catch(_){}   // indexing is a convenience — never lose the voice over it
       await voicesSave(list => {
         list.push({ id: 'v'+Date.now().toString(36), name: nm, url, created: Math.floor(Date.now()/1000) });
         return list;
@@ -14145,10 +14173,34 @@
         const row = document.createElement('div');
         row.className = 'vs-take';
         row.innerHTML = `<div class="vs-take-hd"><b>${enc(voice.name)}</b>
-            <a class="vs-dl" download="${enc(voice.name)}.wav" href="${url}" title="Save this take">
-              <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></a></div>
+            <span class="vs-take-acts">
+              <button class="vs-keep" title="Save this take to my drive">
+                <svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg></button>
+              <a class="vs-dl" download="${enc(voice.name)}.wav" href="${url}" title="Download this take">
+                <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></a>
+            </span></div>
           <div class="vs-said">${enc(text)}</div>
           <audio controls autoplay src="${url}"></audio>`;
+        // A take is a blob: URL — it dies with the modal. That is fine for the ones you are comparing
+        // and wrong for the one you wanted: getting it back costs another ~45s of GPU. "Keep" puts it
+        // on the drive like any other file, so it outlives the session.
+        const keep = row.querySelector('.vs-keep');
+        if(keep) keep.onclick = async ()=>{
+          keep.disabled = true;
+          try{
+            const nm = `${voice.name} - ${text.slice(0,40).replace(/[\r\n]+/g,' ')}`;
+            const f = new File([blob], nm.replace(/[^\w .-]/g,'_')+'.wav', {type:'audio/wav'});
+            const u = await uploadBlob(f);
+            const sha=(String(u).split('/').pop()||'').split('.')[0].split('?')[0];
+            if(/^[0-9a-f]{64}$/i.test(sha)){
+              if(!FilesIdx.folders().includes('Voices')) FilesIdx.addFolder('Voices');
+              FilesIdx.setFile(sha, { name:nm, folder:'Voices', mime:'audio/wav',
+                size:blob.size, ts:Math.floor(Date.now()/1000) });
+            }
+            keep.classList.add('on'); keep.title='Saved to your drive';
+            toast('saved to your drive');
+          }catch(e){ keep.disabled=false; toast('couldn’t save: '+((e&&e.message)||e)); }
+        };
         out.appendChild(row);
         row.scrollIntoView({ block:'nearest' });
       }

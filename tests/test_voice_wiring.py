@@ -209,6 +209,18 @@ class VoiceClientUI(unittest.TestCase):
         self.assertNotIn("PC.modal(", block)
         self.assertNotIn("PC.closeModal(", block)
 
+    def test_empty_library_is_not_treated_as_unreachable(self):
+        """"No document yet" and "relay unreachable" are both an empty query result. Conflating them
+        broke the FIRST save for every user — there is no doc to find until you have saved one — and
+        the studio complained about relays instead. Reachability comes from Relay.ready(), not from
+        whether the query found anything."""
+        js = _read("static/js/client/app.js")
+        block = js.split("---- Voice studio ---")[1].split("window.__openVoiceStudio")[0]
+        self.assertIn("Relay.ready(", block,
+                      "voicesRead must ask the CONNECTION whether it is live")
+        self.assertIn("return [];", block,
+                      "connected + nothing found must mean an empty library, not a failed read")
+
     def test_library_write_refuses_on_a_failed_read(self):
         """kind-30078 is REPLACEABLE: writing a list built on an empty/failed read replaces the whole
         library. Same wipe that took out mutes, follows and a drive's file index."""
