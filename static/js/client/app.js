@@ -1442,69 +1442,7 @@
     { const cm=$('#btn-compose-m'); if(cm) cm.onclick=()=>compose(); }
     // Drafts + Calls are plain sidebar .nav-item[data-view] rows now, so the generic handler above already
     // wires their clicks and active state — no special-casing needed.
-    // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
-    document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
-    bindSearch();
-    bindFeedActions();
-    // Media-grid toggle: flip Home/Global between the normal post list and an images-only picture grid.
-    $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
-    bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
-    // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
-    // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
-    let _hiddenAt = 0, _lastWake = 0;
-    // Reconnect the relay + refetch the feed on resume. Debounced (4s) because a mobile resume fires
-    // several of these signals close together. wake() reopens every socket; onReconnect re-runs the
-    // per-user hydration + re-renders the feed view (see Relay.onReconnect below).
-    const _resumeRelay = ()=>{ if(Date.now() - _lastWake < 4000) return; _lastWake = Date.now(); try{ Relay.wake(); }catch(_){} };
-    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
-      if(document.hidden){ _hiddenAt = Date.now(); return; }
-      // Resumed to the foreground. A mobile PWA's relay WebSocket is frozen while backgrounded and very
-      // often comes back DEAD-but-"open" (zombie) — the feed then looks stuck / a query "relay timeouts".
-      // If we were away long enough for the OS to have suspended the socket, force a fresh relay
-      // connection so the feed reconnects instantly instead of hanging on a dead socket.
-      if(Date.now() - _hiddenAt > 6000) _resumeRelay();
-      // Also: if an AI reply was still pending when we backgrounded, kick the recovery poll now (a slow
-      // effect/video can finish while hidden where the timed recoverWatch is throttled). aiRecover self-guards.
-      if(VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId);
-      // Re-check for an APK update on every foreground. Native users background/foreground far more than
-      // they cold-restart, and a new APK is usually published while the app is open — a once-at-startup
-      // check would never surface it until a full restart. _checkApkUpdate self-guards (native-only, one-shot
-      // latch once found). Throttled so a burst of resume signals doesn't spam /apk/version.
-      if(Date.now() - _lastApkCheck > 300000){ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} } });
-    // visibilitychange alone is unreliable on a phone waking from OFF: it can fire BEFORE the radio is
-    // back, so wake()'s reconnect fails and the feed hangs on "request timeout" with no new posts. The
-    // `online` event (network actually returned) and `pageshow` w/ persisted (restored from bfcache)
-    // give reliable second chances to reconnect + refetch. Debounced so they don't stack with the above.
-    window.addEventListener('online', _resumeRelay);
-    window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
-    if(document.hidden) document.body.classList.add('anim-off');
-    const rb=document.querySelector('.rightbar');
-    // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
-    // It fought anyone trying to read it, and the column is short enough (Topics + Notifications) that there's
-    // nothing to cycle through. Scrolling is the user's again. No scroll handler either — the rail's one
-    // infinite-scroll list (Hot) is the centre column's Trending tab now, paging off #feed's scroll.
-    if(rb){
-      rb.addEventListener('click', e=>{
-        // The "Notifications" heading opens the full view, which marks everything read — so the surface
-        // carrying the unread badge is also the one that clears it.
-        if(e.target.closest('#rb-notif-head')){ switchView('notifications'); return; }
-        // Notifications: react/reply inline, then the row itself. The feed's .act delegate is bound to
-        // #feed, so these buttons need their own handling here — they can't ride on it.
-        const q=e.target.closest('.rbq');
-        if(q){ const id=q.dataset.id, pk=q.dataset.pk;
-          if(q.dataset.q==='reply') compose({reply:id, replyPk:pk}); else pickEmoji(id, pk, q);
-          return; }
-        const nrow=e.target.closest('.notif');
-        if(nrow){ const pf=e.target.closest('[data-prof]');                       // name/avatar → profile
-          if(pf) renderProfileView(pf.dataset.prof);
-          else if(nrow.dataset.prof) renderProfileView(nrow.dataset.prof);        // follows/reports have no thread
-          else if(nrow.dataset.open) openThread(nrow.dataset.open);
-          return; }
-      });
-      // role="button" on the heading has to answer the keyboard too, or it's a button only for a mouse.
-      rb.addEventListener('keydown', e=>{ if(e.key!=='Enter' && e.key!==' ') return;
-        if(e.target.closest('#rb-notif-head')){ e.preventDefault(); switchView('notifications'); } });
-    }
+    bindGlobalsOnce();
     // "Get the app" links: in the bundled native app the client is served from a local origin, so the
     // plain /apk and /desktop/* hrefs would resolve against the bundle and 404. Point them at whichever
     // instance this install talks to (build-www.sh sets __PC_API_BASE__; it's absent on the web).
@@ -1531,53 +1469,6 @@
     _maybeIosInstallHint();   // iPhone-only "Add to Home Screen" cue (no-op everywhere else)
     bumpDraft();   // show the saved-drafts count on the nav badge
     Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
-    // These two are document-level delegates — bind them ONCE. startApp() re-runs on login-without-reload
-    // (see below), so an unguarded addEventListener here would accumulate a listener per run and fire the
-    // handler N times per click.
-    if(!window.__pcClickLoadBound){ window.__pcClickLoadBound = true;
-      // YouTube facade → load the real player iframe on click (kept out of the timeline until then
-      // for performance), and don't let the click bubble up to open the note thread.
-      // CAPTURE phase — see the .img-hold note below for why bubbling is too late.
-      document.addEventListener('click', e=>{
-        const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
-        e.preventDefault(); e.stopPropagation();
-        const f=document.createElement('div'); f.className='yt-frame';
-        // referrerpolicy overrides the page's <meta name="referrer" content="no-referrer"> for THIS iframe
-        // only: YouTube's embed player rejects a referrer-less embed on play (error 153), so send it our
-        // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
-        f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
-        yt.replaceWith(f);
-      }, true);
-      // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
-      // downloaded until now). data-kind picks the element; data-cls restores the layout class.
-      // MUST be CAPTURE phase. Bound on the bubble phase this ran LAST — after every handler between
-      // the placeholder and document. #feed's own click handler is one of them, and .img-hold isn't in
-      // its "skip these" list, so a tap opened the post: renderThread() wipes the feed (feed.innerHTML=
-      // spinner) SYNCHRONOUSLY, detaching the placeholder, and the replaceWith below then swapped an
-      // element that was no longer in the document — "tap to load does nothing" / a flash and back.
-      // stopPropagation() couldn't save it either: on `document` the bubble is already over. Capture
-      // runs before every one of those handlers, so stopping here genuinely stops them (same trick the
-      // carousel nav uses, and why the YouTube facade above needed it too).
-      document.addEventListener('click', e=>{
-        const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
-        const src=h.dataset.src; if(!src) return;
-        e.preventDefault(); e.stopPropagation();   // load in place — don't also fire the enclosing card's click
-        let el;
-        if(h.dataset.kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.playsInline=true; el.preload='metadata'; }
-        else {
-          el=document.createElement('img'); el.loading='eager';
-          // Attach the handler BEFORE the src so a failure can't land before its recovery is wired up,
-          // and when there is no carried handler add NOTHING — that's exactly what the non-data-saver
-          // render produces. The old default here REMOVED the image on any error, so a tap on an image
-          // that needed one retry just made it vanish ("flashes, then nothing"), while the same image
-          // with data saver off recovered or at worst showed as broken.
-          if(h.dataset.onerr) el.setAttribute('onerror', h.dataset.onerr);
-          el.src=src;
-        }
-        if(h.dataset.cls) el.className=h.dataset.cls;
-        h.replaceWith(el);
-      }, true);
-    }
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
@@ -1684,9 +1575,80 @@
           window.__pcBackArmed=true; try{ toast('press back again to exit'); }catch(_){}
           setTimeout(()=>{ window.__pcBackArmed=false; }, 2000);
         }); }catch(_){} }
+        setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
+        setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
       }
-      setTimeout(()=>{ try{ _checkApkUpdate(); }catch(_){} }, 4000);   // in-app: offer an APK update if the server has a newer build
-      setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
+    }
+  }
+  // Document/window/#feed listeners and background timers — bound ONCE PER PAGE LOAD, not per login.
+  // startApp() runs again when a guest logs in WITHOUT a reload (see the hydrateUser note there), and
+  // every registration below is a fresh closure, which the DOM cannot dedupe the way it does a repeated
+  // named handler. A second #feed click delegate is not cosmetic: one tap on a timeline image opened TWO
+  // stacked lightboxes, so the user had to close the image twice. Same for the rightbar (double reactions),
+  // popstate (the back button skipped a view) and the refresh timers (double work forever after).
+  function bindGlobalsOnce(){
+    if(window.__pcGlobalsBound) return; window.__pcGlobalsBound = true;
+    // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
+    document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
+    bindSearch();
+    bindFeedActions();
+    $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
+    bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
+    // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
+    // backgrounded — the GPU idles when you're not looking (laptop heat + mobile battery).
+    let _hiddenAt = 0, _lastWake = 0;
+    // Reconnect the relay + refetch the feed on resume. Debounced (4s) because a mobile resume fires
+    // several of these signals close together. wake() reopens every socket; onReconnect re-runs the
+    // per-user hydration + re-renders the feed view (see Relay.onReconnect in startApp).
+    const _resumeRelay = ()=>{ if(Date.now() - _lastWake < 4000) return; _lastWake = Date.now(); try{ Relay.wake(); }catch(_){} };
+    document.addEventListener('visibilitychange', ()=>{ document.body.classList.toggle('anim-off', document.hidden);
+      if(document.hidden){ _hiddenAt = Date.now(); return; }
+      // Resumed to the foreground. A mobile PWA's relay WebSocket is frozen while backgrounded and very
+      // often comes back DEAD-but-"open" (zombie) — the feed then looks stuck / a query "relay timeouts".
+      // If we were away long enough for the OS to have suspended the socket, force a fresh relay
+      // connection so the feed reconnects instantly instead of hanging on a dead socket.
+      if(Date.now() - _hiddenAt > 6000) _resumeRelay();
+      // Also: if an AI reply was still pending when we backgrounded, kick the recovery poll now (a slow
+      // effect/video can finish while hidden where the timed recoverWatch is throttled). aiRecover self-guards.
+      if(VIEW==='ai' && _ai && _ai.awaiting && _ai.convId) aiRecover(_ai.convId);
+      // Re-check for an APK update on every foreground. Native users background/foreground far more than
+      // they cold-restart, and a new APK is usually published while the app is open — a once-at-startup
+      // check would never surface it until a full restart. _checkApkUpdate self-guards (native-only, one-shot
+      // latch once found). Throttled so a burst of resume signals doesn't spam /apk/version.
+      if(Date.now() - _lastApkCheck > 300000){ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); }catch(_){} } });
+    // visibilitychange alone is unreliable on a phone waking from OFF: it can fire BEFORE the radio is
+    // back, so wake()'s reconnect fails and the feed hangs on "request timeout" with no new posts. The
+    // `online` event (network actually returned) and `pageshow` w/ persisted (restored from bfcache)
+    // give reliable second chances to reconnect + refetch. Debounced so they don't stack with the above.
+    window.addEventListener('online', _resumeRelay);
+    window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
+    if(document.hidden) document.body.classList.add('anim-off');
+    const rb=document.querySelector('.rightbar');
+    // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
+    // It fought anyone trying to read it, and the column is short enough (Topics + Notifications) that there's
+    // nothing to cycle through. Scrolling is the user's again. No scroll handler either — the rail's one
+    // infinite-scroll list (Hot) is the centre column's Trending tab now, paging off #feed's scroll.
+    if(rb){
+      rb.addEventListener('click', e=>{
+        // The "Notifications" heading opens the full view, which marks everything read — so the surface
+        // carrying the unread badge is also the one that clears it.
+        if(e.target.closest('#rb-notif-head')){ switchView('notifications'); return; }
+        // Notifications: react/reply inline, then the row itself. The feed's .act delegate is bound to
+        // #feed, so these buttons need their own handling here — they can't ride on it.
+        const q=e.target.closest('.rbq');
+        if(q){ const id=q.dataset.id, pk=q.dataset.pk;
+          if(q.dataset.q==='reply') compose({reply:id, replyPk:pk}); else pickEmoji(id, pk, q);
+          return; }
+        const nrow=e.target.closest('.notif');
+        if(nrow){ const pf=e.target.closest('[data-prof]');                       // name/avatar → profile
+          if(pf) renderProfileView(pf.dataset.prof);
+          else if(nrow.dataset.prof) renderProfileView(nrow.dataset.prof);        // follows/reports have no thread
+          else if(nrow.dataset.open) openThread(nrow.dataset.open);
+          return; }
+      });
+      // role="button" on the heading has to answer the keyboard too, or it's a button only for a mouse.
+      rb.addEventListener('keydown', e=>{ if(e.key!=='Enter' && e.key!==' ') return;
+        if(e.target.closest('#rb-notif-head')){ e.preventDefault(); switchView('notifications'); } });
     }
     window.addEventListener('popstate', ()=>{ _navPushed=Math.max(0,_navPushed-1); if(ME) routeFromPath(); });   // back/forward
     setInterval(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
@@ -1698,6 +1660,48 @@
         // so this sweep doesn't defeat lazy loading by fetching every off-screen author.
         if(NO_IMAGES){ const r=el.getBoundingClientRect(); if(r.bottom<-600 || r.top>vh+600) return; }
         needProfile(el.dataset.pk); n++; }); }, 12000);
+    // YouTube facade → load the real player iframe on click (kept out of the timeline until then
+    // for performance), and don't let the click bubble up to open the note thread.
+    // CAPTURE phase — see the .img-hold note below for why bubbling is too late.
+    document.addEventListener('click', e=>{
+      const yt=e.target.closest && e.target.closest('.yt-embed[data-yt]'); if(!yt) return;
+      e.preventDefault(); e.stopPropagation();
+      const f=document.createElement('div'); f.className='yt-frame';
+      // referrerpolicy overrides the page's <meta name="referrer" content="no-referrer"> for THIS iframe
+      // only: YouTube's embed player rejects a referrer-less embed on play (error 153), so send it our
+      // origin. The no-referrer default stays for image CDNs. origin= param echoes it for the embed check.
+      f.innerHTML=`<iframe src="https://www.youtube.com/embed/${yt.dataset.yt}?autoplay=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+      yt.replaceWith(f);
+    }, true);
+    // Data-saver: a "tap to load" placeholder → swap in the real image/video on click (nothing
+    // downloaded until now). data-kind picks the element; data-cls restores the layout class.
+    // MUST be CAPTURE phase. Bound on the bubble phase this ran LAST — after every handler between
+    // the placeholder and document. #feed's own click handler is one of them, and .img-hold isn't in
+    // its "skip these" list, so a tap opened the post: renderThread() wipes the feed (feed.innerHTML=
+    // spinner) SYNCHRONOUSLY, detaching the placeholder, and the replaceWith below then swapped an
+    // element that was no longer in the document — "tap to load does nothing" / a flash and back.
+    // stopPropagation() couldn't save it either: on `document` the bubble is already over. Capture
+    // runs before every one of those handlers, so stopping here genuinely stops them (same trick the
+    // carousel nav uses, and why the YouTube facade above needed it too).
+    document.addEventListener('click', e=>{
+      const h=e.target.closest && e.target.closest('.img-hold'); if(!h) return;
+      const src=h.dataset.src; if(!src) return;
+      e.preventDefault(); e.stopPropagation();   // load in place — don't also fire the enclosing card's click
+      let el;
+      if(h.dataset.kind==='video'){ el=document.createElement('video'); el.src=src; el.controls=true; el.playsInline=true; el.preload='metadata'; }
+      else {
+        el=document.createElement('img'); el.loading='eager';
+        // Attach the handler BEFORE the src so a failure can't land before its recovery is wired up,
+        // and when there is no carried handler add NOTHING — that's exactly what the non-data-saver
+        // render produces. The old default here REMOVED the image on any error, so a tap on an image
+        // that needed one retry just made it vanish ("flashes, then nothing"), while the same image
+        // with data saver off recovered or at worst showed as broken.
+        if(h.dataset.onerr) el.setAttribute('onerror', h.dataset.onerr);
+        el.src=src;
+      }
+      if(h.dataset.cls) el.className=h.dataset.cls;
+      h.replaceWith(el);
+    }, true);
   }
   function logout(){ Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
