@@ -2510,7 +2510,15 @@
   }
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
-    const fn = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
+    // Hide replies, on EVERY timeline. A reply reads as an orphan in a firehose — you get one side of
+    // a conversation whose other half you cannot see — and on a busy follow list they crowd out the
+    // posts. Read once per render and folded into the SAME predicate the live-prepend path uses
+    // (_bufferLive(ev, fn)), so a reply cannot slip in through the live socket after the first draw.
+    const _hideR = ClientSettings.get('hideReplies', false);
+    const _follows = view==='home' ? (ev=>FOLLOWS.has(ev.pubkey)) : null;
+    const fn = (_follows || _hideR)
+      ? (ev => (!_follows || _follows(ev)) && !(_hideR && ev.kind===1 && isReply(ev)))
+      : null;
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     if (subs[view]) Relay.close(subs[view]);
@@ -9936,6 +9944,13 @@
         if(AUTO_NEW_POSTS){ const feed=$('#feed');
           if(feed && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending(); }
       }
+      // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
+      // without redrawing would leave the feed showing whatever the previous setting produced.
+      if(!_prefTouched.has('hideReplies') && typeof pr.hideReplies==='boolean'
+         && pr.hideReplies!==ClientSettings.get('hideReplies', false)){
+        ClientSettings.set('hideReplies', pr.hideReplies);
+        if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
+      }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
@@ -15283,6 +15298,7 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">📉 Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
@@ -15510,6 +15526,13 @@
       }; }
     // Auto-show new posts: persist + sync to Nostr. Turning it ON adopts whatever is already buffered
     // (the pill would otherwise sit there until the next live note); turning it OFF leaves the feed as-is.
+    { const hr=$('#set-hide-replies'); if(hr) hr.onchange=()=>{
+        ClientSettings.set('hideReplies', hr.checked);
+        _prefTouched.add('hideReplies'); saveClientPrefsNostr({ hideReplies: hr.checked });
+        toast(hr.checked?'replies hidden in timelines':'replies shown in timelines');
+        // `fn` is captured when a timeline renders, so the change only takes effect on a re-render.
+        if(VIEW==='home'||VIEW==='global') renderView(true);
+      }; }
     { const an=$('#set-auto-new-posts'); if(an) an.onchange=()=>{
         AUTO_NEW_POSTS = an.checked; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);
         _prefTouched.add('autoNewPosts'); saveClientPrefsNostr({ autoNewPosts: AUTO_NEW_POSTS });
