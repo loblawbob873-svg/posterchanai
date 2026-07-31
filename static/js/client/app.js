@@ -2578,6 +2578,27 @@
   // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
   // Falls back to #feed for the views that render into it without a timeline header.
   function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
+  // Scroll-back has no ceiling: every page appends another 30-60 cards, each holding full-resolution
+  // <img>/<video> the device must keep decoded and (for video) a live media player. _prependLive's
+  // 200-card cap deliberately stops applying the moment you paginate — it would delete the history you
+  // just paged in — so a long scroll grew the DOM until something gave. In a browser that is a slow tab;
+  // in the Android app the WebView's RENDER process is what runs out of memory, and Android kills it
+  // (and, before MainActivity.surviveRenderProcessDeath, the whole app) with no error at all. That is the
+  // "app keeps closing" report: no exception to find, because the JS never got to run.
+  //
+  // So bound it. Drop the oldest-rendered cards off the TOP and correct scrollTop by exactly the height
+  // that went away, measured rather than summed (offsetHeight misses margins, and a few px of drift per
+  // page is a visible jump on a phone) — the post being read does not move. Scrolling back above the cap
+  // reaches the top of the trimmed list; pull-to-refresh redraws it from the Store, which still has it.
+  const _FEED_MAX_CARDS = 400;
+  function _capFeedDom(feed, box){
+    if(!feed || !box) return;
+    const cards=[...box.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair'));
+    const excess=cards.length-_FEED_MAX_CARDS; if(excess<=0) return;
+    const beforeH=feed.scrollHeight, top=feed.scrollTop;
+    for(let i=0;i<excess;i++) cards[i].remove();
+    feed.scrollTop=Math.max(0, top-(beforeH-feed.scrollHeight));
+  }
   // The identity of a timeline CARD. A repost renders the ORIGINAL's content and carries the original's
   // data-id, so two reposts of one note are one card — which is why dedupe and reconcile both key on
   // this rather than on ev.id.
@@ -2606,7 +2627,16 @@
     if(!atTop) feed.scrollTop += (feed.scrollHeight - beforeH);   // keep scroll stable on prepend (feed is the scroller)
     // cap the feed at 200 — but NOT once the user has paginated older posts, or we'd delete the
     // scroll-back history they just loaded as soon as a new live note arrives at the top.
-    if(_tl.pages===0){ const cards=[...box.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair')); for(let i=200;i<cards.length;i++) cards[i].remove(); }   // trim whole top-level cards (a reply is a .reply-pair wrapper, not a bare .note)
+    // Trim whole top-level cards off the BOTTOM (a reply is a .reply-pair wrapper, not a bare .note).
+    // 200 on a fresh feed; once the user has paged older, the cap loosens to the general ceiling instead
+    // of switching off entirely — deleting the scroll-back they just loaded is what the old exemption
+    // existed to avoid, but "never trim again" left live prepends growing the DOM without any bound at
+    // all, which is the other half of what kills the Android WebView (see _capFeedDom). Trimming here is
+    // scroll-safe: flushLive only calls us within _LIVE_READ_PX of the top (or via the pill, which
+    // scrolls to top first), so the cards coming off the bottom are never the ones being read.
+    { const keep=_tl.pages===0 ? 200 : _FEED_MAX_CARDS;
+      const cards=[...box.children].filter(el=>el.classList.contains('note')||el.classList.contains('reply-pair'));
+      for(let i=keep;i<cards.length;i++) cards[i].remove(); }
     decorateProfiles(); hydrateLinkCards(feed); hydratePolls(feed);
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
@@ -3282,7 +3312,7 @@
     }
     invalidateCounts();
     if(_tlMedia){ if(evs.length) _drawTimeline(true); }   // grow the grid from the now-larger Store set
-    else if(frag.childElementCount){ _tlNotes(feed).appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
+    else if(frag.childElementCount){ const box=_tlNotes(feed); box.appendChild(frag); _capFeedDom(feed, box); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed); }
     _tl.pages++;
     if(minTs<_tl.oldest) _tl.oldest=minTs;
     if(!evs.length || minTs>=until) _tl.done=true;   // relay returned nothing older → end of feed
@@ -12854,7 +12884,13 @@
     let minTs=until;
     for(const e of evs){ Store.saveEvent(e); needProfile(e.pubkey); if(e.created_at<minTs) minTs=e.created_at; }
     invalidateCounts();
+    // Profile scroll-back REDRAWS from the Store at a growing limit rather than appending, so the cap has
+    // to be the limit itself — _capFeedDom can't help a view that rebuilds every card on the next page.
+    // Same ceiling, same reason (see _capFeedDom). Stopping at the cap rather than merely clamping it is
+    // the point: a clamped limit would keep querying the relay on every scroll to the bottom and redraw
+    // the same 400 posts forever — a dead scroll that still burns the radio.
     _prof.limit += 60;
+    if(_prof.limit >= _FEED_MAX_CARDS){ _prof.limit = _FEED_MAX_CARDS; _prof.done = true; }
     if(minTs<_prof.oldest) _prof.oldest=minTs;
     if(!evs.length || minTs>=until) _prof.done=true;
     if(_prof.fill){ _prof.fill(_prof.tab); hydrate(feed); }
@@ -16635,7 +16671,7 @@
       const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node);
     }
     invalidateCounts();
-    if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    if(frag.childElementCount){ cont.appendChild(frag); _capFeedDom(feed, cont); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
     if(minTs<_search.oldest) _search.oldest=minTs;
     if(!evs.length || minTs>=until) _search.done=true;
     _search.loading=false;
@@ -18298,7 +18334,7 @@
       if(cont.querySelector('.note[data-id="'+ev.id+'"]')) continue;
       const div=document.createElement('div'); div.innerHTML=feedNoteHtml(ev); const node=div.firstElementChild; if(node) frag.appendChild(node); }
     invalidateCounts();
-    if(frag.childElementCount){ cont.appendChild(frag); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
+    if(frag.childElementCount){ cont.appendChild(frag); _capFeedDom(feed, cont); decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); }
     if(minTs<_hashtag.oldest) _hashtag.oldest=minTs;
     if(!evs.length || minTs>=until) _hashtag.done=true;
     _hashtag.loading=false;
@@ -18422,6 +18458,7 @@
         const sp=box.querySelector('.spinner'); if(sp) sp.remove();
         const em=box.querySelector('.empty'); if(em) em.remove();
         box.appendChild(frag);
+        _capFeedDom(feed, box);
         invalidateCounts();
         decorateProfiles(); hydrateLinkCards(feed); hydrateCounts(); hydratePolls(feed); observeProfiles(feed);
       }

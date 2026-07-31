@@ -1,8 +1,16 @@
 package place.poster.app;
 
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import android.webkit.RenderProcessGoneDetail;
+import android.webkit.WebView;
+import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 
 import place.poster.app.nip55.Nip55Plugin;
 import place.poster.app.screenshare.ScreenSharePlugin;
@@ -31,6 +39,65 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(OrbotPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
+        surviveRenderProcessDeath();
+    }
+
+    // THE "app just closes, no error" BUG. The UI runs in the WebView's RENDER process, which Android
+    // hosts separately and is free to kill under memory pressure (or which can crash on its own). When
+    // that happens the framework calls onRenderProcessGone, and whoever handles it must say so by
+    // returning true. Capacitor's BridgeWebViewClient asks its WebViewListeners and returns false when
+    // none of them handled it — and false means "I did not handle this", so the system kills OUR process
+    // too. No exception, no ANR, no "app has stopped" dialog: the app is simply gone, mid-scroll. That is
+    // exactly the reported symptom, and it is unrecoverable by anything on the JS side.
+    //
+    // A WebView whose renderer is gone can never render again, so recovery is not "reload the page" — the
+    // dead view has to go and a fresh one take its place. recreate() does exactly that: a new Activity
+    // instance re-runs onCreate above, so Capacitor builds a new bridge and a new WebView, and the old one
+    // is destroyed on the way out through Bridge.onDetachedFromWindow().
+    //
+    // Deliberately NOT the removeView()+destroy() from Android's own onRenderProcessGone sample: that
+    // sample owns its WebView, and here Capacitor does. Destroying it by hand leaves bridge.webView
+    // pointing at a destroyed object that the teardown we are about to trigger still calls onPause() /
+    // handleDestroy() on — trading a silent disappearance for a real crash. Letting the framework destroy
+    // it exactly once, on its own path, is both safer and less code. The render process being gone does
+    // not invalidate the WebView OBJECT; only its renderer, and lifecycle calls against it are no-ops.
+    //
+    // And we SAY so. Silently reappearing at the login screen reads like one more mysterious restart; the
+    // toast plus the log line are what turn a recurrence into something diagnosable (`adb logcat -s
+    // PosterChan`). didCrash() separates a renderer crash from an out-of-memory reclaim — different causes
+    // with different fixes, and until now there was no way to tell which one users were hitting.
+    private void surviveRenderProcessDeath() {
+        if (bridge == null) return;
+        bridge.addWebViewListener(
+            new WebViewListener() {
+                @Override
+                public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                    // didCrash() is API 26 and minSdk is 23. The callback itself never fires below 26, but
+                    // the SDK_INT guard is what lint's NewApi check reads, and NewApi is fatal-severity —
+                    // without it lintVitalRelease fails the CI release build rather than the code failing
+                    // on a device.
+                    boolean crashed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && detail != null && detail.didCrash();
+                    Log.w("PosterChan", "WebView render process gone (crashed=" + crashed + ") — recovering");
+                    // Off the callback stack: recreate() while the framework is still inside the
+                    // WebViewClient call is asking for trouble. Returning true first is what stops the
+                    // process being killed out from under the restart.
+                    new Handler(Looper.getMainLooper())
+                        .post(
+                            () -> {
+                                Toast
+                                    .makeText(
+                                        MainActivity.this,
+                                        crashed ? "PosterChan hit a display error — reloading" : "PosterChan ran low on memory — reloading",
+                                        Toast.LENGTH_LONG
+                                    )
+                                    .show();
+                                recreate();
+                            }
+                        );
+                    return true;
+                }
+            }
+        );
     }
 
     // A share to an already-running (singleTask) app arrives via onNewIntent. Capacitor does NOT replace the
