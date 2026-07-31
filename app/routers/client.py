@@ -774,7 +774,7 @@ async def client_voice_speak(
     import tempfile
     import shutil
     import time as _time
-    from app.services import voice_local, voice_factory
+    from app.services import voice_local, voice_factory, media_service
 
     pk = nostr_service.to_pubkey_hex(pubkey or "")
     if not pk or not _verify_self_auth(auth, pk):
@@ -806,11 +806,29 @@ async def client_voice_speak(
         raise HTTPException(status_code=413, detail="that reference clip is too long")
 
     tmp = tempfile.mkdtemp(prefix="voice_ref_")
+    raw = os.path.join(tmp, "src")
     path = os.path.join(tmp, "ref.wav")
     _voice_busy.add(pk)
     try:
-        with open(path, "wb") as f:
+        with open(raw, "wb") as f:
             f.write(data)
+        # Normalise to mono 24kHz and TRIM to voice_max_ref_seconds, exactly as the `voice` command
+        # does. Two reasons this can't be skipped just because the model happens to cope: a saved voice
+        # is very often a VIDEO clip (the studio accepts video/*, and a phone recording is webm/mp4),
+        # which only loads at all because librosa quietly falls back to audioread; and the length cap
+        # is otherwise unenforced here, so a ten-minute video gets decoded whole and forwarded whole to
+        # whichever node picks the job. The model reads a few seconds either way.
+        max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
+        ff = media_service.resolve_ffmpeg()
+        proc = await asyncio.create_subprocess_exec(
+            ff, "-y", "-i", raw, "-t", str(max_ref), "-ar", "24000", "-ac", "1", path,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.exists(path):
+            raise HTTPException(status_code=400,
+                                detail="couldn't read any audio out of that clip")
+        with open(path, "rb") as f:
+            data = f.read()          # forward the NORMALISED clip, not the original upload
         wav, where = await voice_factory.generate_voice(db, said, data, reference_path=path)
         logger.info("[voice] spoke %d chars for %s on %s", len(said), pk[:8], where)
         return Response(content=wav, media_type="audio/wav",

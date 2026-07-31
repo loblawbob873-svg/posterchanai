@@ -126,6 +126,24 @@ class VoicePortability(unittest.TestCase):
             self.assertIn(f'"{attr}"', src)
 
 
+class VoiceMemeBuilder(unittest.TestCase):
+    def test_builder_borrows_the_studio_rather_than_copying_it(self):
+        """The Meme Builder must reuse AI Chat's voice studio through the PC bridge. A second copy
+        would mean two voice libraries, two recorders and two sets of mobile layout to keep in step —
+        the same reason 'Generate one with AI' borrows the image studio."""
+        meme = _read("static/js/client/meme.js")
+        self.assertIn("PC.openVoiceStudio(", meme)
+        self.assertIn("onTake", meme)
+        self.assertNotIn("pcai:voices", meme, "the builder must not read the voice library itself")
+        app = _read("static/js/client/app.js")
+        self.assertIn("\n    openVoiceStudio,", app, "openVoiceStudio must be on the PC bridge")
+
+    def test_entry_is_on_the_add_sheet(self):
+        meme = _read("static/js/client/meme.js")
+        self.assertIn('id="mba-voice"', meme)
+        self.assertIn("go('mba-voice', pickClonedVoice)", meme)
+
+
 class VoiceInstaller(unittest.TestCase):
     def test_installer_guards_the_watermarker(self):
         """perth exports PerthImplicitWatermarker as None when its own import fails, so `import perth`

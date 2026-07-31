@@ -14109,6 +14109,7 @@
   }
 
   // Take a clip (recorded or picked), put it on Blossom, and add it to the library.
+  let _voiceOpts = null;   // remembered across the add-a-voice detour so a borrowed studio comes back borrowed
   async function voiceAdd(file){
     const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
     if(name === null) return;
@@ -14134,7 +14135,7 @@
         return list;
       });
       toast('voice saved');
-      openVoiceStudio();
+      openVoiceStudio(_voiceOpts);
     }catch(e){ toast('couldn’t save that voice: '+((e&&e.message)||e)); }
   }
 
@@ -14188,6 +14189,13 @@
         // A take is a blob: URL — it dies with the modal. That is fine for the ones you are comparing
         // and wrong for the one you wanted: getting it back costs another ~45s of GPU. "Keep" puts it
         // on the drive like any other file, so it outlives the session.
+        if(opts && opts.onTake){
+          const use=document.createElement('button');
+          use.className='btn btn-neon small full'; use.style.marginTop='6px';
+          use.textContent = opts.useLabel || 'Use this take';
+          use.onclick=()=>{ closeModal(); opts.onTake(blob, voice.name, text); };
+          row.appendChild(use);
+        }
         const keep = row.querySelector('.vs-keep');
         if(keep) keep.onclick = async ()=>{
           keep.disabled = true;
@@ -14216,7 +14224,12 @@
     }catch(e){ say(''); toast('voice failed: '+((e&&e.message)||e)); }
   }
 
-  async function openVoiceStudio(){
+  // `opts.onTake(blob, voiceName, text)` lets ANOTHER part of the app borrow this studio without
+  // borrowing the chat — the same trick meme.js uses on openGenStudio for image layers. The voice list,
+  // the recorder, the queue notice and the mobile layout are all shared, so the two can't drift; only
+  // the ending differs (the Meme Builder turns the take into an audio layer).
+  async function openVoiceStudio(opts){
+    _voiceOpts = opts || null;
     const status = await voiceStatus();
     if(status && !status.installed){
       modal(`<h3>Voice cloning</h3><p class="muted">This server hasn’t got the voice model
@@ -14263,7 +14276,7 @@
       $$('.vs-del',root).forEach(b=> b.onclick=async()=>{
         const v=list.find(x=>x.id===b.dataset.id); if(!v) return;
         if(!await uiConfirm(`Delete the voice “${v.name}”?`)) return;
-        try{ await voicesSave(cur=>cur.filter(x=>x.id!==v.id)); closeModal(); openVoiceStudio(); }
+        try{ await voicesSave(cur=>cur.filter(x=>x.id!==v.id)); closeModal(); openVoiceStudio(opts); }
         catch(e){ toast((e&&e.message)||'couldn’t delete that'); }
       });
       root.querySelector('#vs-rec').onclick=()=>{ closeModal(); voiceRecord(f=>voiceAdd(f)); };
@@ -18826,6 +18839,9 @@
     // file picker — folders, encrypted-blob hygiene and thumbnails included; sub-modules must use it
     // rather than listing /list/<pubkey> into a grid of their own.
     mediaServer, modal, closeModal, blossomPicker,
+    // The voice studio, so the Meme Builder can put a cloned line on the timeline without a second
+    // copy of the library, the recorder or the queue handling (see openVoiceStudio's opts.onTake).
+    openVoiceStudio,
     // The app's own emoji picker (recents, the unicode set, and every instance pack) + the shortcode →
     // image-URL map behind it, so the Meme Builder can offer stickers WITHOUT a second picker that
     // would know nothing about this instance's custom emoji. onPick gets (value, close) where value is

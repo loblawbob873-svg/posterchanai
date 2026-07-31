@@ -1729,7 +1729,8 @@
       <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-effect"><b>✨ Effect</b><i>The dancing man, the shrug, a character — drag, resize and time it</i></button>
       <button class="btn btn-cyan full mb-addb" id="mba-tpl"><b>📐 Ready-made layout</b><i>Top/bottom captions, a two-panel split, a caption bar</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mba-rec"><b>🎙️ Record a voice-over</b><i>Talk over the meme with your microphone</i></button>`, root=>{
+      <button class="btn btn-cyan full mb-addb" id="mba-rec"><b>🎙️ Record a voice-over</b><i>Talk over the meme with your microphone</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mba-voice"><b>🗣️ Say it in a cloned voice</b><i>Type a line and one of your saved voices reads it</i></button>`, root=>{
       const go=(id,fn)=>{ const b=root.querySelector('#'+id); if(b) b.onclick=()=>{ PC.closeModal(); fn(); }; };
       go('mbm-local', pickLocalMedia);
       go('mbm-blossom', pickBlossom);
@@ -1740,6 +1741,35 @@
       go('mba-effect', pickEffect);
       go('mba-tpl', pickTemplate);
       go('mba-rec', recordVoice);
+      go('mba-voice', pickClonedVoice);
+    });
+  }
+
+  // A spoken line in one of your saved voices, as an ordinary audio layer.
+  //
+  // It BORROWS AI Chat's voice studio (PC.openVoiceStudio with an onTake) rather than growing a second
+  // one here — the voice library, the recorder, the "this holds the GPU" notice and the mobile layout
+  // are all non-trivial and already exist. Same reasoning as 🎨 Generate one with AI borrowing the
+  // image studio: only the ENDING differs. The take arrives as a blob, goes to Blossom like every other
+  // layer source (the renderer only ever fetches URLs), and lands on the timeline as audio.
+  function pickClonedVoice(){
+    if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
+    PC.openVoiceStudio({
+      useLabel: '➕ Add to the meme',
+      onTake: async (blob, voiceName, text) => {
+        const st = document.getElementById('mb-status');
+        try{
+          if(st) st.textContent = 'adding the voice line…';
+          const name = (text || voiceName || 'voice').slice(0, 24);
+          const url = await uploadBlob(new File([blob], name.replace(/[^\w .-]/g, '_') + '.wav',
+                                                { type: 'audio/wav' }));
+          // addLayer returns null at the 24-layer limit (and says so itself) — don't then claim it landed.
+          if(!addLayer('audio', url, { name })) return;
+          if(document.getElementById('mb-stage')) render();
+          toast('voice line added as a layer');
+        }catch(e){ toast('couldn’t add that: ' + ((e && e.message) || e)); }
+        finally{ const s2 = document.getElementById('mb-status'); if(s2) s2.textContent = ''; }
+      },
     });
   }
   // 🎨 The prompt sheet is AI Chat's OWN "Make an image" studio (PC.openGenStudio), borrowed with a
