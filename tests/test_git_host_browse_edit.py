@@ -281,7 +281,11 @@ def main():
         check("no DSN -> cannot confirm the ACL -> 404", aget("/refs")[0] == 404, aget("/refs"))
         _real_maints = gh._Handler._maintainers
         gh._CONFIG["pg_dsn"] = "stub"                       # only gates the lookup; ACL is stubbed
-        gh._Handler._maintainers = lambda self, o, r: {o, maint}
+        acl_reads = []
+        def _stub_maints(self, o, r, _m=maint):
+            acl_reads.append((o, r))                        # each call is one Postgres connection
+            return {o, _m}
+        gh._Handler._maintainers = _stub_maints
         gh._alias_cache.clear()
         try:
             st, j = aget("/refs")
@@ -301,6 +305,24 @@ def main():
             except urllib.error.HTTPError as e:
                 check("alias does not grant delete", e.code == 401, e.code)
             check("repo survived", os.path.isdir(repo))
+            # This lookup runs BEFORE any auth gate, so its cost must be per-REPO, not per-npub:
+            # keyed on the caller's path segment, an anonymous client mints a Postgres connection per
+            # made-up npub (and evicts the real entries once the cache bound is hit).
+            before = len(acl_reads)
+            for _ in range(5):
+                probe = "http://127.0.0.1:%d/%s/demo.git/refs" % (port, nostr_service.derive_pubkey(
+                    os.urandom(32)))
+                try:
+                    urllib.request.urlopen(probe, timeout=20)
+                except urllib.error.HTTPError:
+                    pass
+            check("unknown npubs cost no extra ACL read", len(acl_reads) == before,
+                  "%d -> %d" % (before, len(acl_reads)))
+            # ...and the counter is live, not a dead instrument: a COLD cache does read the ACL.
+            gh._alias_cache.clear()
+            aget("/refs")
+            check("a cold cache does read the ACL", len(acl_reads) > before, len(acl_reads))
+
             # A pubkey that is NOT a maintainer gets nothing.
             gh._Handler._maintainers = lambda self, o, r: {o}
             gh._alias_cache.clear()

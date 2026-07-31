@@ -117,11 +117,16 @@ def _publish_state_witness(owner_hex: str, repo_id: str) -> bool:
         return False
 
 
-# Maintainer-alias cache: (requested_owner_hex, repo_id) -> (expiry_monotonic, canonical_owner|None).
-# MISSES are cached too: a client that probes a maintainer URL re-probes it on every fetch/push, and a
-# 404 must not buy a Postgres round-trip each time.
+# Maintainer-alias cache: repo_id -> (expiry_monotonic, {maintainer_hex: hosting_owner_hex|None}).
+#
+# Keyed on the REPO, never on the requested npub. This lookup runs BEFORE any auth gate, so a cache
+# keyed on the caller's path segment would let an anonymous client mint a fresh Postgres connection per
+# made-up npub — and, past the bound below, evict the real entries while doing it. Per repo the ACL is
+# read ONCE per TTL and an unknown npub is a dict miss; the whole map is cached even when EMPTY, so a
+# repo with no aliases costs nothing to re-probe. (`None` as a value = the key names two hosting owners,
+# i.e. ambiguous -> resolves to neither.)
 _ALIAS_TTL = 300.0
-_ALIAS_MAX = 512               # bounded: the miss path is reachable by any caller with any path
+_ALIAS_MAX = 512               # bounded: reachable by any caller with any repo id
 _alias_cache: dict = {}
 _alias_lock = threading.Lock()
 
@@ -340,30 +345,44 @@ class _Handler(BaseHTTPRequestHandler):
         owner — an alias renames the URL, it is not a second door. Fail-closed: no DSN (we cannot
         confirm the ACL), no candidate, or an AMBIGUOUS one (two hosted repos share the id and both
         name the requester) all stay a 404."""
-        key = (owner_hex, repo_id)
+        canon = self._alias_map(repo_id).get(owner_hex)
+        if not canon:
+            return None
+        # Re-checked on disk: the owner can delete the repo inside the TTL, and handing a stale owner
+        # to git-http-backend turns a clean 404 into a backend error.
+        if not ghs.repo_exists(canon, repo_id):
+            return None
+        log.info("[git-host] %s/%s -> maintainer alias of owner %s",
+                 owner_hex[:12], repo_id, canon[:12])
+        return canon
+
+    def _alias_map(self, repo_id: str) -> dict:
+        """{maintainer_hex: hosting_owner_hex} for every repo on disk with this id — the reverse of the
+        30617 `maintainers` tag, built once per repo per _ALIAS_TTL. A key naming two hosting owners
+        maps to None (ambiguous, resolves to neither). Empty without a DSN: we cannot confirm any ACL,
+        so nothing aliases."""
         now = time.monotonic()
         with _alias_lock:
-            hit = _alias_cache.get(key)
-            # A cached target is re-checked on disk: the owner can delete the repo inside the TTL,
-            # and handing a stale owner to git-http-backend turns a clean 404 into a backend error.
-            if hit and hit[0] > now and (hit[1] is None or ghs.repo_exists(hit[1], repo_id)):
+            hit = _alias_cache.get(repo_id)
+            if hit and hit[0] > now:
                 return hit[1]
-        canon = None
+        amap = {}
         if _CONFIG.get("pg_dsn"):
-            matches = [o for o in ghs.owners_hosting(repo_id)
-                       if o != owner_hex and owner_hex in self._maintainers(o, repo_id)]
-            if len(matches) == 1:
-                canon = matches[0]
-                log.info("[git-host] %s/%s -> maintainer alias of owner %s",
-                         owner_hex[:12], repo_id, canon[:12])
-            elif len(matches) > 1:
-                log.warning("[git-host] %s/%s names %d hosting owners — ambiguous, not aliasing",
-                            owner_hex[:12], repo_id, len(matches))
+            for owner in ghs.owners_hosting(repo_id):
+                for maint in self._maintainers(owner, repo_id):
+                    if maint == owner:
+                        continue                       # an owner is not an alias of themselves
+                    if maint in amap and amap[maint] != owner:
+                        amap[maint] = None
+                        log.warning("[git-host] %s maintains more than one hosted '%s' — not aliasing",
+                                    maint[:12], repo_id)
+                    else:
+                        amap.setdefault(maint, owner)
         with _alias_lock:
             if len(_alias_cache) >= _ALIAS_MAX:
                 _alias_cache.clear()
-            _alias_cache[key] = (now + _ALIAS_TTL, canon)
-        return canon
+            _alias_cache[repo_id] = (now + _ALIAS_TTL, amap)
+        return amap
 
     def _write_gate_signer(self, owner_hex: str, repo_id: str, route: str):
         """WRITE authorization for the web editor. Returns the signing maintainer's hex pubkey, or None.
