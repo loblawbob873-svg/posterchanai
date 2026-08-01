@@ -1566,7 +1566,7 @@ def _probe_duration(data: bytes, ext: str) -> float:
     import tempfile as _tf
     tp = ""
     try:
-        with _tf.NamedTemporaryFile(suffix="." + (ext or "mp4"), delete=False) as tfh:
+        with _tf.NamedTemporaryFile(prefix="pcai_client_probe_", suffix="." + (ext or "mp4"), delete=False) as tfh:
             tfh.write(data)
             tp = tfh.name
         p = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",

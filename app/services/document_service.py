@@ -82,7 +82,7 @@ def extract_image_text(image_base64: str, max_chars: int = 50000) -> Optional[st
 
         # Save to BMP format (uncompressed, always supported by leptonica)
         import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.bmp', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(prefix='pcai_doc_bmp_', suffix='.bmp', delete=False) as tmp:
             tmp_path = tmp.name
             image.save(tmp_path, format='BMP')
 

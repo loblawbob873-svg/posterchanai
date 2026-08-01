@@ -540,6 +540,17 @@ async def startup():
                 logging.error(f"Error starting stream server: {e}", exc_info=True)
 
             try:
+                # The same idea for the REST of the app's temp files. `finally: rmtree` covers every
+                # normal path but cannot survive SIGKILL, so an OOM kill or a restart landing
+                # mid-render strands whatever it was holding. /tmp is a tmpfs here, so that is
+                # pinned, unreclaimable RAM which makes the next OOM likelier. Startup is the only
+                # hook needed: orphans come from kills, and a kill is always followed by a start.
+                from app.services.temp_sweep_service import sweep_temp_orphans
+                sweep_temp_orphans()
+            except Exception as e:
+                logging.error(f"Error sweeping orphaned temp files: {e}", exc_info=True)
+
+            try:
                 # Safety net that publishes a live stream's parked "ended" event when its feed is gone —
                 # covers the ends MediaMTX's runOnUnpublish hook can't deliver (app restarted mid-stream,
                 # mediamtx killed). Streams would otherwise stay announced as ● LIVE forever.

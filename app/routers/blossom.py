@@ -118,7 +118,7 @@ def _video_thumb_bytes(data: bytes, size: int = 320) -> "bytes | None":
         return None
     tin = tout = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".vid", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="pcai_blossom_vid_", suffix=".vid", delete=False) as f:
             f.write(data)
             tin = f.name
         tout = tin + ".jpg"

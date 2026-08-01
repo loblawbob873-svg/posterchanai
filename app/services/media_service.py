@@ -233,7 +233,7 @@ def compress_audio_opus(data: bytes, bitrate: str = "96k") -> bytes:
     quality-per-byte for music, e.g. a 50 MB WAV → ~3-4 MB) via the system ffmpeg, to save storage and
     bandwidth. Returns the compressed bytes. Raises on failure."""
     ff = resolve_ffmpeg()
-    fd, inp = tempfile.mkstemp(suffix=".audio")
+    fd, inp = tempfile.mkstemp(prefix="media_audio_", suffix=".audio")
     os.close(fd)
     out = inp + ".ogg"
     try:
@@ -585,7 +585,7 @@ def extract_audio(data: bytes, source_filename: str = "video", fmt: str = "mp3")
     (e.g. the video has no audio stream — callers report it per-file)."""
     ff = resolve_ffmpeg()
     suffix = Path(source_filename).suffix or ".video"
-    fd, inp = tempfile.mkstemp(suffix=suffix)
+    fd, inp = tempfile.mkstemp(prefix="media_extract_", suffix=suffix)
     os.close(fd)
     out = inp + "." + fmt
     try:

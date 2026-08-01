@@ -56,7 +56,7 @@ async def transcribe_audio(audio_data: bytes, language: str = "auto") -> Tuple[O
     # Write audio to temp file (faster-whisper needs a file path)
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="pcai_stt_", suffix=".webm", delete=False) as f:
             f.write(audio_data)
             temp_path = f.name
 

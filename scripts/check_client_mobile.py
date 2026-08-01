@@ -27,6 +27,7 @@ Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / site u
 """
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -102,6 +103,11 @@ async def run():
         print("SKIP  websockets not installed")
         return 2
 
+    # Start from a clean profile, and take it away again afterwards. On this box /tmp is a tmpfs,
+    # so a ~130 MB Chrome profile left behind is 130 MB of RAM held until the next reboot — and the
+    # old cleanup could not do it: it ran inside drive(), AFTER Chrome had been launched on that
+    # very directory, so it raced Chrome's own startup and still left the profile there at the end.
+    shutil.rmtree(PROFILE, ignore_errors=True)
     proc = subprocess.Popen(
         ["google-chrome-stable", "--headless=new", "--disable-gpu", "--no-sandbox",
          f"--remote-debugging-port={PORT}", f"--user-data-dir={PROFILE}", "about:blank"],
@@ -110,11 +116,15 @@ async def run():
         return await drive()
     finally:
         proc.terminate()
+        try:
+            proc.wait(timeout=10)          # let it release the profile before we delete it
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
 
 async def drive():
     import websockets
-    subprocess.run(["rm", "-rf", PROFILE], check=False)
     page = None
     for _ in range(60):
         try:

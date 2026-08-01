@@ -84,7 +84,7 @@ async def _generate_speech_async(text: str, voice: str = None, rate: str = None,
     communicate = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch)
 
     # Generate audio to a temporary file
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+    with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=".mp3", delete=False) as tmp_file:
         tmp_path = tmp_file.name
 
     try:
@@ -311,13 +311,13 @@ def create_avatar_video(image_bytes: bytes, audio_bytes: bytes, text: str = None
 
         # Write image to temp file with appropriate extension
         suffix = ".gif" if is_gif else ".png"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=suffix, delete=False) as f:
             f.write(image_bytes)
             img_path = f.name
 
         # For GIFs, convert to PNG first (extract first frame) to avoid loop issues
         if is_gif:
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=".png", delete=False) as f:
                 png_path = f.name
 
             # Extract first frame from GIF
@@ -338,12 +338,12 @@ def create_avatar_video(image_bytes: bytes, audio_bytes: bytes, text: str = None
             img_path_for_video = img_path
 
         # Write audio to temp file
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=".mp3", delete=False) as f:
             f.write(audio_bytes)
             audio_path = f.name
 
         # Output video path
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+        with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=".mp4", delete=False) as f:
             video_path = f.name
             original_video_path = f.name  # Keep track for cleanup
 
@@ -361,7 +361,7 @@ def create_avatar_video(image_bytes: bytes, audio_bytes: bytes, text: str = None
             duration = get_audio_duration(audio_path)
             ass_content = create_ass_subtitles(text, duration)
             if ass_content:
-                with tempfile.NamedTemporaryFile(suffix=".ass", delete=False, mode='w') as f:
+                with tempfile.NamedTemporaryFile(prefix="pcai_tts_", suffix=".ass", delete=False, mode='w') as f:
                     f.write(ass_content)
                     ass_path = f.name
                 # Add subtitle filter (escape path for ffmpeg)

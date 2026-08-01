@@ -27,6 +27,7 @@ Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / websoc
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -304,6 +305,14 @@ async def drive(url):
         return 1
     finally:
         proc.terminate()
+        # Take the profile away again — /tmp is a tmpfs here, so a ~130 MB Chrome profile left
+        # behind is 130 MB of RAM held until reboot. The pre-run rm above only stopped it from
+        # accumulating ACROSS runs; it still left one profile resident after every run.
+        try:
+            proc.wait(timeout=10)          # let it release the profile before we delete it
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
 
 def main():

@@ -20,7 +20,7 @@ def _character_still(char_path: str):
         return _Img.open(char_path).convert("RGBA")
     import tempfile as _tf, subprocess as _sp
     from app.services.media_service import resolve_ffmpeg
-    _fd, _fp = _tf.mkstemp(suffix=".png"); os.close(_fd)
+    _fd, _fp = _tf.mkstemp(prefix="pcai_char_frame_", suffix=".png"); os.close(_fd)
     try:
         _sp.run([resolve_ffmpeg(), "-y", "-i", char_path, "-frames:v", "1", _fp],
                 capture_output=True, timeout=30)
@@ -822,7 +822,7 @@ def add_lookingaway_video(data: bytes) -> bytes:
         raise RuntimeError("looking-away art (assets/characters/lookingaway_[ab].png) is missing")
     shots = [(_composite_char_on_image(data, away), 1.6),    # beat on the turn: the second shot
              (_composite_char_on_image(data, look), 1.9)]    # holds longer than the first
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(prefix="pcai_char_work_") as tmp:
         listing = []
         for i, (jpg, dur) in enumerate(shots):
             fp = os.path.join(tmp, f"shot{i}.jpg")

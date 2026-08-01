@@ -157,7 +157,7 @@ class TelegramService:
             # Probably base64 - try to decode and save to temp file
             try:
                 image_bytes = base64.b64decode(photo_data)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(prefix="tg_png_", suffix=".png", delete=False) as tmp:
                     tmp.write(image_bytes)
                     tmp_path = tmp.name
                 
