@@ -122,6 +122,15 @@ def main():
                 print(f"[ERROR] ensure_profile failed: {e}", flush=True)
         threading.Thread(target=_pub_profile, daemon=True).start()
 
+    # EVERY listener below is imported BEFORE its thread starts, never inside the thread body.
+    # An import that first runs in a worker thread can land while the interpreter is FINALISING —
+    # the manager stops this bot, main() returns, and the daemon thread is still on its first line.
+    # By then importlib._bootstrap has lost its own module globals and the import dies with a bare
+    # `NameError: name 'sys' is not defined` several frames inside CPython, which reads as a broken
+    # dependency rather than a shutdown race (it was reported as a PIL/defusedxml bug in the ttt
+    # referee). Importing per-mode keeps the laziness that matters — a bot without --ttt still never
+    # loads tttListener — while making sure no import can run at teardown.
+
     # Track threads for parallel execution of listener modes
     threads = []
 
@@ -131,8 +140,9 @@ def main():
 
     # Nitter RSS → fediverse poster
     if args.nitter:
+        from nitterListener import nitter_poster   # before the thread — see above
+
         def run_nitter():
-            from nitterListener import nitter_poster
             print("Starting Nitter RSS poster mode...")
             nitter_poster()
         # Run in a thread when combined with a listener (--pleroma/--nostr)
@@ -148,8 +158,10 @@ def main():
             return
 
     if args.pleroma:
+        from pleromaListener import process_notifications   # before the thread — see above
+
+
         def run_pleroma():
-            from pleromaListener import process_notifications
             print("Starting Pleroma listener...")
             while True:
                 try:
@@ -175,12 +187,16 @@ def main():
         # unchecked → empty modes → the manager sets NOSTR_PRESENCE_ONLY). It must NOT reply to
         # mentions. The profile publish above already ran; here we just keep the process alive.
         _nostr_presence_only = (_os.getenv("NOSTR_PRESENCE_ONLY", "") or "").strip().lower() in ("1", "true", "yes", "on")
+        # Before the thread — see run_nitter. Still skipped in presence-only mode, which deliberately
+        # never touches nostrListener: the point of that mode is to publish the profile and idle.
+        if not _nostr_presence_only:
+            from nostrListener import process_mentions, process_random_replies
+
         def run_nostr():
             if _nostr_presence_only:
                 print("Nostr presence-only mode (profile published; NOT replying to mentions).", flush=True)
                 while True:
                     time.sleep(3600)
-            from nostrListener import process_mentions, process_random_replies
             print("Starting Nostr listener...")
             while True:
                 try:
@@ -204,8 +220,10 @@ def main():
 
     # DVM listener (NIP-90 job fulfilment) — can run alongside --nostr or standalone.
     if args.dvm:
+        from dvmListener import process_job_requests   # before the thread — see above
+
+
         def run_dvm():
-            from dvmListener import process_job_requests
             print("Starting DVM (NIP-90) listener...")
             while True:
                 try:
@@ -222,12 +240,18 @@ def main():
             run_dvm()
             return
 
+    # Every game referee waits out the relay-subprocess startup race, so the helper is imported
+    # ONCE here — before any of their threads start, for the reason given above.
+    if args.chess or args.ttt or args.hangman or args.connect4 or args.blackjack or args.holdem:
+        from nostr import wait_for_relay
+
     # Chess referee (#chesstr) — can run alongside --nostr or standalone.
     if args.chess:
+        from chessListener import process_chess   # before the thread — see above
+
         def run_chess():
-            from chessListener import process_chess
             print("Starting #chesstr chess listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_chess()
@@ -245,10 +269,11 @@ def main():
 
     # Tic-Tac-Toe referee (#tictactoe)
     if args.ttt:
+        from tttListener import process_ttt   # before the thread — see above
+
         def run_ttt():
-            from tttListener import process_ttt
             print("Starting #tictactoe listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_ttt()
@@ -263,10 +288,11 @@ def main():
 
     # Hangman referee (#hangman)
     if args.hangman:
+        from hangmanListener import process_hangman   # before the thread — see above
+
         def run_hangman():
-            from hangmanListener import process_hangman
             print("Starting #hangman listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_hangman()
@@ -281,10 +307,11 @@ def main():
 
     # Connect Four referee (#connect4)
     if args.connect4:
+        from connect4Listener import process_connect4   # before the thread — see above
+
         def run_connect4():
-            from connect4Listener import process_connect4
             print("Starting #connect4 listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_connect4()
@@ -298,10 +325,11 @@ def main():
             run_connect4(); return
 
     if args.blackjack:
+        from blackjackListener import process_blackjack   # before the thread — see above
+
         def run_blackjack():
-            from blackjackListener import process_blackjack
             print("Starting #blackjack listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_blackjack()
@@ -315,10 +343,11 @@ def main():
             run_blackjack(); return
 
     if args.holdem:
+        from holdemListener import process_holdem   # before the thread — see above
+
         def run_holdem():
-            from holdemListener import process_holdem
             print("Starting #holdem listener...")
-            from nostr import wait_for_relay; wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
+            wait_for_relay()   # wait out the relay-subprocess startup race (see nostr.wait_for_relay)
             while True:
                 try:
                     process_holdem()
