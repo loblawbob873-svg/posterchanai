@@ -103,7 +103,13 @@ _ANIME_CHIN = 0.20        # of box height, below the mouth
 # hand-placed mouth `mw` is the real width, so the drawing has to respect it.
 _ANIME_CAV_W = 0.40       # cavity half-width at rest, × mouth width
 _ANIME_CAV_WMOD = 0.14    # extra half-width on a bright vowel
-_ANIME_CAV_H = 0.30       # cavity half-height at full openness, × mouth width
+# A mouth opens DOWNWARD — the lower lip drops, the upper one barely moves. Centring the cavity on
+# the lip line instead made it eat upward into the philtrum and downward into the chin in equal
+# measure, and the erase behind it then had to wipe the lower lip and its shading, leaving flat skin
+# under the mouth. That is the "shadow below the lips". So the cavity is anchored just ABOVE the lip
+# line and grows down from there.
+_ANIME_CAV_TOP = -0.06    # cavity top, × mouth width, relative to the lip line
+_ANIME_CAV_DROP = 0.62    # how far the cavity reaches BELOW the lip line at full openness
 
 # InsightFace's 106-point model, indices verified by plotting them (see docs/TALK.md):
 # 0-32 is the face contour (chin at the bottom of it) and 52-71 is the lip outline.
@@ -505,7 +511,7 @@ def _skin_tone(base, cx: float, cy: float, mw: float):
     return tuple(int(v) for v in np.median(keep, axis=0))
 
 
-def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float):
+def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float, dy: float = 0.0):
     """`base` with the drawn mouth painted out, following the picture's own shading.
 
     A FLAT fill was the obvious thing and it is visibly wrong: cel art still has shaded regions —
@@ -524,7 +530,7 @@ def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float):
     W, H = base.size
     pad = max(2, int(mw * 0.25))
     x0, x1 = int(round(cx - hw)), int(round(cx + hw))
-    y0, y1 = int(round(cy - hh)), int(round(cy + hh))
+    y0, y1 = int(round(cy + dy - hh)), int(round(cy + dy + hh))
     sx0, sx1 = max(0, x0 - pad), min(W, x1 + pad)
     sy0, sy1 = max(0, y0), min(H, y1)
     if sx1 - sx0 < 2 * pad + 2 or sy1 - sy0 < 2:
@@ -570,24 +576,37 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
     # mouth — a cover narrower than the cavity lets the drawn outline land on untouched art, which
     # is half of what the "ugly shadow around the mouth" was.
     max_hw = mw * (_ANIME_CAV_W + _ANIME_CAV_WMOD)
-    erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.08, mw * (_ANIME_CAV_H + 0.04))
+    # The erase spans exactly what the widest, most-open cavity will cover, and no more — every
+    # pixel beyond that is art being flattened for nothing.
+    e_top, e_bot = mw * _ANIME_CAV_TOP, mw * _ANIME_CAV_DROP
+    erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.08,
+                           (e_bot - e_top) / 2 + mw * 0.04, (e_bot + e_top) / 2)
     for a, wdt in zip(openness, width):
         a = float(a)
         if a < _OPEN_EPS:
             yield base.copy()
             continue
         hw = mw * (_ANIME_CAV_W + _ANIME_CAV_WMOD * float(wdt))   # bright vowels spread it wider
-        hh = mw * _ANIME_CAV_H * a                                # WIDER than tall — a circle reads as a shout
+        top = mw * _ANIME_CAV_TOP
+        bot = mw * _ANIME_CAV_DROP * a
+        hh = max(1.0, (bot - top) / 2)
+        off = (bot + top) / 2                                     # the cavity hangs BELOW the lip line
         r = int(math.ceil(max(hw, hh) * 1.6)) + 6
         n = r * 2
         patch = Image.new("RGBA", (n, n), (0, 0, 0, 0))
         d = ImageDraw.Draw(patch)
         # Draw the open mouth: a dark cavity with a tongue, outlined in the art's own ink weight.
-        d.ellipse([r - hw, r - hh, r + hw, r + hh], fill=cavity + (255,),
-                  outline=ink + (255,), width=max(1, int(mw * 0.06)))
-        if hh > mw * 0.16:
+        d.ellipse([r - hw, r + off - hh, r + hw, r + off + hh], fill=cavity + (255,),
+                  outline=ink + (255,), width=max(1, int(mw * 0.05)))
+        if hh > mw * 0.12:
             tw, th = hw * 0.66, hh * 0.42
-            d.ellipse([r - tw, r + hh - th * 1.6, r + tw, r + hh - th * 0.1], fill=tongue + (255,))
+            d.ellipse([r - tw, r + off + hh - th * 1.6, r + tw, r + off + hh - th * 0.1],
+                      fill=tongue + (255,))
+        # A LOWER LIP under the opening. Without it the erased region just ends in flat skin, which
+        # is the other half of "a shadow below the lips" — a mouth with no lip beneath it.
+        lip_y = r + off + hh
+        d.arc([r - hw * 1.02, lip_y - hh * 0.5, r + hw * 1.02, lip_y + max(2.0, mw * 0.20)],
+              start=8, end=172, fill=ink + (210,), width=max(1, int(mw * 0.05)))
         if abs(angle) > 0.5:
             patch = patch.rotate(-angle, resample=Image.BICUBIC)
         frame = erased.copy()
