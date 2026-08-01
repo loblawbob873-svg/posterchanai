@@ -15,15 +15,26 @@ The mouth is animated by WARPING the picture, not by a neural lip-sync model
     diffusion-shaped feature in this repo has an Arc or ROCm gotcha; this has none,
     and it never takes ``GPUResourceLock`` (see video_service/music_local for why
     that lock is precious).
-  * it works on DRAWINGS. Memes are half cartoon, and the neural models are trained
-    on video of real faces — they smear on flat art. The mouth locator here already
-    falls back to the anime cascade (see faces._locate_mouth), so a hand-drawn face
-    gets the same treatment as a photo.
   * the crude look is the point. This is the Clutch Cargo / cheap-Saturday-cartoon
     jaw flap, which is funnier for a meme than an uncanny half-real mouth.
 
+TWO renderers, because one operation cannot serve both kinds of picture:
+
+  * a PHOTOGRAPH is WARPED (_render_frames) — its own jaw pixels move, so it keeps
+    the face's real detail.
+  * FLAT ART is REDRAWN (_render_anime_frames) — a cel-shaded mouth is a hard ink
+    stroke on a flat fill, and sliding it duplicates and smears it. Anime lip-sync
+    has never worked by warping either; it swaps a drawn mouth per frame.
+
+And the mouth can be PLACED BY HAND (`mouth=`), which is what makes this reliable
+rather than lucky. Every face model here was trained on photographs: InsightFace
+will happily detect an anime face and then put the mouth landmarks on the chin and
+a cheek — a confident wrong answer, which is worse than none. The Meme Builder
+seeds a marker from detection and lets the user correct it; see docs/TALK.md.
+
 How a frame is built (see _render_frames for the code):
-  1. Locate the mouth once — centre, width and the face's tilt.
+  1. Locate the mouth once — centre, width and the face's tilt (or take the one the
+     user placed).
   2. Turn the audio into a per-frame "how open" envelope (_audio_envelope).
   3. Per frame: paint a mouth INTERIOR (dark, with a tooth strip and a tongue) at
      the lip line, then paste the jaw — the picture's own pixels, through a
@@ -72,6 +83,17 @@ _MOUTH_HALF_W = 0.42      # mouth-cavity half-width, × mouth width
 _LIP_LINE = -0.06         # top of the jaw mask / cavity, × mouth width, above the lip line
 _OPEN_EPS = 0.05          # below this the frame is left as the original still
 
+# ANIME proportions, as fractions of the anime cascade's FACE BOX. Measured off real art (a 1920x1080
+# Chainsaw Man still and the PosterChan mascot), not guessed: the mouth sits at 0.72-0.75 of the box
+# height on both, and is 0.10-0.14 of its width. The cascade's own estimate is 0.42 of the width —
+# that number belongs to the `blue` effect, which paints a smear AROUND the mouth and wants to be
+# generous. Used for lip-sync it makes a mouth roughly three times too wide, which is the "doesn't
+# work on anime at all" report: a cavity spanning half the face.
+_ANIME_MOUTH_X = 0.50     # of box width
+_ANIME_MOUTH_Y = 0.76     # of box height
+_ANIME_MOUTH_W = 0.13     # of box width
+_ANIME_CHIN = 0.20        # of box height, below the mouth
+
 # InsightFace's 106-point model, indices verified by plotting them (see docs/TALK.md):
 # 0-32 is the face contour (chin at the bottom of it) and 52-71 is the lip outline.
 # InsightFace ships no semantic table for these, so they are measured, not assumed.
@@ -111,8 +133,69 @@ def _talk_app():
     return _TALK_APP
 
 
-def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, float, float]]:
-    """``(cx, cy, mouth_width, angle_deg, mouth_to_chin)`` for the best face, or None.
+def _anime_geometry(image_data: bytes):
+    """``(cx, cy, mouth_width, angle_deg, mouth_to_chin)`` for a STYLISED anime face, or None.
+
+    Returns None unless the anime cascade fires and the real-face cascade does not — that
+    combination is what says "this is flat art, not a photograph", and it is the gate that keeps
+    photos and semi-realistic drawn characters on the landmark path where they belong.
+
+    The geometry is derived from the cascade BOX by fixed proportions (measured, see the constants),
+    because nothing here produces anime landmarks. The TILT still comes from InsightFace's eye
+    keypoints when it has any: those land correctly on anime even though its mouth output does not.
+    """
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image, ImageOps
+        from . import faces
+    except Exception:
+        return None
+    try:
+        with Image.open(io.BytesIO(image_data)) as im0:
+            im = ImageOps.exif_transpose(im0).convert("RGB")
+        gray = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2GRAY)
+        boxes = faces._detect_thug_faces(gray, cv2.equalizeHist(gray), im.width, im.height)
+        if not boxes or any(kind != "anime" for *_, kind in boxes):
+            return None
+        x, y, w, h, _ = max(boxes, key=lambda f: f[2] * f[3])
+        cx = x + _ANIME_MOUTH_X * w
+        cy = y + _ANIME_MOUTH_Y * h
+        mw = max(8.0, _ANIME_MOUTH_W * w)
+        chin = max(6.0, _ANIME_CHIN * h)
+        angle = 0.0
+        app = _talk_app()
+        if app is not None:
+            try:
+                bgr = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR)
+                dets = [d for d in (app.get(bgr) or [])
+                        if getattr(d, "kps", None) is not None and len(d.kps) >= 5]
+                if dets:
+                    # The face whose box overlaps this one — on a group shot the anime box we picked
+                    # is the one being animated, so the tilt has to come from the same head.
+                    def _near(d):
+                        b = d.bbox
+                        return abs((b[0] + b[2]) / 2 - (x + w / 2)) + abs((b[1] + b[3]) / 2 - (y + h / 2))
+                    f = min(dets, key=_near)
+                    a = math.degrees(math.atan2(float(f.kps[1][1] - f.kps[0][1]),
+                                                float(f.kps[1][0] - f.kps[0][0])))
+                    if abs(a) <= 45:
+                        angle = a
+            except Exception:
+                angle = 0.0
+        logger.info("talk: anime face %dx%d -> mouth %.0f,%.0f w=%.1f chin=%.1f ang=%.1f",
+                    w, h, cx, cy, mw, chin, angle)
+        return (float(cx), float(cy), float(mw), float(angle), float(chin), True)
+    except Exception as e:
+        logger.warning(f"talk: anime detection failed: {e}")
+        return None
+
+
+def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, float, float, bool]]:
+    """``(cx, cy, mouth_width, angle_deg, mouth_to_chin, is_anime)`` for the best face, or None.
+
+    `is_anime` picks the RENDERER: flat art is redrawn, a photograph is warped. See
+    _render_anime_frames for why one operation cannot serve both.
 
     Everything is measured in the FACE's own frame, not the screen's: the tilt comes from
     the eye keypoints (same ``atan2(dy, dx)`` convention as the THUG overlay, so PIL
@@ -135,6 +218,19 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
         often than a head lying on its side, and the animation would land somewhere absurd."""
         ang = math.degrees(math.atan2(float(kps[1][1] - kps[0][1]), float(kps[1][0] - kps[0][0])))
         return 0.0 if abs(ang) > 45 else ang
+
+    # ANIME FIRST, and that order is the whole fix. InsightFace happily DETECTS a stylised anime
+    # face — its box and its two EYE keypoints land correctly — but its landmark models are trained
+    # on photographs and their mouth output is nonsense on flat art: measured on a Chainsaw Man
+    # still, the two "mouth corners" came back on the chin and on a cheek, giving a mouth 1.7x too
+    # wide and 16px too low. A confident wrong answer is worse than no answer, because it means the
+    # anime path below is never reached. So when the anime cascade fires and the REAL one does not,
+    # trust the anime box. (Checked across photos, semi-realistic drawn characters and true anime:
+    # this condition is true for exactly the anime, and the drawn characters InsightFace already
+    # handles well keep their landmark path.)
+    anime = _anime_geometry(image_data)
+    if anime is not None:
+        return anime
 
     app = _talk_app()
     if app is not None:
@@ -170,12 +266,12 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
                     chin = float((contour @ down).max() - float(centre @ down))
                     if chin < 0.25 * mw:                    # nonsense geometry — use the norm
                         chin = 0.70 * mw
-                    return (float(centre[0]), float(centre[1]), mw, angle, chin)
+                    return (float(centre[0]), float(centre[1]), mw, angle, chin, False)
                 # No landmarks on this face: the keypoint mouth, nudged down off the nostrils.
                 lm, rm = f.kps[3], f.kps[4]
                 mw = max(8.0, math.hypot(float(rm[0] - lm[0]), float(rm[1] - lm[1])))
                 c = np.array([(lm[0] + rm[0]) / 2.0, (lm[1] + rm[1]) / 2.0]) + down * (0.17 * mw)
-                return (float(c[0]), float(c[1]), mw, angle, 0.70 * mw)
+                return (float(c[0]), float(c[1]), mw, angle, 0.70 * mw, False)
         except Exception as e:
             logger.warning(f"talk: insightface path failed, falling back: {e}")
 
@@ -183,7 +279,7 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
     if loc is None:
         return None
     cx, cy, mw = loc
-    return (float(cx), float(cy), float(mw), 0.0, 0.70 * float(mw))
+    return (float(cx), float(cy), float(mw), 0.0, 0.70 * float(mw), False)
 
 
 def _decode_pcm(audio_path: str, rate: int = 16000):
@@ -365,6 +461,95 @@ def _jaw_mask(size: Tuple[int, int], cx: float, cy: float, mw: float, chin: floa
     return mask
 
 
+def _skin_tone(base, cx: float, cy: float, mw: float):
+    """The character's skin colour just ABOVE the mouth — the band between nose and lip, which on
+    cel-shaded art is a single flat fill. Median, so the ink line of the mouth itself (and any
+    stray blush pixel) cannot drag it."""
+    import numpy as np
+
+    W, H = base.size
+    # SIDES of the mouth, not above it. Above is the nose and its shadow, which on cel art is a
+    # different, darker fill — sampling there tinted the cover-up and left a visible dark halo
+    # where it met the real cheek. Level with the mouth, just outside it, is flat skin.
+    rgb = base.convert("RGB")
+    bands = []
+    # Close in on BOTH sides and just below. Far out is hair, a hand or the background — on the
+    # Chainsaw Man still, sampling two mouth-widths out picked up her hair and tinted the cover.
+    y0, y1 = int(max(0, cy - mw * 0.25)), int(min(H, cy + mw * 0.25))
+    for x0, x1 in ((cx - mw * 1.25, cx - mw * 0.75), (cx + mw * 0.75, cx + mw * 1.25)):
+        a, b = int(max(0, x0)), int(min(W, x1))
+        if b - a >= 2 and y1 - y0 >= 2:
+            bands.append(np.asarray(rgb.crop((a, y0, b, y1)), dtype=np.int16).reshape(-1, 3))
+    cy0, cy1 = int(max(0, cy + mw * 0.55)), int(min(H, cy + mw * 1.0))
+    cx0, cx1 = int(max(0, cx - mw * 0.5)), int(min(W, cx + mw * 0.5))
+    if cx1 - cx0 >= 2 and cy1 - cy0 >= 2:
+        bands.append(np.asarray(rgb.crop((cx0, cy0, cx1, cy1)), dtype=np.int16).reshape(-1, 3))
+    if not bands:
+        return (240, 214, 198)
+    patch = np.concatenate(bands, axis=0)
+    lum = patch.mean(axis=1)
+    keep = patch[lum > np.percentile(lum, 35)]      # drop the darkest third: line art and shadow
+    if not len(keep):
+        keep = patch
+    return tuple(int(v) for v in np.median(keep, axis=0))
+
+
+def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, openness, width):
+    """Yield frames for FLAT ART, by REDRAWING the mouth rather than warping the picture.
+
+    The warp in _render_frames moves real pixels, which is exactly what a photograph gives it. Cel
+    shading gives it none: the mouth is a hard ink stroke on a flat fill, and sliding the region
+    below it down just duplicates that stroke and smears the chin — the "doesn't work on anime at
+    all" report. Anime lip-sync has never worked that way either; it swaps a drawn mouth per frame.
+    So here the original mouth is covered with the character's own skin tone and an open mouth is
+    drawn in its place, which is both cheaper and the way the medium actually does it.
+
+    A closed frame is the untouched picture, so the artist's own mouth is what silence shows, and
+    the cover-up fades in with the opening rather than popping on.
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+
+    skin = _skin_tone(base, cx, cy, mw)
+    ink = tuple(max(0, int(c * 0.22)) for c in skin)          # the art's own line-art darkness
+    cavity = (58, 26, 34)
+    tongue = (196, 104, 116)
+    for a, wdt in zip(openness, width):
+        a = float(a)
+        if a < _OPEN_EPS:
+            yield base.copy()
+            continue
+        hw = mw * (0.62 + 0.26 * float(wdt))                  # bright vowels spread it wider
+        hh = mw * 0.42 * a                                    # WIDER than tall — a circle reads as a shout
+        r = int(math.ceil(max(hw, hh) * 2.0)) + 6
+        n = r * 2
+        patch = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        d = ImageDraw.Draw(patch)
+        # 1. Hide the drawn mouth under the character's own skin, faded in with the opening so the
+        #    swap from the artist's line to ours is a dissolve, not a pop.
+        cover = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+        # Only as big as the drawn mouth it hides. The first cut was 1.9x the mouth WIDE and
+        # heavily blurred, which on a 60px mouth swallowed the nose and the chin and read as a
+        # bruise. Cel shading has no gradients, so a soft wide patch never looks like the art.
+        ImageDraw.Draw(cover).ellipse([r - mw * 0.66, r - mw * 0.28, r + mw * 0.66, r + mw * 0.28],
+                                      fill=skin + (255,))
+        cover = cover.filter(ImageFilter.GaussianBlur(max(0.8, mw * 0.05)))
+        cover.putalpha(cover.getchannel("A").point(lambda v: int(v * min(1.0, a * 2.4))))
+        patch.alpha_composite(cover)
+        # 2. Draw the open mouth: a dark cavity with a tongue, outlined in the art's own ink weight.
+        d.ellipse([r - hw, r - hh, r + hw, r + hh], fill=cavity + (255,),
+                  outline=ink + (255,), width=max(1, int(mw * 0.06)))
+        if hh > mw * 0.16:
+            tw, th = hw * 0.66, hh * 0.42
+            d.ellipse([r - tw, r + hh - th * 1.6, r + tw, r + hh - th * 0.1], fill=tongue + (255,))
+        patch = patch.filter(ImageFilter.GaussianBlur(max(0.6, mw * 0.03)))
+        if abs(angle) > 0.5:
+            patch = patch.rotate(-angle, resample=Image.BICUBIC)
+        frame = base.copy()
+        frame.paste(patch, (int(round(cx)) - patch.width // 2,
+                            int(round(cy)) - patch.height // 2), patch)
+        yield frame
+
+
 def _render_frames(base, cx: float, cy: float, mw: float, chin: float, angle: float,
                    openness, width):
     """Yield one RGB frame per envelope sample. A generator on purpose: a 30s clip is 600
@@ -429,9 +614,44 @@ def _has_alpha(im) -> bool:
         return False
 
 
+def detect_mouth(image_data: bytes) -> dict:
+    """Where this picture's mouth appears to be, in NORMALISED coordinates.
+
+    ``{found, x, y, w, angle, anime}`` — x/y are fractions of the image's width/height and w is the
+    mouth width as a fraction of the image WIDTH, so the answer survives any resize the client or
+    the renderer does to the picture. `found` is False when nothing was detected, and the caller is
+    expected to let the user place it by hand: on flat art the detectors are unreliable enough that
+    a guess presented as fact is worse than an honest "put it here".
+    """
+    g = _face_geometry(image_data)
+    if g is None:
+        return {"found": False, "x": 0.5, "y": 0.62, "w": 0.12, "angle": 0.0, "anime": False}
+    cx, cy, mw, angle, _chin, is_anime = g
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(image_data)) as im0:
+            W, H = ImageOps.exif_transpose(im0).size
+    except Exception:
+        return {"found": False, "x": 0.5, "y": 0.62, "w": 0.12, "angle": 0.0, "anime": False}
+    return {"found": True, "x": cx / max(1, W), "y": cy / max(1, H), "w": mw / max(1, W),
+            "angle": angle, "anime": bool(is_anime)}
+
+
+# Mouth-to-chin distance as a fraction of MOUTH WIDTH, for a hand-placed mouth (which carries no
+# chin of its own). Measured on the landmark path, where both are real: 26.2/36.9 and 25.6/36.5 —
+# 0.71 on both faces. Only the warp uses it; the redraw has no jaw.
+_CHIN_FROM_MW = 0.71
+
+
 def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS,
-             keep_alpha: bool = False) -> tuple:
+             keep_alpha: bool = False, mouth: Optional[dict] = None) -> tuple:
     """Animate the face in `image_data` speaking `audio_path`. Returns ``(bytes, content_type)``.
+
+    `mouth` is an explicit, NORMALISED placement — ``{x, y, w, angle, anime}`` as produced by
+    detect_mouth and then corrected by the user. When given it REPLACES detection entirely, which is
+    the only thing that makes this reliable on art the models were never trained for: anime, 3D
+    renders, mascots, a face in a crowd. `anime` also picks the renderer, because "redraw or warp"
+    is a judgement about the artwork that the person looking at it can make and the detector cannot.
 
     With `keep_alpha` and a picture that actually uses transparency, the result is a SILENT
     VP9-alpha WebM instead of an MP4 with sound. That is not a preference, it is the only
@@ -462,31 +682,44 @@ def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS,
     # coordinates — scaling a detection afterwards is the classic off-by-a-factor bug.
     if max(im.size) > TALK_MAXDIM:
         im.thumbnail((TALK_MAXDIM, TALK_MAXDIM), Image.LANCZOS)
-    # Detection always runs on flat RGB bytes: cv2 wants three channels, and a cut-out's
-    # transparent region carries whatever RGB happened to be underneath, which is not a face.
-    buf = io.BytesIO()
-    im.convert("RGB").save(buf, format="JPEG", quality=92)
-    image_data = buf.getvalue()
-
-    # Distinguish "this node cannot see faces at all" from "there is no face in this picture".
-    # The lean nostr-only image ships neither insightface nor opencv, and answering "no face found"
-    # there sends someone off to find a better photo forever.
-    import importlib.util
-    if importlib.util.find_spec("cv2") is None:
-        raise RuntimeError("face detection isn't installed on this node, so I can't animate a mouth")
-
-    geom = _face_geometry(image_data)
-    if geom is None:
-        raise RuntimeError("no face found in that picture — try one where the face is bigger")
-    cx, cy, mw, angle, chin = geom
+    if mouth:
+        # A hand-placed mouth is normalised, so it is immune to the downscale above.
+        cx = float(mouth.get("x", 0.5)) * im.width
+        cy = float(mouth.get("y", 0.62)) * im.height
+        mw = max(8.0, float(mouth.get("w", 0.12)) * im.width)
+        try:
+            angle = float(mouth.get("angle") or 0.0)
+        except (TypeError, ValueError):
+            angle = 0.0
+        angle = angle if abs(angle) <= 45 else 0.0
+        chin = mw * _CHIN_FROM_MW
+        is_anime = bool(mouth.get("anime"))
+    else:
+        # Detection runs on flat RGB bytes: cv2 wants three channels, and a cut-out's transparent
+        # region carries whatever RGB happened to be underneath, which is not a face.
+        buf = io.BytesIO()
+        im.convert("RGB").save(buf, format="JPEG", quality=92)
+        image_data = buf.getvalue()
+        # Distinguish "this node cannot see faces at all" from "there is no face in this picture".
+        # The lean nostr-only image ships neither insightface nor opencv. Checked HERE and not
+        # above, because a HAND-PLACED mouth needs no detector at all — the renderers are pure
+        # Pillow + numpy — so that path must keep working on a node without one.
+        import importlib.util
+        if importlib.util.find_spec("cv2") is None:
+            raise RuntimeError("face detection isn't installed on this node — place the mouth by hand")
+        geom = _face_geometry(image_data)
+        if geom is None:
+            raise RuntimeError("no face found in that picture — place the mouth by hand instead")
+        cx, cy, mw, angle, chin, is_anime = geom
     # A mouth a handful of pixels wide cannot be animated into anything but mush, and the
     # mask/ellipse maths degenerates below a few pixels.
     if mw < 12:
-        raise RuntimeError("the face is too small in that picture to animate the mouth")
+        raise RuntimeError("that mouth is too small to animate — make it wider, or use a bigger picture")
 
     # One envelope sample per video frame, so the clip's length IS the speech's length.
     openness, width = _audio_envelope(audio_path, fps)
-    frames = _render_frames(im, cx, cy, mw, chin, angle, openness, width)
+    frames = (_render_anime_frames(im, cx, cy, mw, angle, openness, width) if is_anime
+              else _render_frames(im, cx, cy, mw, chin, angle, openness, width))
     if alpha:
         # Silent by necessity — see the docstring. The caller adds the speech as its own layer.
         return frames_to_alpha_video(frames, fps=fps), "video/webm"

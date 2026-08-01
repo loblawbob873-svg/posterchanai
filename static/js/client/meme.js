@@ -1929,6 +1929,106 @@
       },
     });
   }
+  // Where is the mouth? Resolves to a NORMALISED {x, y, w, angle, anime}, or null if cancelled.
+  //
+  // This control exists because detection cannot be trusted on the art people actually meme with.
+  // InsightFace happily detects an anime face and then puts the mouth landmarks on the chin and a
+  // cheek — a confident wrong answer, which is worse than none, and it is why "make it talk" did
+  // nothing sensible on anime. The server still SEEDS the marker from detection (a photo needs no
+  // interaction at all, you just press Use it), but the person looking at the picture gets the
+  // final say. That also makes 3D renders, mascots, drawings and a face in a crowd all work,
+  // none of which any face model here was trained for.
+  //
+  // "Photo vs drawing" is the same judgement and is asked here for the same reason: it picks the
+  // RENDERER. A photograph has a real jaw to warp; flat art has an ink line that smears when you
+  // move it, so its mouth is redrawn instead. See effects_service/talk.py.
+  function pickMouth(src){
+    return new Promise(resolve => {
+      let m = { x:0.5, y:0.62, w:0.12, angle:0, anime:false }, done = false;
+      PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Where is the mouth?</h3>
+        <div class="muted small" style="margin-bottom:8px">Drag the marker onto the mouth, and the
+        slider to match its width. I have put it where I think it is — on a photo that is usually right.</div>
+        <div class="mb-mouth-wrap" id="mm-wrap"><img id="mm-img" src="${enc(src)}" alt="">
+          <i class="mb-mouth-pin" id="mm-pin"></i></div>
+        <label class="mb-f"><span>Mouth width</span>
+          <input type="range" id="mm-w" min="3" max="45" step="1" value="12"></label>
+        <div class="mb-frow" style="margin-top:6px">
+          <button class="btn btn-cyan small" id="mm-photo">📷 Photo</button>
+          <button class="btn btn-ghost small" id="mm-draw">🎨 Drawing / anime</button>
+        </div>
+        <div class="muted small" id="mm-hint" style="margin-top:6px"></div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-ghost small" id="mm-cancel">Cancel</button>
+          <button class="btn btn-neon small" id="mm-go">Use it</button>
+        </div>`, root => {
+        const wrap = root.querySelector('#mm-wrap'), img = root.querySelector('#mm-img');
+        const pin = root.querySelector('#mm-pin'), rng = root.querySelector('#mm-w');
+        const hint = root.querySelector('#mm-hint');
+        const paint = () => {
+          const r = img.getBoundingClientRect();
+          if(!r.width) return;
+          pin.style.left = (m.x * r.width) + 'px';
+          pin.style.top  = (m.y * r.height) + 'px';
+          pin.style.width = Math.max(6, m.w * r.width) + 'px';
+          pin.style.transform = `translate(-50%,-50%) rotate(${m.angle}deg)`;
+          root.querySelector('#mm-photo').className = 'btn small ' + (m.anime?'btn-ghost':'btn-cyan');
+          root.querySelector('#mm-draw').className  = 'btn small ' + (m.anime?'btn-cyan':'btn-ghost');
+          hint.textContent = m.anime
+            ? 'Flat art: the mouth is redrawn each frame, the way anime does it.'
+            : 'Photo: the real jaw is warped, so it keeps the face’s own detail.';
+        };
+        // One pointer path for mouse AND touch — the builder is used on phones at least as much.
+        const put = ev => {
+          const r = img.getBoundingClientRect(); if(!r.width) return;
+          const p = ev.touches ? ev.touches[0] : ev;
+          m.x = clamp((p.clientX - r.left) / r.width, 0, 1);
+          m.y = clamp((p.clientY - r.top) / r.height, 0, 1);
+          paint();
+        };
+        let dragging = false;
+        // POINTER CAPTURE rather than a window-level pointerup: a drag that ends off the picture
+        // still has to end, and a listener on `window` outlives a modal closed by tapping the
+        // backdrop (which never reaches the Cancel handler that would have removed it).
+        const down = e => { dragging = true;
+          try{ wrap.setPointerCapture(e.pointerId); }catch(_){ }
+          put(e); e.preventDefault(); };
+        const move = e => { if(dragging){ put(e); e.preventDefault(); } };
+        const up = e => { dragging = false;
+          try{ wrap.releasePointerCapture(e.pointerId); }catch(_){ } };
+        wrap.addEventListener('pointerdown', down);
+        wrap.addEventListener('pointermove', move);
+        wrap.addEventListener('pointerup', up);
+        wrap.addEventListener('pointercancel', up);
+        rng.oninput = () => { m.w = (+rng.value || 12) / 100; paint(); };
+        root.querySelector('#mm-photo').onclick = () => { m.anime = false; paint(); };
+        root.querySelector('#mm-draw').onclick  = () => { m.anime = true;  paint(); };
+        img.onload = paint;
+        // A dead Blossom URL would otherwise show an empty box with an invisible marker (paint()
+        // bails on a zero-width image), i.e. a dialog you cannot use and cannot diagnose.
+        img.onerror = () => { hint.textContent = 'That picture would not load — re-add the layer.'; };
+        if(img.complete) paint();
+        // SEED from the server's detector. Failure is not an error here — the whole point of the
+        // control is that it works without one — so a dead request just leaves the default marker.
+        (async () => {
+          try{
+            const auth = await selfProof();
+            const r = await fetch('/client/meme/face',{ method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: src }) });
+            const j = await r.json().catch(()=>null);
+            if(j && j.found){
+              m = { x:+j.x||0.5, y:+j.y||0.62, w:+j.w||0.12, angle:+j.angle||0, anime:!!j.anime };
+              rng.value = Math.round(clamp(m.w,0.03,0.45) * 100);
+              paint();
+            }
+          }catch(_){ }
+        })();
+        const finish = v => { if(done) return; done = true; PC.closeModal(); resolve(v); };
+        root.querySelector('#mm-cancel').onclick = () => finish(null);
+        root.querySelector('#mm-go').onclick = () => finish({ ...m });
+      });
+    });
+  }
+
   // 🎨 The prompt sheet is AI Chat's OWN "Make an image" studio (PC.openGenStudio), borrowed with a
   // different destination: same style/mood/shot chips, same live preview, same mobile layout, and the
   // list can't drift between the two places. Only the ending differs — the result becomes a layer here
@@ -2638,6 +2738,8 @@
     // through the meme render queue. Neither half reimplements the other's discipline.
     on('mb-talk','click',()=>{
       if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
+      // Place the mouth BEFORE spending a minute of GPU on the voice, not after: a marker you drag
+      // is instant, and getting it wrong should cost a drag rather than another generation.
       // Hold the layer's ID, never the layer OBJECT. A voice generation runs for the better part of a
       // minute with a modal over the app, and any re-entry into this view runs `P = load()`, which
       // rebuilds P.layers as brand-new objects. A captured object is then an ORPHAN: mutating it
@@ -2646,7 +2748,9 @@
       // an audio layer and no animation: indistinguishable from the old "Add a voice line", which is
       // exactly how it was reported. Re-resolve by ID at take time instead.
       const lid = l.id;
-      PC.openVoiceStudio({
+      pickMouth(l.src).then(mouth => {
+        if(!mouth) return;                       // cancelled — no voice generated, nothing spent
+        PC.openVoiceStudio({
         useLabel: '🗣️ Make the face say it',
         onTake: async (blob, voiceName, text) => {
           if(_fxBusy){ toast('still working on the last one — hang on'); return; }
@@ -2663,7 +2767,7 @@
                                                     { type:'audio/wav' }));
             const auth = await selfProof();
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: cur.src, audio }) });
+              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
             // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-
@@ -2709,6 +2813,7 @@
           }catch(err){ toast('couldn’t make it talk: '+((err&&err.message)||err)); }
           finally{ _fxBusy = false; const s2=document.getElementById('mb-status'); if(s2) s2.textContent=''; }
         },
+        });
       });
     });
     on('mb-fx-revert','click',()=>{

@@ -372,6 +372,16 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   document / video — which also means `voice`'s "reply to a voice note" docstring doesn't hold
   there). `talk` stays in the TG lists only so it can't fall through to the LLM; making it work needs
   an interactive ForceReply flow like `clip`'s. Treat it as web-UI-only for now.
+  **ANIME/flat art: the mouth is PLACED BY HAND, and that is the design.** Every face model here is
+  trained on photographs — InsightFace *detects* an anime face fine and then puts the mouth
+  landmarks on the chin and a cheek (measured: 1.7x too wide, 16px low), and the cascade's 0.42x
+  face-width mouth belongs to `blue`'s paint smear, not to lip-sync (~3x too wide). A confident
+  wrong answer is worse than none. So the builder opens a placement control BEFORE the voice
+  (draggable marker + width, seeded from `POST /client/meme/face` — CPU, no render slot), and its
+  Photo/Drawing toggle picks the RENDERER: a photo WARPS its real jaw, flat art REDRAWS the mouth
+  (a cel mouth is an ink stroke — sliding it duplicates and smears it). Placement is NORMALISED so
+  it survives every resize, and CLAMPED server-side (`_clean_mouth`) because `w` scales every length
+  in a 600-iteration loop. Chat/Telegram have no picker and still auto-detect.
   **A cut-out layer forces a SILENT clip:** MP4 has no alpha, so rendering one turns a
   background-removed layer into a BLACK RECTANGLE with the subject on top; the transparent form must
   be VP9-alpha WebM, which cannot carry audio without corrupting the alpha (`_ALPHA_VCODEC`). So

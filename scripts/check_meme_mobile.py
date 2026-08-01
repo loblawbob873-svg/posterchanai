@@ -66,7 +66,16 @@ window.__PC = {
   async uploadBlob(){ return 'https://example.invalid/voice.wav'; },
   async selfProof(){ return 'proof'; },
   async uiConfirm(){ return false; }, async uiPrompt(){ return null; },
-  modal(){}, closeModal(){}, blossomPicker(){}, openGenStudio(){},
+  // A real-enough modal: the builder's own dialogs (the mouth placement control) have to be
+  // mountable, and a no-op stub silently rendered nothing while every assertion still "passed".
+  modal(html, onMount){
+    const bg = document.createElement('div'); bg.className = 'modal-bg';
+    bg.innerHTML = '<div class="modal glass neon-border">' + html + '</div>';
+    document.getElementById('modal-root').appendChild(bg);
+    const box = bg.querySelector('.modal'); if (onMount) onMount(box);
+  },
+  closeModal(){ document.getElementById('modal-root').innerHTML = ''; },
+  blossomPicker(){}, openGenStudio(){},
   // Capture the borrowed-studio options instead of opening anything: the regression below fires
   // onTake by hand, which is the whole point — the bug lives in the gap between the click and the
   // take, and that gap is a real voice generation.
@@ -117,7 +126,15 @@ TALK_REGRESSION = r"""(async () => {
   const btn = document.getElementById('mb-talk');
   if (!btn) return {err: 'no #mb-talk to click'};
   btn.click();
-  if (!window.__voiceOpts || !window.__voiceOpts.onTake) return {err: 'mb-talk did not open the studio'};
+  // The mouth PLACEMENT control comes first now — deliberately before the voice, so getting the
+  // marker wrong costs a drag rather than another minute of GPU. Accept its default and go on.
+  for (let i = 0; i < 40 && !document.getElementById('mm-go'); i++)
+    await new Promise(r => setTimeout(r, 50));
+  const go = document.getElementById('mm-go');
+  if (!go) return {err: 'mb-talk did not open the mouth picker'};
+  go.click();
+  for (let i = 0; i < 40 && !window.__voiceOpts; i++) await new Promise(r => setTimeout(r, 50));
+  if (!window.__voiceOpts || !window.__voiceOpts.onTake) return {err: 'the picker did not open the studio'};
   // THE GAP: the project is reloaded while the "generation" is in flight, so every layer object the
   // click closed over is replaced.
   window.PCMeme.render();

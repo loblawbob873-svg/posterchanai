@@ -55,6 +55,38 @@ to `POST /client/meme/talk`, which animates the layer's face. So the speech is g
 `/client/voice/speak` (GPU lock, per-user cooldown, LB) and the render through the meme queue; there
 is no second endpoint that generates speech.
 
+## Anime and other flat art — and why you place the mouth
+
+**Every face model here was trained on photographs.** InsightFace will happily *detect* an anime
+face — its box and its two eye keypoints land correctly — and then put the mouth landmarks on the
+chin and a cheek. Measured on a Chainsaw Man still: a mouth 1.7× too wide and 16px too low. A
+confident wrong answer is worse than none, because it means the anime fallback is never reached.
+The cascade's own estimate is no better for this: its 0.42×face-width mouth belongs to the `blue`
+effect, which paints *around* the mouth and wants to be generous — used for lip-sync it is roughly
+three times too wide, and that was the "doesn't work on anime at all" report.
+
+So the Meme Builder asks. **🗣️ Make it talk** opens a placement control *before* spending a minute
+of GPU on the voice: the picture with a draggable marker and a width slider, seeded from the
+server's detector (`POST /client/meme/face`, CPU-only, no render slot — it runs while you decide).
+On a photo the seed is already right and you just press **Use it**. On anime, a 3D render, a
+mascot, a logo with a face, or one face in a crowd, you drag it. The placement is **normalised**
+(fractions of the image), so it survives every resize between the browser and the renderer.
+
+The same dialog asks **Photo or Drawing** — because that picks the RENDERER, and it is a judgement
+about the artwork that the person looking at it can make and the detector cannot:
+
+| | operation | why |
+|---|---|---|
+| Photo | **warp** the real jaw | keeps the face's own detail |
+| Drawing / anime | **redraw** the mouth | a cel mouth is an ink stroke; sliding it duplicates and smears it |
+
+Detection is still the default everywhere there is no picker (chat, Telegram), and `add_talk`
+auto-detects when `mouth=` is omitted.
+
+Server-side the placement is **clamped**, not merely parsed (`_clean_mouth`): it is untrusted input
+that becomes ellipse dimensions inside a 600-iteration render loop, and `w` is what every length
+scales off — an unclamped `0.9` would build canvases the size of the picture, per frame.
+
 ## Why a puppet warp and not Wav2Lip / SadTalker / LatentSync
 
 * **Portability.** It is numpy + Pillow on the CPU, so it behaves identically on the CUDA box, the

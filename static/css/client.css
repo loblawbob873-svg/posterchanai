@@ -4215,6 +4215,22 @@ svg.mb-e{margin-right:0}
 .mb-f .input,.mb-f textarea{margin:0}
 .mb-f input[type=color]{width:100%;height:34px;padding:2px;background:var(--panel2);
   border:1px solid var(--line);border-radius:8px}
+/* "Where is the mouth?" — the placement control for Make it talk. The picture is capped by VIEWPORT
+   height, not a fixed px: on a phone in landscape a tall portrait photo would otherwise push the
+   marker, the slider and both buttons off the bottom of the sheet, and you cannot drag what you
+   cannot see. touch-action:none because we own the drag — without it the browser scrolls the modal
+   instead of moving the marker on the very gesture the control exists for. */
+.mb-mouth-wrap{position:relative;display:inline-block;max-width:100%;line-height:0;
+  touch-action:none;cursor:crosshair;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.mb-mouth-wrap img{display:block;max-width:100%;max-height:48vh;width:auto;height:auto}
+/* A WIDE, thin marker: it is showing a mouth's position AND its width, and the width is the number
+   every length in the renderer scales off. A dot would say nothing about it. */
+.mb-mouth-pin{position:absolute;height:0;border-top:3px solid var(--neon);border-radius:3px;
+  box-shadow:0 0 0 1px rgba(0,0,0,.65),0 0 10px rgba(var(--accent-rgb),.9);pointer-events:none}
+.mb-mouth-pin::before,.mb-mouth-pin::after{content:'';position:absolute;top:-5px;width:3px;height:11px;
+  background:var(--neon);border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,.65)}
+.mb-mouth-pin::before{left:-1px}
+.mb-mouth-pin::after{right:-1px}
 .mb-frow{display:flex;gap:8px}
 /* The flip toggles are the only mb- buttons with an ON state, and there was no .btn.on rule to
    carry it — an unlit toggle is worse than no toggle, you cannot tell whether the layer is

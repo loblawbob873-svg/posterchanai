@@ -13,6 +13,7 @@ Two of these pin defects that were actually hit while building it:
     empty check silently passed and the whole clip was materialised in RAM (hundreds of MB for a
     long line). The lazy path has to keep raising on empty.
 """
+import io
 import shutil
 import unittest
 
@@ -186,6 +187,53 @@ class TestTransparency(unittest.TestCase):
         src = inspect.getsource(talk.talk_attachments)
         self.assertIn("add_talk(data, audio_path)", src)
         self.assertNotIn("keep_alpha", src)
+
+
+@unittest.skipUnless(_HAVE_IMAGING, "numpy/Pillow unavailable")
+class TestHandPlacedMouth(unittest.TestCase):
+    """Detection cannot be trusted on the art people actually meme with — InsightFace detects an
+    anime face and then puts the mouth landmarks on the chin and a cheek. So the person looking at
+    the picture gets the final say, and that placement has to survive every resize and be safe to
+    take from a browser."""
+
+    def test_detection_answers_in_normalised_coordinates(self):
+        """Normalised, so the answer means the same thing whether the client is showing the picture
+        at 300px or the renderer is working on it at 960."""
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (640, 480), (30, 30, 30)).save(buf, format="PNG")
+        got = talk.detect_mouth(buf.getvalue())
+        self.assertIn("found", got)
+        self.assertFalse(got["found"], "a blank image has no face")
+        for k in ("x", "y", "w", "angle", "anime"):
+            self.assertIn(k, got)
+        self.assertTrue(0.0 <= got["x"] <= 1.0 and 0.0 <= got["y"] <= 1.0)
+
+    def test_a_placement_replaces_detection(self):
+        import inspect
+        sig = inspect.signature(talk.add_talk)
+        self.assertIn("mouth", sig.parameters)
+        self.assertIsNone(sig.parameters["mouth"].default,
+                          "chat/Telegram have no picker, so they must still auto-detect")
+        src = inspect.getsource(talk.add_talk)
+        self.assertIn("_face_geometry", src)
+        self.assertIn("is_anime = bool(mouth", src, "the placement also picks warp vs redraw")
+
+    def test_the_placement_is_clamped(self):
+        """It is untrusted input that becomes ellipse dimensions inside a 600-iteration render loop.
+        `w` is what every length scales off, so an unclamped 0.9 would build canvases the size of
+        the picture, per frame."""
+        from app.routers.client import _clean_mouth
+        self.assertIsNone(_clean_mouth(None))
+        self.assertIsNone(_clean_mouth("nope"))
+        wild = _clean_mouth({"x": 99, "y": -5, "w": 40, "angle": 999, "anime": 1})
+        self.assertLessEqual(wild["w"], 0.6)
+        self.assertEqual(wild["x"], 1.0)
+        self.assertEqual(wild["y"], 0.0)
+        self.assertLessEqual(abs(wild["angle"]), 45.0)
+        self.assertIs(wild["anime"], True)
+        junk = _clean_mouth({"x": "abc", "w": None})
+        self.assertTrue(0.0 <= junk["x"] <= 1.0 and 0.01 <= junk["w"] <= 0.6)
 
 
 @unittest.skipUnless(_HAVE_IMAGING and _HAVE_FFMPEG, "ffmpeg/imaging unavailable")

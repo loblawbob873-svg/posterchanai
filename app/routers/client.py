@@ -1677,11 +1677,67 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
                          "is_video": ct_out.startswith("video/")})
 
 
+def _clean_mouth(raw) -> dict | None:
+    """Validate a client-supplied mouth placement, or None to fall back to detection.
+
+    This is untrusted input that ends up as ellipse dimensions in a per-frame render loop, so it is
+    CLAMPED, not merely parsed: `w` is what every length in the renderer scales off, and a mouth
+    "0.9 of the image wide" would build canvases the size of the picture for every one of 600
+    frames. The bounds are what a real mouth can be, not what the maths survives.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _f(key, lo, hi, default):
+        try:
+            return max(lo, min(hi, float(raw.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+
+    return {"x": _f("x", 0.0, 1.0, 0.5), "y": _f("y", 0.0, 1.0, 0.62),
+            "w": _f("w", 0.01, 0.6, 0.12), "angle": _f("angle", -45.0, 45.0, 0.0),
+            "anime": bool(raw.get("anime"))}
+
+
+class MemeFaceReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/talk
+    url: str                     # the layer's source IMAGE url
+
+
+# Where the mouth appears to be — the SEED for the placement control, not the final word. Cheap
+# (CPU face detection, ~1s, no GPU, no ffmpeg), so it deliberately does NOT take a render slot: it
+# runs while the user is still deciding, and making them queue behind someone's video for a marker
+# position would be absurd. Answers in NORMALISED coordinates so the client can draw it over the
+# picture at whatever size it happens to be showing it.
+@router.post("/meme/face")
+async def meme_face(data: MemeFaceReq, request: Request, db: Session = Depends(get_db)):
+    from app.services.effects_service.talk import detect_mouth
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    img, _ct = await _fetch_media_guarded(data.url, _own_media_hosts(db))
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+    try:
+        return JSONResponse(await asyncio.to_thread(detect_mouth, img))
+    except Exception as e:
+        # Never fail the picker over a detection problem — it exists precisely so the user can
+        # place the mouth themselves. Hand back the neutral seed and let them drag it.
+        logger.info("[meme] face detect failed for %s: %s", pk[:12], e)
+        return JSONResponse({"found": False, "x": 0.5, "y": 0.62, "w": 0.12,
+                             "angle": 0.0, "anime": False})
+
+
 class MemeTalkReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
     url: str                     # the layer's source IMAGE url — the face to animate
     audio: str                   # the SPOKEN LINE's url (a take from the voice studio, on the user's drive)
+    mouth: dict | None = None    # explicit normalised placement {x,y,w,angle,anime}; None = auto-detect
 
 
 # Animate a Meme Builder layer's face to a line the VOICE STUDIO already spoke.
@@ -1715,7 +1771,7 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
 
     _fwd = await _meme_lb_forward(request, "talk",
                                   {"pubkey": data.pubkey, "auth": data.auth,
-                                   "url": data.url, "audio": data.audio},
+                                   "url": data.url, "audio": data.audio, "mouth": data.mouth},
                                   db=db)
     if _fwd is not None:
         return _fwd
@@ -1748,7 +1804,8 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
                 # black rectangle with the subject on top. The transparent form is silent (VP9
                 # alpha + audio corrupts the alpha), so the client puts the speech on the timeline
                 # as its own audio layer — that is what `alpha` in the response is telling it.
-                clip, ct_out = await asyncio.to_thread(add_talk, img, wav, TALK_FPS, True)
+                clip, ct_out = await asyncio.to_thread(add_talk, img, wav, TALK_FPS, True,
+                                                       _clean_mouth(data.mouth))
             except RuntimeError as e:
                 # add_talk's refusals are about the PICTURE (no face, too small, dead audio) — the
                 # user can act on every one of them, so hand the sentence back rather than a 500.
