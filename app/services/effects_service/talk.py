@@ -494,6 +494,49 @@ def _skin_tone(base, cx: float, cy: float, mw: float):
     return tuple(int(v) for v in np.median(keep, axis=0))
 
 
+def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float):
+    """`base` with the drawn mouth painted out, following the picture's own shading.
+
+    A FLAT fill was the obvious thing and it is visibly wrong: cel art still has shaded regions —
+    here a hand throwing a shadow across the chin — so a single skin colour shows up as a lighter
+    oval sitting on top of the art. This inpaints instead: every row of the patch is a horizontal
+    blend between the clean skin just outside it on the LEFT and on the RIGHT, which reproduces the
+    vertical shading (row by row) and any horizontal gradient (across each row) for the cost of one
+    interpolation. A mouth is wide and flat, so its left and right neighbours are exactly the clean
+    skin to blend between.
+
+    Computed ONCE for a clip: only the cavity drawn on top of it changes between frames.
+    """
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFilter
+
+    W, H = base.size
+    pad = max(2, int(mw * 0.25))
+    x0, x1 = int(round(cx - hw)), int(round(cx + hw))
+    y0, y1 = int(round(cy - hh)), int(round(cy + hh))
+    sx0, sx1 = max(0, x0 - pad), min(W, x1 + pad)
+    sy0, sy1 = max(0, y0), min(H, y1)
+    if sx1 - sx0 < 2 * pad + 2 or sy1 - sy0 < 2:
+        return base.copy()
+    strip = np.asarray(base.convert("RGB").crop((sx0, sy0, sx1, sy1)), dtype=np.float32)
+    left = strip[:, :pad].mean(axis=1)                     # (h, 3) clean skin on each side
+    right = strip[:, -pad:].mean(axis=1)
+    inner = strip.shape[1] - 2 * pad
+    if inner < 2:
+        return base.copy()
+    t = np.linspace(0.0, 1.0, inner, dtype=np.float32)[None, :, None]
+    fill = left[:, None, :] * (1.0 - t) + right[:, None, :] * t
+    patch = Image.fromarray(np.clip(fill, 0, 255).astype("uint8"), "RGB")
+    mask = Image.new("L", patch.size, 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, patch.width - 1, patch.height - 1], fill=255)
+    # Just enough feather to avoid a stair-stepped edge; cel art has hard edges, so more than a
+    # pixel or two of gradient reads as a smudge rather than as the drawing.
+    mask = mask.filter(ImageFilter.GaussianBlur(max(0.6, mw * 0.02)))
+    out = base.copy()
+    out.paste(patch, (sx0 + pad, sy0), mask)
+    return out
+
+
 def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, openness, width):
     """Yield frames for FLAT ART, by REDRAWING the mouth rather than warping the picture.
 
@@ -501,18 +544,22 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
     shading gives it none: the mouth is a hard ink stroke on a flat fill, and sliding the region
     below it down just duplicates that stroke and smears the chin — the "doesn't work on anime at
     all" report. Anime lip-sync has never worked that way either; it swaps a drawn mouth per frame.
-    So here the original mouth is covered with the character's own skin tone and an open mouth is
-    drawn in its place, which is both cheaper and the way the medium actually does it.
+    So the original mouth is painted out (see _mouth_erased) and an open one is drawn in its place,
+    which is both cheaper and the way the medium actually does it.
 
-    A closed frame is the untouched picture, so the artist's own mouth is what silence shows, and
-    the cover-up fades in with the opening rather than popping on.
+    A closed frame is the untouched picture, so silence shows the artist's own mouth.
     """
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw
 
     skin = _skin_tone(base, cx, cy, mw)
     ink = tuple(max(0, int(c * 0.22)) for c in skin)          # the art's own line-art darkness
     cavity = (58, 26, 34)
     tongue = (196, 104, 116)
+    # The erase has to cover the widest cavity this clip will draw as well as the artist's own
+    # mouth — a cover narrower than the cavity lets the drawn outline land on untouched art, which
+    # is half of what the "ugly shadow around the mouth" was.
+    max_hw = mw * (0.62 + 0.26)
+    erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.06, mw * 0.46)
     for a, wdt in zip(openness, width):
         a = float(a)
         if a < _OPEN_EPS:
@@ -520,31 +567,19 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
             continue
         hw = mw * (0.62 + 0.26 * float(wdt))                  # bright vowels spread it wider
         hh = mw * 0.42 * a                                    # WIDER than tall — a circle reads as a shout
-        r = int(math.ceil(max(hw, hh) * 2.0)) + 6
+        r = int(math.ceil(max(hw, hh) * 1.6)) + 6
         n = r * 2
         patch = Image.new("RGBA", (n, n), (0, 0, 0, 0))
         d = ImageDraw.Draw(patch)
-        # 1. Hide the drawn mouth under the character's own skin, faded in with the opening so the
-        #    swap from the artist's line to ours is a dissolve, not a pop.
-        cover = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-        # Only as big as the drawn mouth it hides. The first cut was 1.9x the mouth WIDE and
-        # heavily blurred, which on a 60px mouth swallowed the nose and the chin and read as a
-        # bruise. Cel shading has no gradients, so a soft wide patch never looks like the art.
-        ImageDraw.Draw(cover).ellipse([r - mw * 0.66, r - mw * 0.28, r + mw * 0.66, r + mw * 0.28],
-                                      fill=skin + (255,))
-        cover = cover.filter(ImageFilter.GaussianBlur(max(0.8, mw * 0.05)))
-        cover.putalpha(cover.getchannel("A").point(lambda v: int(v * min(1.0, a * 2.4))))
-        patch.alpha_composite(cover)
-        # 2. Draw the open mouth: a dark cavity with a tongue, outlined in the art's own ink weight.
+        # Draw the open mouth: a dark cavity with a tongue, outlined in the art's own ink weight.
         d.ellipse([r - hw, r - hh, r + hw, r + hh], fill=cavity + (255,),
                   outline=ink + (255,), width=max(1, int(mw * 0.06)))
         if hh > mw * 0.16:
             tw, th = hw * 0.66, hh * 0.42
             d.ellipse([r - tw, r + hh - th * 1.6, r + tw, r + hh - th * 0.1], fill=tongue + (255,))
-        patch = patch.filter(ImageFilter.GaussianBlur(max(0.6, mw * 0.03)))
         if abs(angle) > 0.5:
             patch = patch.rotate(-angle, resample=Image.BICUBIC)
-        frame = base.copy()
+        frame = erased.copy()
         frame.paste(patch, (int(round(cx)) - patch.width // 2,
                             int(round(cy)) - patch.height // 2), patch)
         yield frame
