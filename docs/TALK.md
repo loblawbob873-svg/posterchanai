@@ -120,6 +120,19 @@ within 0.3% of each other — a JPEG re-encode flipped which one "won" — while
 * **The cavity starts AT the lip seam, never above it.** It is composited on top of the picture, so
   an ellipse centred on the seam puts half of itself — tooth strip included — over the upper lip and
   reads as a grey smear across the philtrum.
+* **A cut-out layer must stay cut out, and that forces a SILENT clip.** A Meme Builder layer
+  composites, so a background-removed photo has transparency that matters. MP4 has no alpha channel
+  at all, so rendering one turns that layer into a **black rectangle with the subject pasted on
+  top**. The transparent form has to be a VP9-alpha WebM — and that form has to be silent, because
+  an audio stream inside one corrupts the alpha on this ffmpeg (`media_service._ALPHA_VCODEC`, which
+  is why *every* alpha layer in the builder is silent). So `add_talk(keep_alpha=True)` returns
+  `(webm, "video/webm")` when the source really uses transparency, the endpoint reports `alpha:true`,
+  and the client puts the spoken line on the timeline as its **own audio layer** aligned to the clip.
+  Chat and Telegram leave `keep_alpha` off and take the MP4: a reply has to be one self-contained
+  file, and a transparent clip with no sound is the feature failing quietly.
+  **ffprobe will report `pix_fmt=yuv420p` on that WebM and the alpha is still there** — VP9 carries it
+  as a separate track, so you only see it by decoding with `-c:v libvpx-vp9` (which
+  `meme_builder_service` does for every `.webm` layer). Don't "fix" a working file on ffprobe's say-so.
 * **The reference clip goes in a SUBDIRECTORY of the temp dir.** It keeps the upload's own filename,
   so written beside the normalised output an attachment that happens to be called `ref.wav` *is* the
   output path, and ffmpeg refuses with "cannot edit existing files in-place" on a clip that is

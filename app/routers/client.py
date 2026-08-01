@@ -1698,7 +1698,7 @@ class MemeTalkReq(BaseModel):
 @router.post("/meme/talk")
 async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(get_db)):
     from app.services import blossom_service
-    from app.services.effects_service.talk import add_talk, TALK_MAX_DURATION
+    from app.services.effects_service.talk import add_talk, TALK_FPS, TALK_MAX_DURATION
 
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
@@ -1743,7 +1743,12 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
             fh.write(speech)
         async with _meme_slot():
             try:
-                clip = await asyncio.to_thread(add_talk, img, wav)
+                # keep_alpha: a Meme Builder layer COMPOSITES, so a background-removed cut-out has
+                # to stay cut out. MP4 has no alpha, and rendering one turned such a layer into a
+                # black rectangle with the subject on top. The transparent form is silent (VP9
+                # alpha + audio corrupts the alpha), so the client puts the speech on the timeline
+                # as its own audio layer — that is what `alpha` in the response is telling it.
+                clip, ct_out = await asyncio.to_thread(add_talk, img, wav, TALK_FPS, True)
             except RuntimeError as e:
                 # add_talk's refusals are about the PICTURE (no face, too small, dead audio) — the
                 # user can act on every one of them, so hand the sentence back rather than a 500.
@@ -1754,16 +1759,20 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
     finally:
         _sh.rmtree(tmp, ignore_errors=True)
 
+    ext_out = "webm" if "webm" in ct_out else "mp4"
+    is_alpha = ext_out == "webm"
     # The clip runs as long as the speech, capped — the client sizes the layer's slot from it.
-    dur = round(min(_probe_duration(clip, "mp4"), TALK_MAX_DURATION), 2)
+    dur = round(min(_probe_duration(clip, ext_out), TALK_MAX_DURATION), 2)
     if _fwded:
-        return Response(content=clip, media_type="video/mp4", headers={
+        return Response(content=clip, media_type=ct_out, headers={
             "x-pcai-effect-name": "talk",
             "x-pcai-effect-dur": str(dur),
+            "x-pcai-effect-alpha": "1" if is_alpha else "0",
         })
-    desc = await blossom_service.save_blob(db, pk, clip, "video/mp4")
-    url = f"{_blossom_url(request, db)}/{desc['sha256']}.mp4"
-    return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": "talk", "is_video": True})
+    desc = await blossom_service.save_blob(db, pk, clip, ct_out)
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext_out}"
+    return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": "talk",
+                         "is_video": True, "alpha": is_alpha})
 
 
 @router.get("/proxy-image")
@@ -4226,8 +4235,12 @@ async def _meme_store_peer_media(request: "Request", db: Session, body: dict, su
         audio = (r.headers.get("x-pcai-effect-audio") or "0") == "1"
         return JSONResponse({"ok": True, "url": url, "audio": audio,
                              "sound": name if audio else None, "name": name, "dur": dur})
+    # `alpha` only exists for talk, and only its client reads it — a transparent clip is SILENT, so
+    # that flag is what tells the browser to put the spoken line on the timeline as its own layer.
+    # Carried through here because a forwarded render is the same render.
     return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": name,
-                         "is_video": ct.startswith("video/")})
+                         "is_video": ct.startswith("video/"),
+                         "alpha": (r.headers.get("x-pcai-effect-alpha") or "0") == "1"})
 
 
 async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Session | None = None):

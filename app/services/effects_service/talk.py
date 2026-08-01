@@ -60,7 +60,11 @@ TALK_MAX_CHARS = 400
 # The animation's proportions. Jaw travel and the mask are scaled off the MOUTH-TO-CHIN
 # distance, not the mouth width: how far a jaw can drop is a property of the jaw. The
 # mouth's own width scales the cavity. Both come from the landmarks (see _face_geometry).
-_JAW_DROP = 0.45          # jaw travel at full openness, as a fraction of mouth→chin
+# Jaw travel at full openness, as a fraction of mouth→chin. Deliberately modest: the first cuts
+# (0.55, then 0.45) gaped so wide on a loud syllable that the face read as a nutcracker rather than
+# someone talking. The cavity is sized FROM this (see _mouth_interior), so lowering it narrows the
+# whole mouth, not just the travel.
+_JAW_DROP = 0.30
 _JAW_ELL_HW = 1.00        # jaw mask ellipse half-width, × mouth width
 _JAW_ELL_HH = 0.85        # jaw mask ellipse half-height, × mouth→chin
 _JAW_ELL_DY = 0.55        # jaw mask ellipse centre below the lip line, × mouth→chin
@@ -414,8 +418,32 @@ def _render_frames(base, cx: float, cy: float, mw: float, chin: float, angle: fl
         yield frame
 
 
-def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS) -> bytes:
-    """Animate the face in `image_data` speaking `audio_path`; returns MP4 bytes.
+def _has_alpha(im) -> bool:
+    """True if the picture actually USES its alpha channel (not merely has one)."""
+    if im.mode not in ("RGBA", "LA", "PA") and "transparency" not in im.info:
+        return False
+    try:
+        a = im.convert("RGBA").getchannel("A")
+        return a.getextrema()[0] < 255
+    except Exception:
+        return False
+
+
+def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS,
+             keep_alpha: bool = False) -> tuple:
+    """Animate the face in `image_data` speaking `audio_path`. Returns ``(bytes, content_type)``.
+
+    With `keep_alpha` and a picture that actually uses transparency, the result is a SILENT
+    VP9-alpha WebM instead of an MP4 with sound. That is not a preference, it is the only
+    combination that exists: MP4 has no alpha channel at all, so a cut-out rendered to MP4
+    comes back as a black rectangle with the subject pasted on it (exactly what a
+    background-removed Meme Builder layer did), and an audio stream in a VP9-alpha WebM
+    corrupts the alpha on this ffmpeg — see media_service._ALPHA_VCODEC, which is why every
+    other alpha layer is silent too. The caller puts the speech on the timeline as its own
+    audio layer; `content_type` is how it knows which it got.
+
+    Callers that need ONE self-contained file (chat, Telegram) leave `keep_alpha` off and
+    take the MP4: a transparent clip with no audio is useless as a standalone reply.
 
     Raises RuntimeError when there is no usable face (the caller turns that into the
     "I couldn't find a face" reply), when the audio won't decode, or when the encode
@@ -424,17 +452,21 @@ def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS) -> bytes:
     the timeline as a one-frame layer.
     """
     from PIL import Image, ImageOps
-    from app.services.media_service import frames_to_video, mux_audio_loop
+    from app.services.media_service import frames_to_alpha_video, frames_to_video, mux_audio_loop
 
     with Image.open(io.BytesIO(image_data)) as im0:
-        im = ImageOps.exif_transpose(im0).convert("RGB")
+        im0 = ImageOps.exif_transpose(im0)
+        alpha = bool(keep_alpha) and _has_alpha(im0)
+        im = im0.convert("RGBA" if alpha else "RGB")
     # Downscale BEFORE detecting, so the geometry is already in the working image's
     # coordinates — scaling a detection afterwards is the classic off-by-a-factor bug.
     if max(im.size) > TALK_MAXDIM:
         im.thumbnail((TALK_MAXDIM, TALK_MAXDIM), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG", quality=92)
-        image_data = buf.getvalue()
+    # Detection always runs on flat RGB bytes: cv2 wants three channels, and a cut-out's
+    # transparent region carries whatever RGB happened to be underneath, which is not a face.
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, format="JPEG", quality=92)
+    image_data = buf.getvalue()
 
     # Distinguish "this node cannot see faces at all" from "there is no face in this picture".
     # The lean nostr-only image ships neither insightface nor opencv, and answering "no face found"
@@ -454,10 +486,14 @@ def add_talk(image_data: bytes, audio_path: str, fps: int = TALK_FPS) -> bytes:
 
     # One envelope sample per video frame, so the clip's length IS the speech's length.
     openness, width = _audio_envelope(audio_path, fps)
-    silent = frames_to_video(_render_frames(im, cx, cy, mw, chin, angle, openness, width), fps=fps)
+    frames = _render_frames(im, cx, cy, mw, chin, angle, openness, width)
+    if alpha:
+        # Silent by necessity — see the docstring. The caller adds the speech as its own layer.
+        return frames_to_alpha_video(frames, fps=fps), "video/webm"
+    silent = frames_to_video(frames, fps=fps)
     # The video is exactly the audio's length, so the loop in mux_audio_loop never repeats;
     # it is reused for its `-shortest` + best-effort behaviour, not for the looping.
-    return mux_audio_loop(silent, audio_path)
+    return mux_audio_loop(silent, audio_path), "video/mp4"
 
 
 def talk_attachments(
@@ -465,14 +501,17 @@ def talk_attachments(
     audio_path: str,
 ) -> Tuple[List[OutputFile], str]:
     """Make the first image attachment lip-sync `audio_path`. Mirrors the other
-    ``*_attachments`` processors (same shape → one delivery path for web/Telegram)."""
+    ``*_attachments`` processors (same shape → one delivery path for web/Telegram).
+
+    Always the MP4-with-sound form: a chat reply has to be one self-contained file, and the
+    transparent variant is silent (see add_talk)."""
     images = [(fn, d, ct) for fn, d, ct in (attachments or []) if is_image(fn, ct)]
     if not images:
         return [], "No image — attach a picture of a face first."
     filename, data, _ = images[0]
     stem = Path(filename).stem or "image"
     try:
-        result = add_talk(data, audio_path)
+        result, _ct = add_talk(data, audio_path)
         out: OutputFile = {
             "filename": f"{stem}_talk.mp4",
             "data": result,

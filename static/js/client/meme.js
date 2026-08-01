@@ -2661,8 +2661,31 @@
             if(+j.dur > 0) l.dur = +j.dur;
             l.name = name;
             sel = l.id;
+            // A TRANSPARENT result is silent, and has to be: MP4 carries no alpha at all (a cut-out
+            // rendered to MP4 comes back as a black rectangle with the subject on it), and an audio
+            // stream inside a VP9-alpha WebM corrupts the alpha. So when the server kept the layer's
+            // transparency it hands back a mute clip, and the spoken line goes on the timeline as its
+            // own audio layer — aligned to this one, at full volume and with no fade, because it is a
+            // VOICE, not a music bed.
+            if(j.alpha){
+              // Built from scratch, NOT copied off the video layer: a copy would inherit its speed,
+              // crossfade ramps, effect and origSrc undo-state, none of which mean anything on an
+              // audio layer and one of which (origSrc) would make ↺ offer to "restore" a photo onto
+              // the voice. Volume 1 and no fade because this is a VOICE, not a music bed — the same
+              // choice the voice-over path makes for the same reason.
+              const spoken = {
+                id: nid(), type:'audio', src: audio, name: (name + ' (voice)').slice(0, 24),
+                start: +l.start||0, dur: (+j.dur>0) ? +j.dur : (+l.dur||3), trim: 0,
+                x:0, y:0, w:0, h:0, opacity:1, effect:'none', volume:1, fade:false, mute:false,
+                flipH:false, flipV:false, rotate:0,
+                sound:'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'',
+              };
+              if(P.layers.length < 24) P.layers.splice(P.layers.indexOf(l) + 1, 0, spoken);
+              else toast('24 layers is the limit — the voice could not be added');
+            }
             save(); render();
-            toast('🗣️ it talks — ↺ undo puts the photo back');
+            toast(j.alpha ? '🗣️ it talks — the voice is its own layer, ↺ undoes the picture'
+                          : '🗣️ it talks — ↺ undo puts the photo back');
           }catch(err){ toast('couldn’t make it talk: '+((err&&err.message)||err)); }
           finally{ _fxBusy = false; const s2=document.getElementById('mb-status'); if(s2) s2.textContent=''; }
         },

@@ -372,6 +372,13 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   document / video — which also means `voice`'s "reply to a voice note" docstring doesn't hold
   there). `talk` stays in the TG lists only so it can't fall through to the LLM; making it work needs
   an interactive ForceReply flow like `clip`'s. Treat it as web-UI-only for now.
+  **A cut-out layer forces a SILENT clip:** MP4 has no alpha, so rendering one turns a
+  background-removed layer into a BLACK RECTANGLE with the subject on top; the transparent form must
+  be VP9-alpha WebM, which cannot carry audio without corrupting the alpha (`_ALPHA_VCODEC`). So
+  `add_talk(keep_alpha=True)` returns `(webm, ct)`, the endpoint reports `alpha:true`, and the client
+  adds the spoken line as its OWN audio layer. Chat/Telegram keep the MP4 (a reply must be one file).
+  ffprobe reports `pix_fmt=yuv420p` on that WebM and the alpha IS still there — decode with
+  `-c:v libvpx-vp9` to see it; don't "fix" a working file on ffprobe's say-so.
   Reference clips are normalised by ONE shared helper, `_voice_reference_wav` (`voice` + `talk`);
   it writes the upload into a SUBDIRECTORY because a clip named `ref.wav` would otherwise BE
   ffmpeg's output path ("cannot edit existing files in-place") — that bit `voice` too. Wired as a

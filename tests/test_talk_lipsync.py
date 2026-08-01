@@ -143,6 +143,51 @@ class TestTheEnvelope(unittest.TestCase):
             talk._audio_envelope("/nonexistent/nope.mp3", 20)
 
 
+@unittest.skipUnless(_HAVE_IMAGING, "numpy/Pillow unavailable")
+class TestTransparency(unittest.TestCase):
+    """A Meme Builder layer COMPOSITES, so a background-removed cut-out has to stay cut out.
+
+    MP4 has no alpha channel at all: rendering one turned such a layer into a black rectangle with
+    the subject pasted on top — the reported bug. The transparent form has to be a VP9-alpha WebM,
+    and that form has to be SILENT, because an audio stream in one corrupts the alpha on this ffmpeg
+    (media_service._ALPHA_VCODEC). The voice becomes its own timeline layer instead.
+    """
+
+    def test_it_detects_real_transparency_only(self):
+        from PIL import Image
+        opaque_rgba = Image.new("RGBA", (8, 8), (10, 20, 30, 255))
+        cut_out = Image.new("RGBA", (8, 8), (10, 20, 30, 255))
+        cut_out.putpixel((0, 0), (0, 0, 0, 0))
+        self.assertFalse(talk._has_alpha(Image.new("RGB", (8, 8), (1, 2, 3))))
+        self.assertFalse(talk._has_alpha(opaque_rgba), "an unused alpha channel is not transparency")
+        self.assertTrue(talk._has_alpha(cut_out))
+
+    def test_add_talk_reports_which_container_it_produced(self):
+        """It returns (bytes, content_type) — the caller cannot tell webm from mp4 otherwise, and
+        that flag is what makes the client add the separate audio layer."""
+        import inspect
+        sig = inspect.signature(talk.add_talk)
+        self.assertIn("keep_alpha", sig.parameters)
+        self.assertFalse(sig.parameters["keep_alpha"].default,
+                         "chat/Telegram need ONE self-contained file, so the default stays MP4")
+
+    def test_the_meme_endpoint_asks_to_keep_alpha(self):
+        """The whole point of the fix. A Meme Builder layer composites; a chat reply does not."""
+        import inspect
+        from app.routers import client as cl
+        src = inspect.getsource(cl.meme_talk)
+        self.assertIn("add_talk", src)
+        self.assertIn("alpha", src)
+
+    def test_chat_delivery_stays_one_file(self):
+        """talk_attachments must NOT hand back the silent transparent clip: a chat reply that is a
+        video with no sound is the feature failing quietly."""
+        import inspect
+        src = inspect.getsource(talk.talk_attachments)
+        self.assertIn("add_talk(data, audio_path)", src)
+        self.assertNotIn("keep_alpha", src)
+
+
 @unittest.skipUnless(_HAVE_IMAGING and _HAVE_FFMPEG, "ffmpeg/imaging unavailable")
 class TestLazyFrameEncode(unittest.TestCase):
     def test_an_empty_generator_still_raises(self):
