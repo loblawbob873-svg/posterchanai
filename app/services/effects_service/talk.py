@@ -60,7 +60,7 @@ TALK_MAX_CHARS = 400
 # The animation's proportions. Jaw travel and the mask are scaled off the MOUTH-TO-CHIN
 # distance, not the mouth width: how far a jaw can drop is a property of the jaw. The
 # mouth's own width scales the cavity. Both come from the landmarks (see _face_geometry).
-_JAW_DROP = 0.55          # jaw travel at full openness, as a fraction of mouth→chin
+_JAW_DROP = 0.45          # jaw travel at full openness, as a fraction of mouth→chin
 _JAW_ELL_HW = 1.00        # jaw mask ellipse half-width, × mouth width
 _JAW_ELL_HH = 0.85        # jaw mask ellipse half-height, × mouth→chin
 _JAW_ELL_DY = 0.55        # jaw mask ellipse centre below the lip line, × mouth→chin
@@ -250,13 +250,19 @@ def _audio_envelope(audio_path: str, fps: int = TALK_FPS,
     ref = float(np.percentile(loud, 92)) if loud.size else 0.0
     if ref <= 1e-6:
         return np.zeros(n_frames, dtype=np.float32), np.full(n_frames, 0.5, dtype=np.float32)
-    a = np.clip(rms / ref, 0.0, 1.0) ** 0.65
-    a[a < 0.10] = 0.0                                  # noise gate — silence is a closed mouth
+    # Gamma ABOVE 1 compresses the quiet end. Below 1 (the first cut used 0.65) it EXPANDS it, so
+    # room tone and the tail of every syllable drove a half-open mouth and the face chattered
+    # continuously — the "it looks weird" of a jaw that never rests.
+    a = np.clip(rms / ref, 0.0, 1.0) ** 1.15
+    a[a < 0.12] = 0.0                                  # noise gate — silence is a closed mouth
 
     out = np.zeros(n_frames, dtype=np.float32)
     prev = 0.0
     for i, v in enumerate(a):
-        k = 0.65 if v > prev else 0.28                 # fast attack, slow release
+        # Fast attack, slower release — a mouth snaps open on a consonant and closes lazily. Both
+        # are gentler than the first cut (0.65/0.28): at 20fps those tracked the waveform so
+        # closely that the jaw buzzed on every syllable instead of moving like a jaw.
+        k = 0.45 if v > prev else 0.20
         prev = prev + k * (float(v) - prev)
         out[i] = prev
 
@@ -389,6 +395,15 @@ def _render_frames(base, cx: float, cy: float, mw: float, chin: float, angle: fl
             # footprint — including the band at the top that the drop was supposed to
             # uncover, which is exactly where the mouth cavity is. The cavity was drawn and
             # then immediately covered over with cheek.
+            #
+            # A travelling mask is also what keeps the boundary INVISIBLE, and that is not a
+            # detail. An attempt to model the jaw as a hinge — chin translated, the skin below
+            # it squeezed to absorb the travel — needed a static mask, and a static mask means
+            # the pasted region starts at full alpha: a hard step right across the cheeks, far
+            # worse than the thing it set out to fix. The alpha ramp here cross-fades moved and
+            # unmoved pixels instead, which reads as motion blur. Don't re-attempt the hinge
+            # without a real per-pixel displacement field; a rigid region with a soft edge beats
+            # a better-shaped region with a hard one.
             x0, y0, x1, y1 = bbox
             sx0, sy0 = max(0, x0 - dx), max(0, y0 - dy)
             src = base.crop((sx0, sy0, min(W, x1 - dx), min(H, y1 - dy)))

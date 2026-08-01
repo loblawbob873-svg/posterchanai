@@ -1695,14 +1695,36 @@
       // (a hard cut) and the dissolve only appears in the export.
       if(on) el.style.opacity = (l.opacity==null?1:+l.opacity) * _rampAt(l, t - l.start);
       const v=el.querySelector('video');
-      if(v && on){
-        // Local time runs at the clip's SPEED — the renderer feeds `speed x slot` seconds of source into
-        // the slot, so the preview has to walk the source at the same rate or scrubbing shows a different
-        // frame than the export.
-        const sp=_speedOf(l);
-        const local=(+l.trim||0)+(t-l.start)*sp;
-        try{ if(v.playbackRate!==sp) v.playbackRate=sp; }catch(_){ }
-        if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } }
+      if(v){
+        const playing = !!_playT;
+        if(!on){
+          // A hidden video must be PAUSED, not just display:none — it is audible now (below), and a
+          // clip that has scrolled off the playhead would otherwise keep talking over the rest.
+          if(!v.paused){ try{ v.pause(); }catch(_){ } }
+        } else {
+          // Local time runs at the clip's SPEED — the renderer feeds `speed x slot` seconds of source into
+          // the slot, so the preview has to walk the source at the same rate or scrubbing shows a different
+          // frame than the export.
+          const sp=_speedOf(l);
+          const local=(+l.trim||0)+(t-l.start)*sp;
+          try{ if(v.playbackRate!==sp) v.playbackRate=sp; }catch(_){ }
+          if(Math.abs(v.currentTime-local)>0.25){ try{ v.currentTime=local; }catch(_){ } }
+          // HEAR the clip. Video layers used to be hardcoded `muted` here, so the preview was silent
+          // while the export was not — the per-layer mute toggle and volume slider did nothing, and a
+          // talking-face layer (whose whole content IS the audio) previewed as a silent still. Mirrors
+          // seekAudio: the layer's own fields, capped at 1 because that is all a media element takes.
+          const mute = !!l.mute;
+          if(v.muted!==mute) v.muted = mute;
+          const vol = clamp(l.volume==null?1:l.volume, 0, 1);
+          if(Math.abs(v.volume-vol)>0.01) v.volume = vol;
+          // RETRY the play every tick while the playhead is running. togglePlay fires play() once, in
+          // the click, but a layer whose source was just swapped (an effect, "Make it talk") is a
+          // BRAND NEW element that is still loading at that moment — its play() rejects and the clip
+          // sits on its poster frame with no sound until you press play a second time. Retrying is
+          // what makes the first press work; it is exactly what seekAudio already does for music.
+          if(playing && v.paused){ try{ v.play().catch(()=>{}); }catch(_){ } }
+          if(!playing && !v.paused){ try{ v.pause(); }catch(_){ } }
+        }
       }
     });
     seekAudio(t);
@@ -1767,6 +1789,9 @@
     const stopAt=(typeof endT==='number' && endT>0) ? Math.min(endT, projEnd()) : null;
     if(btn) btn.textContent='❚❚';
     let t=+(scrub?scrub.value:0);
+    // Kick every clip off INSIDE the click, so the browser's autoplay policy sees a user gesture (the
+    // clips carry sound now). Anything not loaded yet rejects here and is retried by seek() on the
+    // next tick — see the retry in there for why the first press used to do nothing.
     document.querySelectorAll('.mb-item video').forEach(v=>{ try{ v.play().catch(()=>{}); }catch(_){ } });
     // Start the music INSIDE the click handler. Kicking it off from the interval tick instead puts the
     // play() outside the user gesture, which is exactly what the browsers' autoplay policy blocks.
