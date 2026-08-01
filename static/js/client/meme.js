@@ -1973,12 +1973,22 @@
         const wrap = root.querySelector('#mm-wrap'), img = root.querySelector('#mm-img');
         const pin = root.querySelector('#mm-pin'), rng = root.querySelector('#mm-w');
         const hint = root.querySelector('#mm-hint');
+        // The marker is painted from offsetWidth/offsetHeight, NOT from the client rect. On a tablet
+        // (and any desktop that isn't high-DPI) the app is scaled with `body{zoom}`, and the two are
+        // in different spaces: getBoundingClientRect() reports VIEWPORT pixels, already multiplied by
+        // the zoom, while a px in `style.left` on an element inside that body is a LAYOUT pixel. Sized
+        // from the rect, the pin therefore landed at zoom× the fraction it was handed — at .67 it
+        // crawled to two-thirds of the picture and stopped, so the right and bottom of the image could
+        // not be reached at all, and a mouth lined up by eye was recorded ~1.5x too far across and too
+        // wide (which is what "it doesn't align on anime" was: a photo is seeded by the detector and
+        // never dragged, so only hand placement showed it). offsetWidth is a layout pixel, same as
+        // style.left. The POINTER math below keeps the rect, where clientX and the rect do agree.
         const paint = () => {
-          const r = img.getBoundingClientRect();
-          if(!r.width) return;
-          pin.style.left = (m.x * r.width) + 'px';
-          pin.style.top  = (m.y * r.height) + 'px';
-          pin.style.width = Math.max(6, m.w * r.width) + 'px';
+          const w = img.offsetWidth, h = img.offsetHeight;
+          if(!w) return;
+          pin.style.left = (img.offsetLeft + m.x * w) + 'px';
+          pin.style.top  = (img.offsetTop  + m.y * h) + 'px';
+          pin.style.width = Math.max(6, m.w * w) + 'px';
           pin.style.transform = `translate(-50%,-50%) rotate(${m.angle}deg)`;
           root.querySelector('#mm-photo').className = 'btn small ' + (m.anime?'btn-ghost':'btn-cyan');
           root.querySelector('#mm-draw').className  = 'btn small ' + (m.anime?'btn-cyan':'btn-ghost');

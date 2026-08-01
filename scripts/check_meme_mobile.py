@@ -21,6 +21,13 @@ Assertions, each corresponding to a way a phone layout actually breaks:
   tiny-tap-target      a button under 32px tall. Below that it is a coin toss on a thumb.
   overlapping-buttons  two full-width buttons whose boxes intersect (a missing display/margin rule).
   missing-control      an expected per-layer button is not in the DOM at all.
+  mouth-misplaced      the "where is the mouth?" marker does not land where you put it.
+
+The last one runs at TABLET width on purpose. Between 821px and 1920px the app is scaled with
+`body{zoom}`, and that is a second coordinate system: getBoundingClientRect() reports viewport
+pixels (zoom already applied) while a px written to `style.left` is a layout pixel. A phone is at
+zoom 1, so a control that mixes the two is exactly right at every width this file used to check
+and wrong on a tablet only.
 
 Exit 0 = clean, 1 = regressions (printed), 2 = could not run (no Chrome / websockets).
 """
@@ -35,6 +42,9 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844), (360, 780)]
+# Phone (zoom 1) and tablet (`body{zoom:.67}` — the 821-1366px tier in client.css). See the
+# mouth-misplaced note in the docstring: only the pair proves anything.
+MOUTH_WIDTHS = [(390, 844), (1024, 768)]
 PORT = 9473
 PROFILE = "/tmp/pc-meme-mobile-check"
 
@@ -201,6 +211,46 @@ POSE_TALK = r"""(async () => {
           character: b.character || '', mouth: b.mouth || null};
 })()"""
 
+# The marker in "Where is the mouth?" must land where you put it, at EVERY width. Drag it to a known
+# fraction of the picture, then read back both halves of the control: where the pin is PAINTED (what
+# you aim with) and what actually reaches the render (what the mouth is warped from). They were
+# painted from the client rect and dragged from the client rect, which agree at zoom 1 and do not
+# agree under the desktop/tablet `body{zoom}` tiers — so on a tablet the pin crawled to 0.67 of the
+# picture and stopped: the right and bottom of the image were unreachable, and a mouth lined up by
+# eye was sent ~1.5x too far across and 1.5x too wide. That is "it doesn't align on anime": a photo
+# is seeded by the detector and never dragged, so only hand placement showed it.
+MOUTH_PLACEMENT = r"""(async () => {
+  const TX = 0.85, TY = 0.88, TW = 0.30;
+  const btn = document.getElementById('mb-talk');
+  if (!btn) return {err: 'no #mb-talk to click'};
+  btn.click();
+  for (let i = 0; i < 40 && !document.getElementById('mm-go'); i++)
+    await new Promise(r => setTimeout(r, 50));
+  const img = document.getElementById('mm-img'), wrap = document.getElementById('mm-wrap');
+  const pin = document.getElementById('mm-pin');
+  if (!img || !wrap || !pin) return {err: 'the mouth picker did not open'};
+  for (let i = 0; i < 60 && !(img.complete && img.naturalWidth); i++)
+    await new Promise(r => setTimeout(r, 50));
+  if (!img.naturalWidth) return {err: 'the picture never loaded, so there is nothing to aim at'};
+  const r = img.getBoundingClientRect();
+  wrap.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true,
+    clientX: r.left + TX * r.width, clientY: r.top + TY * r.height}));
+  wrap.dispatchEvent(new PointerEvent('pointerup', {bubbles: true}));
+  const rng = document.getElementById('mm-w');
+  rng.value = Math.round(TW * 100); rng.dispatchEvent(new Event('input'));
+  const p = pin.getBoundingClientRect();
+  const shown = {x: (p.left + p.width / 2 - r.left) / r.width,
+                 y: (p.top + p.height / 2 - r.top) / r.height,
+                 w: p.width / r.width};
+  document.getElementById('mm-go').click();
+  for (let i = 0; i < 40 && !window.__voiceOpts; i++) await new Promise(r => setTimeout(r, 50));
+  if (!window.__voiceOpts || !window.__voiceOpts.onTake) return {err: 'the picker did not open the studio'};
+  await window.__voiceOpts.onTake(new Blob(['x'], {type: 'audio/wav'}), 'testvoice', 'hello there');
+  for (let i = 0; i < 60 && !window.__talkBody; i++) await new Promise(r => setTimeout(r, 100));
+  return {zoom: getComputedStyle(document.body).zoom || '1', want: {x: TX, y: TY, w: TW},
+          shown, sent: (window.__talkBody || {}).mouth || null};
+})()"""
+
 AUDIT = r"""(() => {
   const out = {overflow:false, offscreen:[], tiny:[], overlap:[], present:{}, panel:false};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
@@ -343,6 +393,50 @@ async def drive(url):
                     problems.append(("talk", "stale-layer", f"expected 2 layers, got {tk['n']}"))
                 print(f"talk: layers={tk['n']} video={tk['video']} audio={tk['audio']} "
                       f"image={tk['stillImage']}")
+
+            # Mouth placement at BOTH scales. A phone is zoom 1 and a tablet is not, and the whole
+            # class of bug here is a control that is exact in one coordinate system and skewed in the
+            # other — checking either width alone proves nothing about the other.
+            for w, h in MOUTH_WIDTHS:
+                await call("Emulation.setDeviceMetricsOverride",
+                           {"width": w, "height": h, "deviceScaleFactor": 2, "mobile": True})
+                await call("Page.navigate", {"url": url})
+                for _ in range(40):
+                    await asyncio.sleep(0.25)
+                    if await js("window.__ready === true"):
+                        break
+                r = await call("Runtime.evaluate",
+                               {"expression": MOUTH_PLACEMENT, "returnByValue": True,
+                                "awaitPromise": True})
+                mp = (r or {}).get("result", {}).get("value")
+                label = f"mouth@{w}px"
+                if not mp:
+                    problems.append((label, "mouth-misplaced", "the placement probe did not run"))
+                    continue
+                if mp.get("err"):
+                    problems.append((label, "mouth-misplaced", mp["err"]))
+                    continue
+                want, shown, sent = mp["want"], mp["shown"], mp.get("sent")
+                # 0.02 of the picture. The pin is a 3px rule with a transform on it, so its measured
+                # centre is a pixel or so off by construction; the bug this guards against is off by
+                # a THIRD.
+                for k in ("x", "y", "w"):
+                    if abs(shown[k] - want[k]) > 0.02:
+                        problems.append((label, "mouth-misplaced",
+                                         f"the marker is painted at {k}={shown[k]:.3f} when it was "
+                                         f"put at {want[k]:.2f} (body zoom {mp['zoom']}) — you "
+                                         "cannot aim with it"))
+                if not isinstance(sent, dict):
+                    problems.append((label, "mouth-misplaced",
+                                     "the placement never reached the render"))
+                else:
+                    for k in ("x", "y", "w"):
+                        if abs(float(sent.get(k, -9)) - want[k]) > 0.02:
+                            problems.append((label, "mouth-misplaced",
+                                             f"the render was sent {k}={sent.get(k)} for a marker "
+                                             f"put at {want[k]:.2f}"))
+                print(f"{label}: zoom={mp['zoom']} painted="
+                      f"({shown['x']:.3f},{shown['y']:.3f},w={shown['w']:.3f}) sent={sent}")
 
             await call("Page.navigate", {"url": url})
             for _ in range(40):
