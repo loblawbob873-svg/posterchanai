@@ -4207,10 +4207,13 @@ svg.mb-e{margin-right:0}
   font-weight:700;color:var(--neon);opacity:.85}
 .mb-addgrp:first-of-type{margin-top:2px}
 .mb-insp-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.mb-insp-hd .btn{margin:0}
-/* Duplicate + Delete stay together on the right — space-between with three loose children would strand
-   Duplicate in the middle of the header, away from the buttons it belongs with. */
-.mb-insp-acts{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 0 auto}
+.mb-insp-hd .btn{margin:0;flex:0 0 auto}   /* wrap to a second line rather than squash a label */
+/* Cut + Duplicate + Delete stay together on the right — space-between with loose children would strand
+   them in the middle of the header, away from the buttons they belong with. They WRAP as a group: three
+   buttons plus the "Video layer" title is more than a 360px phone has in one row, and flex:0 0 auto alone
+   would push the last one off the edge instead of dropping it to a second line. */
+.mb-insp-acts{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 1 auto;flex-wrap:wrap;
+  justify-content:flex-end}
 .mb-f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:0}
 .mb-f .input,.mb-f textarea{margin:0}
 .mb-f input[type=color]{width:100%;height:34px;padding:2px;background:var(--panel2);

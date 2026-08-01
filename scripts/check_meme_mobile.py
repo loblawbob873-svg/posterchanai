@@ -50,7 +50,7 @@ PROFILE = "/tmp/pc-meme-mobile-check"
 
 # Per-layer controls the inspector must offer for a selected IMAGE layer. Named, because "it renders"
 # is not the check — a button that silently stopped being emitted still renders a panel.
-EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill"]
+EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill", "mb-split", "mb-cutall"]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -251,6 +251,80 @@ MOUTH_PLACEMENT = r"""(async () => {
           shown, sent: (window.__talkBody || {}).mouth || null};
 })()"""
 
+# ✂ CUT (split at the playhead). The arithmetic is the whole feature and none of it is visible on a
+# screenshot: the second half has to start where the first now ends, the two together have to still fill
+# exactly the span the original filled (so no other clip moves), and — the part that is easy to get wrong
+# — its IN-POINT has to be converted through the clip's SPEED, because the source is walked at that rate
+# (a 2x clip cut one second in resumes two seconds into the footage). A wrong conversion looks fine on the
+# timeline and plays the wrong frames.
+#
+# Also pinned here: the join becomes a HARD cut (the crossfade ramps belong to the outer edges, where the
+# neighbours still are), a one-shot sound does not come along to fire a second time at the cut, and the
+# minimum-piece guard refuses a cut that would leave a sliver instead of making one.
+CUT_SPLIT = r"""(async () => {
+  const q = () => (JSON.parse(localStorage.getItem('pc_meme_project') || 'null') || {layers: []}).layers;
+  const P = JSON.parse(localStorage.getItem('pc_meme_project'));
+  P.xfade = 0.5;
+  P.layers = [{id:'V1', type:'video', src:'https://example.invalid/a.webm', name:'take',
+               start:2, dur:4, trim:1.5, speed:2, sound:'boing', soundVolume:1,
+               xin:0.5, xout:0.5, x:0, y:0, w:720, h:1280, opacity:1, effect:'none',
+               volume:1, mute:false, flipH:false, flipV:false, rotate:0,
+               text:'', size:64, color:'#ffffff', stroke:'#000000', align:''},
+              {id:'T1', type:'text', src:'', name:'', start:2, dur:4, trim:0,
+               x:40, y:40, w:0, h:0, opacity:1, effect:'none', volume:1, mute:false,
+               flipH:false, flipV:false, rotate:0, text:'caption', size:64,
+               color:'#ffffff', stroke:'#000000', align:''}];
+  localStorage.setItem('pc_meme_project', JSON.stringify(P));
+  window.PCMeme.render();
+  await new Promise(r => setTimeout(r, 200));
+  const endBefore = Math.max(...q().map(l => l.start + l.dur));
+  const seek = (t) => { const s = document.getElementById('mb-scrub');
+                        s.value = String(t); s.dispatchEvent(new Event('input')); };
+  const pick = async (id) => {
+    const row = document.querySelector('.mb-track[data-id="' + id + '"]'); if (row) row.click();
+    const tab = document.querySelector('.mb-tab[data-tab="layer"]'); if (tab) tab.click();
+    await new Promise(r => setTimeout(r, 150));
+  };
+
+  // ---- the guard: a cut 0.02s in would leave a sliver, so it must be refused, not made.
+  await pick('V1');
+  seek(2.02);
+  const guardBtn = document.getElementById('mb-split');
+  if (!guardBtn) return {err: 'no #mb-split in the layer panel'};
+  guardBtn.click();
+  await new Promise(r => setTimeout(r, 150));
+  const guardKept = q().length;
+
+  // ---- the cut itself, one second into a 2x clip.
+  await pick('V1');
+  seek(3);
+  document.getElementById('mb-split').click();
+  await new Promise(r => setTimeout(r, 250));
+  const ls = q();
+  const a = ls.find(l => l.id === 'V1');
+  const b = ls.find(l => l.type === 'video' && l.id !== 'V1');
+  if (!a || !b) return {err: 'the cut did not produce two halves (' + ls.length + ' layers)'};
+  const selId = (document.querySelector('.mb-track.sel') || {dataset: {}}).dataset.id || '';
+
+  // ---- ✂ Cut here: everything standing under the playhead, in one step. At 4.5s that is the second
+  // half of the clip and the caption — the FIRST half has already ended, so it must be left alone.
+  const beforeAll = q().length;
+  seek(4.5);
+  document.getElementById('mb-cutall').click();
+  await new Promise(r => setTimeout(r, 250));
+  const after = q();
+  return {
+    guardKept, n: ls.length,
+    a: {start: a.start, dur: a.dur, trim: a.trim, xin: a.xin, xout: a.xout, sound: a.sound},
+    b: {start: b.start, dur: b.dur, trim: b.trim, xin: b.xin, xout: b.xout, sound: b.sound},
+    endBefore, endAfter: Math.max(...ls.map(l => l.start + l.dur)),
+    selIsSecondHalf: selId === b.id,
+    cutAllAdded: after.length - beforeAll,
+    endAfterAll: Math.max(...after.map(l => l.start + l.dur)),
+    toasts: window.__toasts.slice(-2),
+  };
+})()"""
+
 AUDIT = r"""(() => {
   const out = {overflow:false, offscreen:[], tiny:[], overlap:[], present:{}, panel:false};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
@@ -393,6 +467,55 @@ async def drive(url):
                     problems.append(("talk", "stale-layer", f"expected 2 layers, got {tk['n']}"))
                 print(f"talk: layers={tk['n']} video={tk['video']} audio={tk['audio']} "
                       f"image={tk['stillImage']}")
+
+            # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
+            await call("Page.navigate", {"url": url})
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+                if await js("window.__ready === true"):
+                    break
+            r = await call("Runtime.evaluate",
+                           {"expression": CUT_SPLIT, "returnByValue": True, "awaitPromise": True})
+            cut = (r or {}).get("result", {}).get("value")
+            if not cut:
+                problems.append(("cut", "bad-cut", "the cut probe did not run"))
+            elif cut.get("err"):
+                problems.append(("cut", "bad-cut", cut["err"]))
+            else:
+                # start/dur/trim/xin/xout/sound of each half, and the pair of totals that says no other
+                # clip moved. trim 3.5 is the speed conversion: 1.5 already skipped + 1s of slot at 2x.
+                want_a = {"start": 2, "dur": 1, "trim": 1.5, "xin": 0.5, "xout": 0, "sound": "boing"}
+                want_b = {"start": 3, "dur": 3, "trim": 3.5, "xin": 0, "xout": 0.5, "sound": ""}
+                for half, want in (("a", want_a), ("b", want_b)):
+                    for k, v in want.items():
+                        got = cut[half].get(k)
+                        if isinstance(v, str):
+                            ok = got == v
+                        else:
+                            ok = got is not None and abs(float(got) - v) < 0.01
+                        if not ok:
+                            problems.append(("cut", "bad-cut",
+                                             f"half {half}: {k} is {got!r}, expected {v!r}"))
+                if cut["n"] != 3:
+                    problems.append(("cut", "bad-cut", f"expected 3 layers after the cut, got {cut['n']}"))
+                if cut["guardKept"] != 2:
+                    problems.append(("cut", "bad-cut",
+                                     "a cut 0.02s into the clip was made anyway — it must be refused "
+                                     f"rather than leave a sliver (layers={cut['guardKept']})"))
+                if abs(cut["endAfter"] - cut["endBefore"]) > 0.01:
+                    problems.append(("cut", "bad-cut",
+                                     f"the meme changed length: {cut['endBefore']}s → {cut['endAfter']}s"))
+                if not cut["selIsSecondHalf"]:
+                    problems.append(("cut", "bad-cut", "the second half is not left selected"))
+                if cut["cutAllAdded"] != 2:
+                    problems.append(("cut", "bad-cut",
+                                     "✂ Cut here split "
+                                     f"{cut['cutAllAdded']} layers, expected the 2 under the playhead"))
+                if abs(cut["endAfterAll"] - cut["endBefore"]) > 0.01:
+                    problems.append(("cut", "bad-cut",
+                                     f"✂ Cut here changed the length: {cut['endAfterAll']}s"))
+                print(f"cut: halves={cut['a']['dur']}s+{cut['b']['dur']}s trim={cut['b']['trim']} "
+                      f"end={cut['endAfter']}s cutAll+{cut['cutAllAdded']} guard={cut['guardKept']}")
 
             # Mouth placement at BOTH scales. A phone is zoom 1 and a tablet is not, and the whole
             # class of bug here is a control that is exact in one coordinate system and skewed in the

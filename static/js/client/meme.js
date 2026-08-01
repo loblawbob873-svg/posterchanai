@@ -331,6 +331,10 @@
         toast('layer deleted — Ctrl+Z to undo');       // no confirm: undo is the better answer
         return;
       }
+      // ✂ the razor, on the bare S every NLE uses. Shift+S cuts the whole timeline. Premiere's Ctrl+K is
+      // deliberately not offered as well — the Ctrl branch above hands every other combo back to the
+      // browser on purpose, and Ctrl+K is its own search/address-bar shortcut in most of them.
+      if(k === 's' || k === 'S'){ e.preventDefault(); (e.shiftKey ? cutAll : cutSelected)(); return; }
       if(k.indexOf('Arrow') === 0){
         if(!l || l.type === 'audio') return;           // a music bed has no position to nudge
         if(l.type === 'text' && _alignOf(l) === 'center' && (k === 'ArrowLeft' || k === 'ArrowRight')){
@@ -675,6 +679,86 @@
     return c;
   }
 
+  // ---------- ✂ cut (split) ----------
+  // Where the playhead is, in seconds. The scrubber IS the playhead — seek() is driven from it, and the
+  // timeline ruler writes to it — so there is no second source of truth to keep in step.
+  const _playhead = () => { const s = document.getElementById('mb-scrub'); return s ? (+s.value||0) : 0; };
+
+  // The razor. A layer is cut IN TWO at the playhead: the left half stays this layer, the right half becomes
+  // a new one starting exactly where the first now ends. It is the only way to take a piece out of the
+  // MIDDLE of something (cut twice, delete what is between), to caption/speed up/restyle just half of a
+  // take, or to end a music bed early — none of which the trim handles can do, because they only ever move
+  // the two OUTER ends of a clip.
+  //
+  // Both halves are ordinary layers filling exactly the span the original filled, so nothing downstream has
+  // to know a cut happened: the renderer, the save format, undo and the clip order are all untouched, and
+  // no resequence is needed (the pieces are back-to-back by construction, so no other clip moves).
+  //
+  // The one thing that has to be right is where the second half starts INSIDE ITS SOURCE. A video's source
+  // is walked at the clip's SPEED — the same conversion bindTrim does — so a 2× clip cut one second in
+  // resumes two seconds into the footage; a song is walked at 1×; a still and a caption have no source
+  // clock at all and simply take the rest of the slot.
+  const MIN_PIECE = 0.1;                    // the shortest a piece may be (the Length field's own floor)
+  const _canSplit = (l, t) => !!l && (t - (+l.start||0)) >= MIN_PIECE
+                                  && ((+l.start||0) + (+l.dur||0) - t) >= MIN_PIECE;
+  function splitLayer(l, t){
+    if(!_canSplit(l, t)) return null;
+    if(P.layers.length >= 24){ toast('24 layers is the limit — no room for the second half'); return null; }
+    const st = +l.start||0, du = +l.dur||0;
+    const left = +(t - st).toFixed(2);
+    const c = Object.assign({}, l, { id: nid() });
+    c.start = +(st + left).toFixed(2);
+    c.dur   = +(du - left).toFixed(2);
+    if(l.type === 'video')      c.trim = +((+l.trim||0) + left * _speedOf(l)).toFixed(3);
+    else if(l.type === 'audio') c.trim = +((+l.trim||0) + left).toFixed(3);
+    // A one-shot sound effect is pinned to the START of a layer, so leaving it on the second half would
+    // fire it again at the cut — a sound the project never had.
+    c.sound = '';
+    // The cut is a HARD join. The crossfade ramps belong to the OUTER edges, where the neighbouring clips
+    // still are: `c` inherits xout from the copy and `l` keeps xin, so only the two inner ramps are cleared.
+    // (A music bed's "Fade in/out" is one flag for both ends and deliberately rides along unchanged — a bed
+    // cut in half therefore fades at the join too, which is what unticking it on a half is for.)
+    l.dur = left; l.xout = 0; c.xin = 0;
+    const i = P.layers.indexOf(l);
+    P.layers.splice(i < 0 ? P.layers.length : i + 1, 0, c);
+    return c;
+  }
+
+  // ✂ on ONE layer — the selected one. The SECOND half is left selected, because cut-then-delete-the-tail
+  // is the move you are nearly always making, and it is the piece you cannot otherwise get at by tapping
+  // (both halves sit under the playhead at the moment of the cut).
+  function cutSelected(){
+    const l = P.layers.find(x=>x.id===sel);
+    if(!l){ toast('select a layer first, then ✂ cuts it at the playhead'); return; }
+    const t = _playhead();
+    if(!_canSplit(l, t)){
+      toast(`move the playhead into this ${l.type==='audio'?'track':'layer'} first — ✂ cuts where it stands`);
+      return;
+    }
+    snap();
+    const c = splitLayer(l, t);
+    if(!c){ unsnapIfUnchanged(); return; }
+    sel = c.id;
+    save(); render();
+    toast(`cut at ${t.toFixed(1)}s — the second half is selected`);
+  }
+
+  // ✂ across the WHOLE timeline: every layer the playhead is standing on, in ONE undo step. This is the
+  // "cut here" of an editor — split everything at a moment, then move or delete either side as a piece.
+  function cutAll(){
+    const t = _playhead();
+    const hits = P.layers.filter(l=>_canSplit(l, t));
+    if(!hits.length){ toast('nothing under the playhead to cut'); return; }
+    const room = 24 - P.layers.length;
+    if(room <= 0){ toast('24 layers is the limit — no room for the second halves'); return; }
+    const todo = hits.slice(0, room);
+    groupEdit(()=>{ todo.forEach(l=>splitLayer(l, t)); });
+    save(); render();
+    toast(todo.length < hits.length
+      ? `cut ${todo.length} of ${hits.length} layers — 24 layers is the limit`
+      : `cut ${todo.length} layer${todo.length===1?'':'s'} at ${t.toFixed(1)}s`);
+  }
+
   // ---------- rendering the UI ----------
   // What the Layer tab is called right now — "✎ Text" reads as a live thing you can go and edit, where a
   // permanent "Layer" gives no hint that tapping a clip did anything.
@@ -768,6 +852,9 @@
     const any = P.layers.some(_isVisual);
     return `${any ? `<div class="mb-tlbar">
         <button class="btn btn-cyan small" id="mb-arrange" title="Lay every clip back-to-back in its current order">⇄ Arrange</button>
+        ${/* The razor for the WHOLE timeline. The per-layer ✂ lives in the layer panel next to Duplicate;
+              this one is here because "cut here" is about the moment, not about a selection. */''}
+        <button class="btn btn-cyan small" id="mb-cutall" title="Cut every layer standing under the playhead in two (Shift+S). Cut twice and delete the middle piece to take a section out of the meme.">✂ Cut here</button>
         <label class="mb-tlf" title="Dissolve between consecutive clips. ⇄ Arrange overlaps them by this much so there is something to blend.">⇄
           <select class="input" id="mb-xfade">
             ${[0,0.25,0.5,0.75,1,1.5].map(v=>`<option value="${v}" ${Math.abs(_xfade()-v)<0.01?'selected':''}>${v?v+'s':'cut'}</option>`).join('')}
@@ -782,7 +869,7 @@
                 off the side, and hunting for how many times to press − to get it back is the tedious part. */''}
           <button class="mb-zb mb-zfit" id="mb-zoomfit" title="Fit the whole build in the timeline" aria-label="Fit the timeline to the build">⤢</button>
         </span>
-        <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead.</span>
+        <span class="muted small mb-tlhint">Drag a clip to move it, or its edges to trim. Tap the ruler to move the playhead, then ✂ to cut there.</span>
       </div>` : ''}
       <div class="mb-timeline" id="mb-timeline">${timelineInner()}</div>`;
   }
@@ -1084,6 +1171,7 @@
       <div class="mb-insp-hd">
         <b>🎵 Music layer</b>
         <span class="mb-insp-acts">
+          <button class="btn btn-cyan small" id="mb-split" title="Cut this track in two where the playhead is (S) — the halves are separate tracks you can move, retime or delete on their own">✂ Cut</button>
           <button class="btn btn-cyan small" id="mb-dup" title="Make a second copy of this track">⧉ Duplicate</button>
           <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
@@ -1107,6 +1195,7 @@
       <div class="mb-insp-hd">
         <b>${isText?'Text':(l.type==='video'?'Video':'Image')} layer</b>
         <span class="mb-insp-acts">
+          <button class="btn btn-cyan small" id="mb-split" title="Cut this layer in two where the playhead is (S) — the halves are separate layers, so you can trim, restyle or delete either one. Cut twice and delete the middle to drop a piece out.">✂ Cut</button>
           <button class="btn btn-cyan small" id="mb-dup" title="Copy this layer — same clip, size, effect, sound and timing — as a new layer just above it">⧉ Duplicate</button>
           <button class="btn btn-danger small" id="mb-del"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </span>
@@ -2916,6 +3005,7 @@
     on('mb-rot0','click',()=>{ snap(); l.rotate=0; l.flipH=false; l.flipV=false; save();
       const b=root.querySelector('#mb-f-rot'); if(b) b.value=0;
       const v=root.querySelector('#mb-rot-val'); if(v) v.textContent='0°'; _paintX(); });
+    on('mb-split','click',cutSelected);
     on('mb-dup','click',()=>duplicateLayer(l));
     // No confirm — Ctrl+Z (and the ↶ button) is a better answer than a dialog, and the dialog was the
     // only thing standing between you and a mis-tap on a phone anyway.
@@ -3055,6 +3145,7 @@
     on('mb-undo','click',undo);
     on('mb-redo','click',redo);
     on('mb-proj','click',projectMenu);
+    on('mb-cutall','click',cutAll);
     // Explicit "snap everything back-to-back", in the clips' current time order. This used to happen
     // automatically on every drop, which made adjusting one clip rewrite the whole timeline.
     on('mb-arrange','click',()=>{ snap(); resequence(); unsnapIfUnchanged(); save(); render();
