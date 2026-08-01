@@ -1121,6 +1121,7 @@
         ${l.type==='video' ? trimWidget(l) + `
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
+        ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
         <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
@@ -2017,6 +2018,14 @@
             const j = await r.json().catch(()=>null);
             if(j && j.found){
               m = { x:+j.x||0.5, y:+j.y||0.62, w:+j.w||0.12, angle:+j.angle||0, anime:!!j.anime };
+              // The server's photo-vs-drawing guess is only a guess — the two classes overlap, so a
+              // heavily shaded illustration can land on the photo side. YOUR last answer beats it:
+              // people tend to meme with one kind of art, so remembering converges immediately and
+              // the picker never offers the same wrong default twice.
+              try{
+                const seen = localStorage.getItem('pc_meme_talk_mode');
+                if(seen === 'anime' || seen === 'photo') m.anime = (seen === 'anime');
+              }catch(_){ }
               rng.value = Math.round(clamp(m.w,0.03,0.45) * 100);
               paint();
             }
@@ -2024,7 +2033,10 @@
         })();
         const finish = v => { if(done) return; done = true; PC.closeModal(); resolve(v); };
         root.querySelector('#mm-cancel').onclick = () => finish(null);
-        root.querySelector('#mm-go').onclick = () => finish({ ...m });
+        root.querySelector('#mm-go').onclick = () => {
+          try{ localStorage.setItem('pc_meme_talk_mode', m.anime ? 'anime' : 'photo'); }catch(_){ }
+          finish({ ...m });
+        };
       });
     });
   }
@@ -2400,6 +2412,10 @@
             dur: base ? ((+base.dur>0) ? +base.dur : nominal) : nominal,
             trim:0, opacity:1, effect:'none', volume:1, mute:false, fit:'contain',
             flipH:false, flipV:false, rotate:0,
+            // Remember WHICH character this layer is. The layer itself is a rendered transparent
+            // clip, so nothing about it says "jerry" any more — and that name is what lets 🗣️ Make
+            // it talk animate the pose's own artwork instead of trying to lip-sync a video.
+            fxPose: e.pose ? e.name : '',
             sound:j.sound||'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'' }, box);
           // Draw ABOVE the layer it dresses up, but still BELOW any caption — a caption buried under an
           // overlay is the same bug addLayer guards against for ordinary media.
@@ -2748,14 +2764,17 @@
       // an audio layer and no animation: indistinguishable from the old "Add a voice line", which is
       // exactly how it was reported. Re-resolve by ID at take time instead.
       const lid = l.id;
-      pickMouth(l.src).then(mouth => {
+      // A CHARACTER POSE skips the placement step: the artwork never changes, so the detector's
+      // answer for it is fixed and there is nothing for a person to correct.
+      const pose = (l.type !== 'image' && l.fxPose) ? l.fxPose : '';
+      (pose ? Promise.resolve({}) : pickMouth(l.src)).then(mouth => {
         if(!mouth) return;                       // cancelled — no voice generated, nothing spent
         PC.openVoiceStudio({
         useLabel: '🗣️ Make the face say it',
         onTake: async (blob, voiceName, text) => {
           if(_fxBusy){ toast('still working on the last one — hang on'); return; }
           const cur = P.layers.find(x => x.id === lid);
-          if(!cur || !cur.src){ toast('that layer is gone — nothing to make talk'); return; }
+          if(!cur || (!cur.src && !pose)){ toast('that layer is gone — nothing to make talk'); return; }
           _fxBusy = true;
           const st = document.getElementById('mb-status');
           if(st) st.textContent = 'animating the mouth…';
@@ -2767,7 +2786,9 @@
                                                     { type:'audio/wav' }));
             const auth = await selfProof();
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
+              body: JSON.stringify(pose
+                ? { pubkey: ME.pubkey, auth, audio, character: pose }
+                : { pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
             // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-

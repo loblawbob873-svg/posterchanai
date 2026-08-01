@@ -130,20 +130,39 @@ _LMK_CONTOUR = slice(0, 33)
 # cascade fire", which is what decided it before. That cascade does not fire on plenty of drawings
 # at all, so those defaulted to Photo and got the warp — a smear on flat art. It is why a fixed
 # anime renderer could still look completely unchanged: the anime renderer was never running.
-_FLAT_ART_THRESHOLD = 0.27
+# Measured over the SUBJECT (see _is_flat_art) across eleven samples: photos 0.06 / 0.10 / 0.14 /
+# 0.20, drawings 0.22 / 0.31 / 0.33 / 0.36 / 0.48 / 0.51 / 0.79. The gap between the classes is only
+# 0.017 wide, so this is an educated GUESS, not a classifier — a heavily shaded illustration can sit
+# on the photo side of it. A palette-size metric was tried as a second signal and separates nothing
+# (it tracks image size, not style). That thin margin is exactly why the Meme Builder asks rather
+# than decides, and why it remembers the answer: a wrong default is one tap to fix, and the picker
+# will not offer the same wrong one twice.
+_FLAT_ART_THRESHOLD = 0.21
 
 
 def _is_flat_art(im) -> bool:
-    """True if this looks like a DRAWING rather than a photograph."""
+    """True if this looks like a DRAWING rather than a photograph.
+
+    Measured over the SUBJECT only. A cut-out's transparent background is perfectly uniform, so
+    counting it makes every background-removed PHOTO look like line art — which is exactly what it
+    did to the Jerry pose (a Seinfeld still, cut out) and would do to any layer that has been
+    through Remove the background.
+    """
     try:
         import cv2
         import numpy as np
-        small = im.convert("L")
-        small.thumbnail((512, 512))
-        g = np.asarray(small, dtype=np.float32)
+        rgba = im.convert("RGBA")
+        rgba.thumbnail((512, 512))
+        g = np.asarray(rgba.convert("L"), dtype=np.float32)
         m = cv2.blur(g, (3, 3))
         var = cv2.blur(g * g, (3, 3)) - m * m
-        return float((var < 1.0).mean()) >= _FLAT_ART_THRESHOLD
+        keep = np.asarray(rgba.getchannel("A")) > 128
+        # Erode the subject a little: the feathered edge of a cut-out is a gradient that belongs to
+        # neither side, and on a thin subject it would otherwise dominate the sample.
+        keep = cv2.erode(keep.astype("uint8"), np.ones((5, 5), "uint8")).astype(bool)
+        if keep.sum() < 64:
+            keep = np.ones_like(keep)
+        return float((var[keep] < 1.0).mean()) >= _FLAT_ART_THRESHOLD
     except Exception:
         return False
 

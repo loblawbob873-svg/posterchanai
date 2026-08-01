@@ -282,22 +282,28 @@ def alpha_effect_catalog() -> list:
     from app.services.effects_service import nakedman as _nm, character as _ch
     out = []
     # nakedman is drawn procedurally, so it is always available; its audio is a bundled asset.
-    out.append({"name": "nakedman", "label": "🍆 Naked man (dancing)",
+    out.append({"name": "nakedman", "label": "🍆 Naked man (dancing)", "pose": False,
                 "audio": bool(_nm._nakedman_audio_path()), "dur": 8.0})
     # shrug needs its pose art; audio is a bundled asset.
     if _ch._character_path("shrug"):
-        out.append({"name": "shrug", "label": "🤷 Shrug",
+        out.append({"name": "shrug", "label": "🤷 Shrug", "pose": True,
                     "audio": bool(_ch._shrug_audio_path()), "dur": 2.7})
     for key, label in _ALPHA_CHARACTERS:
         if _ch._character_path(key):
             # A still pose holds for as long as you like; the two-panel turn has its own beat.
+            # `pose` marks a STILL character — one drawing held on screen, as opposed to an
+            # animation. Only a pose can be made to TALK: the lip-sync animates a single picture,
+            # so running it on a clip that already moves would freeze the movement. `lookingaway`
+            # is the two-panel turn, which is an animation however still each panel is.
             out.append({"name": key, "label": f"🧍 {label}", "audio": False,
+                        "pose": key != "lookingaway",
                         "dur": _ch.LOOKINGAWAY_ALPHA_DUR if key == "lookingaway" else 6.0})
     # The shipped transparent clips (beavis, reze, makima, …). `dur` is the clip's REAL length, read
     # off the file, so the timeline slot fits the animation instead of a guessed 6s. Each has its
     # sound as a separate mp3 — the clip itself stays silent, exactly like every other alpha layer.
     for name, meta in sorted(_alpha_clips().items()):
         out.append({"name": name, "label": _ALPHA_CLIP_LABELS.get(name, f"🎬 {name.title()}"),
+                    "pose": False,      # a shipped clip already animates
                     "audio": bool(_sound_path(name)), "dur": meta["dur"]})
     return out
 

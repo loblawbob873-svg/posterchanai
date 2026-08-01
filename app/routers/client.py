@@ -1735,9 +1735,10 @@ async def meme_face(data: MemeFaceReq, request: Request, db: Session = Depends(g
 class MemeTalkReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
-    url: str                     # the layer's source IMAGE url — the face to animate
-    audio: str                   # the SPOKEN LINE's url (a take from the voice studio, on the user's drive)
+    url: str = ""                # the layer's source IMAGE url — the face to animate
+    audio: str = ""              # the SPOKEN LINE's url (a take from the voice studio, on the user's drive)
     mouth: dict | None = None    # explicit normalised placement {x,y,w,angle,anime}; None = auto-detect
+    character: str | None = None  # …or a CHARACTER POSE by name (jerry, carl, …) instead of a url
 
 
 # Animate a Meme Builder layer's face to a line the VOICE STUDIO already spoke.
@@ -1771,13 +1772,30 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
 
     _fwd = await _meme_lb_forward(request, "talk",
                                   {"pubkey": data.pubkey, "auth": data.auth,
-                                   "url": data.url, "audio": data.audio, "mouth": data.mouth},
+                                   "url": data.url, "audio": data.audio, "mouth": data.mouth,
+                                   "character": data.character},
                                   db=db)
     if _fwd is not None:
         return _fwd
 
     own = _own_media_hosts(db)
-    img, ct = await _fetch_media_guarded(data.url, own)
+    if data.character:
+        # A CHARACTER POSE (jerry, carl, …) talks from its own artwork rather than from a layer
+        # image. The effect layer on the timeline is a rendered transparent CLIP, and animating a
+        # clip's mouth is not a thing this does — it animates one picture. The pose's source PNG is
+        # that picture, so it is what gets used. Names are checked against the catalogue's `pose`
+        # entries, so this cannot be pointed at an arbitrary file.
+        from app.services import meme_builder_service as mb
+        from app.services.effects_service import character as _ch
+        name = mb.canonical_alpha_effect(data.character)
+        poses = {e["name"] for e in mb.alpha_effect_catalog() if e.get("pose")}
+        path = _ch._character_path(name) if name in poses else ""
+        if not path:
+            raise HTTPException(status_code=400, detail="that character can't be made to talk")
+        with open(path, "rb") as fh:
+            img = fh.read()
+    else:
+        img, _ct = await _fetch_media_guarded(data.url, own)
     if not img:
         raise HTTPException(status_code=400, detail="empty image")
     if len(img) > 80 * 1024 * 1024:

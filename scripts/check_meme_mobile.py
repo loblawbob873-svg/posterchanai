@@ -159,6 +159,10 @@ AUDIT = r"""(() => {
   out.panel = !!document.getElementById('mb-inspector') || !!document.querySelector('.mb-f');
   const ids = %s;
   ids.forEach(id => { out.present[id] = !!document.getElementById(id); });
+  // EXACTLY one, not merely present. #mb-talk is emitted from two mutually exclusive branches (an
+  // image layer, and a character-pose layer, which is a video) — if that exclusivity ever breaks,
+  // two elements share an id and only the first is ever wired up.
+  out.dupes = ids.filter(id => document.querySelectorAll('#' + id).length > 1);
 
   const vis = el => !el.checkVisibility || el.checkVisibility();
   const boxes = [];
@@ -243,6 +247,8 @@ async def drive(url):
                 label = f"{w}px"
                 if not res["panel"]:
                     problems.append((label, "missing-control", "the inspector panel did not render"))
+                for dup in res.get("dupes") or []:
+                    problems.append((label, "duplicate-id", f"#{dup} is in the DOM more than once"))
                 for cid, ok in res["present"].items():
                     if not ok:
                         problems.append((label, "missing-control", f"#{cid} is not in the DOM"))
