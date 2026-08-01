@@ -1,21 +1,59 @@
 # `talk` — making a still picture lip-sync
 
-Attach a photo of a face, type a line, and get back an MP4 of that face saying it.
+Attach a photo of a face **and a few seconds of a voice**, type a line, and get back an MP4 of that
+face saying it **in that voice**.
 
 ```
-talk I am the president now
-talk get in the car | ana          # `| <voice>` picks who says it
+talk I am the president now        # with a photo AND a voice clip attached
 ```
 
 Reachable from: AI chat (the ✨ picker → **Make it talk**, and the image action row), Telegram, and
 **Discover → Meme → a photo layer → 🗣️ Make it talk**. Not exposed to the fediverse bots.
 
-Two independent halves:
+Two halves, and the split is the whole design:
 
-| | what | where |
+| | what | where | cost |
+|---|---|---|---|
+| speech | the **cloned-voice model**, the same one `voice` uses | `voice_factory` → `voice_local` | the node's **GPU**, ~10x realtime |
+| mouth | a CPU puppet warp | `app/services/effects_service/talk.py` | CPU, ~16s for a 20s clip |
+
+`talk` is deliberately **not** edge-tts. edge-tts is what `narrate` uses — cloud, instant, and a
+stock voice. Cloning is the point of the feature, so the speech goes through `voice_factory`, which
+already owns the `GPUResourceLock`, `prepare_for_voice`'s VRAM swap, the round-robin over
+`chat_server_urls` and the busy probe. Nothing about the GPU is reimplemented here.
+
+`talk.py` itself takes a picture and *a path to already-generated audio*. It knows nothing about
+where the speech came from — which is exactly what keeps the GPU discipline in one place.
+
+## Where the voice comes from
+
+| surface | reference | why |
 |---|---|---|
-| speech | edge-tts, the app's existing TTS | `app/services/tts_service.py` |
-| mouth | a CPU puppet warp | `app/services/effects_service/talk.py` |
+| AI chat | a second **attachment** (the ✨ picker takes both files at once) | same as `voice`: the voice library is client-side |
+| Meme Builder | **your saved voices**, via `PC.openVoiceStudio` | the library, recorder, queue notice and length estimate already exist there |
+
+### Telegram is NOT finished — known gap
+
+`talk` is matched on Telegram (so it can never fall through to the LLM) but it cannot currently
+succeed there, and this is a limitation of the transport, not a bug to hunt:
+
+* Telegram cannot put a photo **and** an audio clip in one message — a media group is photos/videos
+  only — so the two files can never arrive together.
+* The Telegram handler does not download `message.voice` / `message.audio` **at all** today (see
+  `messages.py`, which reads only `photo`, `document` and `video`). That is pre-existing, and it
+  means the `voice` command's own "reply to a voice note with `voice <text>`" docstring does not
+  actually hold on Telegram either.
+
+The fix is an interactive two-step flow like `clip`'s: send the photo with `talk <what to say>`, the
+bot ForceReply-prompts for a voice note, then renders. That is not built. Until it is, Telegram users
+get the "attach a voice clip" reply, which is honest but unsatisfiable there — so treat `talk` as
+**web UI only** in practice.
+
+The Meme Builder button borrows AI Chat's voice studio with an `onTake`, exactly as "Add a voice
+line" does — only the ENDING differs. The take is uploaded to the user's own drive and its URL handed
+to `POST /client/meme/talk`, which animates the layer's face. So the speech is generated through
+`/client/voice/speak` (GPU lock, per-user cooldown, LB) and the render through the meme queue; there
+is no second endpoint that generates speech.
 
 ## Why a puppet warp and not Wav2Lip / SadTalker / LatentSync
 
@@ -82,6 +120,10 @@ within 0.3% of each other — a JPEG re-encode flipped which one "won" — while
 * **The cavity starts AT the lip seam, never above it.** It is composited on top of the picture, so
   an ellipse centred on the seam puts half of itself — tooth strip included — over the upper lip and
   reads as a grey smear across the philtrum.
+* **The reference clip goes in a SUBDIRECTORY of the temp dir.** It keeps the upload's own filename,
+  so written beside the normalised output an attachment that happens to be called `ref.wav` *is* the
+  output path, and ffmpeg refuses with "cannot edit existing files in-place" on a clip that is
+  otherwise perfect. (This bit `voice` too — the helper is now shared, so it is fixed for both.)
 * **PNG encoding, not rendering, was the cost.** Frames go to disk for ffmpeg, and at Pillow's
   default compression a 960x665 frame took **167ms to write and 1ms to render**: a 20s clip spent 67
   of its 68 seconds zipping temp files that are deleted moments later. `frames_to_video` /
@@ -93,29 +135,43 @@ within 0.3% of each other — a JPEG re-encode flipped which one "won" — while
 
 ## Load, queues and the GPU
 
-`talk` uses **no GPU compute** and takes **no `GPUResourceLock`**. The only silicon it can touch is
-the GPU's *media engine*, if `_video_encoder_candidates` picks NVENC/VAAPI for the final encode —
-separate hardware from the compute cores, the same reasoning as the live-stream clamp.
+Two different queues, because the two halves cost different things.
 
-It still queues, because it runs where every other meme render runs:
+**The speech is GPU work** and goes through `voice_factory` like every other voice request:
+`GPUResourceLock` (so chat, image, music, video and voice all serialise on one lock),
+`prepare_for_voice` to swap other models out of VRAM, round-robin over the unified `chat_server_urls`
+node list, and a busy probe that demotes a node known to be working. `queue_depth()` is what the
+studio shows while you wait. None of that is new code — `talk` calls the same function `voice` does.
 
-* **From the Meme Builder** — `POST /client/meme/apply-effect`, so it inherits that endpoint's whole
-  discipline for free: the shared `_meme_slot()` render semaphore (503 when the queue won't drain),
-  the per-user cooldown, and `_meme_lb_forward` busy-overflow to a peer node.
-* **From AI chat / Telegram** — the ordinary `execute_command` path, exactly like `compress`,
-  `removebackground` and every ffmpeg effect. ffmpeg and the per-frame Pillow work run in a thread,
-  so they never block the event loop.
+**The mouth is CPU work** and runs where every other meme render runs:
+
+* **From the Meme Builder** — `POST /client/meme/talk`, which takes the same `_meme_slot()` render
+  semaphore (503 when the queue won't drain), the same per-user cooldown, and the same
+  `_meme_lb_forward` overflow to a peer node as `/meme/apply-effect`. It takes **no `GPUResourceLock`
+  and does no GPU compute**; the only silicon it can touch is the GPU's *media engine*, if
+  `_video_encoder_candidates` picks NVENC/VAAPI for the final encode — separate hardware from the
+  compute cores, the same reasoning as the live-stream clamp.
+* **From AI chat / Telegram** — the ordinary `execute_command` path, exactly like `compress` and
+  every ffmpeg effect. ffmpeg and the per-frame Pillow work run in a thread, so they never block the
+  event loop.
 
 ## Limits
 
 `TALK_MAXDIM` 960px working edge, `TALK_FPS` 20, `TALK_MAX_DURATION` 30s, `TALK_MAX_CHARS` 400. A
 mouth narrower than 12px is refused — it cannot animate into anything but mush.
 
+`TALK_MAX_CHARS` is the renderer's bound, not `voice_max_chars` (default 800): a line long enough to
+run past `TALK_MAX_DURATION` would have its video cut mid-sentence, so it is refused up front instead.
+
+Speech needs `voice_enabled` (Admin → Voice) and `./install.sh --voice`; `talk` says which of those
+is missing rather than failing opaquely.
+
 ## Dependencies
 
-Nothing new. `insightface`, `opencv-python-headless`, `onnxruntime`, `numpy`, `Pillow` and `edge-tts`
-are all already in `requirements.txt` for the thug/blue overlays and the existing TTS, and the
-106-point weights are part of the same `buffalo_l` pack that face detection already downloads. On the
-lean `GPU=nostr` image there is no opencv, and `talk` says so rather than blaming the photo.
+Nothing new. `insightface`, `opencv-python-headless`, `onnxruntime`, `numpy` and `Pillow` are already
+in `requirements.txt` for the thug/blue overlays, the 106-point weights are part of the same
+`buffalo_l` pack that face detection already downloads, and the voice model is the existing
+`./install.sh --voice`. On the lean `GPU=nostr` image there is no opencv, and `talk` says so rather
+than blaming the photo.
 
 Tests: `tests/test_talk_lipsync.py`.

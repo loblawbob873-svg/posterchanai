@@ -168,9 +168,21 @@ class TestWiring(unittest.TestCase):
     def test_telegram_matches_it_and_hands_it_the_bytes(self):
         # Telegram never calls parse_command — it matches its own literal list, and it OCRs an upload
         # for anything not named as a raw-media command. Missing either list is a silent failure: the
-        # first falls through to the LLM, the second hands the effect text instead of a picture.
+        # first falls through to the LLM (which would happily INVENT a talking video), the second
+        # hands the command OCR'd text instead of a picture.
+        #
+        # NB this pins the wiring, not a working feature: Telegram cannot carry a photo AND an audio
+        # clip in one message, and its handler downloads no audio at all — see docs/TALK.md. Being
+        # matched is what makes it answer "attach a voice clip" instead of hallucinating.
         self.assertIn("talk", tg._TG_COMMANDS)
         self.assertIn("talk", tg._TG_RAW_MEDIA_COMMANDS)
+
+    def test_the_render_lb_knows_talk_answers_with_raw_media(self):
+        """A forwarded render answers with BYTES (a peer needs ffmpeg, not a blob store). A subpath
+        missing from this tuple isn't a no-op — the LB hands the raw MP4 straight to the browser,
+        which is waiting for {url,...}, so the layer silently never updates."""
+        from app.routers import client as cl
+        self.assertIn("talk", cl._MEME_RAW_MEDIA_SUBPATHS)
 
     def test_it_is_not_an_effect(self):
         """Effects read their argument as motion MODIFIERS, so `talk hello there` in an effect set
@@ -178,14 +190,23 @@ class TestWiring(unittest.TestCase):
         self.assertNotIn("talk", CS.MOTION_EFFECTS)
         self.assertNotIn("talk", CS.ANIMATED_EFFECTS)
 
-    def test_the_voice_names_are_real(self):
-        """The picker (/client/meme/voices) and the `| voice` suffix read the SAME table, so a typo
-        here is a voice the UI offers and the command rejects."""
-        self.assertTrue(CS.TALK_VOICES)
-        for short, full in CS.TALK_VOICES.items():
-            with self.subTest(voice=short):
-                self.assertEqual(short, short.lower())
-                self.assertRegex(full, r"^[a-z]{2}-[A-Z]{2}-\w+Neural$")
+    def test_it_speaks_with_the_cloned_voice_not_tts(self):
+        """`talk` must go through voice_factory — the GPU-locked, load-balanced local model that
+        `voice` uses — and NOT edge-tts. edge-tts is what `narrate` is for; wiring `talk` to it would
+        silently give the meme a stock voice and bypass the whole GPU queue."""
+        import inspect
+        src = inspect.getsource(CS._talk_command)
+        self.assertIn("voice_factory", src)
+        self.assertNotIn("TTSService", src)
+
+    def test_the_reference_clip_has_one_definition(self):
+        """`voice` and `talk` normalise the reference the same way, through one helper — two copies
+        would drift on the cap, the ffmpeg call and the wording of a bad clip."""
+        self.assertTrue(callable(getattr(CS, "_voice_reference_wav", None)))
+        import inspect
+        for fn in (CS._voice_command, CS._talk_command):
+            with self.subTest(command=fn.__name__):
+                self.assertIn("_voice_reference_wav", inspect.getsource(fn))
 
 
 if __name__ == "__main__":

@@ -353,13 +353,28 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   encoder must be broken". A WHIP/phone publisher renegotiates a second after go-live, which kills the
   source and looks identical to encoder failure — that demoted a working GPU stream to libx264 (46% of a
   core) for its whole duration in production. `clamp.sh:hw_ok` probes with the REAL argument set (15ms).
-- **Talking pictures** (`talk` command; `app/services/effects_service/talk.py`): attach a face, type a
-  line, get an MP4 of that face lip-syncing it. Speech is the existing edge-tts (`tts_service`); the
-  MOUTH is a **CPU puppet warp**, not Wav2Lip/SadTalker — numpy+Pillow only, so it is identical on
-  CUDA/Arc/ROCm/no-GPU, it **never takes `GPUResourceLock`**, and it works on DRAWINGS (neural
-  lip-sync smears on flat art). It still queues like everything else: the Meme Builder path is
-  `/meme/apply-effect`, so it inherits `_meme_slot()`, the per-user cooldown and `_meme_lb_forward`
-  overflow; chat/Telegram use the ordinary `execute_command` path like `compress`. Wired as a
+- **Talking pictures** (`talk` command; `app/services/effects_service/talk.py`): attach a face AND a
+  few seconds of a voice, type a line, get an MP4 of that face lip-syncing it IN THAT VOICE. The
+  feature is TWO halves on two different queues, and that split is the design: **speech = the CLONED
+  VOICE model** via `voice_factory` (the same call `voice` makes, so it inherits `GPUResourceLock`,
+  `prepare_for_voice`'s VRAM swap, the `chat_server_urls` round-robin and the busy probe) — it is
+  deliberately **NOT edge-tts**, which is what `narrate` uses; **mouth = a CPU puppet warp**, not
+  Wav2Lip/SadTalker — numpy+Pillow only, identical on CUDA/Arc/ROCm/no-GPU, **never takes
+  `GPUResourceLock`**, and it works on DRAWINGS (neural lip-sync smears on flat art). `talk.py` takes
+  a picture and a PATH TO AUDIO and knows nothing about where the speech came from — that is what
+  keeps the GPU discipline in one place. The mouth render queues like every meme render:
+  `/client/meme/talk` takes `_meme_slot()`, the per-user cooldown and `_meme_lb_forward` overflow;
+  chat/Telegram use the ordinary `execute_command` path like `compress`. The Meme Builder button
+  **borrows `PC.openVoiceStudio`** (as "Add a voice line" already does) rather than growing a second
+  library/recorder/queue-notice — only the ENDING differs, so there is no second speech endpoint.
+  **Telegram is a KNOWN GAP, not a bug to hunt:** it can't put a photo AND an audio clip in one
+  message, and the handler never downloads `message.voice`/`message.audio` at all (only photo /
+  document / video — which also means `voice`'s "reply to a voice note" docstring doesn't hold
+  there). `talk` stays in the TG lists only so it can't fall through to the LLM; making it work needs
+  an interactive ForceReply flow like `clip`'s. Treat it as web-UI-only for now.
+  Reference clips are normalised by ONE shared helper, `_voice_reference_wav` (`voice` + `talk`);
+  it writes the upload into a SUBDIRECTORY because a clip named `ref.wav` would otherwise BE
+  ffmpeg's output path ("cannot edit existing files in-place") — that bit `voice` too. Wired as a
   **`MEME_LAYER_TOOL`, deliberately NOT an effect** — every effect reads its argument as motion
   MODIFIERS, so `talk hello there` in an effect set is two unknown modifiers. Gotchas: (1) the jaw's
   mask must be cropped at the SOURCE box so the alpha TRAVELS with the pixels — read at the

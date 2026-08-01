@@ -437,71 +437,71 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
-    # A handful of edge-tts voices under names a person will actually type. The full
-    # catalogue is hundreds of `xx-YY-NameNeural` strings (GET /api/tts/voices), which is
-    # a dropdown, not something anyone types into a chat box — so the command takes either
-    # one of these or a raw voice name, and the Meme Builder offers the same short list.
-    TALK_VOICES = {
-        "guy": "en-US-GuyNeural",
-        "aria": "en-US-AriaNeural",
-        "jenny": "en-US-JennyNeural",
-        "eric": "en-US-EricNeural",
-        "ana": "en-US-AnaNeural",              # child voice — the funny one
-        "ryan": "en-GB-RyanNeural",
-        "sonia": "en-GB-SoniaNeural",
-        "william": "en-AU-WilliamNeural",
-        "natasha": "en-AU-NatashaNeural",
-        "liam": "en-CA-LiamNeural",
-        "prabhat": "en-IN-PrabhatNeural",
-        "neerja": "en-IN-NeerjaNeural",
-    }
-
     async def _talk_command(self, arg: str, attachments: Optional[list]) -> dict:
-        """Make an attached face say a line: `talk <what to say> | <voice>`.
+        """Make an attached face say a line IN A CLONED VOICE: `talk <what to say>`, with a
+        picture of the face AND a few seconds of the voice attached.
 
-        Two halves, and they are deliberately in different places: the SPEECH is the
-        app's existing edge-tts service (so it inherits the configured rate/pitch and the
-        voice catalogue), and the MOUTH is effects_service.talk — a CPU puppet warp, no
-        GPU and no lip-sync model. See that module for why.
+        Two halves, deliberately in different places:
+          * the SPEECH is `voice_factory` — the same cloned-voice path as the `voice`
+            command, so it inherits the GPU lock, the VRAM swap, the node round-robin and
+            the busy probe. It is NOT edge-tts: this is the local model.
+          * the MOUTH is `effects_service.talk` — a CPU puppet warp, no GPU, no lip-sync
+            model. See that module for why.
+
+        The reference travels as an ATTACHMENT for the same reason `voice` does: the voice
+        library is client-side (the AI Chat studio keeps it on the user's own Blossom
+        drive) and Telegram has no library at all.
         """
         import asyncio
-        import base64
         import os
+        import shutil
         import tempfile
+        from app.services import settings_store, voice_factory
         from app.services.effects_service.talk import talk_attachments, TALK_MAX_CHARS
-        from app.services.tts_service import TTSService
 
+        text = (arg or "").strip()
         if not attachments:
             return {
                 "type": "text",
-                "content": "Attach a picture of a face, then send `talk <what to say>` — "
-                           "e.g. `talk I am the president now`. Add `| guy` to pick a voice.",
+                "content": "Attach a picture of a face AND a few seconds of the voice you want it to "
+                           "speak in, then send `talk <what to say>`.",
             }
-        text, _, voice_raw = (arg or "").partition("|")
-        text = text.strip()
         if not text:
             return {"type": "text", "content": "What should they say? `talk <what to say>`"}
+        # The renderer's cap, not `voice_max_chars`: a line long enough to run past
+        # TALK_MAX_DURATION would have its video cut mid-sentence, which is worse than a refusal.
         if len(text) > TALK_MAX_CHARS:
             return {"type": "text",
                     "content": f"That's a speech, not a meme — keep it under {TALK_MAX_CHARS} characters."}
-        voice_key = voice_raw.strip().lower()
-        # An unknown short name would otherwise be handed to edge-tts as a voice id and
-        # fail there as an opaque error; a raw `xx-YY-...Neural` is passed through.
-        voice = self.TALK_VOICES.get(voice_key) or (voice_raw.strip() if "-" in voice_raw else None)
-        if voice_key and not voice:
-            return {"type": "text",
-                    "content": "Unknown voice. Try one of: " + ", ".join(sorted(self.TALK_VOICES))}
+        if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
+            return {"type": "text", "content": "Voice cloning is switched off on this server."}
 
-        audio_b64 = await TTSService(self.db).generate_speech(text, voice)
-        if not audio_b64:
-            return {"type": "text", "content": "❌ Couldn't generate the speech — TTS is unavailable."}
+        tmp = tempfile.mkdtemp(prefix="talk_cmd_")
+        try:
+            # The override covers only the "nothing attached" case; a clip that WAS attached and
+            # failed keeps its own reason, which is the difference between "add a voice clip" and
+            # "that clip is unreadable, here is why".
+            wav_path, ref_bytes, err_msg = await self._voice_reference_wav(
+                attachments, tmp,
+                missing_msg="I need a voice to copy — attach a few seconds of clean audio "
+                            "(or a video with speech in it) alongside the picture.")
+            if err_msg:
+                return {"type": "text", "content": err_msg}
+            try:
+                said, where = await voice_factory.generate_voice(
+                    self.db, text, ref_bytes, reference_path=wav_path)
+            except Exception as e:
+                return {"type": "text", "content": f"Voice generation failed: {e}"}
+            logger.info("[talk] spoke %d chars on %s", len(text), where)
 
-        with tempfile.TemporaryDirectory(prefix="talk_") as td:
-            speech = os.path.join(td, "speech.mp3")
+            speech = os.path.join(tmp, "speech.wav")
             with open(speech, "wb") as fh:
-                fh.write(base64.b64decode(audio_b64))
-            # ffmpeg + per-frame Pillow work blocks; keep it off the event loop.
+                fh.write(said)
+            # ffmpeg + per-frame Pillow work blocks; keep it off the event loop. talk_attachments
+            # takes the first IMAGE, so the voice clip sitting in the same list is ignored.
             outputs, summary = await asyncio.to_thread(talk_attachments, attachments, speech)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
         if not outputs:
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}

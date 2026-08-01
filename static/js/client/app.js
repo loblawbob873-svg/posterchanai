@@ -14127,12 +14127,13 @@
     meme: { go:'Make it', cmd:'meme', icon:'😂', title:'Add meme text', file:true, accept:'image/*',
       blurb:'Outlined white caption across the image.',
       extra:[['text','Caption','when the code finally works']], needExtra:true },
-    // ONE extra field, not two: the extras are joined with SPACES into `cmd <args>`, so a separate
-    // voice box would build `talk hello guy`. The voice rides the command's own `| voice` syntax in
-    // the same field, which is what the placeholder shows.
-    talk: { go:'Say it', cmd:'talk', icon:'🗣️', title:'Make a face talk', file:true, accept:'image/*',
-      blurb:'Attach a photo of a face and it lip-syncs your line. Add | guy (or aria, ana, sonia…) to pick the voice.',
-      extra:[['text','What should they say?','I am the president now | guy']], needExtra:true },
+    // TWO files: the face and the voice to clone. `multi` is what lets both be picked at once —
+    // the command takes the first IMAGE for the face and the first clip WITH AUDIO for the voice,
+    // so the order they arrive in doesn't matter.
+    talk: { go:'Say it', cmd:'talk', icon:'🗣️', title:'Make a face talk', file:true, multi:true,
+      accept:'image/*,audio/*,video/*',
+      blurb:'Pick a photo of a face AND a few seconds of the voice to clone. The face lip-syncs your line in that voice.',
+      extra:[['text','What should they say?','I am the president now']], needExtra:true },
     collage: { go:'Combine', cmd:'collage', icon:'🖼', title:'Make a collage', file:true, multi:true,
       accept:'image/*', blurb:'Combine several images into one. Pick two or more.' },
     flashcards: { go:'Study', cmd:'flashcards', icon:'🎴', title:'Make study flashcards', file:true,
@@ -14729,7 +14730,7 @@
         <button class="aw-card" data-gen="removebackground"><span class="awc-ic">🪄</span><b>Remove background</b><span>transparent PNG</span></button>
         <button class="aw-card" data-gen="circlecrop"><span class="awc-ic">⭕</span><b>Circle crop</b><span>round avatar cut-out</span></button>
         <button class="aw-card" data-gen="meme"><span class="awc-ic">😂</span><b>Meme text</b><span>caption an image</span></button>
-        <button class="aw-card" data-gen="talk"><span class="awc-ic">🗣️</span><b>Make it talk</b><span>a face lip-syncs your line</span></button>
+        <button class="aw-card" data-gen="talk"><span class="awc-ic">🗣️</span><b>Make it talk</b><span>a face lip-syncs, in a cloned voice</span></button>
         <button class="aw-card" data-gen="collage"><span class="awc-ic">🖼</span><b>Collage</b><span>several images → one</span></button>
         <button class="aw-card" data-gen="ocr"><span class="awc-ic">🔤</span><b>Read the text</b><span>OCR a photo or PDF</span></button>
         <button class="aw-card" data-gen="flashcards"><span class="awc-ic">🎴</span><b>Flashcards</b><span>PDF or notes → quiz</span></button>

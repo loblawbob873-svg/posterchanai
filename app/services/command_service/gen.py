@@ -264,6 +264,60 @@ class _GenMixin:
             "prompt": arg.strip(),
         }
 
+    async def _voice_reference_wav(self, attachments: Optional[list], tmp_dir: str,
+                                   missing_msg: Optional[str] = None):
+        """The first attachment that HAS audio, normalised to what the voice model wants.
+
+        Returns ``(wav_path, wav_bytes, error)`` — `error` is a user-facing sentence when there is
+        nothing usable, and both other values are None then. `missing_msg` overrides the wording for
+        the "no clip attached" case alone, so a caller that also wanted a PICTURE can say what it
+        actually needs without swallowing the specific reason a clip that WAS attached failed.
+
+        Shared by `voice` and `talk` so the two cannot drift on what counts as a reference, what the
+        cap is, or how a bad clip is worded.
+        """
+        import asyncio as _asyncio
+        import os
+
+        from app.services import media_service, settings_store
+
+        # A VIDEO is fine — ffmpeg pulls the track out below, which is what makes "reply to a clip
+        # with `voice ...`" work without the user converting anything first.
+        ref = None
+        for fn, data, ct in (attachments or []):
+            if not data:
+                continue
+            if (ct or "").startswith(("audio/", "video/")) or media_service.is_video(fn, ct or ""):
+                ref = (fn, data)
+                break
+        if ref is None:
+            return None, None, (missing_msg
+                                or "That attachment has no audio in it — I need a clip of the voice.")
+
+        # The upload keeps its own filename, so it goes in a SUBDIRECTORY: written beside the
+        # output, an attachment that happens to be called `ref.wav` IS the output path, and ffmpeg
+        # refuses ("cannot edit existing files in-place") on a clip that is otherwise perfect.
+        in_dir = os.path.join(tmp_dir, "in")
+        os.makedirs(in_dir, exist_ok=True)
+        src = os.path.join(in_dir, os.path.basename(ref[0] or "ref"))
+        with open(src, "wb") as f:
+            f.write(ref[1])
+        # Normalise to what the model wants: mono 24kHz WAV, trimmed to the reference cap. A long
+        # reference buys nothing (the model uses a few seconds) and costs upload + memory on every
+        # forwarded request, so the cap is enforced HERE, once, before any of that.
+        max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
+        wav_path = os.path.join(tmp_dir, "ref.wav")
+        ff = media_service.resolve_ffmpeg()
+        proc = await _asyncio.create_subprocess_exec(
+            ff, "-y", "-i", src, "-t", str(max_ref), "-ar", "24000", "-ac", "1", wav_path,
+            stdout=_asyncio.subprocess.DEVNULL, stderr=_asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.exists(wav_path):
+            return None, None, ("Couldn't read any audio out of that clip: "
+                                + err[-200:].decode("utf-8", "replace"))
+        with open(wav_path, "rb") as f:
+            return wav_path, f.read(), None
+
     async def _voice_command(self, arg: str, attachments: Optional[list] = None) -> dict:
         """Speak text in a CLONED voice. `voice <text>` with a short clip of the voice attached.
 
@@ -277,7 +331,6 @@ class _GenMixin:
         """
         import asyncio as _asyncio
         import base64 as _b64
-        import os
         import shutil
         import tempfile
 
@@ -294,39 +347,11 @@ class _GenMixin:
         if str(settings_store.get("voice_enabled", "false")).lower() not in ("1", "true", "yes", "on"):
             return {"type": "text", "content": "Voice cloning is switched off on this server."}
 
-        # First attachment with audio in it. A VIDEO is fine — ffmpeg pulls the track out below, which
-        # is what makes "reply to a clip with `voice ...`" work without the user converting anything.
-        ref = None
-        for fn, data, ct in attachments:
-            if not data:
-                continue
-            if (ct or "").startswith(("audio/", "video/")) or media_service.is_video(fn, ct or ""):
-                ref = (fn, data)
-                break
-        if ref is None:
-            return {"type": "text", "content": "That attachment has no audio in it — I need a clip of the voice."}
-
         tmp = tempfile.mkdtemp(prefix="voice_cmd_")
         try:
-            src = os.path.join(tmp, ref[0] or "ref")
-            with open(src, "wb") as f:
-                f.write(ref[1])
-            # Normalise to what the model wants: mono 24kHz WAV, trimmed to the reference cap. A long
-            # reference buys nothing (the model uses a few seconds) and costs upload + memory on every
-            # forwarded request, so the cap is enforced HERE, once, before any of that.
-            max_ref = int(float(settings_store.get("voice_max_ref_seconds", "30") or 30))
-            wav_path = os.path.join(tmp, "ref.wav")
-            ff = media_service.resolve_ffmpeg()
-            proc = await _asyncio.create_subprocess_exec(
-                ff, "-y", "-i", src, "-t", str(max_ref), "-ar", "24000", "-ac", "1", wav_path,
-                stdout=_asyncio.subprocess.DEVNULL, stderr=_asyncio.subprocess.PIPE)
-            _, err = await proc.communicate()
-            if proc.returncode != 0 or not os.path.exists(wav_path):
-                return {"type": "text",
-                        "content": "Couldn't read any audio out of that clip: "
-                                   + err[-200:].decode("utf-8", "replace")}
-            with open(wav_path, "rb") as f:
-                ref_bytes = f.read()
+            wav_path, ref_bytes, err_msg = await self._voice_reference_wav(attachments, tmp)
+            if err_msg:
+                return {"type": "text", "content": err_msg}
 
             try:
                 wav, where = await voice_factory.generate_voice(

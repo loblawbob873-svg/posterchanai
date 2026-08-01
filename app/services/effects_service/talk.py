@@ -1,5 +1,12 @@
 """Make a still picture TALK — a puppet lip-sync for the meme tools.
 
+This module is the MOUTH only. It takes a picture and a path to already-generated
+speech, and knows nothing about where that speech came from — the callers use the
+app's CLONED-VOICE model (`voice_factory`, which owns the GPU lock, the VRAM swap
+and the node round-robin), so the two halves queue on entirely different things:
+speech on the GPU, mouth on the meme render queue. Keeping the split at "hand me
+an audio file" is what lets the GPU discipline live in exactly one place.
+
 The mouth is animated by WARPING the picture, not by a neural lip-sync model
 (Wav2Lip/SadTalker/LatentSync). That is a deliberate choice:
 

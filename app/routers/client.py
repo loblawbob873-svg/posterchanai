@@ -1290,17 +1290,6 @@ async def meme_effects():
     return JSONResponse({"effects": mb.alpha_effect_catalog()})
 
 
-@router.get("/meme/voices")
-async def meme_voices():
-    """Voices the Meme Builder's "Make it talk" offers. The full edge-tts catalogue is hundreds of
-    `xx-YY-NameNeural` ids (that's GET /api/tts/voices); this is the short curated list, served from
-    CommandService so the picker and the `talk <text> | <voice>` command can never offer different
-    names. Each entry: {name, label}."""
-    from app.services.command_service import CommandService
-    return JSONResponse({"voices": [{"name": k, "label": k.title()}
-                                    for k in sorted(CommandService.TALK_VOICES)]})
-
-
 class MemeEffectReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/render
@@ -1566,6 +1555,33 @@ async def _fetch_media_guarded(url: str, own: set, *, timeout: float = 30.0, max
     raise HTTPException(status_code=502, detail="too many redirects fetching the layer image")
 
 
+def _probe_duration(data: bytes, ext: str) -> float:
+    """Seconds of media held in memory, via ffprobe (0.0 if it can't say).
+
+    The client sizes a layer's timeline slot from this, so a render that answers 0 gets addLayer's
+    default rather than a bogus length. Shared by the render endpoints below — the block was
+    inline and about to be copied, and two copies drift.
+    """
+    import subprocess as _sp
+    import tempfile as _tf
+    tp = ""
+    try:
+        with _tf.NamedTemporaryFile(suffix="." + (ext or "mp4"), delete=False) as tfh:
+            tfh.write(data)
+            tp = tfh.name
+        p = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", tp], capture_output=True, timeout=20)
+        return float((p.stdout or b"0").strip() or 0)
+    except Exception:
+        return 0.0
+    finally:
+        if tp:
+            try:
+                os.unlink(tp)
+            except OSError:
+                pass
+
+
 @router.post("/meme/apply-effect")
 async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Session = Depends(get_db)):
     """Apply a FULL effect to a Meme Builder layer's IMAGE — the SAME engine as the Effects studio and
@@ -1647,21 +1663,7 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     # A STILL has no duration worth reporting — ffprobe answers ~0.04s for a PNG (one frame at 25fps),
     # and the client would take that as the layer's new slot length, shrinking it to a single frame and
     # dropping it out of the export. Only probe what is actually a video.
-    dur = 0.0
-    try:
-        if not ct_out.startswith("video/"):
-            raise ValueError("still image — no duration")
-        import subprocess as _sp
-        import tempfile as _tf
-        with _tf.NamedTemporaryFile(suffix="." + ext_out, delete=False) as tfh:
-            tfh.write(out["data"])
-            tp = tfh.name
-        p = _sp.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-                     "-of", "default=nw=1:nk=1", tp], capture_output=True, timeout=20)
-        dur = float((p.stdout or b"0").strip() or 0)
-        os.unlink(tp)
-    except Exception:
-        dur = 0.0
+    dur = _probe_duration(out["data"], ext_out) if ct_out.startswith("video/") else 0.0
 
     if _fwded:
         return Response(content=out["data"], media_type=ct_out, headers={
@@ -1673,6 +1675,95 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     url = f"{_blossom_url(request, db)}/{desc['sha256']}.{ext_out}"
     return JSONResponse({"ok": True, "url": url, "dur": round(dur, 2), "effect": effect,
                          "is_video": ct_out.startswith("video/")})
+
+
+class MemeTalkReq(BaseModel):
+    pubkey: str
+    auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/effect
+    url: str                     # the layer's source IMAGE url — the face to animate
+    audio: str                   # the SPOKEN LINE's url (a take from the voice studio, on the user's drive)
+
+
+# Animate a Meme Builder layer's face to a line the VOICE STUDIO already spoke.
+#
+# The split matters. This endpoint does NOT generate speech: the client gets its cloned-voice take
+# from the studio (POST /client/voice/speak, which owns the GPU lock, the VRAM swap, the node
+# round-robin and the per-user cooldown) and uploads it to their own drive first, then hands the URL
+# here. So the GPU discipline lives in ONE place instead of being reimplemented behind a second
+# endpoint, and this one is pure CPU — the same ffmpeg-and-Pillow shape as /meme/apply-effect, and it
+# rides the same render queue and overflow LB.
+#
+# Both URLs are the user's OWN Blossom blobs and both go through the same guarded fetch as
+# apply-effect, so this never fetches an arbitrary host on a user's say-so.
+@router.post("/meme/talk")
+async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(get_db)):
+    from app.services import blossom_service
+    from app.services.effects_service.talk import add_talk, TALK_MAX_DURATION
+
+    pk = nostr_service.to_pubkey_hex(data.pubkey or "")
+    if not pk or not _verify_self_auth(data.auth, pk):
+        raise HTTPException(status_code=401, detail="bad auth")
+    # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
+    _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
+    if not _fwded and not blossom_service.is_enabled(db):
+        raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
+
+    _now = time.monotonic()
+    if _now - _effect_cooldown.get(pk, 0.0) < _EFFECT_COOLDOWN_S:
+        raise HTTPException(status_code=429, detail="one at a time — give the last render a moment")
+    _effect_cooldown[pk] = _now
+
+    _fwd = await _meme_lb_forward(request, "talk",
+                                  {"pubkey": data.pubkey, "auth": data.auth,
+                                   "url": data.url, "audio": data.audio},
+                                  db=db)
+    if _fwd is not None:
+        return _fwd
+
+    own = _own_media_hosts(db)
+    img, ct = await _fetch_media_guarded(data.url, own)
+    if not img:
+        raise HTTPException(status_code=400, detail="empty image")
+    if len(img) > 80 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="image too large (80 MB limit)")
+    speech, _ = await _fetch_media_guarded(data.audio, own)
+    if not speech:
+        raise HTTPException(status_code=400, detail="empty audio")
+    # A spoken line is small; the cap is a sanity bound, not a feature. TALK_MAX_DURATION is what
+    # actually decides how long the clip runs.
+    if len(speech) > 64 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="audio too large")
+
+    import shutil as _sh
+    import tempfile as _tf
+    tmp = _tf.mkdtemp(prefix="memetalk_")
+    try:
+        wav = os.path.join(tmp, "line.wav")
+        with open(wav, "wb") as fh:
+            fh.write(speech)
+        async with _meme_slot():
+            try:
+                clip = await asyncio.to_thread(add_talk, img, wav)
+            except RuntimeError as e:
+                # add_talk's refusals are about the PICTURE (no face, too small, dead audio) — the
+                # user can act on every one of them, so hand the sentence back rather than a 500.
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                logger.warning("[meme] talk render failed for %s: %s", pk[:12], e)
+                raise HTTPException(status_code=500, detail="talk render failed")
+    finally:
+        _sh.rmtree(tmp, ignore_errors=True)
+
+    # The clip runs as long as the speech, capped — the client sizes the layer's slot from it.
+    dur = round(min(_probe_duration(clip, "mp4"), TALK_MAX_DURATION), 2)
+    if _fwded:
+        return Response(content=clip, media_type="video/mp4", headers={
+            "x-pcai-effect-name": "talk",
+            "x-pcai-effect-dur": str(dur),
+        })
+    desc = await blossom_service.save_blob(db, pk, clip, "video/mp4")
+    url = f"{_blossom_url(request, db)}/{desc['sha256']}.mp4"
+    return JSONResponse({"ok": True, "url": url, "dur": dur, "effect": "talk", "is_video": True})
 
 
 @router.get("/proxy-image")
@@ -4100,6 +4191,13 @@ async def _meme_adopt_peer_blob(db: Session, peer: str, payload: dict) -> bool:
     return desc.get("sha256") == sha
 
 
+# Render subpaths whose PEER answers with raw media rather than JSON, because a render node needs
+# ffmpeg but not a blob store — the node holding the user's request owns the storage (see
+# _meme_store_peer_media). A subpath missing from here is not a silent no-op: the LB hands the raw
+# bytes straight back to the browser, which is expecting {url,...}, so the edit never lands.
+_MEME_RAW_MEDIA_SUBPATHS = ("effect", "apply-effect", "talk")
+
+
 async def _meme_store_peer_media(request: "Request", db: Session, body: dict, subpath: str, r):
     """Store an effect rendered BY A PEER into this node's Blossom and return the JSON the client
     expects. The peer sends raw media plus x-pcai-effect-* headers precisely so that it never needs a
@@ -4171,7 +4269,7 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
                 ct = r.headers.get("content-type", "") or ""
                 # An effect peer answers with RAW MEDIA (it has ffmpeg, not necessarily a blob store):
                 # store it here, under this node's Blossom, and build the URL the client expects.
-                if subpath in ("effect", "apply-effect") and r.status_code < 400 \
+                if subpath in _MEME_RAW_MEDIA_SUBPATHS and r.status_code < 400 \
                         and not ct.startswith("application/json") and db is not None:
                     stored = await _meme_store_peer_media(request, db, body, subpath, r)
                     if stored is None:

@@ -38,7 +38,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "translate": "Translate: translate <text> to <lang>",
         "compress": "Compress attached image(s), video(s) or PDF(s)",
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
-        "talk": "Make an attached face talk: attach a picture, then talk <what to say> — add | <voice> (guy, aria, ana, sonia…) to pick who says it",
+        "talk": "Make an attached face talk in a cloned voice: attach a picture of the face AND a few seconds of the voice, then talk <what to say>",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "extractaudio": "Extract the audio from an attached video as MP3",

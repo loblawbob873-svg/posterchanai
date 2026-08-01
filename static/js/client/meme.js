@@ -76,10 +76,6 @@
   // actually resolve on this node, so the picker never offers a broken pick.
   let ALPHA_FX = [];
   fetch('/client/meme/effects').then(r=>r.json()).then(j=>{ ALPHA_FX=(j&&j.effects)||[]; }).catch(()=>{});
-  // Voices for "Make it talk". Server-side list (/client/meme/voices), for the same reason as the two
-  // above: a hardcoded copy here would drift from the names the `talk` command accepts.
-  let VOICES = [];
-  fetch('/client/meme/voices').then(r=>r.json()).then(j=>{ VOICES=(j&&j.voices)||[]; }).catch(()=>{});
   const PRESETS = [
     ['9:16', 720, 1280], ['1:1', 1080, 1080], ['16:9', 1280, 720], ['4:5', 864, 1080],
   ];
@@ -1126,7 +1122,7 @@
         <button class="btn btn-cyan small full" id="mb-prev-clip" title="Play just this clip in the preview above"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg> Preview clip</button>` : ''}
         <div class="mb-frow"><button class="btn btn-cyan small" id="mb-fit" title="Show the whole photo inside the canvas. Bars appear wherever its shape differs from the canvas — they are the canvas background.">⛶ Whole photo (bars)</button><button class="btn btn-cyan small" id="mb-fill" title="Scale up until the canvas is full and crop the overflow — no bars, but the edges are cut off">✂ Fill &amp; crop</button></div>
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
-        <button class="btn btn-cyan small full" id="mb-talk" title="Type a line and the face in this picture says it — the mouth is animated to the speech. Becomes a video layer; undo with ↺ below.">🗣️ Make it talk</button>` : ''}
+        <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below.">🗣️ Make it talk</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
@@ -2181,9 +2177,7 @@
   // layer's name. Background removal goes through this same path (it is a server-side transform of the
   // layer's image that swaps its source in place, with the same one-way-door protection and the same
   // ↺ revert), but calling it "applying removebackground…" and naming the layer after a command would
-  // be nonsense. Effects pass nothing and keep reading as effects. `opts.arg` is the command's own
-  // argument — only `talk` uses it (the line to say), since every EFFECT reads its argument as motion
-  // modifiers.
+  // be nonsense. Effects pass nothing and keep reading as effects.
   async function applyMemeEffect(base, name, opts){
     opts = opts || {};
     const label = opts.busy || ('applying '+name);
@@ -2197,7 +2191,7 @@
     try{
       const auth = await selfProof();
       const r = await fetch('/client/meme/apply-effect',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: ME.pubkey, auth, url: base.src, effect: name, arg: opts.arg||'' }) });
+        body: JSON.stringify({ pubkey: ME.pubkey, auth, url: base.src, effect: name }) });
       const j = await r.json().catch(()=>({}));
       if(!r.ok || !j.url){ throw new Error(j.detail || j.error || ('HTTP '+r.status)); }
       // The effect transforms the still into a clip — swap the layer's source IN PLACE (keep its box and
@@ -2602,42 +2596,51 @@
     on('mb-nobg','click',()=>applyMemeEffect(l, 'removebackground', {
       busy: 'removing the background', done: '🪄 background removed — ↺ undo puts it back',
       layerName: l.name || srcName(l.src) }));
-    // 🗣️ Make it talk — type a line, pick a voice, and the face in this layer lip-syncs it. Sits next
-    // to "Remove the background" and not in the "Meme effect" dropdown for the same reason: it needs an
-    // ARGUMENT (what to say), and that dropdown is a one-click trigger over a hundred effects. The mouth
-    // animation is a CPU puppet warp, not a lip-sync model — see effects_service/talk.py.
+    // 🗣️ Make it talk — the face in this layer lip-syncs a line in one of YOUR CLONED VOICES.
+    //
+    // It BORROWS AI Chat's voice studio, exactly like "Add a voice line" above does: the library, the
+    // recorder, the GPU-queue notice and the length estimate all live there, and a generation is the
+    // node's GPU either way. Only the ENDING differs — the take is uploaded and then handed to
+    // /client/meme/talk to animate this layer's face, instead of landing as its own audio layer.
+    //
+    // So the split is: speech = GPU, through the studio's own locked/load-balanced path; mouth = CPU,
+    // through the meme render queue. Neither half reimplements the other's discipline.
     on('mb-talk','click',()=>{
-      const opts = VOICES.length
-        ? VOICES.map(v=>`<option value="${enc(v.name)}">${enc(v.label||v.name)}</option>`).join('')
-        : '<option value="">default</option>';
-      PC.modal(`<h3>🗣️ Make it talk</h3>
-        <div class="muted small" style="margin-bottom:8px">The face in this picture will say your line, with
-        its mouth animated to the speech. It becomes a video layer as long as the speech — ↺ undo puts the
-        photo back.</div>
-        <label class="mb-f"><span>What should they say?</span>
-          <textarea class="input" id="mb-talk-text" rows="3" maxlength="400"
-            placeholder="I am the president now"></textarea></label>
-        <label class="mb-f"><span>Voice</span><select class="input" id="mb-talk-voice">${opts}</select></label>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn btn-ghost small" id="mb-talk-cancel">Cancel</button>
-          <button class="btn btn-neon small" id="mb-talk-go">Say it</button>
-        </div>`, root=>{
-        const ta = root.querySelector('#mb-talk-text');
-        if(ta) setTimeout(()=>{ try{ ta.focus(); }catch(_){} }, 20);
-        root.querySelector('#mb-talk-cancel').onclick = ()=>PC.closeModal();
-        root.querySelector('#mb-talk-go').onclick = ()=>{
-          const text = (ta && ta.value || '').trim();
-          if(!text){ toast('type a line first'); return; }
-          const v = root.querySelector('#mb-talk-voice');
-          const voice = (v && v.value) || '';
-          PC.closeModal();
-          // The command's own syntax — `talk <text> | <voice>` — so the builder and the chat command
-          // go through exactly one parser on the server.
-          applyMemeEffect(l, 'talk', {
-            arg: voice ? (text + ' | ' + voice) : text,
-            busy: 'making it talk', done: '🗣️ it talks — ↺ undo puts the photo back',
-            layerName: text.slice(0, 24) });
-        };
+      if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
+      PC.openVoiceStudio({
+        useLabel: '🗣️ Make the face say it',
+        onTake: async (blob, voiceName, text) => {
+          if(_fxBusy){ toast('still working on the last one — hang on'); return; }
+          _fxBusy = true;
+          const st = document.getElementById('mb-status');
+          if(st) st.textContent = 'animating the mouth…';
+          try{
+            // The renderer only ever fetches URLs, so the take goes to the user's own drive first —
+            // the same route every other layer source takes.
+            const name = (text || voiceName || 'talk').slice(0, 24);
+            const audio = await uploadBlob(new File([blob], name.replace(/[^\w .-]/g,'_') + '.wav',
+                                                    { type:'audio/wav' }));
+            const auth = await selfProof();
+            const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: l.src, audio }) });
+            const j = await r.json().catch(()=>({}));
+            if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
+            // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-
+            // door protection and same ↺ revert as applyMemeEffect, because it is the same kind of edit.
+            snap();
+            if(!l.origSrc){
+              l.origSrc = l.src; l.origType = l.type;
+              l.origName = l.name || ''; l.origDur = +l.dur || 0;
+            }
+            l.src = j.url; l.type = 'video'; l.trim = 0;
+            if(+j.dur > 0) l.dur = +j.dur;
+            l.name = name;
+            sel = l.id;
+            save(); render();
+            toast('🗣️ it talks — ↺ undo puts the photo back');
+          }catch(err){ toast('couldn’t make it talk: '+((err&&err.message)||err)); }
+          finally{ _fxBusy = false; const s2=document.getElementById('mb-status'); if(s2) s2.textContent=''; }
+        },
       });
     });
     on('mb-fx-revert','click',()=>{
