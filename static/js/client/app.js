@@ -2443,8 +2443,8 @@
       }
     }
     if(removed){ try{ invalidateCounts(); }catch(_){}
-      if(VIEW==='notifications') renderNotifications();
-      else if(VIEW==='articles') renderArticles(); }
+      renderNotificationsSoon();
+      if(VIEW==='articles') renderArticles(); }
   }
   // Always-on deletion feed: catches kind-5s regardless of the current view (the notifications/feed
   // subs are view-scoped and don't carry deletions), so deleted posts/replies/notifications clear.
@@ -6975,12 +6975,106 @@
     // width/height reserve the box before the bytes land — see MediaDims. `decoding="async"` keeps a
     // big image's decode off the main thread so it can't drop a frame mid-scroll on a phone.
     const dim = _dimAttrs(encUrl);
-    if(kind==='video'){
-      const poster = encUrl.includes('#') ? encUrl : encUrl + '#t=0.1';
-      return `<video${c} src="${poster}"${dim} controls preload="metadata" playsinline></video>`;
-    }
+    // Videos carry their URL in data-vsrc and are MOUNTED LAZILY by VideoMount (below) — see the note
+    // there for why a <video src> that is merely present, not playing, is expensive enough to kill the
+    // Android WebView. The poster behaviour above is unchanged; it just happens on mount instead of on
+    // parse, so only the videos actually on screen ever hold a media player.
+    if(kind==='video') return `<video${c} data-vsrc="${encUrl}"${dim} controls preload="none" playsinline></video>`;
     return `<img${c} src="${encUrl}"${dim} loading="lazy" decoding="async"${oe}>`;
   }
+  // ---- VideoMount: only the videos you can SEE hold a media player -------------------------------
+  // A <video> with a src is not markup, it is a live decoder: the WebView allocates a MediaCodec/media
+  // player per element the moment it starts pulling metadata, and Android's pool of those is small and
+  // process-wide. Every surface that renders notes puts an unbounded number of them on screen at once —
+  // and Notifications is the worst of them, because each row embeds the FULL referenced post (quotedDiv,
+  // media gallery and all), the right rail renders the same rows AGAIN, and renderNotifications is a
+  // whole-innerHTML rebuild that fired on every arriving event. Each rebuild threw away every <video>
+  // mid-fetch and built a new one, which is exactly the report: three videos "reloading over and over,
+  // never showing a preview", ending in "PosterChan hit a display error" — MainActivity's
+  // onRenderProcessGone toast, i.e. the render process had died outright.
+  //
+  // So a video's src is attached when it comes near the viewport and RELEASED when it leaves (or when the
+  // node is dropped from the DOM by a re-render) — removeAttribute('src') + load() is what actually hands
+  // the decoder back; letting a detached node fall out of scope leaves the player alive until GC, which is
+  // far too late during a rebuild burst. A video the user is actually PLAYING is never unmounted, and one
+  // that is remounted resumes where it was.
+  const VideoMount = (function(){
+    // The viewport is the real limit — this is only a backstop against a pathological page, so it is set
+    // above anything that genuinely fits on screen at once (a tablet showing the Notifications view AND
+    // the rail is the densest case). Too low and a video you CAN see would sit blank.
+    const MAX_MOUNTED = 8;
+    const mounted = new Set();
+    const _url = el => el.dataset.vsrc || '';
+    const _dist = el => { const r=el.getBoundingClientRect(); const c=(innerHeight||800)/2; return Math.abs(r.top+r.height/2-c); };
+    function unmount(el){
+      if(!el.dataset.vmount) return;
+      if(!el.paused && !el.ended) return;                         // playing → leave it alone (audio keeps going off-screen)
+      delete el.dataset.vmount; mounted.delete(el);
+      try{ if(el.currentTime>0.2) el.dataset.vpos=String(el.currentTime); }catch(_){}
+      try{ el.pause(); }catch(_){}
+      el.removeAttribute('src'); el.preload='none';
+      try{ el.load(); }catch(_){}                                 // THE line that frees the decoder
+    }
+    function mount(el){
+      if(el.dataset.vmount || !_url(el)) return;
+      // Over the cap: free the furthest-away mounted video that is willing to go (a PLAYING one refuses,
+      // so walk the list rather than giving up on the first refusal). Nothing to free and everything on
+      // screen is closer than we are → stay unmounted; the observer will call again when that changes.
+      if(mounted.size>=MAX_MOUNTED){
+        for(const far of [...mounted].sort((a,b)=>_dist(b)-_dist(a))){
+          if(_dist(far)<=_dist(el)) break;
+          unmount(far); if(mounted.size<MAX_MOUNTED) break;
+        }
+        if(mounted.size>=MAX_MOUNTED) return;
+      }
+      el.dataset.vmount='1'; mounted.add(el);
+      el.preload='metadata';
+      const u=_url(el), pos=+(el.dataset.vpos||0);
+      // #t= seeks the browser to a frame and PAINTS it — metadata alone still renders black in several
+      // browsers, which is the "all the videos are missing a preview" bug. Resume point when we have one.
+      el.src = u.includes('#') ? u : u + '#t=' + (pos>0.2 ? pos.toFixed(2) : '0.1');
+    }
+    const io = ('IntersectionObserver' in window) ? new IntersectionObserver(ents=>{
+      for(const e of ents){ if(e.isIntersecting) mount(e.target); else unmount(e.target); }
+    }, { rootMargin:'300px 0px' }) : null;
+    // No IntersectionObserver (nothing current, but the whole feature hangs off it) → mount on sight, which
+    // is precisely the old behaviour. Degrading to "no video ever gets a src" would be the worse bug.
+    const watch = el => io ? io.observe(el) : mount(el);
+    // Watch the WHOLE document rather than asking each render path to opt in. There are a dozen surfaces
+    // that emit note media (timeline, thread, profile, search, notifications view AND rail, community,
+    // bookmarks, …) and a new one that forgot the call would silently reintroduce this.
+    function add(n){
+      if(!n || n.nodeType!==1) return;
+      if(n.tagName==='VIDEO'){ if(n.dataset.vsrc) watch(n); return; }
+      if(n.querySelectorAll) n.querySelectorAll('video[data-vsrc]').forEach(watch);
+    }
+    function drop(n){
+      if(!n || n.nodeType!==1) return;
+      if(n.tagName==='VIDEO'){ if(n.dataset.vsrc) _release(n); return; }
+      if(n.querySelectorAll) n.querySelectorAll('video[data-vsrc]').forEach(v=>_release(v));
+    }
+    // Detached by a re-render → free the decoder rather than waiting for GC. Deferred by a turn and
+    // re-checked, because a MOVE (insertBefore of a node already in the tree — what the timeline's
+    // reconcile does) is reported as a remove followed by an add, and killing those would restart every
+    // visible video on every reconcile: the churn this exists to stop.
+    function _release(el){
+      setTimeout(()=>{
+        if(el.isConnected) return;                                // it was a move, not a removal
+        if(io) io.unobserve(el);
+        mounted.delete(el); delete el.dataset.vmount;
+        try{ el.pause(); }catch(_){}
+        el.removeAttribute('src'); try{ el.load(); }catch(_){}
+      }, 0);
+    }
+    new MutationObserver(muts=>{
+      for(const m of muts){ for(const n of m.addedNodes) add(n); for(const n of m.removedNodes) drop(n); }
+    }).observe(document.documentElement, { childList:true, subtree:true });
+    add(document.body || document.documentElement);   // anything already parsed in (the observer only sees later inserts)
+    // A video the user pressed play on must survive scrolling away, and must not be evicted to make room
+    // for one scrolling in.
+    document.addEventListener('play', e=>{ const el=e.target; if(el && el.tagName==='VIDEO' && el.dataset.vsrc) mounted.add(el); }, true);
+    return { url:_url };
+  })();
   // Wrap an ALREADY-built content <img>/<video> (article / gallery / marketplace / stream / link cards):
   // placeholder in data saver, else the original html untouched. `cls` = layout class to restore on tap.
   // Carry the ORIGINAL element's onerror into the placeholder. Dropping it meant a tapped image lost
@@ -11846,7 +11940,7 @@
       // pinned at its re-save time. (Harmless when you genuinely have no followers — there's no kind-3
       // to mis-pin.)
       _followSeeded = seedComplete && followers.length>0;
-      if(VIEW==='notifications') renderNotifications();   // reflect the seeded ordering once the async seed lands
+      renderNotificationsSoon();   // reflect the seeded ordering once the async seed lands
     }catch(_){}
       // Sub B — follows (kind-3), subscribed only AFTER the seed above, so every kind-3 is judged against a
       // populated _followSeen: an existing follower re-saving their contact list is firstTime=false and
@@ -11865,8 +11959,8 @@
           const ts = genuine ? _followTs(ev.pubkey, Math.floor(Date.now()/1000))
                              : _followTsOld(ev.pubkey, ev.created_at);
           if(genuine && ts>seenNotif.last) bumpNotif();   // only a post-EOSE, never-seen follower badges
-          if(VIEW==='notifications') renderNotifications(); } },
-        onEose: ()=>{ _followReady=true; if(VIEW==='notifications') renderNotifications(); }
+          renderNotificationsSoon(); } },
+        onEose: ()=>{ _followReady=true; renderNotificationsSoon(); }
       });
     })();
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
@@ -11874,8 +11968,8 @@
     Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
-        if(VIEW==='notifications') renderNotifications(); } },
-      onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotifications(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
+        renderNotificationsSoon(); } },
+      onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
   }
   function notifPing(ev){
@@ -11955,7 +12049,7 @@
     // Keep the rail's notification LIST live too, not just its badge: if one lands while you're
     // looking at it, re-render now instead of leaving it stale until the 150s refresh. In-memory read (no
     // relay query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
-    if(_notifReady && _rightbarShown()) loadNotifs(); }
+    if(_notifReady && _rightbarShown()) loadNotifsSoon(); }
   // ---- In-app updater: driven ENTIRELY by controllerchange (see boot()). A new service worker
   // self-activates + claims control (sw.js), firing controllerchange — the single source of truth that a
   // fresh build is LIVE and its shell precached. _onNewController() reloads silently at launch, or surfaces
@@ -12064,7 +12158,19 @@
     return `<div class="notif upd-notif" id="${id}"><span class="ic">🔄</span>`
          + `<div><b>${_updApplying?'Updating…':'Update available'}</b>${body}</div></div>`;
   }
+  // Coalesce EVENT-DRIVEN redraws. renderNotifications() is a whole-innerHTML rebuild of up to 25 rows,
+  // each embedding the full referenced post (quotedDiv: text, images and video), and it was called once per
+  // arriving event — so the initial subscription burst alone rebuilt the view ~150 times, tearing down and
+  // recreating every media element mid-load each time. On the Android tablet that read as videos
+  // "reloading over and over, never showing a preview" and then killed the WebView's render process. One
+  // render per burst instead; anything the USER does (tab, filter, load more) still redraws immediately.
+  let _notifRT=null;
+  function renderNotificationsSoon(){
+    if(VIEW!=='notifications' || _notifRT) return;
+    _notifRT=setTimeout(()=>{ _notifRT=null; if(VIEW==='notifications') try{ renderNotifications(); }catch(_){} }, 300);
+  }
   function renderNotifications(){
+    if(_notifRT){ clearTimeout(_notifRT); _notifRT=null; }   // a direct render satisfies any pending one
     const feed=$('#feed');
     const all=notifGrouped(notifList().filter(_notifMatch));
     const list=all.slice(0, _notifShown);
@@ -18008,7 +18114,9 @@
     const els=[...box.querySelectorAll('img,video')];
     if(els.length<2) return null;
     const i=els.indexOf(im);
-    return { items: els.map(el=>({ src: el.currentSrc||el.src, kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
+    // data-vsrc for an UNMOUNTED video (VideoMount only attaches a src to what's on screen) — without it a
+    // lazily-mounted attachment stepped to in the lightbox would open with an empty src.
+    return { items: els.map(el=>({ src: el.currentSrc||el.src||VideoMount.url(el), kind: el.tagName==='VIDEO'?'video':null })), i: i<0?0:i };
   }
   // Re-host the media you are looking at onto your own Blossom server, then copy the new URL.
   async function _lbToBlossom(src){
@@ -18351,7 +18459,16 @@
   // reply/mention row carries a whole quoted post, so ten of those push "Get the app" + the GitHub link
   // off the bottom. Five fits whatever KIND of notifications happen to be on top.
   const RB_NOTIF_ROWS=5;
+  // Same coalescing as renderNotificationsSoon, for the same reason: the rail renders the SAME rows —
+  // embedded post, media and all — so on a tablet (where the rail IS shown next to the Notifications
+  // view) every arriving event rebuilt both copies of every video at once.
+  let _rbNotifRT=null;
+  function loadNotifsSoon(){
+    if(_rbNotifRT) return;
+    _rbNotifRT=setTimeout(()=>{ _rbNotifRT=null; try{ loadNotifs(); }catch(_){} }, 300);
+  }
   function loadNotifs(){
+    if(_rbNotifRT){ clearTimeout(_rbNotifRT); _rbNotifRT=null; }
     const el=document.getElementById('rb-list'); if(!el) return;
     const upd=_updNotifHtml('upd-notif-rb');
     // The rail is deliberately 5 rows tall. The updater takes one of them rather than making it 6 —
