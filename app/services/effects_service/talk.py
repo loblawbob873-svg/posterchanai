@@ -511,7 +511,8 @@ def _skin_tone(base, cx: float, cy: float, mw: float):
     return tuple(int(v) for v in np.median(keep, axis=0))
 
 
-def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float, dy: float = 0.0):
+def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float,
+                  dy: float = 0.0, angle: float = 0.0):
     """`base` with the drawn mouth painted out, following the picture's own shading.
 
     A FLAT fill was the obvious thing and it is visibly wrong: cel art still has shaded regions —
@@ -546,6 +547,11 @@ def _mouth_erased(base, cx: float, cy: float, mw: float, hw: float, hh: float, d
     patch = Image.fromarray(np.clip(fill, 0, 255).astype("uint8"), "RGB")
     mask = Image.new("L", patch.size, 0)
     ImageDraw.Draw(mask).ellipse([0, 0, patch.width - 1, patch.height - 1], fill=255)
+    # ROTATE the mask with the face. An axis-aligned ellipse over a tilted mouth leaves the corners
+    # of the drawn line sticking out — on a smile that rises to one side, that leftover is read as
+    # "the mouth is not aligned", because the artist's mouth is still visible above the new one.
+    if abs(angle) > 0.5:
+        mask = mask.rotate(-angle, resample=Image.BICUBIC)
     # Just enough feather to avoid a stair-stepped edge; cel art has hard edges, so more than a
     # pixel or two of gradient reads as a smudge rather than as the drawing.
     mask = mask.filter(ImageFilter.GaussianBlur(max(0.6, mw * 0.02)))
@@ -578,9 +584,15 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
     max_hw = mw * (_ANIME_CAV_W + _ANIME_CAV_WMOD)
     # The erase spans exactly what the widest, most-open cavity will cover, and no more — every
     # pixel beyond that is art being flattened for nothing.
+    # The erase spans exactly what the widest, most-open cavity will cover, and NO MORE. Growing it to
+    # chase the last of the artist's smile line was tried and is strictly worse: every pixel beyond
+    # the cavity is art being flattened, and a large flat patch reads as a smear far more loudly than
+    # a bit of the original mouth peeking out at the corners — which, on a real face, is just what
+    # the corners of a mouth do. It is ROTATED with the face, which costs nothing and is what keeps
+    # a tilted mouth's corners inside it.
     e_top, e_bot = mw * _ANIME_CAV_TOP, mw * _ANIME_CAV_DROP
     erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.08,
-                           (e_bot - e_top) / 2 + mw * 0.04, (e_bot + e_top) / 2)
+                           (e_bot - e_top) / 2 + mw * 0.04, (e_bot + e_top) / 2, angle)
     for a, wdt in zip(openness, width):
         a = float(a)
         if a < _OPEN_EPS:
@@ -604,9 +616,11 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
                       fill=tongue + (255,))
         # A LOWER LIP under the opening. Without it the erased region just ends in flat skin, which
         # is the other half of "a shadow below the lips" — a mouth with no lip beneath it.
+        # Light and thin: it is a lip, and the cavity already has its own outline right above it.
+        # A heavy stroke here just reads as a second dark line under the mouth.
         lip_y = r + off + hh
-        d.arc([r - hw * 1.02, lip_y - hh * 0.5, r + hw * 1.02, lip_y + max(2.0, mw * 0.20)],
-              start=8, end=172, fill=ink + (210,), width=max(1, int(mw * 0.05)))
+        d.arc([r - hw * 0.96, lip_y - hh * 0.55, r + hw * 0.96, lip_y + max(2.0, mw * 0.16)],
+              start=12, end=168, fill=ink + (140,), width=max(1, int(mw * 0.032)))
         if abs(angle) > 0.5:
             patch = patch.rotate(-angle, resample=Image.BICUBIC)
         frame = erased.copy()
