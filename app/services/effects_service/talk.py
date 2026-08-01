@@ -94,6 +94,17 @@ _ANIME_MOUTH_Y = 0.76     # of box height
 _ANIME_MOUTH_W = 0.13     # of box width
 _ANIME_CHIN = 0.20        # of box height, below the mouth
 
+# The DRAWN mouth, as fractions of the mouth width. These are half-extents, so the open mouth spans
+# roughly the mouth it replaces — which sounds obvious and was not what the first cut did: at
+# 0.62 + 0.26 it drew a cavity 1.5-1.8x WIDER than the mouth (90-106px on a 60px mouth), and the
+# erase behind it then had to be a 112x55px oval spilling onto both cheeks. That oval is what
+# "an ugly shadow around the mouth" was, and making the erase properly opaque only made it stand
+# out more. Those numbers came from an era when `mw` was the anime cascade's over-estimate; with a
+# hand-placed mouth `mw` is the real width, so the drawing has to respect it.
+_ANIME_CAV_W = 0.40       # cavity half-width at rest, × mouth width
+_ANIME_CAV_WMOD = 0.14    # extra half-width on a bright vowel
+_ANIME_CAV_H = 0.30       # cavity half-height at full openness, × mouth width
+
 # InsightFace's 106-point model, indices verified by plotting them (see docs/TALK.md):
 # 0-32 is the face contour (chin at the bottom of it) and 52-71 is the lip outline.
 # InsightFace ships no semantic table for these, so they are measured, not assumed.
@@ -558,15 +569,15 @@ def _render_anime_frames(base, cx: float, cy: float, mw: float, angle: float, op
     # The erase has to cover the widest cavity this clip will draw as well as the artist's own
     # mouth — a cover narrower than the cavity lets the drawn outline land on untouched art, which
     # is half of what the "ugly shadow around the mouth" was.
-    max_hw = mw * (0.62 + 0.26)
-    erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.06, mw * 0.46)
+    max_hw = mw * (_ANIME_CAV_W + _ANIME_CAV_WMOD)
+    erased = _mouth_erased(base, cx, cy, mw, max_hw * 1.08, mw * (_ANIME_CAV_H + 0.04))
     for a, wdt in zip(openness, width):
         a = float(a)
         if a < _OPEN_EPS:
             yield base.copy()
             continue
-        hw = mw * (0.62 + 0.26 * float(wdt))                  # bright vowels spread it wider
-        hh = mw * 0.42 * a                                    # WIDER than tall — a circle reads as a shout
+        hw = mw * (_ANIME_CAV_W + _ANIME_CAV_WMOD * float(wdt))   # bright vowels spread it wider
+        hh = mw * _ANIME_CAV_H * a                                # WIDER than tall — a circle reads as a shout
         r = int(math.ceil(max(hw, hh) * 1.6)) + 6
         n = r * 2
         patch = Image.new("RGBA", (n, n), (0, 0, 0, 0))
