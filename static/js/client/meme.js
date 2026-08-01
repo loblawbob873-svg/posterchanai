@@ -1943,13 +1943,21 @@
   // "Photo vs drawing" is the same judgement and is asked here for the same reason: it picks the
   // RENDERER. A photograph has a real jaw to warp; flat art has an ink line that smears when you
   // move it, so its mouth is redrawn instead. See effects_service/talk.py.
-  function pickMouth(src){
+  //
+  // A CHARACTER POSE (jerry, carl, …) goes through this too. It briefly did not — the artwork is
+  // fixed, so the detector's answer for it is fixed, and skipping the step looked like a kindness.
+  // It is not: a fixed answer that is off is off on every single render with no way to correct it,
+  // and "the mouth selector never shows" is what that feels like from the outside. The layer's own
+  // src is the rendered CLIP, which an <img> cannot show and which is not what gets animated, so
+  // the picture (and the detection seed) come from the pose's artwork instead — /meme/character.
+  function pickMouth(src, character){
+    const show = character ? '/client/meme/character/' + encodeURIComponent(character) : src;
     return new Promise(resolve => {
       let m = { x:0.5, y:0.62, w:0.12, angle:0, anime:false }, done = false;
       PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Where is the mouth?</h3>
         <div class="muted small" style="margin-bottom:8px">Drag the marker onto the mouth, and the
         slider to match its width. I have put it where I think it is — on a photo that is usually right.</div>
-        <div class="mb-mouth-wrap" id="mm-wrap"><img id="mm-img" src="${enc(src)}" alt="">
+        <div class="mb-mouth-wrap" id="mm-wrap"><img id="mm-img" src="${enc(show)}" alt="">
           <i class="mb-mouth-pin" id="mm-pin"></i></div>
         <label class="mb-f"><span>Mouth width</span>
           <input type="range" id="mm-w" min="3" max="45" step="1" value="12"></label>
@@ -2014,7 +2022,8 @@
           try{
             const auth = await selfProof();
             const r = await fetch('/client/meme/face',{ method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: src }) });
+              body: JSON.stringify(character ? { pubkey: ME.pubkey, auth, character }
+                                             : { pubkey: ME.pubkey, auth, url: src }) });
             const j = await r.json().catch(()=>null);
             if(j && j.found){
               m = { x:+j.x||0.5, y:+j.y||0.62, w:+j.w||0.12, angle:+j.angle||0, anime:!!j.anime };
@@ -2764,10 +2773,10 @@
       // an audio layer and no animation: indistinguishable from the old "Add a voice line", which is
       // exactly how it was reported. Re-resolve by ID at take time instead.
       const lid = l.id;
-      // A CHARACTER POSE skips the placement step: the artwork never changes, so the detector's
-      // answer for it is fixed and there is nothing for a person to correct.
+      // A CHARACTER POSE places the mouth on the pose's ARTWORK rather than on the layer's source,
+      // because the layer's source is the rendered clip and the artwork is what gets animated.
       const pose = (l.type !== 'image' && l.fxPose) ? l.fxPose : '';
-      (pose ? Promise.resolve({}) : pickMouth(l.src)).then(mouth => {
+      pickMouth(l.src, pose).then(mouth => {
         if(!mouth) return;                       // cancelled — no voice generated, nothing spent
         PC.openVoiceStudio({
         useLabel: '🗣️ Make the face say it',
@@ -2787,7 +2796,7 @@
             const auth = await selfProof();
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify(pose
-                ? { pubkey: ME.pubkey, auth, audio, character: pose }
+                ? { pubkey: ME.pubkey, auth, audio, character: pose, mouth }
                 : { pubkey: ME.pubkey, auth, url: cur.src, audio, mouth }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));

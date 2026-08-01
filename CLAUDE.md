@@ -381,7 +381,13 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   Photo/Drawing toggle picks the RENDERER: a photo WARPS its real jaw, flat art REDRAWS the mouth
   (a cel mouth is an ink stroke — sliding it duplicates and smears it). Placement is NORMALISED so
   it survives every resize, and CLAMPED server-side (`_clean_mouth`) because `w` scales every length
-  in a 600-iteration loop. Chat/Telegram have no picker and still auto-detect.
+  in a 600-iteration loop. Chat/Telegram have no picker and still auto-detect. A CHARACTER POSE
+  (`carl`, `jerry`, …) goes through the picker too — it briefly did not, on the theory that fixed
+  artwork has a fixed detection, but a fixed answer that is off is off on EVERY render with no way
+  to correct it. Its layer `src` is the rendered clip, so the picker's picture and its detection seed
+  both come from the pose's own artwork (`GET /client/meme/character/<name>`, `POST /meme/face`
+  with `character`), which is also what the render animates. One name check for all three,
+  `_pose_art_path`.
   **A cut-out layer forces a SILENT clip:** MP4 has no alpha, so rendering one turns a
   background-removed layer into a BLACK RECTANGLE with the subject on top; the transparent form must
   be VP9-alpha WebM, which cannot carry audio without corrupting the alpha (`_ALPHA_VCODEC`). So

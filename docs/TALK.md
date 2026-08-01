@@ -8,7 +8,8 @@ talk I am the president now        # with a photo AND a voice clip attached
 ```
 
 Reachable from: AI chat (the ✨ picker → **Make it talk**, and the image action row), Telegram, and
-**Discover → Meme → a photo layer → 🗣️ Make it talk**. Not exposed to the fediverse bots.
+**Discover → Meme → a photo *or character pose* layer → 🗣️ Make it talk**. Not exposed to the
+fediverse bots.
 
 Two halves, and the split is the whole design:
 
@@ -82,6 +83,17 @@ about the artwork that the person looking at it can make and the detector cannot
 
 Detection is still the default everywhere there is no picker (chat, Telegram), and `add_talk`
 auto-detects when `mouth=` is omitted.
+
+**A character pose gets the same dialog.** It briefly did not: a pose's artwork is fixed, so the
+detector's answer for it is fixed too, and asking looked like pointless ceremony. It is not — a
+fixed answer that is *off* is off on every render anyone ever makes of that character, with no way
+to correct it. What is special about a pose is only *which picture* the dialog shows: the layer's
+own `src` is the rendered transparent clip (an `<img>` cannot display it, and it is not what gets
+animated), so the picture and the seed both come from the pose's artwork —
+`GET /client/meme/character/<name>` and `POST /client/meme/face` with `character` instead of `url`.
+That is the same artwork the render animates, so a marker dragged in the dialog means what it looks
+like it means. All three resolve the name through one check (`_pose_art_path`, against the
+catalogue's `pose` entries), so none of them can be pointed at a file that is not a character.
 
 Server-side the placement is **clamped**, not merely parsed (`_clean_mouth`): it is untrusted input
 that becomes ellipse dimensions inside a 600-iteration render loop, and `w` is what every length

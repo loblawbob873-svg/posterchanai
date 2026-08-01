@@ -1699,10 +1699,43 @@ def _clean_mouth(raw) -> dict | None:
             "anime": bool(raw.get("anime"))}
 
 
+def _pose_art_path(name: str) -> str:
+    """The source ARTWORK of a character pose (jerry, carl, …), or "" if that name is not a pose.
+
+    ONE resolver for the three places that need it — the picker's picture, the picker's detection
+    seed, and the render — so a name can never be a pose for one of them and not the others. Names
+    are checked against the catalogue's `pose` entries, so none of the three can be pointed at an
+    arbitrary file."""
+    from app.services import meme_builder_service as mb
+    from app.services.effects_service import character as _ch
+    canon = mb.canonical_alpha_effect((name or "").strip())
+    if not canon:
+        return ""
+    poses = {e["name"] for e in mb.alpha_effect_catalog() if e.get("pose")}
+    return _ch._character_path(canon) if canon in poses else ""
+
+
+# The artwork behind a character pose, so the mouth picker has something to SHOW.
+#
+# A pose layer's `src` is a rendered transparent CLIP: an <img> cannot display it, and it is not
+# what gets animated anyway — the pose's own drawing is (see meme_talk). Bundled meme art, not user
+# data, so this needs no auth; what it will serve is bounded by the pose catalogue.
+@router.get("/meme/character/{name}")
+async def meme_character_art(name: str):
+    import mimetypes
+    path = _pose_art_path(name.rsplit(".", 1)[0] if "." in name else name)
+    if not path:
+        raise HTTPException(status_code=404, detail="no such character")
+    ct = mimetypes.guess_type(path)[0] or "image/png"
+    # Immutable: the art ships with the code, and the picker fetches it every time it opens.
+    return FileResponse(path, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+
+
 class MemeFaceReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/talk
-    url: str                     # the layer's source IMAGE url
+    url: str = ""                # the layer's source IMAGE url…
+    character: str | None = None  # …or a CHARACTER POSE by name, whose artwork is the face (see meme_talk)
 
 
 # Where the mouth appears to be — the SEED for the placement control, not the final word. Cheap
@@ -1717,7 +1750,14 @@ async def meme_face(data: MemeFaceReq, request: Request, db: Session = Depends(g
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
-    img, _ct = await _fetch_media_guarded(data.url, _own_media_hosts(db))
+    if data.character:
+        path = _pose_art_path(data.character)
+        if not path:
+            raise HTTPException(status_code=400, detail="that character can't be made to talk")
+        with open(path, "rb") as fh:
+            img = fh.read()
+    else:
+        img, _ct = await _fetch_media_guarded(data.url, _own_media_hosts(db))
     if not img:
         raise HTTPException(status_code=400, detail="empty image")
     if len(img) > 80 * 1024 * 1024:
@@ -1783,13 +1823,9 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
         # A CHARACTER POSE (jerry, carl, …) talks from its own artwork rather than from a layer
         # image. The effect layer on the timeline is a rendered transparent CLIP, and animating a
         # clip's mouth is not a thing this does — it animates one picture. The pose's source PNG is
-        # that picture, so it is what gets used. Names are checked against the catalogue's `pose`
-        # entries, so this cannot be pointed at an arbitrary file.
-        from app.services import meme_builder_service as mb
-        from app.services.effects_service import character as _ch
-        name = mb.canonical_alpha_effect(data.character)
-        poses = {e["name"] for e in mb.alpha_effect_catalog() if e.get("pose")}
-        path = _ch._character_path(name) if name in poses else ""
+        # that picture, so it is what gets used. `mouth` still applies: it is the placement the user
+        # made on THAT artwork, which is what /meme/character serves the picker.
+        path = _pose_art_path(data.character)
         if not path:
             raise HTTPException(status_code=400, detail="that character can't be made to talk")
         with open(path, "rb") as fh:

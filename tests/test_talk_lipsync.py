@@ -357,6 +357,36 @@ class TestWiring(unittest.TestCase):
         from app.routers import client as cl
         self.assertIn("talk", cl._MEME_RAW_MEDIA_SUBPATHS)
 
+    def test_a_character_pose_can_be_placed_like_any_other_face(self):
+        """A pose's mouth is picked, not decided for you. The three server halves of that must agree
+        on ONE name check, or the picker shows a picture the render doesn't animate (or 404s while
+        the render happily proceeds): the artwork endpoint, the detection seed and the render all
+        resolve through _pose_art_path."""
+        from app.routers import client as cl
+        self.assertTrue(cl._pose_art_path("carl"))
+        self.assertTrue(cl._pose_art_path("Carl"))          # the layer stores whatever the catalogue said
+        self.assertFalse(cl._pose_art_path("lookingaway"))  # an animation, not a pose — cannot talk
+        self.assertFalse(cl._pose_art_path("../../etc/passwd"))
+        self.assertFalse(cl._pose_art_path(""))
+        import inspect
+        for fn in (cl.meme_character_art, cl.meme_face, cl.meme_talk):
+            with self.subTest(endpoint=fn.__name__):
+                self.assertIn("_pose_art_path", inspect.getsource(fn))
+
+    def test_the_pose_placement_reaches_the_render(self):
+        """The client's pose branch must send `mouth` too. Dropping it doesn't fail — the server
+        falls back to auto-detect — so the picker would appear, be dragged, and be ignored."""
+        import os
+        import re
+        js = open(os.path.join(os.path.dirname(__file__), "..", "static", "js",
+                               "client", "meme.js"), encoding="utf-8").read()
+        # the pose body of the /meme/talk POST
+        m = re.search(r"\{ pubkey: ME\.pubkey, auth, audio, character: pose[^}]*\}", js)
+        self.assertIsNotNone(m, "the pose talk request went away")
+        self.assertIn("mouth", m.group(0))
+        # …and the picker is not skipped for it
+        self.assertIn("pickMouth(l.src, pose)", js)
+
     def test_it_is_not_an_effect(self):
         """Effects read their argument as motion MODIFIERS, so `talk hello there` in an effect set
         would be parsed as two unknown modifiers instead of a line to say."""

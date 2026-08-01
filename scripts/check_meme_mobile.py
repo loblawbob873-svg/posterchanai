@@ -85,14 +85,20 @@ window.__PC = {
   mediaServer:'', eTags(){ return []; }, profOf(){ return {}; },
   get ME(){ return {pubkey:'0'.repeat(64)}; }, get CFG(){ return {}; }, get VIEW(){ return 'meme'; },
 };
-// Only /client/meme/talk is answered; everything else keeps the real fetch (the catalogues).
+// Only /client/meme/talk is answered; everything else keeps the real fetch (the catalogues, and
+// the pose ARTWORK the mouth picker shows — that one has to be a real request, because "the
+// picture loaded" is half of what the pose check is asserting). The request BODY is kept: what a
+// dragged marker is worth is decided by whether it reaches the render.
 const _fetch = window.fetch.bind(window);
-window.fetch = (u, o) => String(u).includes('/client/meme/talk')
-  ? Promise.resolve(new Response(
-      JSON.stringify({ok:true, url:'https://example.invalid/talk.webm', dur:3.5,
-                      effect:'talk', is_video:true, alpha:true}),
-      {status:200, headers:{'Content-Type':'application/json'}}))
-  : _fetch(u, o);
+window.__talkBody = null;
+window.fetch = (u, o) => {
+  if (!String(u).includes('/client/meme/talk')) return _fetch(u, o);
+  try { window.__talkBody = JSON.parse((o || {}).body || 'null'); } catch (_) { }
+  return Promise.resolve(new Response(
+    JSON.stringify({ok:true, url:'https://example.invalid/talk.webm', dur:3.5,
+                    effect:'talk', is_video:true, alpha:true}),
+    {status:200, headers:{'Content-Type':'application/json'}}));
+};
 </script>
 <script src="/static/js/client/sprite.js"></script>
 <script src="/static/js/client/meme.js"></script>
@@ -151,6 +157,48 @@ TALK_REGRESSION = r"""(async () => {
     videoSrc: (ls.find(l => l.type === 'video') || {}).src || '',
     toasts: window.__toasts.slice(-3),
   };
+})()"""
+
+# A CHARACTER POSE layer (the `carl` alpha effect, on the timeline as its rendered clip) must reach
+# the SAME placement control. It briefly did not — "the mouth selector never shows" — and the two
+# ways that path breaks are both invisible from the outside: the picker showing the layer's own src
+# (a webm, which an <img> renders as nothing, leaving a dialog you cannot use), and the placement
+# being collected and then dropped from the request, which silently falls back to auto-detect.
+POSE_TALK = r"""(async () => {
+  const P = JSON.parse(localStorage.getItem('pc_meme_project'));
+  P.layers.push({id:'L2', type:'video', src:'https://example.invalid/carl.webm', name:'Carl',
+                 fxPose:'carl', start:0, dur:6, trim:0, x:0, y:0, w:720, h:1280,
+                 opacity:1, effect:'none', volume:1, mute:false, flipH:false, flipV:false,
+                 rotate:0, sound:'', soundVolume:1, text:'', size:64,
+                 color:'#ffffff', stroke:'#000000', align:''});
+  localStorage.setItem('pc_meme_project', JSON.stringify(P));
+  window.PCMeme.render();
+  await new Promise(r => setTimeout(r, 200));
+  const row = document.querySelector('.mb-track[data-id="L2"]'); if (row) row.click();
+  const tab = document.querySelector('.mb-tab[data-tab="layer"]'); if (tab) tab.click();
+  await new Promise(r => setTimeout(r, 200));
+  const btn = document.getElementById('mb-talk');
+  if (!btn) return {err: 'a character pose offers no #mb-talk'};
+  btn.click();
+  for (let i = 0; i < 40 && !document.getElementById('mm-go'); i++)
+    await new Promise(r => setTimeout(r, 50));
+  if (!document.getElementById('mm-go')) return {err: 'a character pose never opened the mouth picker'};
+  const img = document.getElementById('mm-img');
+  for (let i = 0; i < 60 && img && !img.complete; i++) await new Promise(r => setTimeout(r, 50));
+  const shown = img ? img.getAttribute('src') : '';
+  // Drag the marker somewhere unmistakable, so "it arrived" cannot be confused with the default.
+  const w = document.getElementById('mm-wrap'), r = img.getBoundingClientRect();
+  w.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, clientX:r.left + r.width*0.25,
+                                                   clientY:r.top + r.height*0.75}));
+  w.dispatchEvent(new PointerEvent('pointerup', {bubbles:true}));
+  document.getElementById('mm-go').click();
+  for (let i = 0; i < 40 && !window.__voiceOpts; i++) await new Promise(r => setTimeout(r, 50));
+  if (!window.__voiceOpts || !window.__voiceOpts.onTake) return {err: 'the picker did not open the studio'};
+  await window.__voiceOpts.onTake(new Blob(['x'], {type:'audio/wav'}), 'testvoice', 'hello there');
+  for (let i = 0; i < 60 && !window.__talkBody; i++) await new Promise(r => setTimeout(r, 100));
+  const b = window.__talkBody || {};
+  return {shown, loaded: !!(img && img.naturalWidth > 0),
+          character: b.character || '', mouth: b.mouth || null};
 })()"""
 
 AUDIT = r"""(() => {
@@ -296,6 +344,36 @@ async def drive(url):
                 print(f"talk: layers={tk['n']} video={tk['video']} audio={tk['audio']} "
                       f"image={tk['stillImage']}")
 
+            await call("Page.navigate", {"url": url})
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+                if await js("window.__ready === true"):
+                    break
+            r = await call("Runtime.evaluate",
+                           {"expression": POSE_TALK, "returnByValue": True, "awaitPromise": True})
+            pz = (r or {}).get("result", {}).get("value")
+            if not pz:
+                problems.append(("pose", "no-mouth-picker", "the pose probe did not run"))
+            elif pz.get("err"):
+                problems.append(("pose", "no-mouth-picker", pz["err"]))
+            else:
+                if "/client/meme/character/carl" not in (pz.get("shown") or ""):
+                    problems.append(("pose", "no-mouth-picker",
+                                     "the picker showed the layer's clip, not the pose artwork "
+                                     f"({pz.get('shown')!r}) — an <img> renders that as nothing"))
+                elif not pz.get("loaded"):
+                    problems.append(("pose", "no-mouth-picker",
+                                     "the pose artwork did not load — the marker has no picture"))
+                if pz.get("character") != "carl":
+                    problems.append(("pose", "no-mouth-picker",
+                                     f"the render was asked for character={pz.get('character')!r}"))
+                if not isinstance(pz.get("mouth"), dict):
+                    problems.append(("pose", "no-mouth-picker",
+                                     "the placement never reached the render — it silently "
+                                     "falls back to auto-detect, which is the bug"))
+                print(f"pose: shown={pz.get('shown')} loaded={pz.get('loaded')} "
+                      f"character={pz.get('character')!r} mouth={pz.get('mouth')}")
+
         if not problems:
             print("OK  meme builder mobile checks passed")
             return 0
@@ -333,6 +411,14 @@ def main():
             path = path.split("?")[0].split("#")[0]
             if path.startswith("/static/"):
                 return os.path.join(ROOT, path.lstrip("/"))
+            # The mouth picker's picture for a CHARACTER POSE. The app serves this from the pose
+            # catalogue (GET /client/meme/character/<name>, see _pose_art_path, which is what the
+            # unit tests pin); here it only has to be the same BYTES, so the <img> either renders
+            # or doesn't. Nothing else in this harness needs the app running, and this must not be
+            # what changes that.
+            if path.startswith("/client/meme/character/"):
+                name = os.path.basename(path).rsplit(".", 1)[0]
+                return os.path.join(ROOT, "assets", "characters", f"{name}.png")
             return os.path.join(tmp, path.lstrip("/") or "index.html")
 
         def log_message(self, *a):
