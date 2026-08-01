@@ -108,14 +108,45 @@ _ANIME_CAV_WMOD = 0.14    # extra half-width on a bright vowel
 # measure, and the erase behind it then had to wipe the lower lip and its shading, leaving flat skin
 # under the mouth. That is the "shadow below the lips". So the cavity is anchored just ABOVE the lip
 # line and grows down from there.
-_ANIME_CAV_TOP = -0.06    # cavity top, × mouth width, relative to the lip line
-_ANIME_CAV_DROP = 0.62    # how far the cavity reaches BELOW the lip line at full openness
+# The marker IS the mouth, so the drawn mouth is CENTRED on it, with only a slight downward bias
+# because a real mouth opens by dropping the lower lip. Anchoring the cavity at the marker and
+# growing it entirely downward was anatomically defensible and wrong in practice: you place the bar
+# on the lips and the mouth renders below it, which is the whole feature missing its own target.
+_ANIME_CAV_TOP = -0.26    # cavity top, × mouth width, relative to the marker
+_ANIME_CAV_DROP = 0.42    # how far the cavity reaches BELOW the marker at full openness
 
 # InsightFace's 106-point model, indices verified by plotting them (see docs/TALK.md):
 # 0-32 is the face contour (chin at the bottom of it) and 52-71 is the lip outline.
 # InsightFace ships no semantic table for these, so they are measured, not assumed.
 _LMK_LIPS = slice(52, 72)
 _LMK_CONTOUR = slice(0, 33)
+
+# Cel art vs a photograph, by how much of the picture is EXACTLY flat. Line art is built from large
+# uniform fills; a photograph has grain and texture everywhere, so almost nothing is flat. Measured
+# over the samples here: photos 0.13 and 0.20, drawings 0.32 / 0.45 / 0.62 / 0.68 / 0.79 / 0.79 — a
+# gap wide enough that the threshold is not delicate.
+#
+# This is what decides WARP vs REDRAW, and it is a far better signal than "did the anime face
+# cascade fire", which is what decided it before. That cascade does not fire on plenty of drawings
+# at all, so those defaulted to Photo and got the warp — a smear on flat art. It is why a fixed
+# anime renderer could still look completely unchanged: the anime renderer was never running.
+_FLAT_ART_THRESHOLD = 0.27
+
+
+def _is_flat_art(im) -> bool:
+    """True if this looks like a DRAWING rather than a photograph."""
+    try:
+        import cv2
+        import numpy as np
+        small = im.convert("L")
+        small.thumbnail((512, 512))
+        g = np.asarray(small, dtype=np.float32)
+        m = cv2.blur(g, (3, 3))
+        var = cv2.blur(g * g, (3, 3)) - m * m
+        return float((var < 1.0).mean()) >= _FLAT_ART_THRESHOLD
+    except Exception:
+        return False
+
 
 _TALK_APP = None
 _TALK_APP_TRIED = False
@@ -249,6 +280,16 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
     if anime is not None:
         return anime
 
+    # WHERE the mouth is and WHAT to do with it are two different questions, and only the first one
+    # the cascade above can answer. Whether to warp or redraw is decided by the picture's flatness,
+    # so a drawing that InsightFace locates perfectly well still gets the redraw it needs.
+    try:
+        from PIL import Image as _I, ImageOps as _IO
+        with _I.open(io.BytesIO(image_data)) as _im:
+            flat = _is_flat_art(_IO.exif_transpose(_im))
+    except Exception:
+        flat = False
+
     app = _talk_app()
     if app is not None:
         try:
@@ -283,12 +324,12 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
                     chin = float((contour @ down).max() - float(centre @ down))
                     if chin < 0.25 * mw:                    # nonsense geometry — use the norm
                         chin = 0.70 * mw
-                    return (float(centre[0]), float(centre[1]), mw, angle, chin, False)
+                    return (float(centre[0]), float(centre[1]), mw, angle, chin, flat)
                 # No landmarks on this face: the keypoint mouth, nudged down off the nostrils.
                 lm, rm = f.kps[3], f.kps[4]
                 mw = max(8.0, math.hypot(float(rm[0] - lm[0]), float(rm[1] - lm[1])))
                 c = np.array([(lm[0] + rm[0]) / 2.0, (lm[1] + rm[1]) / 2.0]) + down * (0.17 * mw)
-                return (float(c[0]), float(c[1]), mw, angle, 0.70 * mw, False)
+                return (float(c[0]), float(c[1]), mw, angle, 0.70 * mw, flat)
         except Exception as e:
             logger.warning(f"talk: insightface path failed, falling back: {e}")
 
@@ -296,7 +337,7 @@ def _face_geometry(image_data: bytes) -> Optional[Tuple[float, float, float, flo
     if loc is None:
         return None
     cx, cy, mw = loc
-    return (float(cx), float(cy), float(mw), 0.0, 0.70 * float(mw), False)
+    return (float(cx), float(cy), float(mw), 0.0, 0.70 * float(mw), flat)
 
 
 def _decode_pcm(audio_path: str, rate: int = 16000):
@@ -702,16 +743,24 @@ def detect_mouth(image_data: bytes) -> dict:
     expected to let the user place it by hand: on flat art the detectors are unreliable enough that
     a guess presented as fact is worse than an honest "put it here".
     """
-    g = _face_geometry(image_data)
-    if g is None:
-        return {"found": False, "x": 0.5, "y": 0.62, "w": 0.12, "angle": 0.0, "anime": False}
-    cx, cy, mw, angle, _chin, is_anime = g
+    # The Photo/Drawing default is worth answering even when the mouth is not — failing to find a
+    # face does not stop the picture being a drawing, and that toggle decides which renderer runs.
+    # Leaving it False here sent hand-placed drawings to the WARP, which is the smear.
+    flat = False
+    W = H = 1
     try:
         from PIL import Image, ImageOps
         with Image.open(io.BytesIO(image_data)) as im0:
-            W, H = ImageOps.exif_transpose(im0).size
+            im0 = ImageOps.exif_transpose(im0)
+            W, H = im0.size
+            flat = _is_flat_art(im0)
     except Exception:
-        return {"found": False, "x": 0.5, "y": 0.62, "w": 0.12, "angle": 0.0, "anime": False}
+        pass
+
+    g = _face_geometry(image_data)
+    if g is None or W <= 1:
+        return {"found": False, "x": 0.5, "y": 0.62, "w": 0.12, "angle": 0.0, "anime": flat}
+    cx, cy, mw, angle, _chin, is_anime = g
     return {"found": True, "x": cx / max(1, W), "y": cy / max(1, H), "w": mw / max(1, W),
             "angle": angle, "anime": bool(is_anime)}
 
