@@ -2222,6 +2222,12 @@
       // The effect transforms the still into a clip — swap the layer's source IN PLACE (keep its box and
       // timeline slot), so the effect lands on this image. It becomes a video layer; duration follows the
       // effect clip so the whole thing plays.
+      //
+      // RE-RESOLVE the layer by ID first. `base` was captured before a server render that can run for a
+      // minute, and anything that reloads the project in the meantime (re-entering the view runs
+      // `P = load()`) rebuilds P.layers as new objects — mutating the captured one would then change
+      // nothing at all, silently. Same hazard the Make-it-talk handler hit for real.
+      base = P.layers.find(x => x.id === base.id) || base;
       snap();
       // Remember what was here so "↺ Undo the effect on this layer" can put the picture back. This was a
       // ONE-WAY door: the original URL was overwritten, so the wrong pick out of a hundred-name dropdown
@@ -2632,10 +2638,20 @@
     // through the meme render queue. Neither half reimplements the other's discipline.
     on('mb-talk','click',()=>{
       if(!PC.openVoiceStudio){ toast('voice cloning isn’t available on this build'); return; }
+      // Hold the layer's ID, never the layer OBJECT. A voice generation runs for the better part of a
+      // minute with a modal over the app, and any re-entry into this view runs `P = load()`, which
+      // rebuilds P.layers as brand-new objects. A captured object is then an ORPHAN: mutating it
+      // changes nothing the project can see, and P.layers.indexOf(it) is -1 — so `splice(-1 + 1, …)`
+      // still inserted the voice at the front while the talking video went nowhere. What you got was
+      // an audio layer and no animation: indistinguishable from the old "Add a voice line", which is
+      // exactly how it was reported. Re-resolve by ID at take time instead.
+      const lid = l.id;
       PC.openVoiceStudio({
         useLabel: '🗣️ Make the face say it',
         onTake: async (blob, voiceName, text) => {
           if(_fxBusy){ toast('still working on the last one — hang on'); return; }
+          const cur = P.layers.find(x => x.id === lid);
+          if(!cur || !cur.src){ toast('that layer is gone — nothing to make talk'); return; }
           _fxBusy = true;
           const st = document.getElementById('mb-status');
           if(st) st.textContent = 'animating the mouth…';
@@ -2647,20 +2663,20 @@
                                                     { type:'audio/wav' }));
             const auth = await selfProof();
             const r = await fetch('/client/meme/talk',{ method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: l.src, audio }) });
+              body: JSON.stringify({ pubkey: ME.pubkey, auth, url: cur.src, audio }) });
             const j = await r.json().catch(()=>({}));
             if(!r.ok || !j.url) throw new Error(j.detail || j.error || ('HTTP '+r.status));
             // Swap the layer's source IN PLACE, keeping its box and timeline position — same one-way-
             // door protection and same ↺ revert as applyMemeEffect, because it is the same kind of edit.
             snap();
-            if(!l.origSrc){
-              l.origSrc = l.src; l.origType = l.type;
-              l.origName = l.name || ''; l.origDur = +l.dur || 0;
+            if(!cur.origSrc){
+              cur.origSrc = cur.src; cur.origType = cur.type;
+              cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0;
             }
-            l.src = j.url; l.type = 'video'; l.trim = 0;
-            if(+j.dur > 0) l.dur = +j.dur;
-            l.name = name;
-            sel = l.id;
+            cur.src = j.url; cur.type = 'video'; cur.trim = 0;
+            if(+j.dur > 0) cur.dur = +j.dur;
+            cur.name = name;
+            sel = cur.id;
             // A TRANSPARENT result is silent, and has to be: MP4 carries no alpha at all (a cut-out
             // rendered to MP4 comes back as a black rectangle with the subject on it), and an audio
             // stream inside a VP9-alpha WebM corrupts the alpha. So when the server kept the layer's
@@ -2675,13 +2691,17 @@
               // choice the voice-over path makes for the same reason.
               const spoken = {
                 id: nid(), type:'audio', src: audio, name: (name + ' (voice)').slice(0, 24),
-                start: +l.start||0, dur: (+j.dur>0) ? +j.dur : (+l.dur||3), trim: 0,
+                start: +cur.start||0, dur: (+j.dur>0) ? +j.dur : (+cur.dur||3), trim: 0,
                 x:0, y:0, w:0, h:0, opacity:1, effect:'none', volume:1, fade:false, mute:false,
                 flipH:false, flipV:false, rotate:0,
                 sound:'', soundVolume:1, text:'', size:64, color:'#ffffff', stroke:'#000000', align:'',
               };
-              if(P.layers.length < 24) P.layers.splice(P.layers.indexOf(l) + 1, 0, spoken);
-              else toast('24 layers is the limit — the voice could not be added');
+              // `cur` came out of P.layers, so this index is real. Never splice on an indexOf that can
+              // be -1: it silently prepends, which is how the orphaned-layer bug still managed to add
+              // the voice while dropping the animation.
+              const at = P.layers.indexOf(cur);
+              if(P.layers.length >= 24) toast('24 layers is the limit — the voice could not be added');
+              else P.layers.splice(at < 0 ? P.layers.length : at + 1, 0, spoken);
             }
             save(); render();
             toast(j.alpha ? '🗣️ it talks — the voice is its own layer, ↺ undoes the picture'
