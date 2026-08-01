@@ -1290,6 +1290,17 @@ async def meme_effects():
     return JSONResponse({"effects": mb.alpha_effect_catalog()})
 
 
+@router.get("/meme/voices")
+async def meme_voices():
+    """Voices the Meme Builder's "Make it talk" offers. The full edge-tts catalogue is hundreds of
+    `xx-YY-NameNeural` ids (that's GET /api/tts/voices); this is the short curated list, served from
+    CommandService so the picker and the `talk <text> | <voice>` command can never offer different
+    names. Each entry: {name, label}."""
+    from app.services.command_service import CommandService
+    return JSONResponse({"voices": [{"name": k, "label": k.title()}
+                                    for k in sorted(CommandService.TALK_VOICES)]})
+
+
 class MemeEffectReq(BaseModel):
     pubkey: str
     auth: str                    # base64 signed kind-27235 by this pubkey — same self-proof as /meme/render

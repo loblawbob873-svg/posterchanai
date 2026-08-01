@@ -437,6 +437,75 @@ Files are saved to your Storage.""",
             return {"type": "text", "content": summary}
         return {"type": "files", "content": summary, "files": outputs}
 
+    # A handful of edge-tts voices under names a person will actually type. The full
+    # catalogue is hundreds of `xx-YY-NameNeural` strings (GET /api/tts/voices), which is
+    # a dropdown, not something anyone types into a chat box — so the command takes either
+    # one of these or a raw voice name, and the Meme Builder offers the same short list.
+    TALK_VOICES = {
+        "guy": "en-US-GuyNeural",
+        "aria": "en-US-AriaNeural",
+        "jenny": "en-US-JennyNeural",
+        "eric": "en-US-EricNeural",
+        "ana": "en-US-AnaNeural",              # child voice — the funny one
+        "ryan": "en-GB-RyanNeural",
+        "sonia": "en-GB-SoniaNeural",
+        "william": "en-AU-WilliamNeural",
+        "natasha": "en-AU-NatashaNeural",
+        "liam": "en-CA-LiamNeural",
+        "prabhat": "en-IN-PrabhatNeural",
+        "neerja": "en-IN-NeerjaNeural",
+    }
+
+    async def _talk_command(self, arg: str, attachments: Optional[list]) -> dict:
+        """Make an attached face say a line: `talk <what to say> | <voice>`.
+
+        Two halves, and they are deliberately in different places: the SPEECH is the
+        app's existing edge-tts service (so it inherits the configured rate/pitch and the
+        voice catalogue), and the MOUTH is effects_service.talk — a CPU puppet warp, no
+        GPU and no lip-sync model. See that module for why.
+        """
+        import asyncio
+        import base64
+        import os
+        import tempfile
+        from app.services.effects_service.talk import talk_attachments, TALK_MAX_CHARS
+        from app.services.tts_service import TTSService
+
+        if not attachments:
+            return {
+                "type": "text",
+                "content": "Attach a picture of a face, then send `talk <what to say>` — "
+                           "e.g. `talk I am the president now`. Add `| guy` to pick a voice.",
+            }
+        text, _, voice_raw = (arg or "").partition("|")
+        text = text.strip()
+        if not text:
+            return {"type": "text", "content": "What should they say? `talk <what to say>`"}
+        if len(text) > TALK_MAX_CHARS:
+            return {"type": "text",
+                    "content": f"That's a speech, not a meme — keep it under {TALK_MAX_CHARS} characters."}
+        voice_key = voice_raw.strip().lower()
+        # An unknown short name would otherwise be handed to edge-tts as a voice id and
+        # fail there as an opaque error; a raw `xx-YY-...Neural` is passed through.
+        voice = self.TALK_VOICES.get(voice_key) or (voice_raw.strip() if "-" in voice_raw else None)
+        if voice_key and not voice:
+            return {"type": "text",
+                    "content": "Unknown voice. Try one of: " + ", ".join(sorted(self.TALK_VOICES))}
+
+        audio_b64 = await TTSService(self.db).generate_speech(text, voice)
+        if not audio_b64:
+            return {"type": "text", "content": "❌ Couldn't generate the speech — TTS is unavailable."}
+
+        with tempfile.TemporaryDirectory(prefix="talk_") as td:
+            speech = os.path.join(td, "speech.mp3")
+            with open(speech, "wb") as fh:
+                fh.write(base64.b64decode(audio_b64))
+            # ffmpeg + per-frame Pillow work blocks; keep it off the event loop.
+            outputs, summary = await asyncio.to_thread(talk_attachments, attachments, speech)
+        if not outputs:
+            return {"type": "text", "content": summary}
+        return {"type": "files", "content": summary, "files": outputs}
+
     async def _clip_command(self, arg: str, attachments: Optional[list]) -> dict:
         """Trim an attached video to a [start, end] span: `clip <start> <end>`.
 

@@ -38,6 +38,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "translate": "Translate: translate <text> to <lang>",
         "compress": "Compress attached image(s), video(s) or PDF(s)",
         "removebackground": "Remove the background from an attached image (transparent PNG): removebackground",
+        "talk": "Make an attached face talk: attach a picture, then talk <what to say> — add | <voice> (guy, aria, ana, sonia…) to pick who says it",
         "clip": "Clip an attached video: clip <start> <end> (e.g. clip 0:10 0:30)",
         "convert": "Convert image(s) to PDF or a PDF to images",
         "extractaudio": "Extract the audio from an attached video as MP3",
@@ -236,13 +237,18 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         # and can only answer "attach a clip", which is the exact defect the alias/effect sets fixed.
         "voice",
         "circlecrop", "ocr", "post", "translate", "flashcards",
+        # `talk` animates the attached PICTURE's mouth, so it needs the image bytes.
+        "talk",
     }
     # The NON-effect commands /meme/apply-effect is allowed to run on a single Meme Builder layer.
     # That endpoint's allowlist is a security boundary — it is what stops a crafted `effect` from
     # reaching any command in _execute_command_inner — so widening it is an explicit, named decision
     # rather than "also allow MEDIA_TOOL_COMMANDS". These must take image BYTES and return a file:
     # cutting a layer's background out is compositing, which is exactly what the builder is for.
-    MEME_LAYER_TOOLS = {"removebackground"}
+    # `talk` belongs here rather than in MOTION_EFFECTS: it takes a free-text ARGUMENT
+    # (the line to say), and everything in the effect sets treats its argument as motion
+    # MODIFIERS — "talk hello there" would be read as two unknown modifiers.
+    MEME_LAYER_TOOLS = {"removebackground", "talk"}
     OVERLAY_MOTIONS = {"glow"}
     # --- effect modifier combination rules (ONE source of truth: the command path, the
     # media API and the web studio all resolve combos through check_motion_combo) ---
@@ -646,6 +652,8 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return await self._compress_command(attachments)
         elif command == "removebackground":
             return await self._removebackground_command(attachments)
+        elif command == "talk":
+            return await self._talk_command(arg, attachments)
         elif command == "clip":
             return await self._clip_command(arg, attachments)
         elif command == "convert":

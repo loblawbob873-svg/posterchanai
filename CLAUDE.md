@@ -353,6 +353,24 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   encoder must be broken". A WHIP/phone publisher renegotiates a second after go-live, which kills the
   source and looks identical to encoder failure — that demoted a working GPU stream to libx264 (46% of a
   core) for its whole duration in production. `clamp.sh:hw_ok` probes with the REAL argument set (15ms).
+- **Talking pictures** (`talk` command; `app/services/effects_service/talk.py`): attach a face, type a
+  line, get an MP4 of that face lip-syncing it. Speech is the existing edge-tts (`tts_service`); the
+  MOUTH is a **CPU puppet warp**, not Wav2Lip/SadTalker — numpy+Pillow only, so it is identical on
+  CUDA/Arc/ROCm/no-GPU, it **never takes `GPUResourceLock`**, and it works on DRAWINGS (neural
+  lip-sync smears on flat art). It still queues like everything else: the Meme Builder path is
+  `/meme/apply-effect`, so it inherits `_meme_slot()`, the per-user cooldown and `_meme_lb_forward`
+  overflow; chat/Telegram use the ordinary `execute_command` path like `compress`. Wired as a
+  **`MEME_LAYER_TOOL`, deliberately NOT an effect** — every effect reads its argument as motion
+  MODIFIERS, so `talk hello there` in an effect set is two unknown modifiers. Gotchas: (1) the jaw's
+  mask must be cropped at the SOURCE box so the alpha TRAVELS with the pixels — read at the
+  destination, the jaw repaints its own footprint and covers the cavity it just opened (symptom: a
+  mouth that darkens and never opens); (2) the cavity starts AT the lip seam, never above it, or its
+  tooth strip lands on the upper lip as a grey smear; (3) SCRFD's 5 keypoints put the "mouth corners"
+  at NOSTRIL height, so this uses the **106-point** landmarks — whose index table is measured, not
+  documented (lips 52-71, contour 0-32); (4) faces are ranked by MOUTH width, not box area, which on a
+  group shot is the only stable key. Also fixed here: frame PNGs are written at `compress_level=1`
+  (167ms → 38ms each; the encode of throwaway temp files dominated EVERY frame-based effect), and
+  `frames_to_video` consumes a generator lazily. See `docs/TALK.md`; `tests/test_talk_lipsync.py`.
 - **Remote node management** (`app/services/node_service.py`, `node` command): run OS commands
   on SSH-reachable nodes (or `local`), agentic mode, long-running **background jobs**
   (start → job id → result posted back to the originating channel). Config in Admin → Nodes

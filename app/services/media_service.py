@@ -1476,6 +1476,12 @@ def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
     compress/clip; no audio track (`-an`). Returns MP4 bytes; raises RuntimeError if
     ffmpeg is missing, no frames are given, or every encoder fails.
 
+    `frames` may be a GENERATOR, and with the default ``loops=1`` it is consumed lazily —
+    each frame is written to disk and released. That matters for the long clips (`talk`
+    renders one full-size frame per audio frame, so 30s is 600 of them: materialising the
+    list first is hundreds of MB for no reason). `loops > 1` has to replay the pass, so it
+    still materialises.
+
     Used by the animated "effect" gags (fire/blood/cum) — the effect content is
     re-rendered per frame so the flames flicker / drips run, rather than the flat
     still that the camera-motion modifiers (zoom/shake) move.
@@ -1484,19 +1490,29 @@ def frames_to_video(frames, fps: int = 14, loops: int = 1) -> bytes:
     ffmpeg = resolve_ffmpeg()
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is not installed on the server")
-    frames = list(frames or [])
-    if not frames:
-        raise RuntimeError("no frames to encode")
+    loops = max(int(loops), 1)
+    frames = frames or []
+    if loops > 1:
+        frames = list(frames)
+        if not frames:
+            raise RuntimeError("no frames to encode")
 
     tmp_dir = tempfile.mkdtemp(prefix="media_frames_")
     pattern = os.path.join(tmp_dir, "f_%05d.png")
     out_path = os.path.join(tmp_dir, "output.mp4")
     try:
         idx = 0
-        for _ in range(max(int(loops), 1)):
+        for _ in range(loops):
             for fr in frames:
-                fr.save(pattern % idx, format="PNG")
+                # compress_level=1: these PNGs live for one ffmpeg run and are deleted. At
+                # Pillow's default level the ENCODE dominates everything else — measured on
+                # a 960x665 frame: 167ms to write vs 1ms to render it, so a 400-frame clip
+                # spent 67s of its 68s zipping temp files. Level 1 is 38ms for 10% more
+                # bytes on disk, and the video is identical (PNG is lossless either way).
+                fr.save(pattern % idx, format="PNG", compress_level=1)
                 idx += 1
+        if idx == 0:
+            raise RuntimeError("no frames to encode")
 
         # Even dimensions are required by yuv420p/H.264 (odd → encoder error).
         scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
@@ -1628,8 +1644,10 @@ def frames_to_alpha_video(frames, fps: int = 20, loops: int = 1) -> bytes:
         for _ in range(max(int(loops), 1)):
             for fr in frames:
                 # RGBA PNG carries the alpha the VP9 encoder reads; force the mode so an accidental
-                # RGB frame doesn't silently produce an opaque layer.
-                fr.convert("RGBA").save(pattern % idx, format="PNG")
+                # RGB frame doesn't silently produce an opaque layer. compress_level=1 for the
+                # reason in frames_to_video — the encode of a throwaway temp file was costing far
+                # more than rendering the frame.
+                fr.convert("RGBA").save(pattern % idx, format="PNG", compress_level=1)
                 idx += 1
         cmd = ([ffmpeg, "-framerate", str(fps), "-i", pattern]
                + _ALPHA_VCODEC

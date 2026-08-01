@@ -15,7 +15,7 @@ _TG_BASE_COMMANDS = [
     "help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "voice", "mail", "news", "dailynews",
     "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share",
     "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert",
-    "extractaudio", "circlecrop", "ocr", "flashcards",
+    "extractaudio", "circlecrop", "ocr", "flashcards", "talk",
     "node", "bill", "budget", "bills", "pay", "addbill", "finance", "screenshot", "shot", "ss",
 ]
 _TG_EFFECTS = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_EFFECTS)
@@ -29,6 +29,8 @@ _TG_RAW_MEDIA_COMMANDS = _TG_EFFECTS | {
     "compress", "removebackground", "clip", "convert", "extractaudio", "circlecrop", "flashcards",
     # `voice` clones the speaker in the attached clip — it needs the audio BYTES, not OCR'd text.
     "voice",
+    # `talk` animates the attached PICTURE's mouth — it needs the image bytes, not its OCR.
+    "talk",
 }
 
 

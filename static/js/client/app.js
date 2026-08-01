@@ -14127,6 +14127,12 @@
     meme: { go:'Make it', cmd:'meme', icon:'😂', title:'Add meme text', file:true, accept:'image/*',
       blurb:'Outlined white caption across the image.',
       extra:[['text','Caption','when the code finally works']], needExtra:true },
+    // ONE extra field, not two: the extras are joined with SPACES into `cmd <args>`, so a separate
+    // voice box would build `talk hello guy`. The voice rides the command's own `| voice` syntax in
+    // the same field, which is what the placeholder shows.
+    talk: { go:'Say it', cmd:'talk', icon:'🗣️', title:'Make a face talk', file:true, accept:'image/*',
+      blurb:'Attach a photo of a face and it lip-syncs your line. Add | guy (or aria, ana, sonia…) to pick the voice.',
+      extra:[['text','What should they say?','I am the president now | guy']], needExtra:true },
     collage: { go:'Combine', cmd:'collage', icon:'🖼', title:'Make a collage', file:true, multi:true,
       accept:'image/*', blurb:'Combine several images into one. Pick two or more.' },
     flashcards: { go:'Study', cmd:'flashcards', icon:'🎴', title:'Make study flashcards', file:true,
@@ -14147,7 +14153,7 @@
                  ['search','Search the web'],['images','Find images'],
                  ['compress','Compress a file'],['clip','Clip a video'],['extractaudio','Extract the audio'],
                  ['convert','Convert images / PDF'],['removebackground','Remove a background'],
-                 ['circlecrop','Circle-crop an image'],['meme','Add meme text'],
+                 ['circlecrop','Circle-crop an image'],['meme','Add meme text'],['talk','Make a face talk'],
                  ['collage','Make a collage'],['ocr','Read the text in a file'],
                  ['flashcards','Make study flashcards']];
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make something</h3>
@@ -14723,6 +14729,7 @@
         <button class="aw-card" data-gen="removebackground"><span class="awc-ic">🪄</span><b>Remove background</b><span>transparent PNG</span></button>
         <button class="aw-card" data-gen="circlecrop"><span class="awc-ic">⭕</span><b>Circle crop</b><span>round avatar cut-out</span></button>
         <button class="aw-card" data-gen="meme"><span class="awc-ic">😂</span><b>Meme text</b><span>caption an image</span></button>
+        <button class="aw-card" data-gen="talk"><span class="awc-ic">🗣️</span><b>Make it talk</b><span>a face lip-syncs your line</span></button>
         <button class="aw-card" data-gen="collage"><span class="awc-ic">🖼</span><b>Collage</b><span>several images → one</span></button>
         <button class="aw-card" data-gen="ocr"><span class="awc-ic">🔤</span><b>Read the text</b><span>OCR a photo or PDF</span></button>
         <button class="aw-card" data-gen="flashcards"><span class="awc-ic">🎴</span><b>Flashcards</b><span>PDF or notes → quiz</span></button>
@@ -15582,7 +15589,7 @@
   // Commands match the upload allowlist in chat.py (note: it's `ocr`, not "readtext").
   function _aiAttachActions(){
     const k=new Set(_ai.attach.map(a=>a.kind));
-    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];   // Translate: OCRs + translates the text (prefills — add a language or Enter for English). Bill: reads vendor/total/due, then confirms before writing to the budget.
+    if(k.has('image')) return [['🎬 Effects','fx','__fxguide'],['🪄 Remove BG','run','removebackground'],['⭕ Circle crop','run','circlecrop'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🗜 Compress','run','compress'],['🔄 Convert','fill','convert '],['😂 Meme','fill','meme '],['🗣️ Talk','fill','talk '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];   // Translate: OCRs + translates the text (prefills — add a language or Enter for English). Bill: reads vendor/total/due, then confirms before writing to the budget. Talk prefills: it needs the line to say.
     if(k.has('pdf')||k.has('doc')) return [['🎴 Flashcards','run','flashcards'],['🔤 Read text','run','ocr'],['🌐 Translate','fill','translate '],['🧾 Bill','run','bill'],['⏰ Remind','run','remind']];
     if(k.has('video')) return [['🗜 Compress','run','compress'],['✂️ Clip','fill','clip '],['🎵 Extract audio','run','extractaudio']];   // matches Telegram's video keyboard (Convert is image↔PDF only — useless for video)
     return [['🗜 Compress','run','compress'],['🔄 Convert','fill','convert ']];
