@@ -83,6 +83,37 @@ _MOUTH_HALF_W = 0.42      # mouth-cavity half-width, × mouth width
 _LIP_LINE = -0.06         # top of the jaw mask / cavity, × mouth width, above the lip line
 _OPEN_EPS = 0.05          # below this the frame is left as the original still
 
+# The mouth INTERIOR on a PHOTOGRAPH, as fractions of the surrounding skin's luminance rather than
+# as fixed colours. This is the whole reason photos used to read as a sticker while the anime path
+# looked fine: the anime renderer draws NO teeth at all, and this one painted a constant near-white
+# strip (214,206,194) at full alpha into every picture. On a normally exposed face that band is
+# BRIGHTER than the lit cheek beside it, which no real mouth ever is — the inside of a mouth is lit
+# by the same light as the face and then shadowed by the lips, so every value here is relative to
+# the skin `_skin_tone` measures and travels with the photo's own exposure and white balance.
+_CAV_BACK = 0.055         # throat: the darkest thing in frame, × skin luminance
+_CAV_FRONT = 0.16         # just inside the lower lip, where bounce light reaches
+_CAV_FLOOR = 9.0          # ...but never crushed to pure black, which reads as a punched hole
+#
+# Teeth and tongue are NOT skin, and a straight × skin luminance gets that wrong at both ends.
+# Enamel has its own reflectance: a dark-skinned face genuinely HAS teeth brighter relative to its
+# cheek than a pale one does, and scaling them at a flat fraction of skin turned them dark grey and
+# lost the tongue entirely (measured on a 72-luminance skin patch: tongue came out (32,15,16), i.e.
+# invisible). So these are `slope × skin + bias`, CAPPED at a ratio of skin. The cap is the part
+# that actually fixes the complaint — the interior may never out-shine the lit cheek — while the
+# bias keeps a dark face's mouth from going flat black.
+_TEETH_SLOPE, _TEETH_BIAS, _TEETH_CAP = 0.42, 40.0, 0.80
+_TONGUE_SLOPE, _TONGUE_BIAS, _TONGUE_CAP = 0.34, 34.0, 0.62
+# Tooth strip height, × cavity half-height. NOT reduced along with the brightness: dimming, thinning
+# and blurring all at once erased the teeth completely (measured: at a 49px mouth the strip is 2px
+# and the rim blur below is already 1.5px), leaving a featureless black slot — the "hole punched in
+# the face" this function exists to avoid. Brightness is the lever that fixes the glare; height is
+# what keeps the mouth from reading as empty.
+_TEETH_H = 0.24
+# A mouth barely parted shows no teeth at all — the old code flashed the full strip the moment the
+# cavity cleared 4px, which is the "you can see their teeth" tell on quiet syllables. Fade across
+# this openness range instead so the teeth arrive with the vowel.
+_TEETH_FADE = (0.22, 0.62)
+
 # ANIME proportions, as fractions of the anime cascade's FACE BOX. Measured off real art (a 1920x1080
 # Chainsaw Man still and the PosterChan mascot), not guessed: the mouth sits at 0.72-0.75 of the box
 # height on both, and is 0.10-0.14 of its width. The cascade's own estimate is 0.42 of the width —
@@ -454,7 +485,8 @@ def _audio_envelope(audio_path: str, fps: int = TALK_FPS,
     return out.astype(np.float32), width.astype(np.float32)
 
 
-def _mouth_interior(mw: float, drop: float, width: float, angle: float):
+def _mouth_interior(mw: float, drop: float, width: float, angle: float,
+                    skin=None, openness: float = 1.0):
     """The inside of an open mouth, as an RGBA patch already rotated to the face's tilt,
     plus the offset from the lip seam to the patch's centre.
 
@@ -469,6 +501,7 @@ def _mouth_interior(mw: float, drop: float, width: float, angle: float):
     bottom — without those it reads as a black hole punched in the face.
     """
     from PIL import Image, ImageDraw, ImageFilter
+    import numpy as np
 
     # The cavity starts AT the seam, not above it. Starting above (where the jaw mask is
     # cut) bleaches the upper lip: the cavity is composited on top of the picture, so its
@@ -481,25 +514,56 @@ def _mouth_interior(mw: float, drop: float, width: float, angle: float):
     hw = mw * _MOUTH_HALF_W * (0.86 + 0.28 * float(width))
     r = int(math.ceil(max(hw, hh) * 1.5)) + 4
     size = r * 2
+
+    # Everything below is scaled off the LOCAL skin luminance, so the mouth sits in the
+    # photograph's own exposure instead of a fixed palette. See the _CAV_/_TEETH_ constants.
+    sl = 205.0 if skin is None else (0.299 * skin[0] + 0.587 * skin[1] + 0.114 * skin[2])
+    sl = float(min(255.0, max(28.0, sl)))
+
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     box = [r - hw, r - hh, r + hw, r + hh]
-    ImageDraw.Draw(canvas).ellipse(box, fill=(28, 12, 14, 255))
     clip = Image.new("L", (size, size), 0)
     ImageDraw.Draw(clip).ellipse(box, fill=255)
     black = Image.new("L", (size, size), 0)
+
+    # A FLAT fill is what makes an open mouth read as a hole cut with scissors: a real one is
+    # darkest at the back and picks up bounce light toward the lower lip. So the cavity is a
+    # vertical ramp, warm (the light inside a mouth is filtered through flesh) rather than the
+    # neutral grey a straight luminance scale would give.
+    yy = np.arange(size, dtype=np.float32)[:, None]
+    t = np.clip((yy - (r - hh)) / max(1.0, 2.0 * hh), 0.0, 1.0)      # 0 at the seam, 1 at the lip
+    warm = np.array([1.00, 0.62, 0.66], dtype=np.float32)            # keeps the hole from going grey
+    back = max(_CAV_BACK * sl, _CAV_FLOOR) * warm
+    front = max(_CAV_FRONT * sl, _CAV_FLOOR * 2.2) * warm
+    ramp = (back[None, None, :] * (1.0 - t)[..., None] + front[None, None, :] * t[..., None])
+    rgb = np.broadcast_to(ramp, (size, size, 3)).astype(np.uint8)
+    canvas = Image.fromarray(np.dstack([rgb, np.asarray(clip, dtype=np.uint8)]), "RGBA")
+
     if hh > 4.0:
-        # Upper teeth: a strip under the top lip, clipped to the cavity. Kept THIN and off
-        # white — a fat bright band is the whole cavity on a small mouth, and then the flap
-        # looks like a smear of light instead of a hole.
-        teeth = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        ImageDraw.Draw(teeth).rectangle(
-            [r - hw, r - hh, r + hw, r - hh + max(2.0, hh * 0.24)], fill=(214, 206, 194, 255))
-        canvas.paste(teeth, (0, 0), Image.composite(clip, black, teeth.split()[3]))
-        # Tongue: a soft blob resting on the lower lip.
+        # Upper teeth: a strip under the top lip, clipped to the cavity. Kept THIN and always
+        # DARKER than the lit cheek — see _TEETH_LUM. Faded in with openness so a half-parted
+        # mouth doesn't flash a bright band on every quiet syllable.
+        lo, hi = _TEETH_FADE
+        fade = min(1.0, max(0.0, (float(openness) - lo) / max(1e-6, hi - lo)))
+        if fade > 0.01:
+            tl = min(212.0, _TEETH_CAP * sl, _TEETH_SLOPE * sl + _TEETH_BIAS)
+            # Enamel is very slightly warm, never blue-white.
+            col = (int(tl), int(tl * 0.985), int(tl * 0.95), int(round(235 * fade)))
+            teeth = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            ImageDraw.Draw(teeth).rectangle(
+                [r - hw, r - hh, r + hw, r - hh + max(2.0, hh * _TEETH_H)], fill=col)
+            # Deliberately NOT blurred on its own here. That was tried and is what turned the
+            # mouth into a void: the rim blur at the end of this function is already ~1.5px on a
+            # 49px mouth, which is most of a 2px strip, and a second blur on top removed the teeth
+            # altogether. One blur, applied to the whole patch, is enough to kill the hard edge.
+            canvas.paste(teeth, (0, 0), Image.composite(clip, black, teeth.split()[3]))
+        # Tongue: a soft blob resting on the lower lip, in the same exposure as the rest.
+        tgl = min(_TONGUE_CAP * sl, _TONGUE_SLOPE * sl + _TONGUE_BIAS)
+        tcol = (int(min(255, tgl * 1.30)), int(tgl * 0.62), int(tgl * 0.68), 255)
         tw, th = hw * 0.62, hh * 0.46
         tongue = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         ImageDraw.Draw(tongue).ellipse([r - tw, r + hh - th * 1.7, r + tw, r + hh + th * 0.3],
-                                       fill=(158, 74, 84, 255))
+                                       fill=tcol)
         canvas.paste(tongue, (0, 0), Image.composite(clip, black, tongue.split()[3]))
     # Soften the rim so the cavity sits under the lips instead of on top of them.
     canvas = canvas.filter(ImageFilter.GaussianBlur(max(0.8, mw * 0.03)))
@@ -697,6 +761,9 @@ def _render_frames(base, cx: float, cy: float, mw: float, chin: float, angle: fl
     W, H = base.size
     mask = _jaw_mask((W, H), cx, cy, mw, chin, angle)
     bbox = mask.getbbox()
+    # Sampled ONCE for the clip, not per frame: the face's exposure doesn't change between
+    # frames, and this is a numpy crop + median over ~3 patches.
+    skin = _skin_tone(base, cx, cy, mw)
     rad = math.radians(angle)
     dxu, dyu = -math.sin(rad), math.cos(rad)            # the face's own "down" (see _face_geometry)
     for a, wdt in zip(openness, width):
@@ -708,7 +775,7 @@ def _render_frames(base, cx: float, cy: float, mw: float, chin: float, angle: fl
         drop = a * _JAW_DROP * chin
         # The cavity is drawn first and the jaw is pasted over it, so what shows through is
         # exactly the band the jaw uncovered.
-        interior, off = _mouth_interior(mw, drop, float(wdt), angle)
+        interior, off = _mouth_interior(mw, drop, float(wdt), angle, skin=skin, openness=a)
         frame.paste(interior, (int(round(cx + off * dxu)) - interior.width // 2,
                                int(round(cy + off * dyu)) - interior.height // 2), interior)
         dx = int(round(drop * dxu))

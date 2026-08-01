@@ -91,6 +91,86 @@ class TestTheWarp(unittest.TestCase):
         self.assertGreater(_reach(full), _reach(half))
 
 
+@unittest.skipUnless(_HAVE_IMAGING, "imaging unavailable")
+class TestTheMouthInterior(unittest.TestCase):
+    """The inside of the mouth on a PHOTOGRAPH, which is the half that used to look pasted-on.
+
+    The reported symptom was "you can see their teeth and it looks weird". Measured on a real
+    photo the tooth strip composited at 1.14x the luminance of the cheek beside it — the inside
+    of the mouth was BRIGHTER than the face, which no real mouth ever is. It came from a fixed
+    (214,206,194) fill that ignored the picture's exposure entirely; on a dark-skinned face the
+    same constant landed at 2.85x. The anime renderer never had the bug because it draws no
+    teeth at all.
+    """
+
+    # "mid" is the skin actually MEASURED off the face this was reported on (insightface's own
+    # t1.jpg sample), luminance 124. It is not a decorative choice: an earlier version of this test
+    # used a lighter mid-tone at luminance 163, and since the old tooth strip composited to a fixed
+    # ~141 whatever the picture, that swatch sailed past the assertion and the test only caught the
+    # bug on dark skin. Pick swatches that bracket the reported case, not ones that flatter it.
+    SKINS = [("dark", (92, 66, 56)), ("mid", (155, 114, 97)), ("bright", (244, 218, 202))]
+
+    def _interior_stats(self, skin, openness=1.0, mw=60.0, chin=42.0):
+        """Brightest and mean luminance INSIDE the cavity, composited over the skin — i.e. what
+        the viewer actually sees, after the rim blur."""
+        drop = openness * talk._JAW_DROP * chin
+        patch, _off = talk._mouth_interior(mw, drop, 0.5, 0.0, skin=skin, openness=openness)
+        bg = Image.new("RGB", patch.size, skin)
+        bg.paste(patch, (0, 0), patch)
+        arr = np.asarray(bg, dtype=np.float32)
+        lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+        # Rows are picked by the patch's own ALPHA, never by brightness: a luminance threshold
+        # would silently exclude the bright teeth this test exists to catch (it did, once).
+        alpha = np.asarray(patch.split()[3], dtype=np.float32)
+        cx = patch.width // 2
+        rows = np.where(alpha[:, cx - 2:cx + 3].mean(axis=1) > 140)[0]
+        self.assertTrue(rows.size, "no cavity was drawn at all")
+        col = lum[:, cx - 2:cx + 3].mean(axis=1)[rows]
+        return float(col.max()), float(col.mean())
+
+    @staticmethod
+    def _lum(rgb):
+        return 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+
+    def test_the_interior_is_never_brighter_than_the_face(self):
+        """THE defect. Teeth are in shadow under the top lip, so however the numbers are tuned the
+        brightest pixel inside the mouth has to stay under the lit cheek — at every exposure and
+        every openness, because a constant that happens to look right on one skin tone is exactly
+        how this broke."""
+        for name, skin in self.SKINS:
+            for openness in (0.3, 0.65, 1.0):
+                with self.subTest(skin=name, openness=openness):
+                    brightest, _mean = self._interior_stats(skin, openness)
+                    self.assertLess(brightest, self._lum(skin),
+                                    f"the mouth interior out-shines the face on {name} skin")
+
+    def test_the_interior_follows_the_photos_exposure(self):
+        """It has to be DERIVED from the picture, not a palette. A fixed fill is what made one
+        constant read as grey teeth on a bright face and glowing teeth on a dark one."""
+        dark, _ = self._interior_stats(self.SKINS[0][1])
+        bright, _ = self._interior_stats(self.SKINS[2][1])
+        self.assertGreater(bright, dark * 1.2,
+                           "the interior ignored the picture's exposure")
+
+    def test_a_dark_face_still_gets_a_mouth_and_not_a_void(self):
+        """The other failure mode, and the first fix hit it: scaling everything at a flat fraction
+        of skin luminance drove a dark face's tongue to (32,15,16) and left a featureless black
+        slot. Enamel and tongue are their own materials — the cavity floor and the brightness bias
+        are what keep the mouth from reading as a hole punched in the face."""
+        skin = self.SKINS[0][1]
+        brightest, mean = self._interior_stats(skin, openness=1.0)
+        self.assertGreater(brightest, mean * 1.25,
+                           "the cavity is flat — no teeth or tongue survived")
+
+    def test_a_barely_open_mouth_does_not_flash_its_teeth(self):
+        """The strip used to arrive at full strength the moment the cavity cleared 4px, so quiet
+        syllables strobed. It fades in with the vowel instead."""
+        skin = self.SKINS[1][1]
+        quiet, _ = self._interior_stats(skin, openness=0.25)
+        loud, _ = self._interior_stats(skin, openness=1.0)
+        self.assertLess(quiet, loud, "the teeth are at full brightness on a near-closed mouth")
+
+
 @unittest.skipUnless(_HAVE_IMAGING and _HAVE_FFMPEG, "ffmpeg/imaging unavailable")
 class TestTheEnvelope(unittest.TestCase):
     @classmethod
