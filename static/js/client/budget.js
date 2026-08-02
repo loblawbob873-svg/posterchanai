@@ -259,10 +259,10 @@
     const hidden = c.hidden_month===thisMonth();
     const paid = c.paid==='Y';
     return `<div class="bg-row bg-planitem${paid?' done':''}${hidden?' hid':''}" data-cat="${c.id}" data-item="${i.id}">
-      <span class="bg-check bg-checkless" title="paid on the plan “${enc(c.name)}”" aria-hidden="true">${paid?'✅':'▫'}</span>
+      <span class="bg-check bg-checkless" title="paid on the plan “${enc(c.name)}”" aria-hidden="true">${paid?'✅':'⬜'}</span>
       <span class="bg-name"><span class="bg-itxt">${enc(i.name)}</span><i class="bg-flag bg-planflag" data-act="gotoplan" title="open the plan “${enc(c.name)}”">${enc(c.name)}</i>${hidden?' <i class="bg-flag">skipped</i>':''}</span>
       <span class="bg-amt out">−${enc(money(i.amount))}</span>
-      <button class="bg-more" data-act="catmenu" aria-label="more">☰</button>
+      <button class="bg-more" data-act="itemmenu" aria-label="more">☰</button>
     </div>`;
   }
 
@@ -379,6 +379,7 @@
       // The plan name on a derived Expenses row: jump to the plan that owns the item, which is the
       // only place its amount can actually be edited (these rows are display-only by design).
       if(act==='gotoplan'){ _tab='plans'; render(); return; }
+      if(act==='itemmenu') return itemMenu(cid, e.target.closest('[data-item]').dataset.item);
       if(act==='additem') return itemForm(cid);
       if(act==='delitem'){ const iid=e.target.closest('[data-item]').dataset.item;
         _doc.items=_doc.items.filter(i=>i.id!==iid); save(); repaint(); return; }
@@ -470,17 +471,44 @@
     });
   }
 
-  function itemForm(cid){
-    modal(`<h3>Add item</h3>
-      <label class="fld">Name<input class="input" id="bg-in"></label>
-      <label class="fld">Amount<input class="input" id="bg-ia" inputmode="decimal" placeholder="0.00"></label>
-      <button class="btn btn-cyan full" id="bg-iok">Add</button>`, root=>{
+  // Add, or EDIT when `item` is passed. Editing an item had no home at all before: the plan card
+  // offers only ✕, so a typo'd name or a mis-keyed amount could only be deleted and re-added — and a
+  // plan's amount is what feeds Bills Due, so that is the number most worth being able to correct.
+  function itemForm(cid, item){
+    const ed = !!item;
+    modal(`<h3>${ed?'Edit item':'Add item'}</h3>
+      <label class="fld">Name<input class="input" id="bg-in" value="${ed?enc(item.name):''}"></label>
+      <label class="fld">Amount<input class="input" id="bg-ia" inputmode="decimal" placeholder="0.00" value="${ed?enc(item.amount):''}"></label>
+      <button class="btn btn-cyan full" id="bg-iok">${ed?'Save':'Add'}</button>`, root=>{
       root.querySelector('#bg-iok').onclick=()=>{
         const n=(root.querySelector('#bg-in').value||'').trim(); if(!n) return toast('give the item a name');
-        _doc.items.push({ id:uid(), cat:cid, name:n, amount:num(root.querySelector('#bg-ia').value),
-                          sort_order:_doc.items.filter(i=>i.cat===cid).length });
+        const a=num(root.querySelector('#bg-ia').value);
+        if(ed){ item.name=n; item.amount=a; }
+        else _doc.items.push({ id:uid(), cat:cid, name:n, amount:a,
+                              sort_order:_doc.items.filter(i=>i.cat===cid).length });
         closeModal(); save(); repaint();
       };
+    });
+  }
+
+  // The ☰ on a derived Expenses row. It must act on the ITEM: wired to catMenu it offered "Delete
+  // plan" from a row showing a single line item, which is a destructive action on something the row
+  // does not represent.
+  function itemMenu(cid, iid){
+    const c = catById(cid), i = _doc.items.find(x=>x.id===iid);
+    if(!c || !i) return;
+    modal(`<h3>${enc(i.name)}</h3>
+      <div class="bg-menu">
+        <button class="btn" data-m="edit">✏ Edit item</button>
+        <button class="btn" data-m="plan">Open plan “${enc(c.name)}”</button>
+        <button class="btn btn-red" data-m="del">🗑 Delete item</button>
+      </div>`, root=>{
+      root.querySelectorAll('[data-m]').forEach(x=> x.onclick=()=>{
+        const m=x.dataset.m; closeModal();
+        if(m==='edit') return itemForm(cid, i);
+        if(m==='plan'){ _tab='plans'; render(); return; }
+        if(m==='del'){ _doc.items=_doc.items.filter(y=>y.id!==iid); save(); repaint(); return; }
+      });
     });
   }
 

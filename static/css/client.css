@@ -4719,7 +4719,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
    They are DERIVED rows — paid state lives on the plan, so there is no checkbox here, only the
    plan's state echoed in a non-interactive slot that keeps the row aligned with real bills. */
 .bg-planitem .bg-checkless{ display:inline-flex; align-items:center; justify-content:center;
-  opacity:.5; cursor:default; }
+  opacity:.45; cursor:default; pointer-events:none; }
 .bg-planitem .bg-planflag{ cursor:pointer; text-decoration:underline dotted; }
 .bg-planitem .bg-planflag:hover{ opacity:.85; }
 /* .bg-name is a nowrap/ellipsis cell, so on a phone the LAST thing in it gets clipped first — which

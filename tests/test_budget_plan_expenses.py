@@ -140,6 +140,15 @@ class PlanItemsInExpenses(unittest.TestCase):
         self.assertEqual(s["paid"], 40)
         self.assertEqual(s["remaining"], 30)
 
+    def test_the_check_slot_uses_a_glyph_that_actually_draws(self):
+        """U+25AB WHITE SMALL SQUARE measured 6.7px of ink beside the 24px emoji in the same row: in
+        a 38px slot at 45% opacity it reads as an EMPTY box, which is how it was reported. Use the
+        glyphs the real bill rows already prove render here; the not-a-button signal is in the CSS."""
+        html = _run(_doc_with_plan())["expenses"]
+        self.assertIn("\u2b1c", html)
+        for tiny in ("\u25ab", "\u25aa", "\u00b7", "\u2610"):
+            self.assertNotIn(tiny, html)
+
     def test_derived_rows_carry_no_paid_checkbox(self):
         """Paid state lives on the plan. A `paid` action here would target a bill id that does not
         exist; the row echoes the plan's state in a non-interactive slot instead."""
@@ -147,14 +156,25 @@ class PlanItemsInExpenses(unittest.TestCase):
         self.assertNotIn('data-act="paid"', html)
         self.assertNotIn('data-act="delitem"', html)
         self.assertIn("bg-checkless", html)
+        # ...but it must still show WHICH state the plan is in, or the row looks perpetually unpaid.
+        doc = _doc_with_plan(); doc["cats"][0]["paid"] = "Y"
+        self.assertIn("\u2705", _run(doc)["expenses"])
 
     def test_rows_reach_the_plan_that_owns_them(self):
-        """The row's menu and its name both have to resolve to the plan — that is the only place the
-        amount can be edited. catMenu() reads closest('[data-cat]'), so the row must carry it."""
+        """The row must carry both ids: itemMenu() reads closest('[data-cat]') for the plan and
+        closest('[data-item]') for the line it acts on."""
         html = _run(_doc_with_plan())["expenses"]
         self.assertIn('data-cat="c1"', html)
-        self.assertIn('data-act="catmenu"', html)
+        self.assertIn('data-item="t1"', html)
         self.assertIn('data-act="gotoplan"', html)
+
+    def test_the_row_menu_acts_on_the_item_not_the_plan(self):
+        """Wired to catmenu, pressing ☰ on a row showing ONE $25 grocery line opened a menu offering
+        "Delete plan" — a destructive action on something the row does not represent, reachable by
+        one tap from a list that otherwise deletes only what you pressed."""
+        html = _run(_doc_with_plan())["expenses"]
+        self.assertIn('data-act="itemmenu"', html)
+        self.assertNotIn('data-act="catmenu"', html)
 
     def test_a_paid_plan_strikes_through_rather_than_vanishing(self):
         doc = _doc_with_plan()
@@ -189,6 +209,23 @@ class PlanItemsInExpenses(unittest.TestCase):
 
 
 class Wiring(unittest.TestCase):
+    def test_itemmenu_has_a_handler_and_a_menu(self):
+        """The row renders a ☰; without both the dispatch case and the function it is a dead button
+        (the click resolves to [data-act] and falls off the end of the if-chain, silently)."""
+        src = _src()
+        self.assertIn("act==='itemmenu'", src)
+        self.assertIn("function itemMenu(", src)
+
+    def test_the_item_menu_can_edit_and_does_not_delete_the_plan(self):
+        """Editing an item had no home anywhere before this — the plan card offers only ✕, so a
+        mis-keyed amount could only be deleted and re-added, and that amount is what feeds Bills
+        Due. The menu must also not offer delCat: it acts on one line, not the plan."""
+        body = _extract(_src(), "itemMenu")
+        self.assertIn("itemForm(cid, i)", body)
+        self.assertNotIn("delCat", body)
+        self.assertIn("_doc.items.filter", body)
+        self.assertIn("ed?'Edit item':'Add item'", _extract(_src(), "itemForm"))
+
     def test_gotoplan_has_a_handler(self):
         """The row renders a clickable plan name; without a handler it is a dead affordance that
         silently does nothing (the click resolves to [data-act] and falls off the end of the chain)."""
