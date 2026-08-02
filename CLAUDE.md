@@ -43,6 +43,14 @@ git push                     # or ./sync.sh — origin/production first
 git push github master:main  # mirror, same commits, every time
 ```
 
+**A deploy pulls EVERY node, even when it restarts nothing.** The pull is free; only the restart
+costs an outage, and `scripts/deploy_targets.py` decides that separately. Skipping `sync.sh` for a
+UI-only change and hand-pulling router.lan left **nas.lan 3 commits behind**, running old code with
+nothing in any log to say so. `sync.sh` now pulls both nodes, waits on the GPU **only** if something
+is actually restarting, and ends by verifying local/origin/github/nas/router are all on the commit —
+exiting **1** on drift rather than reporting a green deploy. Guarded by
+`tests/test_sync_deploy_flow.py`.
+
 Push authorization is a **Nostr signature, not a connection**: only a maintainer of
 `30617:<owner>:posterchanai` can move a ref, and the `pre-receive` hook reads the **hosting node's**
 (nas) relay Postgres. server1 and nas run separate relays with separate event stores, so the repo

@@ -101,7 +101,9 @@ _wait_gpu_free() {
     fi
 }
 
-_wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
+# NOTE: the GPU wait happens LATER, and only if this deploy actually restarts something. It blocks
+# until any in-flight generation finishes, which on a long video/music job is minutes -- pure dead
+# time on a UI-only deploy that restarts nothing.
 
 # Restart only what this deploy actually TOUCHED. With the relay, worker, mediamtx/TURN and the bots
 # split into their own units, a blanket `restart posterchanai.service` would hand back the very outage
@@ -136,6 +138,7 @@ _PY="${_PY:-python3}"
 _TARGETS="$("$_PY" scripts/deploy_targets.py "$_PREV_HEAD..HEAD" 2>/dev/null \
             || echo posterchanai.service)"
 echo "[sync] deploy targets: ${_TARGETS:-<none>}"
+if [ -n "$_TARGETS" ]; then _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock; fi
 _restart_units "$_TARGETS"
 
 # server1 is cut over: the bots now run via the in-app manager (botframework/ + Admin → Bots,
@@ -163,7 +166,6 @@ cd ~/posterchanai
 _NAS_PREV=\$(git rev-parse HEAD 2>/dev/null || echo HEAD)
 git fetch origin
 git reset --hard origin/master
-_wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 # Same targeted restart as server1: only the units this deploy touched. Computed on nas from its OWN
 # pre-pull HEAD, because a node can be behind by more than one commit. Falls back to restarting the
 # app if anything about that fails — never silently restart nothing.
@@ -171,6 +173,8 @@ _NAS_PY=\$(ls -1 venv-unified/bin/python venv/bin/python 2>/dev/null | head -1)
 _NAS_PY=\${_NAS_PY:-python3}
 _NAS_TARGETS=\$(\$_NAS_PY scripts/deploy_targets.py \$_NAS_PREV..HEAD 2>/dev/null || echo posterchanai.service)
 echo \"[nas] deploy targets: \${_NAS_TARGETS:-<none>}\"
+# Only pay the GPU wait if something is actually restarting (see the note on server1).
+if [ -n \"\$_NAS_TARGETS\" ]; then _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock; fi
 for u in \$_NAS_TARGETS; do
     if systemctl cat \$u >/dev/null 2>&1; then echo \"[nas] restarting \$u\"; sudo systemctl restart \$u; fi
 done
@@ -183,3 +187,60 @@ if systemctl is-enabled posterchan >/dev/null 2>&1; then
     sudo systemctl restart posterchan
 fi
 "
+
+# ---------------------------------------------------------------------------------------------
+# Did every node actually land on this commit?
+#
+# Every pull above is best-effort — a WARN, or an ssh block whose failure nobody reads. A node that
+# silently stays behind is the worst outcome there is: it serves or runs OLD code with nothing in
+# any log to say so, and the next bug hunt starts from source that isn't what's running.
+#
+# That is not hypothetical. nas.lan sat three commits behind because a UI-only change was pulled to
+# router.lan by hand and nas was never touched — invisible until someone asked "are the repos in
+# sync?". THE PULL IS FREE; only the restart costs an outage, and deploy_targets already decides
+# that separately. So every node pulls on every deploy, and this checks that it worked.
+# ---------------------------------------------------------------------------------------------
+_EXPECT="$(git rev-parse HEAD 2>/dev/null)"
+_DRIFT=0
+
+_verify_node() {
+    local label="$1" host="$2" dir="$3" got
+    got="$(ssh -o ConnectTimeout=15 "$host" "cd $dir 2>/dev/null && git rev-parse HEAD" 2>/dev/null)"
+    if [ "$got" = "$_EXPECT" ]; then
+        echo "[sync]   ok   $label  ${got:0:8}"
+    elif [ -z "$got" ]; then
+        # Unreachable, or the checkout is gone. NOT "probably fine": it is still serving whatever it
+        # last had, so this is a failed deploy however friendly the ssh error looked.
+        echo "[sync]   UNREACHABLE $label  <-- could not read its HEAD; it is NOT on ${_EXPECT:0:8}"
+        _DRIFT=1
+    else
+        echo "[sync]   BEHIND $label  ${got:0:8}  <-- running OLD code, expected ${_EXPECT:0:8}"
+        _DRIFT=1
+    fi
+}
+
+echo "[sync] verifying every node is on ${_EXPECT:0:8}"
+echo "[sync]   ok   local       ${_EXPECT:0:8}"
+for _r in origin:master github:main; do
+    _rem="${_r%%:*}"; _br="${_r##*:}"
+    _got="$(git rev-parse "$_rem/$_br" 2>/dev/null)"
+    if [ "$_got" = "$_EXPECT" ]; then
+        echo "[sync]   ok   $_rem/$_br  ${_got:0:8}"
+    else
+        echo "[sync]   BEHIND $_rem/$_br  ${_got:0:8}  <-- push did not land"
+        _DRIFT=1
+    fi
+done
+_verify_node "nas.lan    " nas.lan '~/posterchanai'
+_verify_node "router.lan " router.lan /srv/posterchanai
+
+if [ "$_DRIFT" != "0" ]; then
+    echo "[sync] ================================================================"
+    echo "[sync] DEPLOY INCOMPLETE — at least one target is not on this commit."
+    echo "[sync] Re-run ./sync.sh, or pull the node by hand:"
+    echo "[sync]   ssh nas.lan    'cd ~/posterchanai && git fetch origin && git reset --hard origin/master'"
+    echo "[sync]   ssh router.lan 'cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master'"
+    echo "[sync] ================================================================"
+    exit 1
+fi
+echo "[sync] all nodes in sync"
