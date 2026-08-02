@@ -30,6 +30,27 @@ else
     echo "[sync] WARN: pyflakes unavailable -- skipping the undefined-name gate"
 fi
 
+# BOT ENTRYPOINT SMOKE TEST. pyflakes above finds undefined NAMES; it cannot see a call that is
+# syntactically fine and blows up when executed. That hole cost the worst bot outage on record:
+# a bad `parser.add_argument(...)` shipped, every bot died on argparse construction the instant it
+# started ("TypeError: _get_positional_kwargs() missing 1 required positional argument: 'dest'"),
+# the manager restarted all nine every 5s until it hit its restart cap, and the bots stayed down —
+# 63 deaths in one hour, with no undefined name for the linter to find.
+#
+# Running the entrypoint with NO arguments builds the parser, prints its "specify a mode" message and
+# returns, so this exercises the exact code that failed and costs about a second. A traceback here
+# means every bot on every node would crash-loop the moment this deploys.
+if [ -z "$SKIP_LINT" ] && [ -x venv-unified/bin/python ]; then
+    _boterr=$(cd botframework && ../venv-unified/bin/python main.py 2>&1 | grep -E "Traceback|Error:" | head -5)
+    if [ -n "$_boterr" ]; then
+        echo "[sync] ABORT: botframework/main.py fails to start -- every bot would crash-loop:"
+        echo "$_boterr" | sed 's/^/    /'
+        echo "[sync] fix it, or bypass with: SKIP_LINT=1 ./sync.sh"
+        exit 1
+    fi
+    echo "[sync] bot entrypoint OK (starts and parses arguments)"
+fi
+
 # Remember what was deployed BEFORE this commit, so the restart set can be computed from
 # the actual diff rather than from guesswork.
 _PREV_HEAD="$(git rev-parse HEAD 2>/dev/null || echo HEAD)"
