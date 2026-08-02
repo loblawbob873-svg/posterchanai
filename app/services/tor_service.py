@@ -120,8 +120,18 @@ LearnCircuitBuildTimeout 0
 MaxCircuitDirtiness 600
 SocksTimeout 30
 
-# Logging
-Log notice file {self.data_dir}/tor.log
+# Logging -> STDOUT, so it lands in the journal under this unit and journald owns rotation and
+# rate-limiting. The old `Log notice file .../tor.log` had NEITHER: tor does not rotate its own log,
+# so a single torrenting session wrote a 166 MB file of one repeated line —
+#   "All routers are down or won't exit -- choosing a doomed exit at random"
+# — 417k times, because torrent traffic to port 6881 through a country-restricted exit set finds
+# almost no exit willing to carry it and rebuilds circuits forever. Unbounded, and it survives every
+# restart because nothing ever truncates it.
+#
+# Level stays `notice`: it is where tor reports bootstrap progress, and "why won't tor start" is much
+# harder to answer without it. journald rate-limits a repeated line instead of writing it 417k times,
+# which is the actual problem — not the level.
+Log notice stdout
 
 # Disable unnecessary features
 AvoidDiskWrites 1
