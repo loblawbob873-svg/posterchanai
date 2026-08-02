@@ -170,7 +170,7 @@ async def generate_voice(db: Session, text: str, reference: bytes,
 
     order = await _rotated(candidates)
 
-    # Busy-aware, WITHOUT becoming "always prefer the remote". Two things this gets right that the
+    # Busy-aware, WITHOUT becoming "always prefer the remote". Three things this gets right that the
     # first cut did not:
     #
     #   * It probes whenever there is ANY remote, not only 2+. The common deployment is exactly one
@@ -180,19 +180,36 @@ async def generate_voice(db: Session, text: str, reference: bytes,
     #     would mean the single remote goes first every time it is free, which is not round-robin any
     #     more; the shared load_balancer is round-robin + health, and voice has no business inventing
     #     a different policy for the same node list.
+    #   * It weighs LOCAL on the same scale as a remote. "local" used to be left out of the check
+    #     entirely (only `remote` was ever measured), so this node won its turn while its own GPU was
+    #     minutes deep in an LLM/image/video job and the request simply blocked on the flock — the
+    #     one case the whole busy check exists to prevent. Local can't be asked over HTTP (it is a
+    #     sentinel precisely so we never HTTP ourselves), so it is read straight from the same
+    #     `gpu_busy()` that image_factory/music_factory/video_factory balance on.
     #
     # `None` (can't tell — unreachable, or an older build with no status endpoint) counts as NOT busy,
     # so an unreachable status endpoint is never mistaken for evidence of a busy GPU.
     remote = [c for c in order if c != "local"]
+    busy: set = set()
     if remote:
         try:
             probed = await asyncio.wait_for(
                 asyncio.gather(*[is_busy(u) for u in remote], return_exceptions=True), timeout=4.0)
-            busy = {u for u, b in zip(remote, probed) if b is True}
-            if busy:
-                order = [c for c in order if c not in busy] + [c for c in order if c in busy]
+            busy |= {u for u, b in zip(remote, probed) if b is True}
         except Exception:
             pass
+    if "local" in order:
+        from app.services.locks import gpu_busy
+        if gpu_busy():
+            busy.add("local")
+    # Demote every busy node in one pass, so a busy local lands behind an idle remote rather than
+    # merely behind the other busy ones. Guarded on there being somewhere else to go: with a single
+    # candidate the partition is a no-op, and announcing a preference for remotes we haven't got
+    # would be a lie in the log.
+    if busy and len(order) > 1:
+        order = [c for c in order if c not in busy] + [c for c in order if c in busy]
+        logger.info("[voice] busy → deferring %s, preferring %s",
+                    ",".join(sorted(busy)), order[0])
 
     errors = []
     for node in order:

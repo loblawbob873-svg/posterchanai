@@ -60,17 +60,24 @@ async def get_voice_auth(
 async def voice_status():
     """Is this node able to generate, and is its GPU already occupied?
 
-    `voice_factory.is_busy` reads this to prefer an idle node. It deliberately reports `busy` from the
-    QUEUE depth rather than "is a model loaded": a loaded-but-idle model is exactly the node we most
+    `voice_factory.is_busy` reads this to prefer an idle node. It deliberately reports `busy` from
+    OCCUPANCY rather than "is a model loaded": a loaded-but-idle model is exactly the node we most
     want to send work to, since it skips the 6.4s load.
+
+    Occupancy is the voice queue OR the shared GPU lock. The queue alone was not enough: it counts
+    only voice jobs (`_queued` is incremented in `_generate_local`), so a node 8 minutes into a 30B
+    LLM agent job reported `busy: false` and won its round-robin turn — the caller then sat on the
+    GPU flock for the rest of that job. `gpu_busy()` is the same signal image/music/video balance
+    on, and it sees holders in the worker process too.
     """
     from app.services import voice_local, voice_factory
     from app.services import settings_store
+    from app.services.locks import gpu_busy
     enabled = str(settings_store.get("voice_enabled", "false")).lower() in ("1", "true", "yes", "on")
     return {
         "available": voice_local.is_available() and enabled,
         "downloaded": voice_local.is_downloaded(),
-        "busy": voice_factory.queue_depth() > 0,
+        "busy": voice_factory.queue_depth() > 0 or gpu_busy(),
         "queue": voice_factory.queue_depth(),
     }
 

@@ -18,11 +18,15 @@ Two defects lived here, both invisible on the box they were written on:
 
 No GPU, model, network or database needed — everything is stubbed.
 """
+import os
+import shutil
+import tempfile
 import threading
 import time
 import unittest
 from unittest import mock
 
+from app.services import locks
 from app.services import model_download_service as mds
 
 
@@ -139,6 +143,26 @@ class ImageDownloadTest(unittest.TestCase):
 class SyncLockExclusionTest(unittest.TestCase):
     """GPUResourceLockSync must really exclude — it is the only thing standing between a download
     thread and a generation, and it has to work from a plain thread with no event loop."""
+
+    def setUp(self):
+        """Point the lock files at a temp dir. Alone among the tests here these take the REAL
+        cross-process flock, so on the default path (/tmp/posterchanai_locks/gpu.lock) they contend
+        with the LIVE service on this box: while a generation is running `test_second_holder_waits`
+        blocks for the full GPU_LOCK_WAIT_TIMEOUT (630s) instead of asserting anything, and
+        `gpu_busy()` truthfully reports that unrelated holder. The header promises these tests need
+        no GPU; this is what makes that true."""
+        self._tmp = tempfile.mkdtemp()
+        self._patches = [
+            mock.patch.object(locks, "GPU_LOCK_FILE", os.path.join(self._tmp, "gpu.lock")),
+            mock.patch.object(locks, "CPU_LOCK_FILE", os.path.join(self._tmp, "cpu.lock")),
+        ]
+        for p in self._patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_second_holder_waits(self):
         from app.services.locks import GPUResourceLockSync

@@ -234,6 +234,55 @@ class VoiceLoadBalancing(unittest.TestCase):
         src = _read("app/routers/voice_api.py")
         self.assertIn("voice_factory._generate_local(", src)
 
+    def _order_with(self, local_busy, remote_busy, remote="http://nas:3051"):
+        """Run generate_voice with every node stubbed; return the node it actually used."""
+        import asyncio
+        from unittest import mock
+        from app.services import voice_factory
+
+        async def _go():
+            with mock.patch.object(voice_factory, "_cfg", return_value={
+                        "enabled": True, "device": "auto", "servers": [remote], "timeout": 1.0}), \
+                 mock.patch("app.services.voice_local.is_available", return_value=True), \
+                 mock.patch.object(voice_factory, "is_busy",
+                                   new=mock.AsyncMock(return_value=remote_busy)), \
+                 mock.patch("app.services.locks.gpu_busy", return_value=local_busy), \
+                 mock.patch.object(voice_factory, "_generate_local",
+                                   new=mock.AsyncMock(return_value=b"wav")), \
+                 mock.patch.object(voice_factory, "_generate_on_node",
+                                   new=mock.AsyncMock(return_value=b"wav")):
+                _, where = await voice_factory.generate_voice(
+                    db=object(), text="hi", reference=b"ref", reference_path="/tmp/ref.wav")
+                return where
+
+        return asyncio.run(_go())
+
+    def test_a_busy_local_gpu_defers_to_an_idle_remote(self):
+        """The bug this exists for: `local` was excluded from the busy check entirely, so this node
+        won its round-robin turn while its own GPU was minutes deep in an LLM agent job, and the
+        request blocked on the flock instead of going to the idle node next door."""
+        for _ in range(4):      # every rotation offset, not just the lucky one
+            self.assertEqual(self._order_with(local_busy=True, remote_busy=False),
+                             "http://nas:3051")
+
+    def test_a_busy_remote_still_defers_to_local(self):
+        """Demotion has to be symmetric, or 'busy-aware' just means 'always prefer the remote'."""
+        for _ in range(4):
+            self.assertEqual(self._order_with(local_busy=False, remote_busy=True), "local")
+
+    def test_local_stays_a_fallback_when_everything_is_busy(self):
+        """Busy demotes, it never removes: with no idle node the request must still be served."""
+        for _ in range(4):
+            self.assertIn(self._order_with(local_busy=True, remote_busy=True),
+                          ("local", "http://nas:3051"))
+
+    def test_busy_is_gpu_occupancy_not_just_the_voice_queue(self):
+        """`queue_depth() > 0` counts only VOICE jobs, so a node 8 minutes into a 30B LLM agent job
+        reported `busy: false` and won its turn. The status endpoint every other node balances on
+        must read the shared GPU lock too."""
+        src = _read("app/routers/voice_api.py")
+        self.assertIn("queue_depth() > 0 or gpu_busy()", src)
+
 
 class VoiceClientUI(unittest.TestCase):
     def test_studio_is_reachable_from_both_render_paths(self):

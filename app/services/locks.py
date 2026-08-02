@@ -34,10 +34,27 @@ GPU_LOCK_WAIT_TIMEOUT = 630.0
 
 
 def gpu_busy() -> bool:
-    """True if THIS node's GPU lock is currently held (an LLM/image/music/video task is running).
-    Used by the load-balancing factories to prefer an idle remote node over queueing locally.
-    Counts the SYNC holder too, so a model download also pushes new work to an idle remote node."""
-    return _gpu_lock_holder is not None or _sync_lock_holder is not None
+    """True if THIS NODE's GPU lock is currently held (an LLM/image/music/video/voice task is
+    running). Used by the load-balancing factories to prefer an idle remote node over queueing
+    locally. Counts the SYNC holder too, so a model download also pushes new work to an idle
+    remote node.
+
+    NODE-wide, not process-wide, and that distinction is the whole point. `_gpu_lock_holder` is a
+    module global, so it only ever sees a hold taken by THIS process — but the pollers, the DVM and
+    the scheduled health report all run in the separate WORKER process (app/worker.py), and a DVM
+    agent job there can hold the GPU for many minutes. Reading only the in-process globals reported
+    "idle" for every one of those, so the factories kept routing to a node whose GPU was fully
+    occupied and the request discovered the truth by blocking on the flock for up to
+    GPU_LOCK_WAIT_TIMEOUT (630s). The flock IS the cross-process layer, so probe it: a
+    non-blocking try-acquire that fails means some other process holds the GPU.
+    """
+    if _gpu_lock_holder is not None or _sync_lock_holder is not None:
+        return True
+    fd = _try_acquire_file_lock(GPU_LOCK_FILE)
+    if fd is None:
+        return True        # held by another process (typically the worker)
+    os.close(fd)           # closing the fd releases the flock we just took to test it
+    return False
 
 
 def _try_acquire_file_lock(lock_file: str) -> Optional[int]:
