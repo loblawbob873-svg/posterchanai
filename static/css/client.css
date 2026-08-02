@@ -4718,8 +4718,16 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 /* Budget: a plan's line items, mirrored into the Expenses list (see planItemRow in budget.js).
    They are DERIVED rows — paid state lives on the plan, so there is no checkbox here, only the
    plan's state echoed in a non-interactive slot that keeps the row aligned with real bills. */
-.bg-planitem .bg-checkless{ display:inline-flex; align-items:center; justify-content:center;
+/* Inert ONLY when the whole plan is flagged paid — the item's own state cannot change what is
+   shown there, so a live control would appear to do nothing. Everywhere else this slot is a real
+   button and inherits .bg-check's 38px touch target. */
+.bg-checkless{ display:inline-flex; align-items:center; justify-content:center;
   opacity:.45; cursor:default; pointer-events:none; }
+/* The tick on a plan card's own item rows. */
+.bg-icheck{ cursor:pointer; background:transparent; border:none; color:var(--muted); font:inherit;
+  font-size:15px; padding:2px 4px; min-width:30px; min-height:30px; display:inline-flex;
+  align-items:center; justify-content:center; flex:none; }
+.bg-item.done .bg-iname{ text-decoration:line-through; opacity:.7; }
 .bg-planitem .bg-planflag{ cursor:pointer; text-decoration:underline dotted; }
 .bg-planitem .bg-planflag:hover{ opacity:.85; }
 /* .bg-name is a nowrap/ellipsis cell, so on a phone the LAST thing in it gets clipped first — which

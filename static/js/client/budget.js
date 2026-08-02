@@ -20,9 +20,17 @@
  *   remaining     = income − paid − bills due
  *
  * A plan's line items are ALSO listed under Expenses (planItemRow), because a plan that only showed
- * up as a total on another tab read as "my plan is missing". Those rows are DERIVED and display-only:
- * the money is already in `due` via catTotal, so persisting them as bills would count every plan
- * twice. Paid state stays on the plan.
+ * up as a total on another tab read as "my plan is missing". Those rows are DERIVED — computed from
+ * _doc.items at render time, never copied into _doc.bills, since the money is already in `due` and
+ * persisting them as bills would count every plan twice.
+ *
+ * They can be ticked off individually (item.paid), which EXTENDS the rules above:
+ *   bills due   += Σ |amount| over a plan's UNPAID items   (was: the plan's whole total)
+ *   paid        += Σ |amount| over its paid items
+ *   a plan's own paid flag still covers every line, and wins over the items
+ * With no item ticked that is arithmetically identical to the whole-plan version, so documents
+ * written before per-item payment existed read exactly the same. _reopen() must clear item.paid
+ * along with the bills and plans, or a ticked item stays paid forever.
  * Monthly rollover (maybe_reset_month_for_user): on the first open of a new month, recurring bills
  * and every plan category go back to unpaid+visible, and PAID one-time bills are deleted. The manual
  * "Reset month" button does the same thing on demand (it just doesn't stamp lastReset).
@@ -146,6 +154,7 @@
   function _reopen(){
     for(const b of _doc.bills) if(b.is_recurring){ b.hidden_month=''; b.paid='N'; }
     for(const c of _doc.cats){ c.hidden_month=''; c.paid='N'; }
+    for(const i of _doc.items) i.paid='N';   // else a ticked plan item stays paid forever
     const drop = new Set(_paidOneTime().map(b=>b.id));
     if(drop.size) _doc.bills = _doc.bills.filter(b=>!drop.has(b.id));
   }
@@ -174,19 +183,37 @@
   // ---- derived numbers (ported from the Flask index/api_summary) --------------------------------
   const catTotal = id => _doc.items.filter(i=>i.cat===id).reduce((s,i)=>s+(Number(i.amount)||0), 0);
   const settled = row => row.paid==='Y' || row.hidden_month===thisMonth();
+  const _sum = rows => rows.reduce((s,i)=>s+(Number(i.amount)||0), 0);
+  const itemsOf = id => _doc.items.filter(i=>i.cat===id);
+  // A plan item can be ticked off on its own. The PLAN's own flag still means "all of it is paid",
+  // so it wins over the individual items — that is what keeps documents written before per-item
+  // payment existed reading exactly the same.
+  const settledItem = (i, c) => c.paid==='Y' || c.hidden_month===thisMonth() || i.paid==='Y';
 
   function summary(){
     const income = _doc.bills.filter(b=>b.is_income).reduce((s,b)=>s+(Number(b.cost)||0), 0);
-    // Plans live on their own tab but count toward Bills Due, so the Plans tab carries a badge for
-    // the unpaid ones — otherwise the total silently disagrees with the bills you can see.
-    const duePlanCats = _doc.cats.filter(c=>!settled(c));
     let due = _doc.bills.filter(b=>!b.is_income && !settled(b)).reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
-    due += duePlanCats.reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
     let paid = _doc.bills.filter(b=>!b.is_income && b.paid==='Y').reduce((s,b)=>s+Math.abs(Number(b.cost)||0), 0);
-    paid += _doc.cats.filter(c=>c.paid==='Y').reduce((s,c)=>s+Math.abs(catTotal(c.id)), 0);
+
+    // Plans count toward Bills Due, and now they do it a LINE AT A TIME: ticking one item off a plan
+    // has to move that item's money out of `due` and into `paid`, or the tick is cosmetic and the
+    // total disagrees with the rows you just checked.
+    //
+    // With no item ticked this is arithmetically identical to the whole-plan version it replaces:
+    // an untouched plan puts its entire total in `due`, a plan flagged paid puts it all in `paid`.
+    let duePlanCount = 0;
+    for(const c of _doc.cats){
+      const items = itemsOf(c.id);
+      if(c.paid==='Y'){ paid += Math.abs(_sum(items)); continue; }      // whole plan paid, hidden or not
+      if(c.hidden_month===thisMonth()) continue;                        // skipped this month: neither
+      paid += Math.abs(_sum(items.filter(i=>i.paid==='Y')));
+      const rest = Math.abs(_sum(items.filter(i=>i.paid!=='Y')));
+      due += rest;
+      if(rest) duePlanCount++;
+    }
     return { income, due, paid, remaining: income - paid - due,
              dueCount: _doc.bills.filter(b=>!b.is_income && !settled(b)).length,
-             duePlanCount: duePlanCats.filter(c=>catTotal(c.id)).length };
+             duePlanCount };
   }
 
   const visibleBills = () => _showHidden ? _doc.bills.slice() : _doc.bills.filter(b=>b.hidden_month!==thisMonth());
@@ -211,6 +238,8 @@
   const catById  = id => _doc.cats.find(c=>c.id===id);
 
   function togglePaid(id){ const b=billById(id); if(!b) return; b.paid = b.paid==='Y'?'N':'Y'; save(); repaint(); }
+  function toggleItemPaid(iid){ const i=_doc.items.find(x=>x.id===iid); if(!i) return;
+    i.paid = i.paid==='Y'?'N':'Y'; save(); repaint(); }
   function toggleCatPaid(id){ const c=catById(id); if(!c) return; c.paid = c.paid==='Y'?'N':'Y'; save(); repaint(); }
   // "Hide" = skip it for THIS month only (the Flask app's hidden_month). It stops counting toward
   // Bills Due and comes back on the next rollover — distinct from delete.
@@ -257,9 +286,16 @@
   // Expenses list stays a complete picture of the month.
   function planItemRow(i, c){
     const hidden = c.hidden_month===thisMonth();
-    const paid = c.paid==='Y';
+    const whole = c.paid==='Y';                 // the PLAN is marked paid: it covers every line
+    const paid = settledItem(i, c);
+    // Tick it off like any other expense. The one case that is NOT a button is when the whole plan
+    // is already flagged paid — there the item's own state cannot change what you see, so it would
+    // be a control that appears to do nothing. Unmark the plan instead, which is what the title says.
+    const box = whole
+      ? `<span class="bg-check bg-checkless" title="the whole plan “${enc(c.name)}” is marked paid">✅</span>`
+      : `<button class="bg-check" data-act="itempaid" title="${paid?'mark unpaid':'mark paid'}" aria-label="${paid?'mark unpaid':'mark paid'}">${paid?'✅':'⬜'}</button>`;
     return `<div class="bg-row bg-planitem${paid?' done':''}${hidden?' hid':''}" data-cat="${c.id}" data-item="${i.id}">
-      <span class="bg-check bg-checkless" title="paid on the plan “${enc(c.name)}”" aria-hidden="true">${paid?'✅':'⬜'}</span>
+      ${box}
       <span class="bg-name"><span class="bg-itxt">${enc(i.name)}</span><i class="bg-flag bg-planflag" data-act="gotoplan" title="open the plan “${enc(c.name)}”">${enc(c.name)}</i>${hidden?' <i class="bg-flag">skipped</i>':''}</span>
       <span class="bg-amt out">−${enc(money(i.amount))}</span>
       <button class="bg-more" data-act="itemmenu" aria-label="more">☰</button>
@@ -283,7 +319,10 @@
         <button class="bg-more" data-act="catmenu" aria-label="more">☰</button>
       </div>
       <div class="bg-items">
-        ${items.map(i=>`<div class="bg-item" data-item="${i.id}">
+        ${items.map(i=>`<div class="bg-item${settledItem(i,c)?' done':''}" data-item="${i.id}">
+            ${c.paid==='Y'
+              ? '<span class="bg-icheck bg-checkless" aria-hidden="true">✅</span>'
+              : `<button class="bg-icheck" data-act="itempaid" aria-label="${i.paid==='Y'?'mark unpaid':'mark paid'}">${i.paid==='Y'?'✅':'⬜'}</button>`}
             <span class="bg-iname">${enc(i.name)}</span>
             <span class="bg-iamt">${enc(money(i.amount))}</span>
             <button class="bg-idel" data-act="delitem" aria-label="remove">✕</button>
@@ -380,6 +419,7 @@
       // only place its amount can actually be edited (these rows are display-only by design).
       if(act==='gotoplan'){ _tab='plans'; render(); return; }
       if(act==='itemmenu') return itemMenu(cid, e.target.closest('[data-item]').dataset.item);
+      if(act==='itempaid') return toggleItemPaid(e.target.closest('[data-item]').dataset.item);
       if(act==='additem') return itemForm(cid);
       if(act==='delitem'){ const iid=e.target.closest('[data-item]').dataset.item;
         _doc.items=_doc.items.filter(i=>i.id!==iid); save(); repaint(); return; }

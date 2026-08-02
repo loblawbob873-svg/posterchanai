@@ -37,7 +37,8 @@ def _src():
 
 # Pulled out of budget.js by name and evaluated as-is, so the test exercises shipped code. Named
 # function declarations and `const NAME = ...` one-liners both appear here.
-_WANT = ["catTotal", "settled", "summary", "visibleCats", "bySort", "planItemRow", "planItemRows"]
+_WANT = ["catTotal", "settled", "_sum", "itemsOf", "settledItem", "summary", "visibleCats",
+         "bySort", "planItemRow", "planItemRows", "_paidOneTime", "_reopen"]
 
 
 def _extract(src, name):
@@ -67,20 +68,25 @@ def _extract(src, name):
     raise AssertionError(f"unbalanced braces reading {name}()")
 
 
-def _run(doc, show_hidden=False):
-    """Eval the extracted functions against `doc` and return {summary, expensesHtml}."""
+def _run(doc, show_hidden=False, reset=False):
+    """Eval the extracted functions against `doc` and return {summary, expenses, afterReset}."""
     src = _src()
     harness = """
 'use strict';
 const _doc = %s;
 const _showHidden = %s;
+globalThis.RESET = %s;
 // Stubs for the module-level helpers the extracted functions close over.
 const thisMonth = () => '2026-08';
 const money = n => '$' + Math.abs(Number(n)||0).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
 const enc = s => (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 %s
-console.log(JSON.stringify({ summary: summary(), expenses: planItemRows() }));
-""" % (json.dumps(doc), "true" if show_hidden else "false",
+const before = summary();
+if (globalThis.RESET) _reopen();
+console.log(JSON.stringify({ summary: before, expenses: planItemRows(),
+                             afterReset: globalThis.RESET ? summary() : null,
+                             itemsAfterReset: globalThis.RESET ? _doc.items : null }));
+""" % (json.dumps(doc), "true" if show_hidden else "false", "true" if reset else "false",
        "\n".join(_extract(src, n) for n in _WANT))
     out = subprocess.run([shutil.which("node") or "node", "-e", harness],
                          capture_output=True, text=True, timeout=60)
@@ -149,16 +155,23 @@ class PlanItemsInExpenses(unittest.TestCase):
         for tiny in ("\u25ab", "\u25aa", "\u00b7", "\u2610"):
             self.assertNotIn(tiny, html)
 
-    def test_derived_rows_carry_no_paid_checkbox(self):
-        """Paid state lives on the plan. A `paid` action here would target a bill id that does not
-        exist; the row echoes the plan's state in a non-interactive slot instead."""
+    def test_the_row_can_be_marked_paid(self):
+        """THE reported defect: "i can't mark as paid". These rows were built with a deliberately
+        inert check slot, on the reasoning that paid state belonged to the plan. If an item is listed
+        as an expense it has to be tickable like one, so the slot is a real button."""
         html = _run(_doc_with_plan())["expenses"]
-        self.assertNotIn('data-act="paid"', html)
+        self.assertIn('data-act="itempaid"', html)
+        self.assertIn("<button", html)
         self.assertNotIn('data-act="delitem"', html)
-        self.assertIn("bg-checkless", html)
-        # ...but it must still show WHICH state the plan is in, or the row looks perpetually unpaid.
+
+    def test_the_slot_is_inert_only_when_the_whole_plan_is_paid(self):
+        """There the item's own state cannot change what is drawn, so a live control would appear to
+        do nothing — the one case where inert is honest."""
         doc = _doc_with_plan(); doc["cats"][0]["paid"] = "Y"
-        self.assertIn("\u2705", _run(doc)["expenses"])
+        html = _run(doc)["expenses"]
+        self.assertIn("bg-checkless", html)
+        self.assertNotIn('data-act="itempaid"', html)
+        self.assertIn("\u2705", html)
 
     def test_rows_reach_the_plan_that_owns_them(self):
         """The row must carry both ids: itemMenu() reads closest('[data-cat]') for the plan and
@@ -208,7 +221,106 @@ class PlanItemsInExpenses(unittest.TestCase):
         self.assertIn("&quot;", html)
 
 
+class BillsDueReflectsPlanItems(unittest.TestCase):
+    """Ticking a plan item has to MOVE money: out of Bills Due and into Paid. If it only changes the
+    checkbox, the tick is cosmetic and the total silently disagrees with the rows you just checked —
+    the one failure a budgeting tool cannot have, and one that looks perfectly fine on screen.
+
+    Baseline throughout: $100 income, a $30 unsettled bill, and a $25 + $15 plan.
+    """
+
+    def test_ticking_one_item_moves_only_that_item(self):
+        doc = _doc_with_plan()
+        doc["items"][0]["paid"] = "Y"                 # Groceries $25
+        s = _run(doc)["summary"]
+        self.assertEqual(s["paid"], 25)               # not the whole $40 plan
+        self.assertEqual(s["due"], 45)                # $30 bill + the $15 still owed
+        self.assertEqual(s["remaining"], 30)          # income − paid − due is unchanged by a tick
+
+    def test_ticking_every_item_settles_the_plan(self):
+        doc = _doc_with_plan()
+        for i in doc["items"]:
+            i["paid"] = "Y"
+        s = _run(doc)["summary"]
+        self.assertEqual(s["paid"], 40)
+        self.assertEqual(s["due"], 30)
+        self.assertEqual(s["duePlanCount"], 0)        # the Plans tab badge clears with the last item
+
+    def test_the_plans_badge_counts_a_partly_paid_plan(self):
+        doc = _doc_with_plan()
+        doc["items"][0]["paid"] = "Y"
+        self.assertEqual(_run(doc)["summary"]["duePlanCount"], 1)
+
+    def test_untouched_documents_produce_identical_numbers(self):
+        """Back-compat, and the reason the plan-level flag still wins: every document written before
+        per-item payment existed has no item flags at all, so this path must reduce exactly to the
+        whole-plan arithmetic it replaced."""
+        s = _run(_doc_with_plan())["summary"]
+        self.assertEqual((s["income"], s["due"], s["paid"], s["remaining"]), (100, 70, 0, 30))
+
+    def test_the_plan_flag_still_covers_every_line(self):
+        """A plan marked paid stays fully paid even if its items are individually unticked."""
+        doc = _doc_with_plan()
+        doc["cats"][0]["paid"] = "Y"
+        doc["items"][0]["paid"] = "N"
+        s = _run(doc)["summary"]
+        self.assertEqual(s["paid"], 40)
+        self.assertEqual(s["due"], 30)
+
+    def test_a_skipped_plan_is_neither_due_nor_paid(self):
+        doc = _doc_with_plan()
+        doc["cats"][0]["hidden_month"] = "2026-08"
+        s = _run(doc)["summary"]
+        self.assertEqual(s["due"], 30)
+        self.assertEqual(s["paid"], 0)
+
+    def test_a_skipped_but_paid_plan_still_counts_as_paid(self):
+        """Pre-existing behaviour worth pinning: the old code added every paid cat to `paid`
+        regardless of hidden, and reordering the new branches would quietly drop that."""
+        doc = _doc_with_plan()
+        doc["cats"][0]["paid"] = "Y"
+        doc["cats"][0]["hidden_month"] = "2026-08"
+        self.assertEqual(_run(doc)["summary"]["paid"], 40)
+
+    def test_reset_month_unticks_plan_items(self):
+        """Reset Month reopens recurring bills and plans. Missing the items would leave them paid
+        FOREVER — every later month would under-report Bills Due by the plan's total, and the user
+        already reached for Reset Month once over this feature."""
+        doc = _doc_with_plan()
+        for i in doc["items"]:
+            i["paid"] = "Y"
+        got = _run(doc, reset=True)
+        self.assertEqual(got["summary"]["due"], 30)            # before: plan fully ticked
+        self.assertEqual(got["afterReset"]["due"], 70)         # after: the plan is owed again
+        self.assertEqual(got["afterReset"]["paid"], 0)
+        self.assertTrue(all(i["paid"] == "N" for i in got["itemsAfterReset"]))
+
+    def test_a_negative_item_does_not_flip_the_sign_of_the_total(self):
+        """Amounts are summed then abs()'d per group, mirroring the whole-plan code it replaced."""
+        doc = _doc_with_plan()
+        doc["items"][1]["amount"] = -15
+        self.assertEqual(_run(doc)["summary"]["due"], 40)      # $30 bill + |25 − 15|
+
+
 class Wiring(unittest.TestCase):
+    def test_itempaid_has_a_handler_and_a_toggle(self):
+        """The checkbox renders; without both the dispatch case and the toggle it is a dead control
+        that silently does nothing — which is precisely how this was reported."""
+        src = _src()
+        self.assertIn("act==='itempaid'", src)
+        self.assertIn("function toggleItemPaid(", src)
+        self.assertIn("save()", _extract(src, "toggleItemPaid"))
+
+    def test_both_tabs_can_tick_an_item(self):
+        """The tick exists on the Expenses row AND on the plan card, so the two views of the same
+        item cannot disagree about whether it can be paid."""
+        src = _src()
+        self.assertIn('data-act="itempaid"', _extract(src, "planItemRow"))
+        self.assertIn('data-act="itempaid"', _extract(src, "planCard"))
+
+    def test_reset_clears_item_flags_at_the_source(self):
+        self.assertIn("i.paid='N'", _extract(_src(), "_reopen"))
+
     def test_itemmenu_has_a_handler_and_a_menu(self):
         """The row renders a ☰; without both the dispatch case and the function it is a dead button
         (the click resolves to [data-act] and falls off the end of the if-chain, silently)."""
