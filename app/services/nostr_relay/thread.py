@@ -1451,7 +1451,22 @@ def stop_nostr_relay() -> None:
 
 def restart_nostr_relay() -> dict:
     """Stop the relay subprocess and spawn a fresh one — used to pick up relay code changes
-    (the relay otherwise keeps running across the app's own internal restarts)."""
+    (the relay otherwise keeps running across the app's own internal restarts).
+
+    WHEN THIS PROCESS DOES NOT OWN THE RELAY (role split: posterchanai-relay.service runs it), the
+    local `_relay` handle is empty and the code below would happily _spawn_relay() a SECOND relay as
+    a child of the web app — two relays on one Postgres, the newcomer crash-looping on the bound
+    :3052. It is reached from an ordinary admin Settings save (admin.py restarts the relay to apply a
+    task-topology change), so it is not a rare path.
+
+    Instead, signal the OWNING process to exit and let systemd's Restart=always bring it back with
+    the fresh config. The pid comes from the status file relay_status() already trusts, and is
+    verified to actually be a relay of THIS repo before signalling — never SIGTERM a pid read from a
+    file without checking what it is."""
+    from app.role import owns as _owns
+    if not _owns("relay"):
+        return _restart_relay_elsewhere()
+
     global _relay_shutdown
     with _relay_lock:
         stop_nostr_relay()
@@ -1462,6 +1477,45 @@ def restart_nostr_relay() -> dict:
         _relay.cfg = cfg
         _spawn_relay(cfg)
     return {"ok": True, "restarted": True}
+
+
+def _restart_relay_elsewhere() -> dict:
+    """Ask the process that OWNS the relay to exit, so its unit restarts it with fresh config.
+
+    Verified before signalling: the pid must still exist AND its cmdline must name this repo and a
+    relay role/entrypoint. A stale status file whose pid has been recycled would otherwise make this
+    SIGTERM an unrelated process.
+    """
+    import signal
+    try:
+        with open(_relay_paths(_relay_db_path())["status"]) as f:
+            pid = int(json.load(f).get("pid") or 0)
+    except Exception as e:
+        return {"ok": False, "error": f"relay runs in its own service and its status file is unreadable ({e}); "
+                                      f"restart posterchanai-relay.service by hand"}
+    if pid <= 0:
+        return {"ok": False, "error": "relay runs in its own service; restart posterchanai-relay.service"}
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+    except OSError:
+        return {"ok": False, "error": f"relay pid {pid} is not running; systemd should respawn it"}
+    # FOUR dirnames: this file is app/services/nostr_relay/thread.py, so three lands on `app/` — a
+    # path that never appears in the relay's cmdline, which made the check refuse every time.
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    # "relay" specifically, NOT "run.py": the app itself runs `run.py --role app,bots`, so accepting
+    # run.py would let a stale/recycled pid pointing at the WEB APP be SIGTERM'd by this.
+    # Both relay spellings contain "relay" — `relay_main.py` (role all) and `run.py --role relay`.
+    if repo not in cmd or "relay" not in cmd:
+        logger.warning("[nostr-relay] refusing to signal pid %s — cmdline does not look like our relay: %s",
+                       pid, cmd[:120])
+        return {"ok": False, "error": "could not identify the relay process; restart posterchanai-relay.service"}
+    try:
+        os.kill(pid, signal.SIGTERM)
+        logger.info("[nostr-relay] asked the relay service (pid %s) to restart for a config change", pid)
+        return {"ok": True, "restarted": True, "via": "service"}
+    except OSError as e:
+        return {"ok": False, "error": f"could not signal relay pid {pid}: {e}"}
 
 
 def relay_status() -> dict:

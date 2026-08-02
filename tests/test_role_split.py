@@ -147,6 +147,103 @@ class MainPyGating(unittest.TestCase):
                          "_owns must be imported at module scope, not inside a handler")
 
 
+class NoSpawningWhatYouDoNotOwn(unittest.TestCase):
+    """The failure class the split keeps producing: app-side code driving a component whose state
+    lives in ANOTHER process.
+
+    Two real instances. The bots one shipped: Admin → Bots reads an in-process registry, so every bot
+    showed as stopped while running, and reconcile_now() from a button would have made the app spawn
+    a SECOND copy of each (fixed by keeping bots in the app — role 'app,bots'). The relay one is
+    asserted here: restart_nostr_relay() is reached from an ordinary Settings save, and its tail is
+    _spawn_relay() — from an app-role process that is a second relay on one Postgres, crash-looping
+    on the bound :3052."""
+
+    def test_restart_relay_does_not_spawn_when_this_process_is_not_the_owner(self):
+        from app.services.nostr_relay import thread as t
+        with mock.patch.dict(os.environ, {"POSTERCHANAI_ROLE": "app,bots"}), \
+             mock.patch.object(t, "_spawn_relay") as spawn, \
+             mock.patch.object(t, "_restart_relay_elsewhere", return_value={"ok": True}) as delegate:
+            t.restart_nostr_relay()
+        spawn.assert_not_called()
+        delegate.assert_called_once()
+
+    def test_restart_relay_still_spawns_locally_when_it_does_own_the_relay(self):
+        """role 'all' (the default, and every un-split node) must behave exactly as before."""
+        from app.services.nostr_relay import thread as t
+        with mock.patch.dict(os.environ, {"POSTERCHANAI_ROLE": "all"}), \
+             mock.patch.object(t, "_restart_relay_elsewhere") as delegate, \
+             mock.patch.object(t, "_spawn_relay"), \
+             mock.patch.object(t, "stop_nostr_relay"), \
+             mock.patch.object(t, "_read_config", return_value={"enabled": True}):
+            t.restart_nostr_relay()
+        delegate.assert_not_called()
+
+    def test_the_delegate_refuses_a_pid_that_is_not_our_relay(self):
+        """It SIGTERMs a pid read from a FILE, so a stale/recycled pid must never be signalled. Uses a
+        real status file and a real (absent) pid so the /proc identity check actually runs."""
+        import json as _json
+        import tempfile
+        from app.services.nostr_relay import thread as t
+        d = tempfile.mkdtemp()
+        status = os.path.join(d, "s.json")
+        with open(status, "w") as f:
+            _json.dump({"pid": 4242424}, f)      # far above pid_max on any normal box
+        with mock.patch.object(t, "_relay_paths", return_value={"status": status}), \
+             mock.patch.object(t, "_relay_db_path", return_value="x"), \
+             mock.patch("os.kill") as kill:
+            res = t._restart_relay_elsewhere()
+        kill.assert_not_called()
+        self.assertFalse(res.get("ok"), res)
+
+    def test_the_delegate_actually_signals_the_real_relay(self):
+        """The POSITIVE case, and the one whose absence let a real bug through: the first cut built
+        the repo path with three dirnames instead of four, landing on `app/` — a string that never
+        appears in the relay's cmdline — so the identity check refused every time and the delegate
+        was silently dead. Only refusal cases were covered, so everything still 'passed'.
+
+        Uses THIS process's own pid, whose cmdline genuinely contains the repo path, and stands in for
+        the relay by asserting the identity check accepts it once 'relay' is present."""
+        import json as _json
+        import tempfile
+        from app.services.nostr_relay import thread as t
+        d = tempfile.mkdtemp()
+        status = os.path.join(d, "s.json")
+        with open(status, "w") as f:
+            _json.dump({"pid": os.getpid()}, f)
+        real_open = open
+
+        def fake_open(path, *a, **kw):
+            # Our own cmdline is pytest's; substitute a relay-looking one for the identity check.
+            if str(path).startswith("/proc/"):
+                import io
+                return io.BytesIO(f"{REPO}/venv/bin/python run.py --role relay".encode())
+            return real_open(path, *a, **kw)
+
+        with mock.patch.object(t, "_relay_paths", return_value={"status": status}), \
+             mock.patch.object(t, "_relay_db_path", return_value="x"), \
+             mock.patch("builtins.open", fake_open), \
+             mock.patch("os.kill") as kill:
+            res = t._restart_relay_elsewhere()
+        self.assertTrue(res.get("ok"), res)
+        kill.assert_called_once()
+
+    def test_the_delegate_refuses_a_pid_whose_cmdline_is_not_ours(self):
+        """The dangerous case: the pid EXISTS but belongs to something else entirely."""
+        import json as _json
+        import tempfile
+        from app.services.nostr_relay import thread as t
+        d = tempfile.mkdtemp()
+        status = os.path.join(d, "s.json")
+        with open(status, "w") as f:
+            _json.dump({"pid": 1}, f)            # pid 1 is init — exists, definitely not our relay
+        with mock.patch.object(t, "_relay_paths", return_value={"status": status}), \
+             mock.patch.object(t, "_relay_db_path", return_value="x"), \
+             mock.patch("os.kill") as kill:
+            res = t._restart_relay_elsewhere()
+        kill.assert_not_called()
+        self.assertFalse(res.get("ok"), res)
+
+
 class RunPyDispatch(unittest.TestCase):
     def test_every_role_has_a_dispatch_or_is_the_app(self):
         with open(os.path.join(REPO, "run.py"), encoding="utf-8") as f:
