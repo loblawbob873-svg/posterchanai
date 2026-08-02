@@ -4234,6 +4234,24 @@ svg.mb-e{margin-right:0}
   background:var(--neon);border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,.65)}
 .mb-mouth-pin::before{left:-1px}
 .mb-mouth-pin::after{right:-1px}
+/* ✂ Erase parts — the same shrink-wrapped, untransformed picture the mouth picker uses, with the mask
+   scrim laid over it. `touch-action:none` is LOAD-BEARING on a phone: without it the browser claims the
+   drag as a scroll/pinch and the stroke never reaches the canvas — the tool looks dead to a finger while
+   working perfectly with a mouse. */
+.mb-er-wrap{position:relative;display:inline-block;max-width:100%;line-height:0;
+  touch-action:none;cursor:crosshair;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+  /* A checkerboard behind the art, so an erased area reads as SEE-THROUGH rather than as a coloured
+     patch — the same convention every image editor uses, and the honest preview of what the export does. */
+  background-image:linear-gradient(45deg,#2a2a2a 25%,transparent 25%,transparent 75%,#2a2a2a 75%),
+                   linear-gradient(45deg,#2a2a2a 25%,transparent 25%,transparent 75%,#2a2a2a 75%);
+  background-size:18px 18px;background-position:0 0,9px 9px;background-color:#1b1b1b}
+.mb-er-wrap>img,.mb-er-wrap>video{display:block;max-width:100%;max-height:46vh;width:auto;height:auto}
+/* Stretched to the element box, NOT sized in pixels: the canvas backing store is the MASK's resolution
+   (capped source pixels) while the picture is laid out at whatever fits the screen, and the two only stay
+   in register if the browser scales one onto the other. */
+.mb-er-wrap>canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.mb-er-tools{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.mb-er-tools .btn{flex:1 1 auto;min-width:96px}
 .mb-frow{display:flex;gap:8px}
 /* The flip toggles are the only mb- buttons with an ON state, and there was no .btn.on rule to
    carry it — an unlit toggle is worse than no toggle, you cannot tell whether the layer is
@@ -4513,6 +4531,12 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
   .mb-grip{width:18px}
   .mb-clip{padding:0 21px}                        /* clear the wider grips, or the duration sits under one */
   .mb-h{width:22px;height:22px;right:-11px;bottom:-11px}
+  /* ✂ Erase: the picture has to share a phone screen with four tool buttons, a slider and Apply, and it
+     is the one control here you cannot use if it is scrolled off — you are drawing on it. dvh, not vh:
+     on iOS Safari 46vh is measured against the tall layout viewport, so with the URL bar showing the
+     real estimate is short by the bar's height and Apply lands under the fold. */
+  .mb-er-wrap>img,.mb-er-wrap>video{max-height:38dvh}
+  .mb-er-tools .btn{flex:1 1 46%;min-width:0;padding-top:9px;padding-bottom:9px}
 }
 /* A real phone (360–430px). Emoji + word + two arrows + Render is 58px more than the row has, so the three
    labelled buttons drop their emoji and keep the WORD — Undo staying on screen is worth more than a

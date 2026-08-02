@@ -3085,10 +3085,34 @@
     }
     return out;
   }
+  // A note mirrored in from the fediverse by a bridge. TWO markers, and both earn their place:
+  //   * `fedibridge` — our own bridge stamps this on EVERY puppet event it signs (the relay validates
+  //     it, see fedi_bridge_identity.sign_puppet), so it is the complete marker for this instance.
+  //   * NIP-48 `proxy` … `activitypub` — the interoperable one. It catches notes bridged by Mostr and
+  //     anything else this relay merely receives, which our own tag by definition cannot.
+  function isFediBridged(ev){
+    if(!ev || !ev.tags) return false;
+    for(const t of ev.tags){
+      if(!t) continue;
+      if(t[0]==='fedibridge') return true;
+      if(t[0]==='proxy' && String(t[2]||'').toLowerCase()==='activitypub') return true;
+    }
+    return false;
+  }
+  // TIMELINE ONLY. This is reached solely from _drawTimeline, which returns early unless the view is
+  // home/global — deliberately, because hiding the fediverse from your feed must NOT hide fediverse
+  // people from Notifications or Messages. Those are addressed to YOU: swallowing a bridged mention or
+  // DM would read as the bridge being broken, and you would never know a reply had arrived.
   function _tlFilter(view){
     const hideR = ClientSettings.get('hideReplies', false);
+    // Default TRUE — the bridge mirrors whole remote timelines, so left visible it is most of what a
+    // new account sees on Nostr. A REPOST of a bridged note is left alone: the wrapper is a real Nostr
+    // user choosing to share it, which is not the firehose this filter exists to keep out.
+    const hideFedi = ClientSettings.get('hideFediBridge', true);
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    return ev => (!follows || follows(ev)) && !(hideR && ev.kind===1 && isReply(ev));
+    return ev => (!follows || follows(ev))
+              && !(hideR && ev.kind===1 && isReply(ev))
+              && !(hideFedi && isFediBridged(ev));
   }
   function _drawTimeline(preserveScroll){
     if(VIEW!=='home' && VIEW!=='global') return;
@@ -10115,6 +10139,15 @@
         ClientSettings.set('hideReplies', pr.hideReplies);
         if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
       }
+      // Same shape as hideReplies above, and for the same reason: adopting the synced value without a
+      // redraw leaves the feed showing whatever the previous setting produced. Compared against the
+      // SAME `true` default the filter reads, so a device that has never toggled it doesn't count as a
+      // difference and force a pointless re-render on every login.
+      if(!_prefTouched.has('hideFediBridge') && typeof pr.hideFediBridge==='boolean'
+         && pr.hideFediBridge!==ClientSettings.get('hideFediBridge', true)){
+        ClientSettings.set('hideFediBridge', pr.hideFediBridge);
+        if(VIEW==='home'||VIEW==='global'){ try{ renderView(true); }catch(_){} }
+      }
       if(!_prefTouched.has('vimKeys') && typeof pr.vimKeys==='boolean') ClientSettings.set('vimKeys', pr.vimKeys);
       if(!_prefTouched.has('xmrTip') && pr.xmrTip!=null && String(pr.xmrTip)) ClientSettings.set('xmrLastAmt', String(pr.xmrTip));
       if(!_prefTouched.has('bchTip') && pr.bchTip!=null && String(pr.bchTip)) ClientSettings.set('bchLastAmt', String(pr.bchTip));
@@ -15936,6 +15969,8 @@
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">🆕 Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
           <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications.">⌨️ Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
@@ -16169,6 +16204,12 @@
         toast(hr.checked?'replies hidden in timelines':'replies shown in timelines');
         // `fn` is captured when a timeline renders, so the change only takes effect on a re-render.
         if(VIEW==='home'||VIEW==='global') renderView(true);
+      }; }
+    { const hf=$('#set-hide-fedi'); if(hf) hf.onchange=()=>{
+        ClientSettings.set('hideFediBridge', hf.checked);
+        _prefTouched.add('hideFediBridge'); saveClientPrefsNostr({ hideFediBridge: hf.checked });
+        toast(hf.checked?'fediverse posts hidden in timelines':'fediverse posts shown in timelines');
+        if(VIEW==='home'||VIEW==='global') renderView(true);   // same captured-`fn` reason as above
       }; }
     { const an=$('#set-auto-new-posts'); if(an) an.onchange=()=>{
         AUTO_NEW_POSTS = an.checked; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);

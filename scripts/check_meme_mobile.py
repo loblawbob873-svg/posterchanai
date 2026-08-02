@@ -50,7 +50,7 @@ PROFILE = "/tmp/pc-meme-mobile-check"
 
 # Per-layer controls the inspector must offer for a selected IMAGE layer. Named, because "it renders"
 # is not the check — a button that silently stopped being emitted still renders a panel.
-EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill", "mb-split", "mb-cutall"]
+EXPECTED = ["mb-nobg", "mb-talk", "mb-fit", "mb-fill", "mb-split", "mb-cutall", "mb-erase"]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -325,6 +325,71 @@ CUT_SPLIT = r"""(async () => {
   };
 })()"""
 
+# ✂ Erase parts, at phone width. The eraser is the one control here you DRAW on, which makes it the one
+# that fails in ways a layout audit cannot see:
+#
+#   * the pointer -> mask mapping — clientX/rect are viewport pixels, the mask canvas is source pixels.
+#     Get it wrong and the erase appears somewhere other than where the finger went.
+#   * the picture scrolling off — you cannot draw on what you cannot see, and Apply has to be reachable.
+#   * `touch-action` — without it the browser claims the drag as a scroll and the stroke never lands, so
+#     the tool is dead to a finger and perfect to a mouse.
+#
+# The stroke is real PointerEvents and the assertion SAMPLES the scrim canvas, so what is checked is "the
+# pixels under the finger are the pixels that got erased", not "a function was called".
+#
+# `touch-action` is asserted from the COMPUTED STYLE, deliberately, and not left to the stroke: a
+# synthetic PointerEvent is dispatched straight to the element and never goes through the gesture
+# recogniser, so the drag lands perfectly with the property removed. Verified by deleting it and watching
+# this file still pass — which is exactly the kind of coverage that reads as green and is not there.
+ERASE_PROBE = r"""(async () => {
+  const layer = () => ((JSON.parse(localStorage.getItem('pc_meme_project')||'null')||{layers:[]})
+                        .layers.find(l => l.id === 'L1') || {});
+  document.getElementById('mb-erase').click();
+  const art = document.getElementById('er-src'), ov = document.getElementById('er-ov');
+  if (!art || !ov) return {err: 'the eraser did not open'};
+  for (let i = 0; i < 40 && !ov.width; i++) await new Promise(r => setTimeout(r, 50));
+  if (!ov.width) return {err: 'the mask never sized itself (the picture did not load)'};
+
+  const r = art.getBoundingClientRect();
+  const pt = (fx, fy) => ({clientX: r.left + r.width * fx, clientY: r.top + r.height * fy});
+  const fire = (t, p) => art.parentElement.dispatchEvent(new PointerEvent(t, {
+    ...p, pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true}));
+  // A stroke straight across the middle. Several moves, because one is indistinguishable from a tap.
+  fire('pointerdown', pt(0.2, 0.5));
+  for (let i = 3; i <= 8; i++) fire('pointermove', pt(i / 10, 0.5));
+  fire('pointerup', pt(0.8, 0.5));
+
+  // The scrim is drawn ONLY where the mask has been rubbed away, so its alpha is the erased region.
+  const c = ov.getContext('2d');
+  const alphaAt = (fx, fy) => c.getImageData(Math.round(ov.width * fx), Math.round(ov.height * fy), 1, 1).data[3];
+  const painted = alphaAt(0.5, 0.5), corner = alphaAt(0.04, 0.04);
+
+  // Everything a thumb has to reach, with the picture on screen.
+  const vw = innerWidth, vh = innerHeight;
+  const box = id => { const e = document.getElementById(id); return e ? e.getBoundingClientRect() : null; };
+  const go = box('er-go'), pic = art.getBoundingClientRect();
+  const small = ['er-rub','er-put','er-undo','er-all','er-go','er-cancel']
+    .map(id => ({id, h: Math.round((box(id)||{height:0}).height)})).filter(x => x.h < 24);
+  // Read BEFORE Apply: it closes the dialog, and getComputedStyle on the detached element then
+  // returns "" for everything — which reads as "touch-action is unset" and fails on a correct build.
+  const touchAction = getComputedStyle(art.parentElement).touchAction;
+
+  document.getElementById('er-go').click();
+  for (let i = 0; i < 40 && !layer().mask; i++) await new Promise(r => setTimeout(r, 50));
+
+  return {
+    painted, corner,
+    touchAction,
+    maskW: ov.width, maskH: ov.height,
+    overflow: document.documentElement.scrollWidth > vw + 1,
+    picOnScreen: pic.top >= -1 && pic.bottom <= vh + 1 && pic.left >= -1 && pic.right <= vw + 1,
+    applyOnScreen: !!go && go.bottom <= vh + 1 && go.top >= -1,
+    small,
+    mask: layer().mask || '',
+    stillOpen: !!document.getElementById('er-src'),
+  };
+})()"""
+
 AUDIT = r"""(() => {
   const out = {overflow:false, offscreen:[], tiny:[], overlap:[], present:{}, panel:false};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
@@ -467,6 +532,53 @@ async def drive(url):
                     problems.append(("talk", "stale-layer", f"expected 2 layers, got {tk['n']}"))
                 print(f"talk: layers={tk['n']} video={tk['video']} audio={tk['audio']} "
                       f"image={tk['stillImage']}")
+
+            # ✂ ERASE, at the NARROWEST width — the modal has to hold a picture, four tools, a slider and
+            # Apply on the smallest screen the app supports, and the stroke has to land where the finger did.
+            await call("Emulation.setDeviceMetricsOverride",
+                       {"width": WIDTHS[-1][0], "height": WIDTHS[-1][1],
+                        "deviceScaleFactor": 2, "mobile": True})
+            await call("Page.navigate", {"url": url})
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+                if await js("window.__ready === true"):
+                    break
+            r = await call("Runtime.evaluate",
+                           {"expression": ERASE_PROBE, "returnByValue": True, "awaitPromise": True})
+            er = (r or {}).get("result", {}).get("value")
+            lbl = f"erase@{WIDTHS[-1][0]}px"
+            if not er:
+                problems.append((lbl, "erase-broken", "the probe did not run"))
+            elif er.get("err"):
+                problems.append((lbl, "erase-broken", er["err"]))
+            else:
+                # The stroke went across the middle, so the middle must be rubbed out and the corner
+                # must not. Both halves matter: an erase that covers EVERYTHING also "painted".
+                if not er["painted"]:
+                    problems.append((lbl, "erase-broken",
+                                     "the stroke did not erase anything — the pointer never reached the "
+                                     "canvas (touch-action?) or the mapping is wrong"))
+                if er["corner"]:
+                    problems.append((lbl, "erase-broken",
+                                     "a corner the stroke never touched was erased too"))
+                if er.get("touchAction") != "none":
+                    problems.append((lbl, "erase-broken",
+                                     f"the drawing surface has touch-action:{er.get('touchAction')} — a "
+                                     "finger drag will scroll the page instead of drawing"))
+                if not er["picOnScreen"]:
+                    problems.append((lbl, "offscreen-control", "the picture is not fully on screen"))
+                if not er["applyOnScreen"]:
+                    problems.append((lbl, "offscreen-control", "Apply is below the fold"))
+                if er["overflow"]:
+                    problems.append((lbl, "horizontal-overflow", "the eraser scrolls the page sideways"))
+                for s in er["small"]:
+                    problems.append((lbl, "tiny-tap-target", f"#{s['id']} is {s['h']}px tall"))
+                if not er["mask"]:
+                    problems.append((lbl, "erase-broken", "Apply did not put a mask on the layer"))
+                if er["stillOpen"]:
+                    problems.append((lbl, "erase-broken", "Apply left the dialog open"))
+                print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
+                      f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'}")
 
             # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
             await call("Page.navigate", {"url": url})

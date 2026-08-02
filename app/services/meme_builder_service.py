@@ -89,6 +89,29 @@ def _fx_chain(effect: str, w: int, h: int, dur: float, fps: int) -> str:
     return ""
 
 
+def _fit_chain(fit: Optional[str], lw: int, lh: int, fps: int) -> list:
+    """The scale/pad (or scale/crop) that seats a source inside the layer's lw x lh box.
+
+    "contain" (default) letterboxes the source inside the box; "cover" scales UP until the box is filled
+    and crops the overflow — what you actually want from a "fill the canvas" background, where a
+    letterboxed image with transparent bars is not filling anything.
+
+    Shared by the layer and by its ERASE MASK, and the sharing is the whole point. The mask is painted in
+    the SOURCE's own coordinate space (so it survives resizing, re-fitting or rotating the layer
+    afterwards), which means it only covers the pixels it is meant to erase if it is seated into the box
+    by EXACTLY this geometry. Two copies of these five filters would drift apart the first time either
+    was touched, and the symptom — an erase that is offset or scaled slightly — looks like a brush bug
+    rather than a geometry one.
+    """
+    if str(fit or "").lower() == "cover":
+        return [f"scale={lw}:{lh}:force_original_aspect_ratio=increase",
+                f"crop={lw}:{lh}",
+                "setsar=1", f"fps={fps}", "format=rgba"]
+    return [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
+            f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
+            "setsar=1", f"fps={fps}", "format=rgba"]
+
+
 def _ff_colour(c: Optional[str], fallback: str = "black") -> str:
     """A hex colour we are willing to hand to ffmpeg. Anything else falls back — this string ends up in
     a command line, so it is validated rather than trusted."""
@@ -673,17 +696,18 @@ def render(edit: dict, sources: dict) -> tuple:
                 _dec = ["-c:v", "libvpx-vp9"] if str(path).lower().endswith(".webm") else []
                 cmd += _dec + ["-ss", f"{trim:.3f}", "-t", f"{src_dur:.3f}", "-i", path]
 
-            # "contain" (default) letterboxes the source inside the layer box; "cover" scales UP until the box
-            # is filled and crops the overflow — what you actually want from a "fill the canvas" background,
-            # where a letterboxed image with transparent bars is not filling anything.
-            if str(layer.get("fit") or "").lower() == "cover":
-                chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=increase",
-                         f"crop={lw}:{lh}",
-                         "setsar=1", f"fps={fps}", "format=rgba"]
-            else:
-                chain = [f"scale={lw}:{lh}:force_original_aspect_ratio=decrease",
-                         f"pad={lw}:{lh}:(ow-iw)/2:(oh-ih)/2:color=black@0",
-                         "setsar=1", f"fps={fps}", "format=rgba"]
+            # ERASE MASK (the builder's ✂ tool): a PNG the size of the layer's SOURCE whose alpha is the
+            # part to KEEP — opaque where the picture stays, transparent where the user rubbed it out.
+            # Resolved through `sources` like any other layer media, so it is fetched by the same guarded
+            # path and this stays a renderer with no network of its own. Added as its own input right
+            # after the layer's, which is why `idx` advances by two below.
+            mask_path = sources.get(str(layer.get("mask") or "")) if layer.get("mask") else None
+            mask_idx = None
+            if mask_path and os.path.exists(mask_path):
+                mask_idx = idx + 1
+                cmd += ["-loop", "1", "-t", f"{dur:.3f}", "-i", mask_path]
+
+            chain = _fit_chain(layer.get("fit"), lw, lh, fps)
             # Speed goes FIRST, before `fps` resamples: restretching the timestamps after the frame rate has
             # been fixed leaves a stream running at fps*speed, which every downstream filter built for `fps`
             # (zoompan's d=frames, the fade ramps) then measures wrongly. Ahead of it, `fps` does the
@@ -701,6 +725,31 @@ def render(edit: dict, sources: dict) -> tuple:
                 _sdur = _source_duration(path)
                 if _sdur and trim + src_dur > _sdur + 0.05:
                     chain.append(f"tpad=stop_mode=clone:stop_duration={dur:.3f}")
+            # APPLY THE ERASE MASK here — after the source is seated in its box, before flip/effect/rotate.
+            # That order is what the editor paints against: the eraser shows the layer's own artwork
+            # untransformed, so the stroke means "this part of the picture", not "this part of the screen".
+            # Masking after a rotate would erase a fixed region of the frame while the picture turned
+            # underneath it.
+            #
+            # It MULTIPLIES the existing alpha instead of replacing it (which is all `alphamerge` alone
+            # would do). The stream already carries meaningful transparency by this point — a cut-out PNG,
+            # a VP9-alpha effect layer, and the transparent letterbox bars `pad` just added — and replacing
+            # the alpha with the mask makes every one of those opaque: the bars come back as black,
+            # and erasing part of a cut-out un-cuts the rest of it.
+            if mask_idx is not None:
+                head = f"[{idx}:v]"
+                chains.append(head + ",".join(chain) + f"[mp{n}]")
+                # Same _fit_chain as the layer — see its docstring. alphaextract turns the mask's own alpha
+                # into the gray plane blend/alphamerge work on.
+                chains.append(f"[{mask_idx}:v]" + ",".join(_fit_chain(layer.get("fit"), lw, lh, fps))
+                              + f",alphaextract[mk{n}]")
+                chains.append(f"[mp{n}]split[mA{n}][mB{n}]")
+                chains.append(f"[mB{n}]alphaextract[mBa{n}]")
+                # repeatlast: the mask is one still frame looped, the layer may be a video — hold the mask
+                # rather than letting framesync end the blend at the shorter input.
+                chains.append(f"[mBa{n}][mk{n}]blend=all_mode=multiply:repeatlast=1[mNa{n}]")
+                chains.append(f"[mA{n}][mNa{n}]alphamerge[mM{n}]")
+                chain = []
             # MIRROR before the effect (hflip/vflip preserve the frame size, so the effect chain still
             # sees the lw x lh box it was built for) and ROTATE after it — so a spin/zoom animates the
             # upright artwork and the whole result is then turned, rather than the effect's own geometry
@@ -742,7 +791,11 @@ def render(edit: dict, sources: dict) -> tuple:
             # setpts shifts the layer to its slot on the project timeline; the overlay `enable` then
             # gates it. Both are needed: without setpts the clip plays from t=0 regardless of `start`.
             chain.append(f"setpts=PTS-STARTPTS+{start:.3f}/TB")
-            chains.append(f"[{idx}:v]" + ",".join(chain) + f"[l{n}]")
+            # A masked layer already emitted its front half above and continues from the mask's output;
+            # `chain` is never empty here (the setpts shift above always lands in it), so this can't
+            # produce a chainless "[a][b]" link.
+            chains.append((f"[mM{n}]" if mask_idx is not None else f"[{idx}:v]")
+                          + ",".join(chain) + f"[l{n}]")
 
             nxt = f"[v{n}]"
             chains.append(f"{cur}[l{n}]overlay=x={ox}:y={oy}:"
@@ -765,7 +818,10 @@ def render(edit: dict, sources: dict) -> tuple:
                 audio_parts.append(f"[{idx}:a]" + "".join(t + "," for t in _tempo)
                                    + f"adelay={int(start*1000)}|{int(start*1000)},"
                                    f"volume={vol:.2f}[a{n}]")
-            idx += 1
+            # TWO inputs were added for a masked layer (the source and its mask), so the next layer's
+            # input index has to clear both. Advancing by one would silently point every later layer at
+            # the wrong input — a mask erasing one layer while another rendered somebody else's footage.
+            idx += 2 if mask_idx is not None else 1
 
             # Per-layer SOUND effect (the AI-chat catalogue: curb, fahh, sopranos…). Added as its own input,
             # trimmed to the layer's window and delayed to its start, then mixed with everything else — so a

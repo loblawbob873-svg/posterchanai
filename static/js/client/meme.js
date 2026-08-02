@@ -1077,9 +1077,10 @@
     // `#t=0.1` (a media fragment) makes the browser seek to 0.1s and DISPLAY that frame as a poster the
     // moment the layer mounts — otherwise `preload` alone decodes nothing and the clip shows blank until
     // you scrub/play (the "I have to render to see the effect" bug). preload=auto so the frame loads eagerly.
+    const mk = _maskCss(l, ofit);
     const inner = l.type==='video'
-      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${_xformCss(l)}"></video>`
-      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${_xformCss(l)}">`;
+      ? `<video src="${enc(l.src)}#t=0.1" muted playsinline preload="auto" style="object-fit:${ofit}${mk}${_xformCss(l)}"></video>`
+      : `<img src="${enc(l.src)}" alt="" style="object-fit:${ofit}${mk}${_xformCss(l)}">`;
     return `<div class="mb-item mb-media${s}" data-id="${l.id}" style="${pos}${size}opacity:${l.opacity}">${inner}<i class="mb-h"></i></div>`;
   }
 
@@ -1146,6 +1147,35 @@
     </div>`;
   }
 
+  // CSS equivalent of the renderer's ERASE MASK ('' when nothing is erased), so the stage shows the
+  // real result instead of making you render to find out.
+  //
+  // `mask-size` mirrors `object-fit` — and that one line is why the preview matches the export. The mask
+  // has the SAME aspect ratio as the source (it is painted in source space), so `contain` letterboxes it
+  // by exactly the ratio `object-fit:contain` letterboxes the picture, and `cover` crops it by exactly
+  // the ratio the picture is cropped. That is the browser's spelling of the renderer's shared
+  // _fit_chain. A fixed `mask-size:100% 100%` would stretch the mask to the box and misalign the erase
+  // on every layer whose shape differs from its box — which is most of them.
+  //
+  // It goes on the SAME element as the flip/rotate transform, so the erased region turns with the
+  // picture — matching the renderer, which masks before those filters.
+  //
+  // A raster mask-image is read by its ALPHA (mask-mode: match-source), which is what we encode:
+  // opaque = keep, transparent = erased.
+  function _maskCss(l, ofit){
+    if(!l || !l.mask) return '';
+    // This lands in a CSS url() inside a style attribute, which enc() alone does NOT make safe: it
+    // escapes a quote to &quot;, and the HTML parser hands the attribute VALUE back with a real quote
+    // in it — closing url(" early and letting the rest of the string be read as CSS. A project is a
+    // shareable Blossom document (Save/Open), so its fields are not automatically ours. Allow only a
+    // plain http(s) or root-relative URL with nothing that can terminate the literal.
+    if(!/^(https?:\/\/|\/)[^\s"'()\\<>]+$/i.test(String(l.mask))) return '';
+    const u = `url("${enc(l.mask)}")`;
+    return `;-webkit-mask-image:${u};mask-image:${u}`
+         + `;-webkit-mask-size:${ofit};mask-size:${ofit}`
+         + `;-webkit-mask-position:center;mask-position:center`
+         + `;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat`;
+  }
   // CSS equivalent of the renderer's flip+rotate for this layer ('' when it is untouched).
   function _xformCss(l){
     const t=_xform(l); return t ? `;transform:${t};transform-origin:center` : '';
@@ -1213,6 +1243,8 @@
         ${(l.type!=='image' && l.fxPose) ? `<button class="btn btn-cyan small full" id="mb-talk" title="Make this character say a line in one of your cloned voices. It is animated from the character's own artwork, so the pose stays exactly as it is."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
         ${l.type==='image' ? `<button class="btn btn-cyan small full" id="mb-nobg" title="Cut the subject out of this photo and drop the background, so the layers underneath show through. Same cut-out the removebackground command does. Undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>Remove the background</button>
         <button class="btn btn-cyan small full" id="mb-talk" title="The face in this picture says a line in one of your cloned voices, with its mouth animated to the speech. Becomes a video layer; undo with ↺ below."><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Make it talk</button>` : ''}
+        <button class="btn btn-cyan small full" id="mb-erase" title="Rub parts of this layer out with your finger or the mouse. What you erase turns see-through, so the layers underneath show through it.">✂ Erase parts${l.mask?' (erased)':''}</button>
+        ${l.mask ? `<button class="btn btn-cyan small full" id="mb-erase-clear" title="Put every erased part of this layer back">↺ Undo the erase</button>` : ''}
         ${l.origSrc ? `<button class="btn btn-cyan small full" id="mb-fx-revert" title="Put this layer's original picture back — the effect (or the background cut-out) that replaced it is undone">↺ Undo the effect on this layer</button>` : ''}`}
 
       <!-- Stacking order is one of the handful you reach for on EVERY layer, so it belongs up here with
@@ -2149,6 +2181,216 @@
     });
   }
 
+  // ---------- ✂ erase part of a layer ----------
+  // Rub bits of a layer out with a finger or a mouse. What you erase becomes TRANSPARENT, so whatever is
+  // underneath shows through — the layers below it, or the canvas background.
+  //
+  // The stroke is painted in the layer's SOURCE space, not on the stage, and that is the design:
+  //   * it survives everything done to the layer afterwards — resize, re-fit, flip, rotate, move —
+  //     because the renderer seats the mask into the layer box with the SAME geometry as the picture
+  //     (_fit_chain in meme_builder_service.py). Painting on the stage would bake in today's size.
+  //   * the pointer maths stay trivial. The stage element carries the flip/rotate transform, so a stroke
+  //     there would have to be un-rotated by hand; here the artwork is shown upright and untransformed,
+  //     exactly like the mouth picker, and clientX and the rect agree.
+  //
+  // The mask is uploaded and referenced by URL like every other piece of layer media. Inline base64 is
+  // the obvious alternative and is wrong twice over: snap() snapshots the WHOLE project 40 deep and
+  // save() puts it in localStorage, so a handful of masks would blow up both.
+  const MASK_EDGE = 1024;          // cap on the mask's long edge — see below
+  // Undo REPLAYS strokes rather than stacking bitmaps. A 1024px mask is 4 MB as ImageData, so even a
+  // shallow bitmap stack is tens of megabytes on a phone; a stroke is a few hundred bytes of points.
+  function eraseParts(l){
+    const isVid = l.type === 'video';
+    PC.modal(`<h3>✂ Erase parts of this layer</h3>
+      <div class="muted small" style="margin-bottom:8px">Rub out what you don’t want — it turns
+        see-through, so whatever is under it shows through. ${isVid?'The whole clip is erased in the same place.':''}</div>
+      <div class="mb-er-wrap" id="er-wrap">
+        ${isVid ? `<video id="er-src" src="${enc(l.src)}#t=0.1" muted playsinline preload="auto"></video>`
+                : `<img id="er-src" src="${enc(l.src)}" alt="">`}
+        <canvas id="er-ov"></canvas>
+      </div>
+      <div class="mb-er-tools">
+        <button class="btn btn-cyan small on" id="er-rub" title="Rub the picture out">✂ Erase</button>
+        <button class="btn btn-ghost small" id="er-put" title="Paint an erased part back in">↺ Restore</button>
+        <button class="btn btn-ghost small" id="er-undo" disabled title="Undo the last stroke">↶ Undo</button>
+        <button class="btn btn-ghost small" id="er-all" title="Put the whole layer back">Clear all</button>
+      </div>
+      <label class="mb-f"><span>Brush size <b id="er-bv">18%</b></span>
+        <input type="range" id="er-b" min="2" max="60" step="1" value="18"></label>
+      <div class="muted small" id="er-hint">Loading the picture…</div>
+      <div class="mb-frow" style="margin-top:12px">
+        <button class="btn btn-ghost small" id="er-cancel">Cancel</button>
+        <button class="btn btn-neon small" id="er-go" disabled>Apply</button>
+      </div>`, root => {
+      const $q = s => root.querySelector(s);
+      const wrap = $q('#er-wrap'), art = $q('#er-src'), ov = $q('#er-ov');
+      const hint = $q('#er-hint'), go = $q('#er-go'), undoBtn = $q('#er-undo');
+      // msk is the real mask: opaque = keep, transparent = erased. Its ALPHA is the whole payload —
+      // both consumers (CSS mask-image on the stage, alphaextract in ffmpeg) read alpha and ignore RGB.
+      const msk = document.createElement('canvas');
+      // `base` is the mask as it was when this opened, so re-opening CONTINUES the previous erase
+      // instead of starting over — and so Undo can replay this session's strokes on top of it.
+      let base = null, ops = [], mode = 'rub', drawing = false, last = null, cleared = false, busy = false;
+
+      const brush = () => (+$q('#er-b').value || 18) / 100;
+      const radius = () => Math.max(1, brush() * msk.width / 2);
+
+      // One brush pass. `pts` may be the whole stroke (a replay) or the two points of the segment just
+      // drawn (the live path) — round caps and joins make a polyline and its segments identical, so the
+      // two agree pixel for pixel.
+      function drawOp(c, mode, r, pts){
+        c.globalCompositeOperation = mode === 'rub' ? 'destination-out' : 'source-over';
+        c.strokeStyle = '#fff'; c.fillStyle = '#fff';
+        c.lineWidth = r * 2; c.lineCap = 'round'; c.lineJoin = 'round';
+        if(pts.length === 1){          // a TAP is a dot, not a zero-length line (which strokes nothing)
+          c.beginPath(); c.arc(pts[0][0], pts[0][1], r, 0, Math.PI * 2); c.fill();
+        } else {
+          c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
+          for(let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
+          c.stroke();
+        }
+        c.globalCompositeOperation = 'source-over';
+      }
+      function syncBtns(){
+        undoBtn.disabled = !ops.length;
+        go.disabled = busy || (!ops.length && !cleared);
+      }
+      // FULL replay — undo, Clear all, and the initial paint. Deliberately NOT what a pointermove uses:
+      // replaying every stroke per move is quadratic in the length of the drag, which on a phone is a
+      // stutter that gets worse the longer you draw. A move extends the canvas by one segment instead.
+      function rebuild(){
+        const c = msk.getContext('2d');
+        c.globalCompositeOperation = 'source-over';
+        c.clearRect(0, 0, msk.width, msk.height);
+        if(base) c.drawImage(base, 0, 0, msk.width, msk.height);
+        else { c.fillStyle = '#fff'; c.fillRect(0, 0, msk.width, msk.height); }
+        ops.forEach(op => drawOp(c, op.mode, op.r, op.pts));
+        paintOv();
+        syncBtns();
+      }
+      // The erased area is shown as a scrim rather than by hiding the pixels: you need to see WHAT you
+      // rubbed out to judge the edge, and the true result is one Apply away on the stage behind.
+      function paintOv(){
+        const c = ov.getContext('2d');
+        c.globalCompositeOperation = 'source-over';
+        c.clearRect(0, 0, ov.width, ov.height);
+        c.fillStyle = 'rgba(255,32,96,.45)';
+        c.fillRect(0, 0, ov.width, ov.height);
+        c.globalCompositeOperation = 'destination-out';   // keep the scrim ONLY where the mask is gone
+        c.drawImage(msk, 0, 0, ov.width, ov.height);
+        c.globalCompositeOperation = 'source-over';
+      }
+      // Pointer -> mask pixels. The RECT is right here (clientX and the rect are both viewport pixels,
+      // so body{zoom} cancels out); it is only the drawing of elements that has to use layout pixels.
+      const at = ev => {
+        const r = art.getBoundingClientRect(); if(!r.width) return null;
+        const p = ev.touches ? ev.touches[0] : ev;
+        return [clamp((p.clientX - r.left) / r.width, 0, 1) * msk.width,
+                clamp((p.clientY - r.top) / r.height, 0, 1) * msk.height];
+      };
+      const down = e => {
+        if(!msk.width || busy) return;
+        drawing = true;
+        try{ wrap.setPointerCapture(e.pointerId); }catch(_){ }
+        const p = at(e); if(!p) return;
+        last = p; ops.push({ mode, r: radius(), pts: [p] });
+        drawOp(msk.getContext('2d'), mode, radius(), [p]); paintOv(); syncBtns();
+        e.preventDefault();
+      };
+      const move = e => {
+        if(!drawing || !ops.length) return;
+        const p = at(e); if(!p) return;
+        // Skip sub-pixel jitter: a phone emits pointermove at 120Hz and every point is replayed on
+        // every undo, so an unfiltered drag builds a stroke thousands of points long for no extra detail.
+        if(last && Math.abs(p[0] - last[0]) < 1.5 && Math.abs(p[1] - last[1]) < 1.5) return;
+        const op = ops[ops.length - 1];
+        drawOp(msk.getContext('2d'), op.mode, op.r, [last, p]);   // just the new segment — see rebuild()
+        op.pts.push(p); last = p; paintOv();
+        e.preventDefault();
+      };
+      const up = e => { drawing = false; last = null;
+        try{ wrap.releasePointerCapture(e.pointerId); }catch(_){ } };
+      wrap.addEventListener('pointerdown', down);
+      wrap.addEventListener('pointermove', move);
+      wrap.addEventListener('pointerup', up);
+      wrap.addEventListener('pointercancel', up);
+
+      const setMode = m => { mode = m;
+        $q('#er-rub').className = 'btn small ' + (m === 'rub' ? 'btn-cyan on' : 'btn-ghost');
+        $q('#er-put').className = 'btn small ' + (m === 'put' ? 'btn-cyan on' : 'btn-ghost'); };
+      $q('#er-rub').onclick = () => setMode('rub');
+      $q('#er-put').onclick = () => setMode('put');
+      $q('#er-undo').onclick = () => { if(ops.length){ ops.pop(); rebuild(); } };
+      $q('#er-all').onclick = () => { ops = []; base = null; cleared = true; rebuild(); };
+      $q('#er-b').oninput = e => { $q('#er-bv').textContent = (+e.target.value || 18) + '%'; };
+
+      // Size the mask from the SOURCE's natural dimensions, capped: the mask only has to resolve the
+      // brush edge, and a 12 MP phone photo would otherwise upload a 12 MP PNG per erase.
+      function ready(nw, nh){
+        if(!nw || !nh){ hint.textContent = 'That picture would not load — re-add the layer.'; return; }
+        const k = Math.min(1, MASK_EDGE / Math.max(nw, nh));
+        msk.width = Math.max(2, Math.round(nw * k)); msk.height = Math.max(2, Math.round(nh * k));
+        ov.width = msk.width; ov.height = msk.height;
+        hint.textContent = 'Drag over the picture to rub it out.';
+        // Continue a previous erase. crossOrigin so the canvas stays EXPORTABLE — drawing a
+        // cross-origin image without it taints the canvas and toBlob() then throws SecurityError,
+        // which would only surface at Apply, after the work. A mask we cannot read is not fatal:
+        // start clean and say so, rather than silently dropping the old erase without a word.
+        if(l.mask){
+          const mi = new Image(); mi.crossOrigin = 'anonymous';
+          mi.onload = () => { base = mi; rebuild(); };
+          mi.onerror = () => { hint.textContent = 'Could not re-open the earlier erase — starting fresh.';
+                               cleared = true; rebuild(); };
+          mi.src = l.mask;
+        }
+        rebuild();
+      }
+      if(isVid){
+        art.addEventListener('loadedmetadata', () => ready(art.videoWidth, art.videoHeight), { once:true });
+        art.addEventListener('error', () => ready(0, 0), { once:true });
+      } else {
+        art.onload = () => ready(art.naturalWidth, art.naturalHeight);
+        art.onerror = () => ready(0, 0);
+        if(art.complete && art.naturalWidth) ready(art.naturalWidth, art.naturalHeight);
+      }
+
+      $q('#er-cancel').onclick = () => PC.closeModal();
+      // RE-RESOLVE the layer by id before writing to it. `l` was captured when the dialog opened, and an
+      // upload is a real round trip; anything that reloads the project in between (re-entering the view
+      // runs `P = load()`) rebuilds P.layers as NEW objects, so the captured one becomes an orphan and
+      // the mask would be written to something no longer on the timeline — silently, with the toast
+      // still saying it worked. The exact hazard applyMemeEffect and Make-it-talk both hit for real.
+      const live = () => P.layers.find(x => x.id === l.id) || l;
+      go.onclick = () => {
+        if(busy) return;
+        // Cleared back to nothing: drop the mask entirely rather than uploading an all-opaque PNG that
+        // costs the renderer an extra input and a blend to change nothing.
+        if(cleared && !ops.length){
+          const cur = live();
+          if(cur.mask){ snap(); cur.mask = ''; save(); render(); }
+          PC.closeModal(); return;
+        }
+        busy = true; go.disabled = true; go.textContent = 'Saving…';
+        try{
+          msk.toBlob(async blob => {
+            try{
+              if(!blob) throw new Error('could not read the mask');
+              const url = await uploadBlob(new File([blob], 'erase.png', { type:'image/png' }));
+              snap(); live().mask = url; save(); render();
+              PC.closeModal(); toast('erased — render to see it in the export');
+            }catch(err){
+              busy = false; go.disabled = false; go.textContent = 'Apply';
+              toast('couldn’t save the erase: ' + ((err && err.message) || err));
+            }
+          }, 'image/png');
+        }catch(err){
+          busy = false; go.disabled = false; go.textContent = 'Apply';
+          toast('couldn’t save the erase: ' + ((err && err.message) || err));
+        }
+      };
+    });
+  }
+
   // 🎨 The prompt sheet is AI Chat's OWN "Make an image" studio (PC.openGenStudio), borrowed with a
   // different destination: same style/mood/shot chips, same live preview, same mobile layout, and the
   // list can't drift between the two places. Only the ending differs — the result becomes a layer here
@@ -2458,6 +2700,11 @@
         base.origName = base.name || ''; base.origDur = +base.dur || 0;
       }
       base.src = j.url;
+      // An erase was painted against the artwork that is being REPLACED here. On the new picture the
+      // same mask covers something else, so it would rub out the wrong region on every render from now
+      // on, with nothing on screen to explain why. Drop it and say so — a wrong erase you cannot see the
+      // cause of is worse than one you have to redo.
+      const _hadMask = !!base.mask; base.mask = '';
       const isVid = (j.is_video !== false);
       base.type = isVid ? 'video' : 'image';
       // Only a VIDEO result re-times the layer. ffprobe reports a duration for a still too (one frame,
@@ -2468,7 +2715,7 @@
       base.trim = 0;
       sel = base.id;
       save(); render();
-      toast(done || (name+' applied'));
+      toast((done || (name+' applied')) + (_hadMask ? ' — the erase was cleared, it was drawn on the old picture' : ''));
     }catch(err){ toast('failed: '+((err&&err.message)||err)); }
     finally{ _fxBusy = false; if(st) st.textContent=''; }
   }
@@ -2603,6 +2850,11 @@
           // wrapText is the same function the preview lays out, so what you saw is what gets drawn.
           text:(l.type==='text' ? wrapText(l) : l.text), size:+l.size, color:l.color, stroke:l.stroke,
           box:!!l.box, boxColor:l.boxColor||'#000000', boxAlpha:(l.boxAlpha==null?0.55:+l.boxAlpha), shadow:!!l.shadow,
+          // The erase mask travels as a URL like `src` does; the server fetches it down the same guarded
+          // path. This payload is an explicit WHITELIST, so a field missing here is a field the renderer
+          // never sees — the erase would preview perfectly on the stage and be silently absent from
+          // every export, which is indistinguishable from "the eraser is broken".
+          mask:l.mask||'',
           fit:l.fit||'contain', align:_alignOf(l), cx:(l.type==='text' ? _textCenterX(l) : null) })) };
       const auth=await selfProof();
       const r=await fetch('/client/meme/render',{ method:'POST', headers:{'Content-Type':'application/json'},
@@ -2907,6 +3159,9 @@
               cur.origName = cur.name || ''; cur.origDur = +cur.dur || 0;
             }
             cur.src = j.url; cur.type = 'video'; cur.trim = 0;
+            // Same reason as applyMemeEffect: the mask was drawn on the still, and this is a different
+            // clip — often a different shape, since a talking take is rendered to its own frame.
+            cur.mask = '';
             if(+j.dur > 0) cur.dur = +j.dur;
             cur.name = name;
             sel = cur.id;
@@ -2944,6 +3199,14 @@
         },
         });
       });
+    });
+    // ✂ Erase parts — a per-layer alpha mask, NOT a new source. That is why it sits beside the
+    // background cut-out rather than replacing it: rembg swaps the layer's picture (and needs origSrc to
+    // undo), while this leaves the source alone and is undone by dropping one field.
+    on('mb-erase','click',()=>eraseParts(l));
+    on('mb-erase-clear','click',()=>{
+      if(!l.mask) return;
+      snap(); l.mask=''; save(); render(); toast('erase undone — the whole layer is back');
     });
     on('mb-fx-revert','click',()=>{
       if(!l.origSrc) return;

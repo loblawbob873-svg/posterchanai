@@ -4457,6 +4457,17 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             and (l.get("type") or "") != "text"}
     if len(urls) > meme_builder_service.MAX_LAYERS:
         raise HTTPException(status_code=400, detail="too many distinct sources")
+    # ERASE MASKS travel as URLs, exactly like every other piece of layer media, so they come down the
+    # SAME guarded fetch below (SSRF allowlist, redirect following, size cap) and land in `sources` for
+    # the renderer to look up. Inline base64 was the alternative and is worse in three ways: the edit
+    # list is what undo snapshots (40 deep) and localStorage hold, the render POST would carry every
+    # mask on every attempt, and it would need a second decode path with its own bounds. Counted
+    # separately from `urls` so adding an eraser can't push a legitimate project over the source limit.
+    masks = {str(l.get("mask")) for l in layers if isinstance(l, dict) and l.get("mask")
+             and (l.get("type") or "") not in ("text", "audio")}
+    if len(masks) > meme_builder_service.MAX_LAYERS:
+        raise HTTPException(status_code=400, detail="too many distinct erase masks")
+    urls |= masks
 
     # Our own media hosts are exempt from the SSRF guard, and have to be — see _own_media_hosts.
     own = _own_media_hosts(db)
@@ -4476,7 +4487,11 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
                 # Keep the URL in the message — with several layers, "refused source" alone doesn't say
                 # WHICH one the user has to remove. 200 chars, not 80: a fedi media URL is ~100 and the
                 # old cut landed mid-hash, so the reported URL 404'd when pasted back for diagnosis.
-                raise HTTPException(status_code=e.status_code, detail=f"{e.detail}: {u[:200]}")
+                # Say when it is an ERASE MASK: that URL is one the builder uploaded silently, so
+                # "refused source: …/erase.png" reads as a file the user has never heard of, on a
+                # project whose layers all look fine. Naming it points at the ↺ that clears it.
+                what = " (the erase on a layer — ↺ Undo the erase clears it)" if u in masks else ""
+                raise HTTPException(status_code=e.status_code, detail=f"{e.detail}{what}: {u[:200]}")
             # 80 MB per source: a phone-shot clip fits, a film does not. Renders share the box with
             # chat and image gen, so this is a real resource bound, not a formality.
             if len(content) > 80 * 1024 * 1024:
