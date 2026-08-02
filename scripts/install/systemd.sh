@@ -51,9 +51,12 @@ offer_split_services() {
     [ "$SERVICE_NAME" = "posterchanai" ] || return 0
 
     echo ""
-    print_step "Run the relay, worker, media and bots as SEPARATE services?"
+    print_step "Run the relay, worker, media, tor, proxy and git host as SEPARATE services?"
     echo "  Recommended. Restarting the web app then no longer drops connected Nostr clients,"
-    echo "  kills live streams mid-broadcast, drops calls, or restarts the bots."
+    echo "  kills live streams mid-broadcast, drops calls, tears down Tor circuits, or kills"
+    echo "  in-flight git clones/pushes."
+    echo "  The BOT MANAGER stays with the app deliberately (Admin -> Bots drives it through an"
+    echo "  in-process registry), so the app runs role \"app,bots\"."
     echo "  Reversible at any time with: scripts/install_services.sh --revert"
     read -p "Split into separate services? [y/N]: " SPLIT_SVC
     SPLIT_SVC=${SPLIT_SVC:-N}
