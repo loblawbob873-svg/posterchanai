@@ -51,9 +51,31 @@ if [ -z "$SKIP_LINT" ] && [ -x venv-unified/bin/python ]; then
     echo "[sync] bot entrypoint OK (starts and parses arguments)"
 fi
 
-# Remember what was deployed BEFORE this commit, so the restart set can be computed from
-# the actual diff rather than from guesswork.
+# What are THIS node's services actually running? That -- not "HEAD before the commit below" -- is the
+# base the restart set has to be computed from, and the two are only the same when sync.sh created the
+# commit itself.
+#
+# This is a bug that shipped: a commit made BY HAND before running sync.sh makes `git commit -a` a no-op,
+# so HEAD-before == HEAD-after, the range is EMPTY, deploy_targets returns <none>, and server1 restarts
+# NOTHING -- while nas restarts correctly, because nas computes its range from its own pre-pull HEAD
+# (what it was running). The deploy then reports "all nodes in sync", which is true of the CHECKOUTS and
+# false of the processes: server1 served two-hour-old code with nothing in any log to say so. Running
+# sync.sh twice, or pulling a commit made on another machine, does the same thing.
+#
+# So track it the way nas effectively does: a stamp of the commit at the last successful local restart,
+# kept in .git/ (never committed, never in `git status`, survives checkouts). Falls back to the old
+# behaviour on a fresh clone that has no stamp yet.
+_STAMP=".git/posterchanai-deployed"
 _PREV_HEAD="$(git rev-parse HEAD 2>/dev/null || echo HEAD)"
+if [ -r "$_STAMP" ]; then
+    _s="$(tr -d '[:space:]' < "$_STAMP")"
+    # Only trust a stamp that still names a real commit -- a rebased/gc'd sha would make the range
+    # bogus, and deploy_targets failing open (restart everything) is the safe direction anyway.
+    if [ -n "$_s" ] && git rev-parse --verify --quiet "${_s}^{commit}" >/dev/null 2>&1; then
+        _PREV_HEAD="$_s"
+        echo "[sync] local services last restarted at ${_s:0:8}"
+    fi
+fi
 git commit -a -m fix || true
 # Deploy to PRODUCTION. `origin` is now the NOSTR repo on the built-in GRASP host
 # (nostr://<npub>/relay.poster.place/posterchanai -> https://poster.place/git/<npub>/posterchanai.git);
@@ -116,6 +138,7 @@ _wait_gpu_free() {
 #
 # A node that has NOT been split still has only posterchanai.service; `systemctl restart` on a unit
 # that does not exist is skipped below, so this is safe on both layouts.
+_RESTART_FAILED=0
 _restart_units() {
     local units="$1"
     if [ -z "$units" ]; then
@@ -125,7 +148,13 @@ _restart_units() {
     for u in $units; do
         if systemctl list-unit-files "$u" >/dev/null 2>&1 && systemctl cat "$u" >/dev/null 2>&1; then
             echo "[sync] restarting $u"
-            sudo systemctl restart "$u"
+            # A failed restart used to pass silently: the unit keeps running OLD code and the deploy
+            # still reported success. Say so, and don't let the stamp advance past a commit this node
+            # never actually started.
+            if ! sudo systemctl restart "$u"; then
+                echo "[sync]   FAILED to restart $u -- it is still on the previous code"
+                _RESTART_FAILED=1
+            fi
         fi
     done
 }
@@ -140,6 +169,14 @@ _TARGETS="$("$_PY" scripts/deploy_targets.py "$_PREV_HEAD..HEAD" 2>/dev/null \
 echo "[sync] deploy targets: ${_TARGETS:-<none>}"
 if [ -n "$_TARGETS" ]; then _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock; fi
 _restart_units "$_TARGETS"
+
+# Advance the stamp -- including when nothing needed restarting. A deploy whose range held no
+# server-side change leaves the services on older code quite correctly, and the NEXT deploy must
+# measure from here, not from that older commit; the union of the two ranges is the same set either
+# way. Not advanced when a restart failed, so the retry still sees the work as outstanding.
+if [ "$_RESTART_FAILED" = "0" ]; then
+    git rev-parse HEAD > "$_STAMP" 2>/dev/null || true
+fi
 
 # server1 is cut over: the bots now run via the in-app manager (botframework/ + Admin → Bots,
 # bots_manager_enabled). The legacy posterchan.service is stopped+disabled here, so do NOT

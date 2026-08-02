@@ -89,6 +89,55 @@ class RestartsOnlyWhatChanged(unittest.TestCase):
             self.assertIn("_TARGETS", s, f"unguarded GPU wait: {s}")
 
 
+class LocalRestartSetIsMeasuredFromWhatIsRunning(unittest.TestCase):
+    """The local restart range must start at the commit THIS NODE'S SERVICES ARE ON, not at
+    "HEAD before sync.sh's own commit". Those are the same only when sync.sh created the commit.
+
+    That gap shipped. A commit made by hand before running sync.sh makes `git commit -a` a no-op, so
+    HEAD-before == HEAD-after, the range is EMPTY, deploy_targets returns nothing, and server1 restarts
+    NOTHING -- while nas restarts correctly, because nas computes its range from its own pre-pull HEAD.
+    The deploy then reports "all nodes in sync", which is true of the checkouts and false of the
+    processes: server1 ran two-hour-old code with nothing in any log to say so. Running sync.sh twice,
+    or pulling a commit made on another machine, reproduces it exactly.
+    """
+
+    def test_the_base_comes_from_a_persisted_deploy_stamp(self):
+        src = _src()
+        self.assertIn("_STAMP=", src, "no stamp of what the local services are running")
+        self.assertRegex(src, r'_PREV_HEAD="\$_s"',
+                         "the stamp is read but never used as the restart range's base")
+
+    def test_the_stamp_is_validated_before_it_is_trusted(self):
+        """A rebased/gc'd sha would make the range bogus; falling back restarts more, which is safe."""
+        self.assertIn('git rev-parse --verify --quiet "${_s}^{commit}"', _src())
+
+    def test_the_stamp_lives_outside_the_working_tree(self):
+        """In .git/, so it is never committed, never dirties `git status`, and survives checkouts."""
+        m = re.search(r'_STAMP="([^"]+)"', _src())
+        self.assertIsNotNone(m)
+        self.assertTrue(m.group(1).startswith(".git/"), m.group(1))
+
+    def test_the_stamp_advances_even_when_nothing_restarted(self):
+        """A range with no server-side change leaves the services on older code correctly; the next
+        deploy must measure from here or it re-evaluates ground already covered forever."""
+        src = _src()
+        m = re.search(r'_restart_units "\$_TARGETS"(.*?)\n# server1 is cut over', src, re.S)
+        self.assertIsNotNone(m, "could not find the post-restart block")
+        self.assertIn("$_STAMP", m.group(1), "the stamp is never written after a local restart pass")
+
+    def test_a_failed_restart_does_not_advance_the_stamp(self):
+        """Otherwise the retry sees the work as already done and the unit stays on old code."""
+        src = _src()
+        self.assertIn("_RESTART_FAILED=1", src)
+        self.assertRegex(src, r'(?s)if \[ "\$_RESTART_FAILED" = "0" \]; then\s*\n\s*git rev-parse HEAD > "\$_STAMP"')
+
+    def test_a_failed_restart_is_reported(self):
+        """It used to pass silently: the unit keeps running old code, the deploy still says success."""
+        src = _src()
+        self.assertRegex(src, r'if ! sudo systemctl restart "\$u"; then')
+        self.assertIn("FAILED to restart", src)
+
+
 class VerifiesTheDeployLanded(unittest.TestCase):
     def test_every_target_is_verified(self):
         src = _src()
