@@ -40,10 +40,6 @@ def check_ipex_environment():
         pass
 
 
-# Single definition lives in app/role.py, so the CLI choices, the unit files and the
-# ownership predicate can never disagree about what a valid role is.
-from app.role import ROLES
-
 ROLE_HELP = """Which part of the stack this process IS. Default 'all' = the historical single-process
 behaviour: the web app plus every child it supervises (relay, worker, mediamtx, TURN, tor, bots).
 

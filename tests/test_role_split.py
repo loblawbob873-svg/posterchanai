@@ -303,9 +303,10 @@ class RunPyDispatch(unittest.TestCase):
         # ROLES has ONE definition (app/role.py) which run.py imports, so the CLI's --role choices,
         # the unit files and the ownership predicate cannot disagree about what a valid role is. A
         # second literal here is exactly how the own-media-hosts list ended up in two places.
-        self.assertIn("from app.role import ROLES", src)
+        # run.py must not carry its own list of valid roles: app.role.current() validates, and a
+        # second copy here would let the CLI and the ownership predicate disagree.
         self.assertNotRegex(src, r"(?m)^ROLES\s*=\s*\(",
-                            "run.py must import ROLES, not redefine it")
+                            "run.py must not redefine ROLES — app/role.py owns it")
         self.assertEqual(set(role.ROLES),
                          {"all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git"})
 
