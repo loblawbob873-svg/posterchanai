@@ -18,6 +18,11 @@
  *   bills due     = Σ |cost| over unsettled expenses  + Σ |total| over unsettled plan categories
  *   paid          = Σ |cost| over paid expenses       + Σ |total| over paid plan categories
  *   remaining     = income − paid − bills due
+ *
+ * A plan's line items are ALSO listed under Expenses (planItemRow), because a plan that only showed
+ * up as a total on another tab read as "my plan is missing". Those rows are DERIVED and display-only:
+ * the money is already in `due` via catTotal, so persisting them as bills would count every plan
+ * twice. Paid state stays on the plan.
  * Monthly rollover (maybe_reset_month_for_user): on the first open of a new month, recurring bills
  * and every plan category go back to unpaid+visible, and PAID one-time bills are deleted. The manual
  * "Reset month" button does the same thing on demand (it just doesn't stamp lastReset).
@@ -240,6 +245,33 @@
     </div>`;
   }
 
+  // A plan's line items, shown in the EXPENSES list as well as on their own plan card.
+  //
+  // DERIVED AND DISPLAY-ONLY. The summary already counts a plan through catTotal() in `due`, so these
+  // rows must not be added to _doc.bills and must not get their own paid checkbox — either would
+  // double-count the same money, which in a budgeting tool is worse than not showing it at all. Paid
+  // state belongs to the PLAN (that is what `settled(cat)` reads), so the checkbox lives on the plan
+  // card and these rows carry the plan's state instead.
+  //
+  // A settled plan's items are shown struck-through like any paid bill rather than hidden, so the
+  // Expenses list stays a complete picture of the month.
+  function planItemRow(i, c){
+    const hidden = c.hidden_month===thisMonth();
+    const paid = c.paid==='Y';
+    return `<div class="bg-row bg-planitem${paid?' done':''}${hidden?' hid':''}" data-cat="${c.id}" data-item="${i.id}">
+      <span class="bg-check bg-checkless" title="paid on the plan “${enc(c.name)}”" aria-hidden="true">${paid?'✅':'▫'}</span>
+      <span class="bg-name"><span class="bg-itxt">${enc(i.name)}</span><i class="bg-flag bg-planflag" data-act="gotoplan" title="open the plan “${enc(c.name)}”">${enc(c.name)}</i>${hidden?' <i class="bg-flag">skipped</i>':''}</span>
+      <span class="bg-amt out">−${enc(money(i.amount))}</span>
+      <button class="bg-more" data-act="catmenu" aria-label="more">☰</button>
+    </div>`;
+  }
+
+  // Every plan item, paired with its plan, ordered with the plans themselves.
+  function planItemRows(){
+    return visibleCats().sort(bySort).flatMap(c =>
+      _doc.items.filter(i=>i.cat===c.id).sort(bySort).map(i=>planItemRow(i, c))).join('');
+  }
+
   function planCard(c){
     const items = _doc.items.filter(i=>i.cat===c.id).sort(bySort);
     const hidden = c.hidden_month===thisMonth();
@@ -300,7 +332,7 @@
         <div class="bg-list">
           ${income.length?`<div class="bg-sec">Income</div>${income.map(billRow).join('')}`:''}
           <div class="bg-sec">Expenses</div>
-          ${out.map(billRow).join('') || '<div class="muted small bg-empty">No bills yet — add one below.</div>'}
+          ${(out.map(billRow).join('') + planItemRows()) || '<div class="muted small bg-empty">No bills yet — add one below.</div>'}
         </div>
         <div class="bg-add">
           <input class="input" id="bg-n" placeholder="Bill name" autocomplete="off">
@@ -344,6 +376,9 @@
       if(act==='menu')    return billMenu(bid);
       if(act==='catpaid') return toggleCatPaid(cid);
       if(act==='catmenu') return catMenu(cid);
+      // The plan name on a derived Expenses row: jump to the plan that owns the item, which is the
+      // only place its amount can actually be edited (these rows are display-only by design).
+      if(act==='gotoplan'){ _tab='plans'; render(); return; }
       if(act==='additem') return itemForm(cid);
       if(act==='delitem'){ const iid=e.target.closest('[data-item]').dataset.item;
         _doc.items=_doc.items.filter(i=>i.id!==iid); save(); repaint(); return; }
