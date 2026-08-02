@@ -507,6 +507,10 @@ def render_post_card(handle, text, display_name="", timestamp="", media_bytes=No
     if result.get("error") or not result.get("data"):
         return (None, result.get("error", "render card failed"))
     try:
-        return (base64.b64decode(result["data"]), None)
+        # (bytes, mime) — the server compresses the screenshot, so the card is NOT necessarily a PNG
+        # any more and both posters label bare bytes "image/png" by default. Carrying the real type
+        # is what stops a JPEG being uploaded under a .png name.
+        return ((base64.b64decode(result["data"]),
+                 result.get("content_type") or "image/png"), None)
     except Exception as e:
         return (None, f"could not decode card: {e}")

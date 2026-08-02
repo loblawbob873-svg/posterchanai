@@ -122,11 +122,21 @@ def build_mention_prefix(status_obj, own_acct=None, include_author=True):
 
 
 def upload_media_to_pleroma(image_bytes, filename="image.png", mime="image/png"):
-    # Extract bytes from tuple if needed
+    # A (bytes, mime) tuple is the normal way callers carry a non-PNG image — the post card is
+    # compressed to JPEG server-side, and the defaults above would otherwise upload it as
+    # "image.png". Honour the mime and match the filename extension to it; anything else keeps
+    # the old warn-and-unwrap behaviour.
     if isinstance(image_bytes, tuple):
-        print(f"WARNING: image_bytes is tuple, extracting first element")
-        image_bytes = image_bytes[0] if image_bytes else None
-    
+        if len(image_bytes) == 2 and isinstance(image_bytes[0], bytes) and image_bytes[1]:
+            image_bytes, mime = image_bytes[0], image_bytes[1]
+            ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+                   "image/gif": ".gif"}.get(mime)
+            if ext:
+                filename = filename.rsplit(".", 1)[0] + ext
+        else:
+            print(f"WARNING: image_bytes is tuple, extracting first element")
+            image_bytes = image_bytes[0] if image_bytes else None
+
     if not isinstance(image_bytes, bytes):
         print(f"ERROR: upload_media_to_pleroma received {type(image_bytes).__name__} instead of bytes")
         return None

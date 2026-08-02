@@ -375,9 +375,9 @@ def _format_caption(handle, item):
 
 
 def _render_card(handle, item):
-    """Render the tweet as a post-card PNG via the posterchanai backend (which
-    screenshots HTML we build). Downloads any media here so the server does no
-    outbound fetch. Returns PNG bytes, or None to signal a text+link fallback.
+    """Render the tweet as a post card via the posterchanai backend (which screenshots HTML we
+    build, then compresses it through the app's shared media_service). Downloads any media here so
+    the server does no outbound fetch. Returns (bytes, mime), or None for a text+link fallback.
     """
     try:
         from posterchanai_api import render_post_card
@@ -390,7 +390,7 @@ def _render_card(handle, item):
     media_bytes, media_ct = _download(item.get("media_url"))
     avatar_bytes, avatar_ct = _download(_resolve_nitter_pic(item.get("avatar_url")))
 
-    png, err = render_post_card(
+    card, err = render_post_card(
         handle, item.get("text") or item.get("title") or "",
         display_name=item.get("display_name") or item.get("author") or handle,
         timestamp=item.get("timestamp") or "",
@@ -400,7 +400,7 @@ def _render_card(handle, item):
     if err:
         print(f"[nitter] card render failed ({err}); falling back to text+link", flush=True)
         return None
-    return png
+    return card   # (bytes, mime)
 
 
 def _post_item(feed, handle, item):
@@ -426,8 +426,13 @@ def _post_item(feed, handle, item):
     return True
 
 
-def _process_feed(feed, state):
-    """Check one feed config dict and post any new items. Mutates `state`."""
+def _process_feed(feed, state, save=None):
+    """Check one feed config dict and post any new items. Mutates `state`.
+
+    `save` persists `state` and is called after EVERY posted item, not once at the end. A post is
+    already out the door by then; if the process dies before the mark is durable the item is "new"
+    again on the next start and gets posted AGAIN. See the note on nitter_poster().
+    """
     rss_url = (feed.get("rss") or "").strip()
     if not rss_url:
         print(f"[nitter] Skipping malformed feed entry: {feed}", flush=True)
@@ -449,6 +454,9 @@ def _process_feed(feed, state):
     if seen is None:
         state[rss_url] = [it["guid"] for it in items][:_MAX_SEEN_PER_FEED]
         print(f"[nitter] Seeded @{handle} ({len(items)} existing items, none posted)", flush=True)
+        if save:
+            save()   # a seed that isn't persisted re-seeds next start; harmless, but it also means
+                     # a restart between seed and cycle-end posts the whole backlog as "new"
         return
 
     seen_set = set(seen)
@@ -476,9 +484,17 @@ def _process_feed(feed, state):
             # single malformed item doesn't wedge the feed forever.
             print(f"[nitter] Error posting {it['guid']}: {e}", flush=True)
             seen.append(it["guid"])
+            state[rss_url] = seen[-_MAX_SEEN_PER_FEED:]
+            if save:
+                save()
             continue
         if ok:
             seen.append(it["guid"])
+            # Persist IMMEDIATELY: the post is already public, so the mark must survive whatever
+            # happens next. Cheap — the per-cycle cap means a handful of small writes.
+            state[rss_url] = seen[-_MAX_SEEN_PER_FEED:]
+            if save:
+                save()
         else:
             # Destination temporarily unavailable (e.g. a room send 403 during a
             # membership/federation blip). Leave the item UNSEEN so it retries on
@@ -498,12 +514,20 @@ def nitter_poster():
         print(f"[nitter] Starting with {len(NITTER_FEEDS)} feed(s), "
               f"poll every {NITTER_POLL_SECONDS}s", flush=True)
 
+    # State is saved after EVERY post, not once at the end of a cycle. It used to be the latter, and
+    # that turned every restart into a re-post: a cycle takes ~a minute (3 feeds x paced posts), the
+    # bot is restarted far more often than that (280 starts in one week — deploys, UI toggles, config
+    # edits), and a process killed mid-cycle never reached _save_state. Everything it had just posted
+    # stayed "new", so the next start posted it all over again. The on-disk state was 15 days stale
+    # while the bot posted daily; the fediverse flooding was that loop, and toggling the bot off and
+    # on to stop it made it worse.
     while True:
         if NITTER_FEEDS:
             state = _load_state()
+            save = lambda: _save_state(state)
             for feed in NITTER_FEEDS:
-                _process_feed(feed, state)
-            _save_state(state)
+                _process_feed(feed, state, save)
+            _save_state(state)   # also covers feeds that only changed state without posting (seeds)
         time.sleep(max(60, NITTER_POLL_SECONDS))
 
 

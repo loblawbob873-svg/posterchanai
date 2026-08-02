@@ -476,7 +476,28 @@ async def render_post_card(
         logger.error(f"[MEDIA-API] render-post-card failed: {e}", exc_info=True)
         return {"error": str(e)}
 
-    return {"data": base64.b64encode(png).decode("ascii"), "content_type": "image/png"}
+    # Screenshots come back as PNG, which is the worst format for a card that is mostly PHOTO —
+    # measured here: a card embedding a tweet image is 293 KB as PNG and 59 KB through the shared
+    # compressor, and each one is an upload to Pleroma plus a fetch by every viewer. So run it
+    # through the SAME media_service.compress_image the rest of the app uses, not a bot-local
+    # re-encode.
+    #
+    # But only KEEP the JPEG when it is a real win. PNG is the right format for the flat text a
+    # media-less card is made of: that card is 10 KB as PNG and 6.9 KB as JPEG — 3 KB saved in
+    # exchange for ringing artifacts on the tweet text, which is the one thing on a card that has
+    # to stay readable. The size ratio tells the two cases apart on its own (20% for photo, 68%
+    # for text), so it picks the format instead of a flag someone has to remember to set.
+    # Best-effort throughout: a compressor failure must not cost the caller its card.
+    ct = "image/png"
+    try:
+        from app.services import media_service
+        smaller = await asyncio.to_thread(media_service.compress_image, png, quality=85)
+        if smaller and len(smaller) <= 0.6 * len(png):
+            png, ct = smaller, "image/jpeg"
+    except Exception as e:
+        logger.warning("[MEDIA-API] post-card compression skipped: %s", e)
+
+    return {"data": base64.b64encode(png).decode("ascii"), "content_type": ct}
 
 
 @router.post("/ytdl")
