@@ -274,6 +274,50 @@ services:
   # GPU lock as image and video — one model server instead of two, and no HTTP hop between them.
   # Set POSTERCHANAI_ACESTEP_URL to point at an external ACE-Step server if you still want one.
 
+
+  # ---- SPLIT LAYOUT (optional) -------------------------------------------------------------
+  # One component per container instead of one container running everything. Same image, same
+  # volumes; the only difference is POSTERCHANAI_ROLE. Bring up with BOTH profiles, e.g.
+  #   POSTERCHANAI_ROLE=app,bots docker compose --profile cpu --profile split up -d
+  #
+  # These are REAL services, not `docker compose run` one-offs: `docker compose down` removes them.
+  # A `run`-created container is not managed by `down`, so it lingers holding the project network
+  # open and down reports "Resource is still in use" — which is what this section exists to avoid.
+  #
+  # They publish NO ports on purpose. x-common publishes the whole port map, and six copies of that
+  # would collide on every one; the roles are reached over the compose network by the app, and only
+  # the app needs to be reachable from the host.
+  #
+  # NOT a `bots` role: the bot manager must run WITH the app (Admin -> Bots drives it through an
+  # in-process registry), which is why the app runs POSTERCHANAI_ROLE=app,bots above.
+  relay: &split
+    image: posterchanai:${TAG:-local}-${PC_SPLIT_BACKEND:-cpu}
+    profiles: ["split"]
+    restart: unless-stopped
+    depends_on: [postgres]
+    volumes:
+      - pc-data:/var/lib/posterchanai
+      - pc-rag:/app/data
+      - ./models:/var/lib/posterchanai/models
+    environment:
+      - POSTERCHANAI_PORT=3051
+      - POSTERCHANAI_ROLE=relay
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
+
+  worker:
+    <<: *split
+    environment:
+      - POSTERCHANAI_PORT=3051
+      - POSTERCHANAI_ROLE=worker
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
+
+  media:
+    <<: *split
+    environment:
+      - POSTERCHANAI_PORT=3051
+      - POSTERCHANAI_ROLE=media
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://posterchan:posterchan@postgres:5432/posterchan}
+
 volumes:
   pc-data:
   pc-rag:  # legacy name; mounts /app/data (uploads, generated media)

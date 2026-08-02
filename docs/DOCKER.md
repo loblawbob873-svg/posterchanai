@@ -163,13 +163,20 @@ that matters, run one component per container instead:
 | `git` | the GRASP git host |
 
 ```bash
-# one component per container, same image, same volumes
-docker compose run -d -e POSTERCHANAI_ROLE=relay  --name pc-relay  intel
-docker compose run -d -e POSTERCHANAI_ROLE=media  --name pc-media  intel
-docker compose run -d -e POSTERCHANAI_ROLE=worker --name pc-worker intel
-# …and the web app itself, which now supervises none of them
-POSTERCHANAI_ROLE=app,bots docker compose up -d intel
+# Bring up the split layout. `split` services publish NO ports (only the app does), so there is
+# nothing to collide, and they are REAL services — `docker compose down` removes them.
+POSTERCHANAI_ROLE=app,bots docker compose --profile cpu --profile split up -d
+
+# …and down, cleanly:
+docker compose --profile cpu --profile split down
 ```
+
+> **Do not use `docker compose run` for these.** `run` creates a ONE-OFF container that
+> `docker compose down` does not manage, so it stays attached to the project network and `down`
+> reports `Network posterchanai_default  Resource is still in use` while the container lingers
+> invisibly. (An earlier version of this page recommended exactly that — it was wrong.) If you have
+> orphans from that, clear them with `docker compose down --remove-orphans`.
+
 
 **The bots stay with the web app, deliberately.** Admin → Bots reads the manager's *in-process*
 registry and drives start/stop/publish through it. Run the manager elsewhere and the admin UI shows
