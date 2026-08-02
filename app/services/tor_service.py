@@ -194,8 +194,17 @@ HiddenServicePort 80 {self.onion_target}
 
             self._process = subprocess.Popen(
                 [tor_binary, "-f", str(torrc_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                # INHERIT the parent's stdout/stderr — do NOT pipe and do NOT discard.
+                #   DEVNULL threw tor's own log away entirely, which is what `Log notice stdout` in
+                #   the torrc feeds. The bootstrap lines you still see are OUR python logger, not
+                #   tor's, so a tor that fails to bootstrap would say nothing anywhere.
+                #   subprocess.PIPE would be worse: nothing reads it, so the 64 KB pipe buffer fills
+                #   and TOR BLOCKS — a hang, not a lost log.
+                # Inheriting sends it to the journal under this unit (systemd) or to `docker logs`
+                # (container), both of which rotate and rate-limit. That is the whole point of moving
+                # off the unrotated 526 MB file.
+                stdout=None,
+                stderr=None,
                 start_new_session=True,
             )
 
