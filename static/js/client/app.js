@@ -358,11 +358,14 @@
     // Replaceable-list wipe guard (kind-3 follows / kind-10000 mutes): NEVER publish a member list that's
     // drastically shorter than the last-known count. A throttled/empty relay read producing an empty base
     // is exactly how the whole follows/mutes list got erased before — block it instead of erasing it.
-    if(kind===3 || kind===10000){
-      const outP=(tags||[]).filter(t=>t[0]==='p'&&t[1]).length;
-      const known=ClientSettings.get(kind===3?'followsCount':'mutedUsersCount',0)||0;
+    // 10005 (joined public chats) is the same shape of hazard, just with `e` members instead of `p`.
+    if(kind===3 || kind===10000 || kind===10005){
+      const letter = kind===10005 ? 'e' : 'p';
+      const outP=(tags||[]).filter(t=>t[0]===letter&&t[1]).length;
+      const label = kind===3?'follows':kind===10000?'mute':'joined-channels';
+      const known=ClientSettings.get(kind===3?'followsCount':kind===10000?'mutedUsersCount':'pubChatsCount',0)||0;
       if(known>=8 && outP < Math.floor(known/2)){
-        toast('safety: refused to erase your '+(kind===3?'follows':'mute')+' list — reload and try again');
+        toast('safety: refused to erase your '+label+' list — reload and try again');
         throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
       }
     }
@@ -1428,7 +1431,7 @@
     $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
     // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
-        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; };
+        const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; try{ bumpChat(); }catch(_){} };   // the chat count moves between the header and the Chat item as this opens/closes
         apply(ClientSettings.get('discOpen', false));   // collapsed on first load — Discover is too cluttery open
         dt.onclick=()=>{ const o=!ClientSettings.get('discOpen', false); ClientSettings.set('discOpen', o); apply(o); }; } }
     // Collapsible "Games" group (Chess).
@@ -1487,7 +1490,7 @@
       restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
-      watchNotifications(); watchDeletions(); startCallSignaling();
+      watchNotifications(); watchDeletions(); startCallSignaling(); loadPubChats();
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       // is published lazily on first DM use (renderMessages / send), NOT here — see ensureDmInboxList.
     };
@@ -6214,18 +6217,184 @@
   //  _chatReplyTo: id of the message the compose box is replying to (null = top-level)
   let _chatReacts=new Map(), _chatZaps=new Map(), _chatDeleted=new Map(), _chatAuxSeen=new Set();
   let _chatReactPoll=null, _chatReplyTo=null;
-  function _chanMeta(e){ let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){} return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' }; }
+  // A kind-42's root channel. Prefer the "root"-marked `e` tag: a REPLY inside a channel carries a second
+  // `e` (the message replied to), so taking tags[0] blindly attributes it to whichever came first.
+  function _chatRoot(ev){ const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]); return ((es.find(t=>t[3]==='root')||es[0]||[])[1])||''; }
+
+  // ---------- joined channels (NIP-51 kind-10005 "public chats") + unread badges ----------
+  // Notifications on Nostr are just a subscription: our notification subs all filter on '#p':[me], so a
+  // channel message only reaches you if the sender TAGGED you. To be told about ordinary chatter you
+  // subscribe to the CHANNEL instead — which needs a durable answer to "which channels do I care about".
+  // That's kind 10005: e-tags of the kind-40s you've joined, so the list follows you across devices.
+  let PUBCHATS=new Set();          // channel ids joined
+  let _pubChatsReady=false;        // a COMPLETE read landed → safe to publish an edited list
+  let _chatUnreadIds=new Map();    // channel id → Set(unread message ids)   (ids, not a counter: re-polls double-count)
+  let _chatJoinSub=null;
+  // Read state is per DEVICE (localStorage), deliberately: it changes on every glance at a room, and
+  // syncing it would mean a relay write per read — the DM unread counter works the same way.
+  // Held in memory and written through on a timer: ClientSettings.get/set JSON-parses (and re-stringifies)
+  // the WHOLE settings blob per call, and this is touched once per arriving message. A tab closed inside
+  // the write window re-shows a message as unread — the cheapest possible way to be wrong.
+  let _chatSeenMem=null, _chatSeenWT=null;
+  function _chatSeen(){ if(!_chatSeenMem){ try{ _chatSeenMem=ClientSettings.get('chatSeen',{})||{}; }catch(_){ _chatSeenMem={}; } } return _chatSeenMem; }
+  function _setChatSeen(id, ts){
+    const m=_chatSeen(); if((m[id]||0)>=ts) return; m[id]=ts;
+    if(_chatSeenWT) return;
+    _chatSeenWT=setTimeout(()=>{ _chatSeenWT=null; try{ ClientSettings.set('chatSeen', _chatSeenMem); }catch(_){} }, 1000);
+  }
+  async function loadPubChats(){
+    if(GUEST || !ME) return;
+    let evs=[]; try{ evs=await Relay.query([{ kinds:[10005], authors:[ME.pubkey], limit:1 }]); }catch(_){ return; }
+    // A PARTIAL read (some relay never EOSE'd) is indistinguishable from "you've joined nothing" by
+    // length alone — and publishing an edit on the strength of that is exactly how the follows/mute
+    // lists got erased before. Stay un-ready instead: reads still work, only writes are blocked.
+    if(!evs.complete) return;
+    const ev=[...evs].sort((a,b)=>b.created_at-a.created_at)[0];
+    PUBCHATS=new Set(ev?ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[]);
+    _pubChatsReady=true;
+    try{ ClientSettings.set('pubChatsCount', PUBCHATS.size); }catch(_){}   // feeds publish()'s shrink guard
+    // A channel joined on ANOTHER device has no read stamp here, and without one it would count its
+    // entire backlog as unread the first time this device sees it. Stamp only those — stamping every
+    // joined channel would mark everything read on each launch, which is precisely the messages you
+    // opened the app to find.
+    { const now=Math.floor(Date.now()/1000), seen=_chatSeen(); PUBCHATS.forEach(id=>{ if(!seen[id]) _setChatSeen(id, now); }); }
+    _watchJoinedChats();
+  }
+  async function savePubChats(){
+    if(!_pubChatsReady) return false;   // callers ensure readiness first (see toggleJoinChannel)
+    const rurl=(CFG&&CFG.relay_url)||'';
+    try{ const r=await publish(10005, '', [...PUBCHATS].map(id=>['e', id, rurl]));   // failure toast by publish()
+      if(r && r.ok){ try{ ClientSettings.set('pubChatsCount', PUBCHATS.size); }catch(_){} return true; }
+      return false; }
+    catch(e){ return false; }
+  }
+  async function toggleJoinChannel(e){
+    // Get a trustworthy list FIRST, then apply the toggle on top of it. Retrying inside savePubChats
+    // instead would be a wipe: the reload would return the channels you joined elsewhere and the
+    // optimistic local set — built while we had no list at all — would overwrite them.
+    if(!_pubChatsReady) await loadPubChats();   // a flaky relay at boot must not leave Join dead all session
+    if(!_pubChatsReady){ toast('still loading your channel list — try again in a moment'); _paintChanHead(e); return; }
+    const joined=PUBCHATS.has(e.id);
+    if(joined) PUBCHATS.delete(e.id); else { PUBCHATS.add(e.id); _setChatSeen(e.id, Math.floor(Date.now()/1000)); }
+    const ok=await savePubChats();
+    if(!ok){ if(joined) PUBCHATS.add(e.id); else PUBCHATS.delete(e.id); }   // publish failed → don't lie about the state
+    else { toast(joined?'left the channel':'joined — you’ll be told about new messages'); _watchJoinedChats(); }
+    _paintChanHead(e);
+  }
+  // ONE live subscription across every joined channel, re-armed whenever the set changes. `since` is the
+  // oldest read stamp, so a room you haven't opened in a while still reports what you missed.
+  function _watchJoinedChats(){
+    if(_chatJoinSub){ try{ Relay.close(_chatJoinSub); }catch(_){} _chatJoinSub=null; }
+    const ids=[...PUBCHATS];
+    _chatUnreadIds.clear(); bumpChat(); _paintChatUnreadPills();   // the sub below refills it; until then the badge must not show a stale count
+    if(!ids.length) return;
+    const seen=_chatSeen(), now=Math.floor(Date.now()/1000);
+    const since=Math.min(...ids.map(id=>seen[id]||now));
+    const take=ev=>{
+      if(!ev || ev.kind!==42 || ev.pubkey===ME.pubkey) return;              // your own message isn't news
+      const root=_chatRoot(ev); if(!root || !PUBCHATS.has(root)) return;
+      if(VIEW==='channel' && _chatId===root){ _setChatSeen(root, ev.created_at); return; }   // you're reading it right now
+      if(ev.created_at<=(_chatSeen()[root]||0) || isMutedView(ev)) return;
+      let s=_chatUnreadIds.get(root); if(!s){ s=new Set(); _chatUnreadIds.set(root, s); }
+      if(s.has(ev.id)) return; s.add(ev.id);
+      bumpChat(); _paintChatUnreadPills();
+    };
+    try{ _chatJoinSub=Relay.subscribe([{ kinds:[42], '#e':ids, since }], { onEvent:take, live:true }); }catch(_){}
+  }
+  function _chatUnreadTotal(){ let n=0; _chatUnreadIds.forEach(s=>n+=s.size); return n; }
+  function _chatUnreadOf(id){ const s=_chatUnreadIds.get(id); return s?s.size:0; }
+  // Patch the pills on the cards already on screen. renderChatrooms() is a full rebuild behind THREE relay
+  // queries, so re-running it per arriving message would hammer the relay over a number that changed by one.
+  function _paintChatUnreadPills(){
+    if(VIEW!=='chat') return;
+    $$('.channel-card').forEach(card=>{
+      const thumb=card.querySelector('.stream-thumb'); if(!thumb) return;
+      const n=_chatUnreadOf(card.dataset.id); let pill=thumb.querySelector('.chat-unread');
+      if(!n){ if(pill) pill.remove(); return; }
+      if(!pill){ pill=document.createElement('span'); pill.className='chat-unread'; thumb.appendChild(pill); }
+      pill.textContent=n>99?'99+':n;
+    });
+  }
+  function bumpChat(){
+    const n=_chatUnreadTotal();
+    $$('#chat-badge,#chat-badge-m').forEach(b=>{ if(n){ b.textContent=n>99?'99+':n; b.classList.remove('hidden'); } else b.classList.add('hidden'); });
+    // Discover starts COLLAPSED, so a badge on the Chat sub-item alone is invisible to most people — an
+    // unread count you can't see isn't one. Roll it onto the group header while the group is closed.
+    const b=$('#chat-badge-d'), sub=$('#disc-sub');
+    if(b){ if(n && sub && sub.classList.contains('collapsed')){ b.textContent=n>99?'99+':n; b.classList.remove('hidden'); }
+           else b.classList.add('hidden'); }
+  }
+  // ---------- deleting a channel (NIP-09) ----------
+  // A channel IS an event, so its creator deletes it with a kind-5 — the relay author-gates that, so
+  // nobody can delete someone else's. PERSISTED locally as well, for the same reason streams are: a
+  // kind-40 also arrives from the firehose/other relays, which may lag or ignore the kind-5, and
+  // renderChatrooms re-queries them — without a tombstone the room simply comes back.
+  // What a kind-5 CANNOT do is remove the messages: those are other people's events. Deleting a room
+  // orphans them rather than erasing them, and the confirm text says so instead of implying otherwise.
+  let _deletedChans=new Set((()=>{ try{ return ClientSettings.get('deletedChans', []) || []; }catch(_){ return []; } })());
+  function _isChanDeleted(e){ return !!(e && _deletedChans.has(e.id)); }
+  async function _deleteChannel(e){
+    if(!ME || e.pubkey!==ME.pubkey){ toast('you can only delete a channel you created'); return; }
+    if(!await uiConfirm('Delete this channel? It’s removed from Nostr for everyone. Messages already posted in it are other people’s events and stay on the relays — they just won’t be reachable.',
+                        {ok:'Delete', danger:true})) return;
+    // Delete our own kind-41 edits alongside the kind-40, or the rename/picture we published outlives
+    // the channel it described.
+    const tags=[['e', e.id], ['k','40']];
+    { const mine=(_chan41.get(e.id)||new Map()).get(ME.pubkey); if(mine) tags.push(['e', mine.id]); }
+    try{
+      const r=await publish(5, '', tags, {quiet:true});
+      if(!(r && r.ok)){ toast('couldn’t reach the relay — the channel was NOT deleted, try again'); return; }
+      _deletedChans.add(e.id);
+      try{ ClientSettings.set('deletedChans', [..._deletedChans].slice(-300)); }catch(_){}
+      try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
+      _chan41.delete(e.id);
+      // You can't stay joined to a room that no longer exists — drop it from the list and re-arm the
+      // watcher, else it keeps a live sub open on a dead channel and counts unread for it forever.
+      if(PUBCHATS.delete(e.id)){ await savePubChats(); }
+      if(_chatUnreadIds.delete(e.id)) bumpChat();
+      if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
+      _watchJoinedChats();
+      toast('channel deleted'); switchView('chat');
+    }catch(_){ toast('couldn’t delete the channel'); }
+  }
+  // Clear a room's unread the moment you look at it, and remember how far you read.
+  function _markChatRead(id, msgs){
+    const top=(msgs||[]).reduce((a,x)=>Math.max(a, x.created_at||0), Math.floor(Date.now()/1000));
+    _setChatSeen(id, top);
+    if(_chatUnreadIds.delete(id)) bumpChat();
+  }
+  // A kind-40 is IMMUTABLE — NIP-28 edits are a separate kind-41 whose root `e` tag points at it, so a
+  // channel's live metadata is "the kind-40 content, overridden by the newest kind-41 BY ITS CREATOR".
+  // Kept PER AUTHOR rather than one-newest-per-channel: anyone may publish a 41 for anyone's channel, so
+  // a stranger's newer 41 would evict the owner's — and since the read below only trusts the owner's, the
+  // channel would silently snap back to its original name/picture for everybody.
+  let _chan41=new Map();   // channel id → Map(author pubkey → their newest kind-41)
+  function _recordChan41(ev){
+    const root=(ev.tags.find(t=>t[0]==='e')||[])[1]; if(!root) return;
+    let by=_chan41.get(root); if(!by){ by=new Map(); _chan41.set(root, by); }
+    const prev=by.get(ev.pubkey); if(prev && prev.created_at>=ev.created_at) return;
+    by.set(ev.pubkey, ev);
+  }
+  function _chanMeta(e){
+    let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){}
+    const up=(_chan41.get(e.id)||new Map()).get(e.pubkey);   // only the CREATOR's edit counts
+    if(up && up.created_at>=e.created_at){ try{ m={...m, ...(JSON.parse(up.content||'{}')||{})}; }catch(_){} }
+    return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' };
+  }
   async function renderChatrooms(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
     // Instance-local: the relay holds many synced channel DEFINITIONS (kind-40) but only messages
     // (kind-42) from WoT members. Showing 50 empty foreign channels is noise — list only channels
     // that have activity HERE, plus your own, newest-active first.
-    let chans=[], msgs=[];
-    try{ [chans, msgs] = await Promise.all([ Relay.query([{ kinds:[40], limit:200 }]), Relay.query([{ kinds:[42], limit:500 }]) ]); }catch(_){}
+    let chans=[], msgs=[], metas=[];
+    try{ [chans, msgs, metas] = await Promise.all([ Relay.query([{ kinds:[40], limit:200 }]), Relay.query([{ kinds:[42], limit:500 }]), Relay.query([{ kinds:[41], limit:200 }]) ]); }catch(_){}
+    (metas||[]).forEach(_recordChan41);   // apply channel edits BEFORE any card is built
     chans.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='chat') return;
-    const active=new Map(); msgs.forEach(m=>{ const r=(m.tags.find(t=>t[0]==='e')||[])[1]; if(r) active.set(r, Math.max(active.get(r)||0, m.created_at)); });
-    const shown=chans.filter(c=> active.has(c.id) || (ME && c.pubkey===ME.pubkey))
+    const active=new Map(); msgs.forEach(m=>{ const r=_chatRoot(m); if(r) active.set(r, Math.max(active.get(r)||0, m.created_at)); });
+    // A JOINED channel always lists, even with no local activity — you asked to be told about it, so it
+    // must not vanish from the one screen where you'd go to turn that off.
+    const shown=chans.filter(c=> !_isChanDeleted(c) && (active.has(c.id) || PUBCHATS.has(c.id) || (ME && c.pubkey===ME.pubkey)))
       .sort((a,b)=> (active.get(b.id)||b.created_at) - (active.get(a.id)||a.created_at));
     feed.innerHTML=`<div class="chat-list">
       <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New channel</button></div>
@@ -6239,35 +6408,103 @@
   }
   function channelCard(e){
     const p=profOf(e.pubkey); needProfile(e.pubkey); const m=_chanMeta(e);
+    const unread=_chatUnreadOf(e.id);
     return `<article class="stream-card channel-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">✺</span>'}</div>
-      <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
+      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">✺</span>'}${unread?`<span class="chat-unread">${unread>99?'99+':unread}</span>`:''}</div>
+      <div class="stream-meta"><div class="stream-title">${PUBCHATS.has(e.id)?'<span class="chat-joined" title="Joined — you get unread counts for this channel">✓</span> ':''}${enc(m.name)}</div>
         ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
       </div></article>`;
   }
-  async function createChannel(){
-    const name=(await uiPrompt('Channel name?')||'').trim(); if(!name) return;
-    const about=(await uiPrompt('Description (optional)?')||'').trim();
-    try{ const r=await publish(40, JSON.stringify({ name, about }), []);   // failure toast by publish()
-      if(r && r.ok && r.ev){ Store.saveEvent(r.ev); toast('channel created'); openChannel(r.ev); } }
-    catch(e){ toast('create failed: '+((e&&e.message)||e)); }
+  // One form for both "New channel" and "Edit channel" — the only difference is the event we publish
+  // at the end (kind 40 creates, kind 41 edits). It's a modal, not a chain of uiPrompts, because a
+  // picture needs an Upload button next to the URL field: with prompts alone the `picture` field
+  // channelCard/openChannel already render was unreachable, so every channel was iconless.
+  function channelForm(cur, onSave){
+    const c=cur||{name:'',about:'',picture:''};
+    modal(`<h3>${cur?'Edit channel':'New channel'}</h3>
+      <label class="fld">Name<input class="input" id="cf-name" placeholder="channel name" value="${enc(c.name==='(unnamed)'?'':c.name)}"></label>
+      <label class="fld">Description<textarea id="cf-about" placeholder="what's this channel about?">${enc(c.about||'')}</textarea></label>
+      <label class="fld">Picture URL<input class="input" id="cf-pic" placeholder="https://…" value="${enc(c.picture||'')}"></label>
+      <div class="row"><button class="btn btn-cyan small" id="cf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload picture</button><input type="file" id="cf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="cf-save">${cur?'Save':'Create'}</button></div>`, root=>{
+      $('#cf-up',root).onclick=()=>$('#cf-file',root).click();
+      $('#cf-file',root).onchange=async ev=>{
+        const f=ev.target.files[0]; ev.target.value=''; if(!f) return;
+        const b=$('#cf-up',root); b.disabled=true;
+        try{ const url=await uploadBlob(f); $('#cf-pic',root).value=url;
+          // Index it under Files too, same as a profile picture — otherwise it lands on Blossom and
+          // never appears in the user's own file list.
+          try{ const sha=_shaFromUrl(url); if(sha) FilesIdx.setFile(sha,{name:f.name||'channel-pic', folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
+          toast('uploaded'); }
+        catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
+          else toast('upload failed: '+((err&&err.message)||err)); }
+        b.disabled=false;
+      };
+      $('#cf-save',root).onclick=async()=>{
+        const name=$('#cf-name',root).value.trim();
+        if(!name){ toast('give the channel a name'); $('#cf-name',root).focus(); return; }   // keep the modal open → the other fields aren't lost
+        const meta={ name, about:$('#cf-about',root).value.trim(), picture:$('#cf-pic',root).value.trim() };
+        closeModal(); onSave(meta);
+      };
+      setTimeout(()=>{ try{ $('#cf-name',root).focus(); }catch(_){} },20);
+    });
+  }
+  function createChannel(){
+    channelForm(null, async meta=>{
+      try{ const r=await publish(40, JSON.stringify(meta), []);   // failure toast by publish()
+        if(r && r.ok && r.ev){ Store.saveEvent(r.ev); toast('channel created'); openChannel(r.ev); } }
+      catch(e){ toast('create failed: '+((e&&e.message)||e)); }
+    });
+  }
+  // NIP-28 edit: kind 41, same JSON, root `e` tag → the kind-40. Only the channel's creator's 41 is
+  // honoured on read (_chanMeta), so don't offer this on someone else's channel.
+  function editChannel(e){
+    channelForm(_chanMeta(e), async meta=>{
+      try{ const r=await publish(41, JSON.stringify(meta), [['e', e.id, CFG.relay_url||'', 'root']]);
+        // Repaint the header only — reopening the room would drop the loaded messages and scroll
+        // position to re-fetch what we already have.
+        if(r && r.ok && r.ev){ _recordChan41(r.ev); toast('channel updated'); _paintChanHead(e); } }
+      catch(err){ toast('update failed: '+((err&&err.message)||err)); }
+    });
+  }
+  // Header is painted separately from the room shell because an edit (kind 41) can arrive AFTER the
+  // room is on screen — deep-linking straight into a channel means its metadata hasn't been read yet.
+  function _paintChanHead(e){
+    const head=$('#ch-head'); if(!head) return;
+    const m=_chanMeta(e), mine=!!(ME && e.pubkey===ME.pubkey);
+    // Data saver falls back to the ✺ glyph rather than _hold()'s "tap to load image" chip — that chip is
+    // sized for a feed image and would eat the header next to the title.
+    const pic=m.picture && !NO_IMAGES;
+    $('#view-title').textContent=m.name;
+    head.innerHTML=`<button class="btn btn-ghost small" id="ch-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>`
+      +(pic?`<img class="chatroom-pic" src="${enc(m.picture)}" alt="" loading="lazy" onerror="this.remove()">`:'')
+      +`<span class="chatroom-title">${pic?'':'✺ '}${enc(m.name)}</span>`
+      // Every label is wrapped so it can be shed on phones (the .lbl convention the profile header uses).
+      // Four controls plus a picture squeezed the channel NAME down to 10px at 360px — the one thing on
+      // the bar nobody can do without.
+      +(GUEST?'':(inList=>`<button class="btn ${inList?'btn-ghost':'btn-neon'} small" id="ch-join" title="${inList?'Stop being notified about this channel':'Get notified about new messages here'}" aria-label="${inList?'Leave channel':'Join channel'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${inList?'check':'plus'}"></use></svg><span class="lbl">${inList?'Joined':'Join'}</span></button>`)(PUBCHATS.has(e.id)))
+      +(mine?`<button class="btn btn-cyan small" id="ch-edit" title="edit channel" aria-label="Edit channel"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg><span class="lbl">Edit</span></button>`
+            +`<button class="btn btn-ghost small" id="ch-del" title="delete channel" aria-label="Delete channel" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`:'');
+    $('#ch-back').onclick=()=>switchView('chat');
+    { const b=$('#ch-join'); if(b) b.onclick=()=>{ b.disabled=true; toggleJoinChannel(e); }; }
+    { const b=$('#ch-edit'); if(b) b.onclick=()=>editChannel(e); }
+    { const b=$('#ch-del'); if(b) b.onclick=()=>_deleteChannel(e); }
+    const ab=$('#ch-about'); if(ab){ ab.hidden=!m.about; ab.innerHTML=m.about?linkify(m.about):''; }
   }
   async function openChannel(e, focusId){
     VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
     if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
     if(_chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }
     _clearNav();
-    const m=_chanMeta(e); $('#view-title').textContent=m.name;
     const feed=$('#feed'); feed.classList.add('feed-chat');
     feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="ch-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">✺ ${enc(m.name)}</span></div>
-      ${m.about?`<div class="chatroom-about">${linkify(m.about)}</div>`:''}
+      <div class="chatroom-head" id="ch-head"></div>
+      <div class="chatroom-about" id="ch-about" hidden></div>
       <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
       <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
       <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>${window.PC_NOSTR_ONLY?'':'<button class="mini" id="ch-translate" title="translate your message"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg></button>'}<input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
     </div>`;
-    $('#ch-back').onclick=()=>switchView('chat');
+    _paintChanHead(e);
     { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
     const send=()=>postToChannel(e);
     { const b=$('#ch-send'); if(b) b.onclick=send; }
@@ -6293,13 +6530,17 @@
           ab.disabled=false; ab.textContent=lbl; ta.focus();
         };
       } }
-    let msgs=[]; try{ msgs=await Relay.query([{ kinds:[42], '#e':[e.id], limit:300 }]); }catch(_){}
+    let msgs=[], metas=[];
+    try{ [msgs, metas] = await Promise.all([ Relay.query([{ kinds:[42], '#e':[e.id], limit:300 }]), Relay.query([{ kinds:[41], '#e':[e.id], limit:20 }]) ]); }catch(_){}
     if(VIEW!=='channel' || _chatId!==e.id) return;
+    if((metas||[]).length){ metas.forEach(_recordChan41); _paintChanHead(e); }   // an edit read after the room opened
     msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
+    _markChatRead(e.id, msgs);   // opening the room IS reading it
     _drawChannel(true);
     if(focusId) _scrollChatTo(focusId);   // deep-link from a notification → highlight that message
     _pollChannelMeta();   // fetch + keep reactions/zaps/deletions for the on-screen messages live
-    _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey); if(VIEW==='channel' && _chatId===e.id) _drawChannel(); } } });
+    _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey);
+      if(VIEW==='channel' && _chatId===e.id){ _setChatSeen(e.id, ev.created_at); _drawChannel(); } } } });   // read as it arrives, so leaving the room leaves nothing unread
   }
   function _drawChannel(force){
     const box=$('#ch-msgs'); if(!box || !_chatId) return;
@@ -6784,7 +7025,7 @@
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
     if (ev.kind===34550) return communityCard(ev);  // NIP-72 community → discovery card in the feed
-    if (ev.kind===40) return channelCard(ev);        // NIP-28 channel → discovery card in the feed
+    if (ev.kind===40) return _isChanDeleted(ev) ? '' : channelCard(ev);   // NIP-28 channel → discovery card in the feed (a deleted one must not come back via the timeline)
     return noteCard(ev);
   }
   // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
@@ -9138,9 +9379,10 @@
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['4chan','leaf','4chan'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets'));   // Markets needs the AI backend (Budget is client-only, so it stays)
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
+      bumpChat();   // the sheet is rebuilt each time it opens, so its badge starts hidden — fill it in
     });
   }
   function gamesMenu(){

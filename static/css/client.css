@@ -1228,6 +1228,10 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .chatroom{display:flex;flex-direction:column;min-height:0;height:100%}
 .chatroom-head{display:flex;align-items:center;gap:10px;padding:10px 12px 8px;flex:0 0 auto;border-bottom:1px solid var(--line)}
 .chatroom-head .btn{flex:0 0 auto;min-height:38px}
+.chatroom-pic{flex:0 0 auto;width:32px;height:32px;border-radius:8px;object-fit:cover;border:1px solid var(--line)}
+/* unread pill on a channel card's thumb + the "you joined this" tick on its title */
+.chat-unread{position:absolute;top:8px;right:8px;min-width:20px;padding:1px 6px;border-radius:11px;background:var(--danger,#e0245e);color:#fff;font-size:12px;font-weight:800;text-align:center;line-height:18px}
+.chat-joined{color:var(--neon)}
 .chatroom-title{flex:1 1 auto;min-width:0;font-weight:800;color:var(--neon);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chatroom-about{flex:0 0 auto;padding:8px 12px;color:var(--text);opacity:.8;font-size:13.5px;border-bottom:1px solid var(--line)}
 .chatroom-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:14px 12px}
@@ -2086,6 +2090,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   .prof .phead .btn{margin-top:0;font-size:13.5px;padding:8px 12px}
   .prof .prof-actions .btn .lbl{display:none}   /* collapse "⚙ Settings" → "⚙" on phones */
   .prof .prof-actions .btn .ic{display:inline}
+  /* Same trick in a chat room's header: Join / Edit / Delete keep their icons, drop their words, so the
+     channel NAME keeps the width instead of being crushed to a few pixels. */
+  .chatroom-head .btn .lbl{display:none}
+  .chatroom-head .btn{padding:8px 10px}
   .files-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;padding:12px}
   .media-grid{gap:3px;padding:3px}   /* tighter phone gallery, still 3 across */
   .media-grid img,.media-grid video{border-radius:6px}

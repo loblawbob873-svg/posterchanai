@@ -22,9 +22,25 @@ _cursor = 0                 # `since` cursor (unix secs); set to now on first po
 _seen: set[str] = set()     # event ids already pushed (bounded)
 _names: dict[str, str] = {}  # pubkey -> display name (cached)
 
-_KINDS = [1, 6, 7, 9735, 1111]   # mention/reply, repost, reaction, zap receipt, NIP-22 comment
+_KINDS = [1, 6, 7, 9735, 1111, 42]   # mention/reply, repost, reaction, zap receipt, NIP-22 comment, NIP-28 chat
 _POLL_SECS = 20
 _SEEN_MAX = 5000
+
+# ---- Joined-channel push (NIP-28 chatter that does NOT tag you) -------------------------------------
+# The poll above only fires when an event p-tags you, so an ordinary message in a channel you're in
+# reaches nobody. Which channels a user wants is their kind-10005 ("public chats") list, so this reads
+# that per subscriber and watches those channels directly. Slower cadence + a per-(user, channel)
+# cooldown, because unlike a mention this fires on traffic the user didn't ask for individually — one
+# chatty room must not become a push every 20 seconds.
+_CHAN_POLL_SECS = 60
+_CHAN_COOLDOWN = 300.0
+_chan_cursor = 0
+_chan_seen: set[str] = set()
+_joined: dict[str, set[str]] = {}          # subscriber pubkey -> channel ids from their kind-10005
+_joined_at = 0.0                           # monotonic stamp of the last _joined refresh
+_JOINED_TTL = 300.0
+_chan_names: dict[str, str] = {}           # channel id -> display name
+_chan_last: dict[tuple, float] = {}        # (pubkey, channel id) -> last push (monotonic)
 
 
 def _local_relay() -> list[str]:
@@ -61,7 +77,153 @@ def _title(ev: dict, name: str) -> str:
         return f"{who} reposted your note"
     if k == 1111:
         return f"{who} commented on your post"
+    if k == 42:
+        return f"{who} mentioned you in a chat"
     return f"{who} mentioned you"            # kind 1 (reply / mention)
+
+
+def _root_channel(ev: dict) -> str:
+    """The kind-40 a chat message belongs to. Prefer the "root"-marked `e` tag — a REPLY inside a channel
+    carries a second `e` (the message replied to), so taking the first blindly misfiles it."""
+    es = [t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
+    for t in es:
+        if len(t) >= 4 and t[3] == "root":
+            return t[1]
+    return es[0][1] if es else ""
+
+
+async def _channel_name(cid: str) -> str:
+    if cid in _chan_names:
+        return _chan_names[cid]
+    name = ""
+    try:
+        # The kind-40 holds the original metadata; a kind-41 BY ITS AUTHOR supersedes it (renames), so
+        # read both and prefer the newest edit from the creator — the same rule the client applies.
+        evs = await relay.query(_local_relay(), [{"ids": [cid], "kinds": [40], "limit": 1}], timeout=4)
+        if evs:
+            owner = evs[0].get("pubkey", "")
+            name = (json.loads(evs[0].get("content") or "{}").get("name") or "").strip()
+            ups = await relay.query(_local_relay(),
+                                    [{"kinds": [41], "#e": [cid], "authors": [owner], "limit": 5}], timeout=4)
+            if ups:
+                newest = max(ups, key=lambda x: x.get("created_at", 0))
+                name = (json.loads(newest.get("content") or "{}").get("name") or "").strip() or name
+    except Exception:
+        pass
+    # Only cache a real answer. A channel whose kind-40 hasn't synced to this node yet would otherwise be
+    # pinned as nameless forever, and every push for it would read "💬 Chat".
+    if name:
+        _chan_names[cid] = name
+        if len(_chan_names) > 2000:
+            _chan_names.clear()
+    return name
+
+
+async def _refresh_joined(pubkeys: list[str]) -> None:
+    """Rebuild `pubkey -> joined channel ids` from everyone's kind-10005. Replaces the map wholesale ONLY
+    on a successful query; a relay hiccup leaves the previous map in place rather than silently
+    unsubscribing every user from every channel until the next refresh."""
+    global _joined, _joined_at
+    try:
+        evs = await relay.query(_local_relay(), [{"kinds": [10005], "authors": pubkeys}], timeout=8)
+    except Exception as e:
+        logger.debug("[nostr-push] joined-channel refresh failed: %s", e)
+        return
+    newest: dict[str, dict] = {}
+    for ev in evs:
+        pk = ev.get("pubkey", "")
+        if not pk:
+            continue
+        if pk not in newest or ev.get("created_at", 0) > newest[pk].get("created_at", 0):
+            newest[pk] = ev
+    _joined = {pk: {t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]}
+               for pk, ev in newest.items()}
+    _joined_at = time.monotonic()
+
+
+async def _poll_channels():
+    global _chan_cursor
+    from app.database import SessionLocal
+    from app.models import PushSubscription
+    db = SessionLocal()
+    try:
+        subs = db.query(PushSubscription).all()
+        if not subs:
+            return
+        by_pk: dict[str, list] = {}
+        for s in subs:
+            by_pk.setdefault(s.pubkey, []).append(s)
+
+        if not _joined or (time.monotonic() - _joined_at) > _JOINED_TTL:
+            await _refresh_joined(list(by_pk.keys()))
+        watched: set[str] = set()
+        for pk, chans in _joined.items():
+            if pk in by_pk:
+                watched |= chans
+        if not watched:
+            return
+
+        now = int(time.time())
+        if not _chan_cursor:                 # first poll → set the cursor, never backfill a room's history
+            _chan_cursor = now
+            return
+        since = _chan_cursor - 5
+        _chan_cursor = now
+
+        evs = await relay.query(_local_relay(),
+                                [{"kinds": [42], "#e": sorted(watched), "since": since}], timeout=8)
+        mono = time.monotonic()
+        dead = []
+        for ev in evs:
+            eid = ev.get("id")
+            if not eid or eid in _chan_seen:
+                continue
+            _chan_seen.add(eid)
+            author = ev.get("pubkey", "")
+            cid = _root_channel(ev)
+            if not cid:
+                continue
+            ptags = {t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "p"}
+            recips = []
+            for pk in by_pk:
+                if pk == author or cid not in _joined.get(pk, ()):
+                    continue
+                if pk in ptags:
+                    continue                 # p-tagged → _poll() already pushed it; don't push twice
+                if mono - _chan_last.get((pk, cid), 0.0) < _CHAN_COOLDOWN:
+                    continue                 # this room already notified them recently
+                recips.append(pk)
+            if not recips:
+                continue
+            name = await _name_for(author)
+            room = await _channel_name(cid)
+            body = (ev.get("content") or "").strip().replace("\n", " ")[:80] or "New message"
+            payload = {"title": f"💬 {room or 'Chat'}", "body": f"{name or 'Someone'}: {body}",
+                       "eid": eid, "author": author, "chan": cid}
+            for pk in recips:
+                _chan_last[(pk, cid)] = mono
+                for s in by_pk[pk]:
+                    ok = await asyncio.to_thread(
+                        push_service.send,
+                        {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}, payload)
+                    if not ok:
+                        dead.append(s)
+        for s in dead:
+            try:
+                db.delete(s)
+            except Exception:
+                pass
+        if dead:
+            db.commit()
+
+        if len(_chan_seen) > _SEEN_MAX:
+            _chan_seen.clear()
+        if len(_chan_last) > _SEEN_MAX:
+            _chan_last.clear()
+    except Exception as e:
+        logger.warning(f"[nostr-push] channel poll error: {e}")
+    finally:
+        db.close()
 
 
 async def _poll():
@@ -213,6 +375,7 @@ def start_nostr_push_scheduler():
         return
     _sched = AsyncIOScheduler()
     _sched.add_job(_poll, "interval", seconds=_POLL_SECS, max_instances=1, coalesce=True)
+    _sched.add_job(_poll_channels, "interval", seconds=_CHAN_POLL_SECS, max_instances=1, coalesce=True)
     # Persist the day's call tally to the relay every few minutes, so a restart doesn't lose it.
     _sched.add_job(_flush_call_stats, "interval", seconds=300, max_instances=1, coalesce=True)
     _sched.start()
@@ -222,7 +385,8 @@ def start_nostr_push_scheduler():
             _call_task = asyncio.create_task(_call_sub_loop())
     except Exception as e:
         logger.warning(f"[nostr-push] could not start call subscription: {e}")
-    logger.info("[nostr-push] scheduler started (every %ss) + call-invite push subscription", _POLL_SECS)
+    logger.info("[nostr-push] scheduler started (mentions every %ss, joined channels every %ss) + call-invite push subscription",
+                _POLL_SECS, _CHAN_POLL_SECS)
 
 
 def stop_nostr_push_scheduler():
