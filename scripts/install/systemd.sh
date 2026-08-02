@@ -28,6 +28,44 @@ setup_systemd() {
     # other backend. (The old dual chat/image split was only needed because EOL IPEX-LLM and
     # torch-XPU couldn't share a process — see setup_intel_dual_services below, now unused.)
     setup_single_service
+    offer_split_services
+}
+
+# The stack can run as ONE unit (the historical layout) or as five: the web app plus
+# posterchanai-{relay,worker,media,bots}. Offered here because the choice only makes sense once the
+# main unit exists — this script's job — and because doing it by hand is the one change you must make
+# in BOTH halves or not at all.
+#
+# Under the single unit the web app supervises the relay, mediamtx, pion-turn, tor and the bots, so
+# restarting to ship a code change drops every connected Nostr client, kills live streams
+# MID-BROADCAST, drops active calls and restarts the bots. Split, `sync.sh` restarts only what the
+# deploy touched.
+#
+# DEFAULT IS NO. The single-unit layout is what every existing node runs and it keeps working; this is
+# an opt-in improvement, not a migration anyone is forced through. Declining leaves POSTERCHANAI_ROLE
+# unset, which means role 'all' — exactly the old behaviour.
+offer_split_services() {
+    local helper="$SCRIPT_DIR/scripts/install_services.sh"
+    [ -x "$helper" ] || return 0
+    # Only meaningful for the plain service name; a ROCm-suffixed unit is not what the helper edits.
+    [ "$SERVICE_NAME" = "posterchanai" ] || return 0
+
+    echo ""
+    print_step "Run the relay, worker, media and bots as SEPARATE services?"
+    echo "  Recommended. Restarting the web app then no longer drops connected Nostr clients,"
+    echo "  kills live streams mid-broadcast, drops calls, or restarts the bots."
+    echo "  Reversible at any time with: scripts/install_services.sh --revert"
+    read -p "Split into separate services? [y/N]: " SPLIT_SVC
+    SPLIT_SVC=${SPLIT_SVC:-N}
+    if [[ ! "$SPLIT_SVC" =~ ^[Yy] ]]; then
+        print_warning "Keeping the single-service layout (role 'all')"
+        return 0
+    fi
+    if "$helper" --launcher "run-$BACKEND.sh"; then
+        print_success "Split services installed (app + relay + worker + media + bots)"
+    else
+        print_warning "Split-service setup failed — the single service is still installed and working"
+    fi
 }
 
 setup_single_service() {
