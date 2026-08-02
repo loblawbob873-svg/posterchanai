@@ -1486,7 +1486,6 @@ def _restart_relay_elsewhere() -> dict:
     relay role/entrypoint. A stale status file whose pid has been recycled would otherwise make this
     SIGTERM an unrelated process.
     """
-    import signal
     try:
         with open(_relay_paths(_relay_db_path())["status"]) as f:
             pid = int(json.load(f).get("pid") or 0)
