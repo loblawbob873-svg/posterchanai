@@ -1493,23 +1493,14 @@ def _own_media_hosts(db: Session) -> set:
 
     Only an admin can add to it, and listing a host says "this deployment serves that name" — the same
     trust already placed in blossom_public_url. Everything not listed still goes through the guard.
+
+    The list itself MOVED next to the guard it exempts (search_service.own_media_hosts) so there is
+    exactly one. Keeping a copy here is what let the two disagree: a render could fetch
+    media.poster.place while AI chat refused the identical URL as a private IP. This stays as a thin
+    wrapper because several call sites pass `db`, and the setting read never needed it.
     """
-    from urllib.parse import urlparse
-    own = set()
-    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
-        h = urlparse(_setting(db, key) or "").hostname
-        if h:
-            own.add(h.lower())
-    for line in (_setting(db, "media_own_hosts") or "").replace(",", "\n").split("\n"):
-        t = line.strip().lower().strip(".")
-        if not t:
-            continue
-        # Accept a bare hostname OR a pasted URL — an admin will paste whichever is at hand. Matching is
-        # by EXACT hostname (no wildcards): each name a deployment fronts is listed on its own line, so a
-        # typo can never widen the exemption to a whole zone.
-        own.add(urlparse(t).hostname or t.split("/", 1)[0].split(":", 1)[0])
-    own.discard("")
-    return own
+    from app.services.search_service import own_media_hosts
+    return own_media_hosts()
 
 
 async def _fetch_media_guarded(url: str, own: set, *, timeout: float = 30.0, max_redirects: int = 3):

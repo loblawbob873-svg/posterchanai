@@ -73,6 +73,28 @@ def _render_still(edit, sources):
     return Image.open(io.BytesIO(out)).convert("RGB")
 
 
+def _make_video(path, seconds=3.0, rgb="red", size=(CANVAS, CANVAS)):
+    """A solid-colour test clip. Real footage, so the video path is exercised end to end rather than
+    an image layer wearing a .mp4 extension."""
+    import subprocess
+    subprocess.run([mb.media_service.resolve_ffmpeg(), "-y", "-v", "error",
+                    "-f", "lavfi", "-i", f"color=c={rgb}:s={size[0]}x{size[1]}:r=15:d={seconds}",
+                    "-pix_fmt", "yuv420p", path], check=True, capture_output=True, timeout=120)
+    return path
+
+
+def _frame_at(mp4_bytes, at, tmpdir):
+    """The composited frame `at` seconds into a rendered MP4."""
+    import subprocess
+    src = os.path.join(tmpdir, "out.mp4")
+    with open(src, "wb") as fh:
+        fh.write(mp4_bytes)
+    png = os.path.join(tmpdir, f"f{at}.png")
+    subprocess.run([mb.media_service.resolve_ffmpeg(), "-y", "-v", "error", "-ss", str(at),
+                    "-i", src, "-frames:v", "1", png], check=True, capture_output=True, timeout=120)
+    return Image.open(png).convert("RGB")
+
+
 def _project(layers, **kw):
     e = {"w": CANVAS, "h": CANVAS, "fps": 10, "bg": BG, "duration": 1.0,
          "fmt": "png", "still": 0.0, "layers": layers}
@@ -159,6 +181,38 @@ class EraseMask(unittest.TestCase):
         self.assertEqual(_dom(img.getpixel((50, 100))), RED, "kept half of the letterboxed strip")
         self.assertEqual(_dom(img.getpixel((150, 100))), BLUE, "erased half of the letterboxed strip")
         self.assertEqual(_dom(img.getpixel((100, 20))), BLUE, "above the strip is background, not picture")
+
+    def test_the_mp4_export_is_erased_not_just_the_still(self):
+        """Everything above exports PNG, which shares the graph but not the tail. The reported bug was
+        about RENDER, so the h264 path is asserted on its own frames rather than assumed."""
+        red = _solid(self.p("red.png"), (255, 0, 0, 255))
+        mask = _half_mask(self.p("mask.png"))
+        out, ct = mb.render(_project([_layer("u://red", mask="u://mask")], fmt="mp4", duration=2.0),
+                            {"u://red": red, "u://mask": mask})
+        self.assertEqual(ct, "video/mp4")
+        img = _frame_at(out, 0.2, self.tmp)
+        self.assertEqual(_dom(img.getpixel((50, 100))), RED)
+        self.assertEqual(_dom(img.getpixel((150, 100))), BLUE)
+
+    def test_a_video_layer_is_erased_for_its_whole_duration(self):
+        """A VIDEO layer, on real footage. The mask is ONE still looped against a moving stream, so the
+        thing that can go wrong here and nowhere else is framesync: the erase holding on frame 1 and
+        then lapsing (or the blend ending the stream early) once the mask input runs out. Sampled late
+        as well as early, because a first-frame-only check would pass on exactly that bug."""
+        vid = _make_video(self.p("v.mp4"), seconds=3.0)
+        mask = _half_mask(self.p("mask.png"))
+        # dur must SPAN the sampled times: _layer defaults to 1.0s, and a layer that has ended shows
+        # background on both halves — which reads as "the erase ate the picture" rather than "the slot
+        # ran out". (It failed exactly that way first.)
+        out, ct = mb.render(
+            _project([_layer("u://v", mask="u://mask", type="video", trim=0, dur=2.0)],
+                     fmt="mp4", duration=2.0),
+            {"u://v": vid, "u://mask": mask})
+        self.assertEqual(ct, "video/mp4")
+        for at in (0.2, 1.5):
+            img = _frame_at(out, at, self.tmp)
+            self.assertEqual(_dom(img.getpixel((50, 100))), RED, f"kept half at t={at}s")
+            self.assertEqual(_dom(img.getpixel((150, 100))), BLUE, f"erased half at t={at}s")
 
     def test_the_mask_survives_a_flip(self):
         """The mask is applied BEFORE flip/rotate, so it means 'this part of the picture'. Flipping the

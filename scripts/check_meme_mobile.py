@@ -390,6 +390,37 @@ ERASE_PROBE = r"""(async () => {
   };
 })()"""
 
+# Reported: "preview shows black screen after you use erase and render".
+#
+# A mask-image the browser cannot fetch does NOT degrade to "no mask" — it hides the element outright
+# (measured in headless Chrome: a div masked with a 404 renders as page background, not as itself). So
+# one unreachable mask turned the whole LAYER invisible, and a one-layer meme became a black stage,
+# while the server-side render — which fetches the mask itself — stayed perfect. Preview and export
+# disagreeing with no error anywhere is the worst shape a bug can have.
+#
+# Both directions are asserted, because "never mask" would also pass a one-sided test:
+#   a mask that LOADS   must actually be applied (the erase still shows on the stage)
+#   a mask that 404s    must leave the layer drawn and un-erased (never a hole)
+MASK_PROBE = r"""(async () => {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const setMask = async (url) => {
+    const p = JSON.parse(localStorage.getItem('pc_meme_project'));
+    p.layers[0].mask = url;
+    localStorage.setItem('pc_meme_project', JSON.stringify(p));
+    window.PCMeme.render();
+    await wait(1200);                       // the probe Image() has to resolve
+    const el = document.querySelector('.mb-item[data-id="L1"] > img');
+    if (!el) return {err: 'the layer element is not on the stage'};
+    const cs = getComputedStyle(el);
+    const mi = cs.webkitMaskImage || cs.maskImage || 'none';
+    return {maskImage: mi, hasMask: mi !== 'none' && mi !== '', display: cs.display,
+            w: Math.round(el.getBoundingClientRect().width)};
+  };
+  const good = await setMask('/static/icon-192.png');     // a real, served PNG
+  const bad  = await setMask('/static/no-such-mask-404.png');
+  return {good, bad};
+})()"""
+
 AUDIT = r"""(() => {
   const out = {overflow:false, offscreen:[], tiny:[], overlap:[], present:{}, panel:false};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
@@ -579,6 +610,39 @@ async def drive(url):
                     problems.append((lbl, "erase-broken", "Apply left the dialog open"))
                 print(f"{lbl}: mask={er['maskW']}x{er['maskH']} painted={er['painted']} "
                       f"corner={er['corner']} saved={'yes' if er['mask'] else 'NO'}")
+
+            # ✂ ERASE MASK on the stage — the "black screen after erase" regression.
+            await call("Page.navigate", {"url": url})
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+                if await js("window.__ready === true"):
+                    break
+            r = await call("Runtime.evaluate",
+                           {"expression": MASK_PROBE, "returnByValue": True, "awaitPromise": True})
+            mk = (r or {}).get("result", {}).get("value")
+            if not mk:
+                problems.append(("mask", "erase-broken", "the mask probe did not run"))
+            elif (mk.get("good") or {}).get("err") or (mk.get("bad") or {}).get("err"):
+                problems.append(("mask", "erase-broken",
+                                 (mk.get("good") or {}).get("err") or (mk.get("bad") or {}).get("err")))
+            else:
+                if not mk["good"]["hasMask"]:
+                    problems.append(("mask", "erase-broken",
+                                     "a mask that LOADS was not applied — the erase would never show"))
+                if mk["bad"]["hasMask"]:
+                    problems.append(("mask", "erase-broken",
+                                     "a mask that 404s was still applied — the layer renders as a hole "
+                                     "(this is the black-screen bug)"))
+                # Compared against the GOOD case, not against zero: at phone width the builder is
+                # tabbed and boot opens the Layer tab, so the stage is off-screen and both widths are
+                # legitimately 0. "Same as a working mask" is the property that actually matters —
+                # an unreachable mask must not change the layer's box.
+                if mk["bad"]["w"] != mk["good"]["w"]:
+                    problems.append(("mask", "erase-broken",
+                                     f"an unreachable mask changed the layer's box "
+                                     f"({mk['good']['w']}px -> {mk['bad']['w']}px)"))
+                print(f"mask: loads->applied={mk['good']['hasMask']} "
+                      f"404->applied={mk['bad']['hasMask']} (must be True/False)")
 
             # ✂ CUT. Arithmetic, so it is checked against exact numbers rather than "it changed".
             await call("Page.navigate", {"url": url})

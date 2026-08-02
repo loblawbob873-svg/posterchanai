@@ -12,6 +12,40 @@ from app.services import settings_store
 logger = logging.getLogger(__name__)
 
 
+def own_media_hosts() -> set:
+    """Hostnames THIS deployment serves itself, exempt from the private-IP check below.
+
+    Our own public names resolve to a PRIVATE LAN IP from inside the LAN (split-horizon DNS:
+    media.poster.place -> 192.168.0.1), so the guard rejects them as internal and every fetch of our
+    own media is refused — reported from AI chat as "URL blocked: Private IP not allowed: 192.168.0.1"
+    on a perfectly ordinary media.poster.place image.
+
+    It lives HERE, next to the guard, and is the single list: the meme/effect fetch path
+    (client._own_media_hosts) delegates to it rather than keeping its own. Two lists is how one path
+    ends up trusting a host the other blocks — which is exactly the state this fixes, since only the
+    render path was ever exempt.
+
+    Sources are the configured Blossom bases plus the admin's "Own media hosts" setting
+    (Admin -> Blossom), one hostname per line. Nothing is hardcoded: a deployment's own names are
+    deployment config, and a name listed here says "this box serves that" — the same trust already
+    placed in blossom_public_url.
+    """
+    own = set()
+    for key in ("blossom_public_url", "nostr_dvm_blossom_url"):
+        h = urlparse(settings_store.get(key) or "").hostname
+        if h:
+            own.add(h.lower())
+    for line in (settings_store.get("media_own_hosts") or "").replace(",", "\n").split("\n"):
+        t = line.strip().lower().strip(".")
+        if not t:
+            continue
+        # Accept a bare hostname OR a pasted URL. EXACT hostname match, no wildcards, so a typo can
+        # never widen the exemption to a whole zone.
+        own.add(urlparse(t).hostname or t.split("/", 1)[0].split(":", 1)[0])
+    own.discard("")
+    return own
+
+
 def is_safe_url(url: str) -> tuple[bool, str]:
     """
     SSRF protection: Validate that URL doesn't point to internal networks.
@@ -33,6 +67,14 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         trusted_domains = {'git.poster.place', 'poster.place'}
         if hostname.lower() in trusted_domains:
             return True, ""
+        # …and the hosts this deployment serves itself, which are CONFIG rather than hardcoded names.
+        # Without this, only the meme/effect fetch path was exempt and everything else — AI chat
+        # reading a page, translate <url>, link previews — refused our own media.
+        try:
+            if hostname.lower() in own_media_hosts():
+                return True, ""
+        except Exception:
+            pass   # never let a settings read turn the guard into a hard failure
 
         # Block localhost variations
         localhost_names = {'localhost', 'localhost.localdomain', '127.0.0.1', '::1'}

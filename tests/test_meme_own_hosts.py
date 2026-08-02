@@ -10,18 +10,25 @@ render. The extra names are an admin setting rather than a hardcoded list.
 
 What matters here is the PARSE: this list decides which hosts skip the private-address check, so a
 line that widens it beyond one exact hostname is a security bug, not a cosmetic one.
+
+The list MOVED to search_service, next to the guard it exempts, because a second copy in the router
+is what let the two disagree: the meme render path trusted media.poster.place while AI chat refused
+the identical URL as "Private IP not allowed: 192.168.0.1". The parse assertions below are unchanged
+across that move — that is what makes them evidence the move changed no behaviour.
 """
 import unittest
 from unittest import mock
 
 from app.routers import client as client_router
+from app.services import search_service
 
 
 def _hosts(media_own_hosts, blossom="https://media.poster.place/blossom", dvm=""):
     vals = {"blossom_public_url": blossom, "nostr_dvm_blossom_url": dvm,
             "media_own_hosts": media_own_hosts}
-    with mock.patch.object(client_router, "_setting", lambda db, k, d="": vals.get(k, d)):
-        return client_router._own_media_hosts(None)
+    with mock.patch.object(search_service.settings_store, "get",
+                           lambda k, *a, **kw: vals.get(k, "")):
+        return search_service.own_media_hosts()
 
 
 class TestOwnMediaHosts(unittest.TestCase):
@@ -89,6 +96,37 @@ class TestGuardStillApplies(unittest.TestCase):
 
     def test_non_http_scheme_is_refused_even_when_listed(self):
         self.assertEqual(self._run("file:///etc/passwd", {""}, safe=True), "bad image url")
+
+
+class TestGuardHonoursOwnHosts(unittest.TestCase):
+    """Reported from AI chat: "Couldn't fetch text from https://media.poster.place/….jpg: URL blocked:
+    Private IP not allowed: 192.168.0.1".
+
+    The exemption existed but only the meme/effect fetch path consulted it, so the SAME url was fine
+    for a render and refused for anything else — reading a page, `translate <url>`, link previews.
+    is_safe_url is the guard all of those share, so that is where it is asserted."""
+
+    def _safe(self, url, own_hosts):
+        vals = {"blossom_public_url": "", "nostr_dvm_blossom_url": "", "media_own_hosts": own_hosts}
+        with mock.patch.object(search_service.settings_store, "get",
+                               lambda k, *a, **kw: vals.get(k, "")), \
+             mock.patch.object(search_service.socket, "gethostbyname", return_value="192.168.0.1"):
+            return search_service.is_safe_url(url)
+
+    def test_a_listed_own_host_is_allowed_despite_the_private_address(self):
+        ok, why = self._safe("https://media.poster.place/abc.jpg", "media.poster.place")
+        self.assertTrue(ok, why)
+
+    def test_an_unlisted_host_resolving_privately_is_still_blocked(self):
+        ok, why = self._safe("https://attacker.example/abc.jpg", "media.poster.place")
+        self.assertFalse(ok)
+        self.assertIn("Private IP", why)
+
+    def test_listing_nothing_keeps_the_guard_shut(self):
+        # The fix must not grant blanket trust: with the setting empty this URL is still refused,
+        # which is why it is CONFIG rather than a hardcoded name.
+        ok, _ = self._safe("https://media.poster.place/abc.jpg", "")
+        self.assertFalse(ok)
 
 
 if __name__ == "__main__":

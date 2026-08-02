@@ -1162,8 +1162,52 @@
   //
   // A raster mask-image is read by its ALPHA (mask-mode: match-source), which is what we encode:
   // opaque = keep, transparent = erased.
+  // Has this mask URL been PROVED loadable by the browser? undefined = not tried yet.
+  //
+  // This gate exists because a mask the browser cannot fetch does not degrade to "no mask" — it hides
+  // the element COMPLETELY (measured: a div with mask-image pointing at a 404 renders as background,
+  // not as itself). So a mask that 404s, or is still uploading, or is blocked, does not make the erase
+  // go missing; it makes the whole LAYER go missing, and a one-layer meme then looks like a black
+  // screen with no error anywhere. The renderer has no such problem — it fetches the mask server-side
+  // and simply fails loudly — so the stage would be black while the export was perfect.
+  //
+  // Emitting the mask only once an Image() has actually loaded it keeps ONE render path (stageEl stays
+  // synchronous and declarative) and makes the failure mode "the erase isn't shown yet" instead of
+  // "your layer disappeared".
+  const _maskOk = Object.create(null);
+  // On success the mask is PATCHED onto the elements already on the board rather than triggering a
+  // rebuild. render() re-creates every layer element, which restarts the <video>s and throws away an
+  // in-progress drag — the reason so many edits here deliberately repaint in place. A mask arriving is
+  // exactly that kind of edit: one CSS property on one element.
+  function _paintMask(url){
+    P.layers.forEach(l => {
+      if(l.mask !== url || l.type === 'text' || l.type === 'audio') return;
+      const el = document.querySelector(`.mb-item[data-id="${l.id}"] > img, .mb-item[data-id="${l.id}"] > video`);
+      if(!el) return;
+      const ofit = (l.fit === 'cover') ? 'cover' : 'contain';   // mirrors object-fit; see _maskCss
+      const u = `url("${l.mask}")`;
+      el.style.webkitMaskImage = u;  el.style.maskImage = u;
+      el.style.webkitMaskSize = ofit; el.style.maskSize = ofit;
+      el.style.webkitMaskPosition = 'center'; el.style.maskPosition = 'center';
+      el.style.webkitMaskRepeat = 'no-repeat'; el.style.maskRepeat = 'no-repeat';
+    });
+  }
+  function _maskProbe(url){
+    if(url in _maskOk) return _maskOk[url];
+    _maskOk[url] = undefined;                 // in flight — don't start a second load per re-render
+    const im = new Image();
+    im.onload  = () => { _maskOk[url] = true; try{ _paintMask(url); }catch(_){ } };
+    im.onerror = () => { _maskOk[url] = false;   // stays false for the session: a mask that 404s now
+                                                 // will 404 on every repaint, and retrying per render
+                                                 // would be an unbounded request loop.
+      try{ toast('the erase on a layer could not be loaded — showing the layer un-erased'); }catch(_){ }
+    };
+    im.src = url;
+    return undefined;
+  }
   function _maskCss(l, ofit){
     if(!l || !l.mask) return '';
+    if(_maskProbe(l.mask) !== true) return '';   // unknown or failed → draw the layer, not a hole
     // This lands in a CSS url() inside a style attribute, which enc() alone does NOT make safe: it
     // escapes a quote to &quot;, and the HTML parser hands the attribute VALUE back with a real quote
     // in it — closing url(" early and letting the rest of the string be read as CSS. A project is a
