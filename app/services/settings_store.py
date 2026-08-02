@@ -51,7 +51,7 @@ _PLUMBING_KEYS = frozenset({
 # are also inherently per-node (each node has its own sync position), so they must stay local: never
 # hydrate (a stale relay cursor would reset progress → re-post old content) and never write-through.
 _RUNTIME_KEYS = frozenset({"nitter_seen", "autopost_last_runs", "autopost_daily_counts",
-                           "fedi_timeline_since", "stats_counters"})
+                           "fedi_timeline_since", "stats_counters", "stats_counters_hourly"})
 _RUNTIME_SUFFIXES = ("_since", "_seen", "_cursor", "_last_runs", "_next_batch")
 
 

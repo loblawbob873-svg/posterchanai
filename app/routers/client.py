@@ -313,6 +313,26 @@ import time as _time
 _VIEWERS: "dict[str, float]" = {}
 _VIEWER_WINDOW = 150.0   # seconds — tolerates one missed 60s poll
 _LOCAL_VIDS = {"127.0.0.1", "::1", "localhost", "?"}   # internal/loopback callers are never "people online"
+
+
+def _internal_caller(key: str) -> bool:
+    """True for a viewer-key that is this deployment talking to itself rather than a person.
+
+    Loopback alone was not enough. A request from the box's OWN LAN address (or from any peer node,
+    or the router) arrives as e.g. "192.168.0.2" — not in _LOCAL_VIDS — so every internal poll,
+    health check or `curl` registered as a distinct online PERSON for the whole 150s window. Measured:
+    one curl took the count from 1 to 2.
+
+    Only applies to the IP FALLBACK. A real client sends its stable viewer id (`v=k…`/`v=a…`), so a
+    genuine visitor is never filtered by this no matter where they connect from.
+    """
+    if key in _LOCAL_VIDS:
+        return True
+    try:
+        import ipaddress
+        return ipaddress.ip_address(key).is_private
+    except ValueError:
+        return False   # not an IP at all → it's a viewer id, i.e. a real client
 _BOT_VID_CACHE: "dict" = {"set": set(), "ts": 0.0}
 
 
@@ -340,7 +360,7 @@ def _record_viewer(request: Request, vid: str) -> int:
         key = (xff.split(",")[0].strip() if xff else "") or (request.client.host if request.client else "?")
     cutoff = now - _VIEWER_WINDOW
     # Count REAL people only: skip our own bots (by pubkey-id) and loopback/internal callers.
-    if key and key not in _LOCAL_VIDS and key not in _bot_viewer_ids():
+    if key and not _internal_caller(key) and key not in _bot_viewer_ids():
         _VIEWERS[key] = now
     for _k in [k for k, t in _VIEWERS.items() if t < cutoff]:
         _VIEWERS.pop(_k, None)
@@ -4435,6 +4455,22 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     _fwd = await _meme_lb_forward(request, "render",
                                   {"pubkey": data.pubkey, "auth": data.auth, "edit": data.edit})
     if _fwd is not None:
+        # Count it HERE, on the node the user actually asked. The bump below is in the local-render
+        # path only, so an overflow render was counted on whichever peer happened to absorb it — on a
+        # busy day the node serving the page reported the fewest memes, which is the opposite of the
+        # truth. The peer skips its own bump when it sees the forward header (see below), so this
+        # counts each meme exactly once, on the node that fielded the request.
+        #
+        # SUCCESS only, matching the local path's "count a PRODUCED meme, not an attempt". A peer's
+        # 5xx already falls through to a local render (so it would be counted there), but its 4xx is
+        # handed straight back to the client — counting that would inflate the figure with every
+        # refused edit list.
+        try:
+            if getattr(_fwd, "status_code", 200) < 400:
+                from app.services import stats_service
+                stats_service.bump("meme")
+        except Exception:
+            pass
         return _fwd
 
     # ONE render at a time per user. Without this every extra Render click spawned ANOTHER full ffmpeg of the
@@ -4523,9 +4559,12 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
         # Public stats counter (Server Stats page): count a PRODUCED meme, not an attempt — this sits
         # after the render so a 400/500 never inflates it. The MP4 is streamed straight back and no row
         # is kept, so like image/music/video there is nothing to aggregate after the fact.
+        # …unless this render IS someone else's overflow: the node that fielded the request already
+        # counted it above, and counting again here would double it for every load-balanced meme.
         try:
-            from app.services import stats_service
-            stats_service.bump("meme")
+            if not request.headers.get("x-pcai-meme-fwd"):
+                from app.services import stats_service
+                stats_service.bump("meme")
         except Exception:
             pass
         _ext = {"image/gif": "gif", "image/png": "png"}.get(ctype, "mp4")

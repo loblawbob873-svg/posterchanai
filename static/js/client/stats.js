@@ -46,11 +46,29 @@
     // WHAT the number covers (they used to show all-time figures that never moved when you switched
     // range, which read as broken).
     const rangeWord = () => ({minute:'last hour', hour:'last 24h', day:'last 30 days'})[_range];
-    // Counters are stored per DAY, so a 60-minute range can't be answered from them — the honest
-    // mapping is: last hour / last 24h -> today, 30 days -> the whole series.
-    const inRange = (series)=>{
-      const a = series || [];
-      return _range === 'day' ? sum(a) : (a.length ? a[a.length-1] : 0);
+    // The COUNTER cards get their own range word, because for the first 24h after hourly counting
+    // starts they still answer from the day bucket (see inRange). Saying "last 24h" over a
+    // today-so-far number is the exact defect being fixed, so the label follows the data.
+    const counterRangeWord = () => {
+      const rolling = !!(_data && _data.counters && _data.counters.rolling);
+      if(rolling || _range === 'day') return rangeWord();
+      return _range === 'minute' ? 'today (UTC)' : 'today (UTC so far)';
+    };
+    // Counters are now bucketed per HOUR as well as per day, so each range is answered with the window
+    // it actually names. It used to serve "last hour" AND "last 24h" from the current UTC day bucket,
+    // which is today-so-far: in UTC-6 that means every evening after 18:00 local the numbers collapse
+    // and read as broken (8 memes shown as a day's worth against a 51/day average).
+    //
+    // `rolling` is the server's flag that it sends the hourly windows. Without it — an older node
+    // behind a newer page — fall back to the old day-bucket behaviour rather than showing 0, which
+    // would be a confident lie where the old number was merely mislabelled.
+    const inRange = (m)=>{
+      const a = (m && m.series) || [];
+      if(_range === 'day') return sum(a);
+      if(_data && _data.counters && _data.counters.rolling){
+        return (_range === 'minute' ? (m && m.last1h) : (m && m.last24)) || 0;
+      }
+      return a.length ? a[a.length - 1] : 0;
     };
 
     // ---- SVG chart builders -----------------------------------------------------------------
@@ -109,7 +127,7 @@
         <div class="st-cardhd"><span class="st-ic">${icon}</span><span class="st-lbl">${enc(label)}</span>
           ${note?'<span class="st-new" title="Counted from when this feature shipped">new</span>':''}</div>
         <div class="st-num">${nf(ranged)}</div>
-        <div class="st-sub muted small">${enc(rangeWord())} · ${nf(allTime)} all time</div>
+        <div class="st-sub muted small">${enc(counterRangeWord())} · ${nf(allTime)} all time</div>
         <div class="st-spark">${areaChart(vals, colour, 'c_'+id, 46)}</div>
       </div>`;
     }
@@ -136,7 +154,7 @@
       const notes = S.notes || [];
       const T = _data.totals || {}, G = _data.games || {by_game:{}};
       const CT = _data.counters || {metrics:{}}, isNew = !!CT.since_deploy;
-      const blank = {series:[], total:0, today:0};
+      const blank = {series:[], total:0, today:0, last24:0, last1h:0};
       // Defaults for every counter, so a node running an older server (whose payload has no `meme`
       // key yet) renders an empty card instead of throwing on cm.meme.series.
       const cm = Object.assign({calls:blank, image:blank, music:blank, video:blank, meme:blank}, CT.metrics||{});
@@ -180,16 +198,16 @@
           ${tile('relay database', bytes(T.db_bytes), 'On-disk size of the relay database — includes everything it stores and serves, local and federated')}
         </div>
 
-        <h3 class="st-sec">🤖 AI &amp; media <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
+        <h3 class="st-sec">🤖 AI &amp; media <span class="st-rangelbl">${enc(counterRangeWord())}</span></h3>
         <div class="st-grid">
           ${seriesCard('chat','💬','AI chat','#22d3ee', chat, inRange(chat), T.ai_requests, false)}
-          ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, inRange(cm.image.series), cm.image.total, isNew)}
-          ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, inRange(cm.music.series), cm.music.total, isNew)}
-          ${seriesCard('video','🎬','Video','#34d399', cm.video.series, inRange(cm.video.series), cm.video.total, isNew)}
-          ${seriesCard('meme','😂','Memes','#fb923c', cm.meme.series, inRange(cm.meme.series), cm.meme.total, isNew)}
-          ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, inRange(cm.calls.series), cm.calls.total, isNew)}
+          ${seriesCard('image','🎨','Images','#f472b6', cm.image.series, inRange(cm.image), cm.image.total, isNew)}
+          ${seriesCard('music','🎵','Music','#a78bfa', cm.music.series, inRange(cm.music), cm.music.total, isNew)}
+          ${seriesCard('video','🎬','Video','#34d399', cm.video.series, inRange(cm.video), cm.video.total, isNew)}
+          ${seriesCard('meme','😂','Memes','#fb923c', cm.meme.series, inRange(cm.meme), cm.meme.total, isNew)}
+          ${seriesCard('calls','📞','Calls','#fbbf24', cm.calls.series, inRange(cm.calls), cm.calls.total, isNew)}
         </div>
-        <div class="muted small st-hint">These are counted per day, so the 60-minute range shows today.</div>
+        <div class="muted small st-hint">Counted on this node as they happen. The 30-day range is bucketed per day; shorter ranges are a rolling window ending now.</div>
 
         <h3 class="st-sec">🎮 Games &amp; streams <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-tiles">

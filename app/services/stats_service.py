@@ -73,6 +73,16 @@ WINDOWS = (
 )
 
 _COUNTER_KEY = "stats_counters"   # local-only settings key: {"YYYY-MM-DD": {"calls": n, ...}}
+# The same events bucketed by UTC HOUR ("YYYY-MM-DDTHH"), which is what makes a real rolling 24h
+# possible. The day buckets cannot answer it: "last 24h" was served as the CURRENT UTC day-to-date, so
+# at 20:40 in UTC-6 it reported 2.7 hours of activity under a 24-hour label — 8 memes against a 7-day
+# average of 51/day, which reads as a broken counter rather than a mislabelled window. Worst right
+# after the UTC rollover, which is 18:00 local here, i.e. every evening.
+#
+# Separate key rather than a nested structure because bump_counter already bounds each counter to its
+# last 90 buckets — 90 days for the daily key, and for this one 90 HOURS, which self-prunes well past
+# the 24 we read and costs no extra code.
+_COUNTER_KEY_H = "stats_counters_hourly"
 # Things that leave NO trace to aggregate later, so they can only be counted as they happen:
 #   calls  — kind-25050 signaling is ephemeral, the relay stores none of it
 #   image/music/video — generated media is returned to the caller, never recorded server-side
@@ -100,7 +110,12 @@ def bump(metric: str, n: int = 1) -> None:
         # periodic flush counted nothing — each flushed its own empty copy and restarts discarded the
         # rest. That is why Server Stats read 0 images and 0 music after a day of generating.
         from app.services import settings_store
-        settings_store.bump_counter(_COUNTER_KEY, time.strftime("%Y-%m-%d", time.gmtime()), metric, n)
+        now = time.gmtime()
+        settings_store.bump_counter(_COUNTER_KEY, time.strftime("%Y-%m-%d", now), metric, n)
+        # …and the hourly bucket, so "last 24h" can be answered as an actual rolling window instead of
+        # as today-so-far. Both are written: the daily series still backs the 30-day chart and keeps
+        # the history that predates hourly counting.
+        settings_store.bump_counter(_COUNTER_KEY_H, time.strftime("%Y-%m-%dT%H", now), metric, n)
     except Exception:
         pass
 
@@ -271,15 +286,31 @@ def _counter_series(now: int):
     # Read FROM DISK each time — another process may have counted something since this one started.
     from app.services import settings_store
     counts = settings_store.read_counter(_COUNTER_KEY)
+    hours = settings_store.read_counter(_COUNTER_KEY_H)
     days = [time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400)) for i in range(29, -1, -1)]
     today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    # The 24 hourly buckets ending with the current one — a genuine rolling day, not "since UTC
+    # midnight". `h24[0]` is the current (partial) hour, which is also the "last hour" figure.
+    h24 = [time.strftime("%Y-%m-%dT%H", time.gmtime(now - i * 3600)) for i in range(0, 24)]
     out = {"days": days, "metrics": {}}
     for m in COUNTERS:
         out["metrics"][m] = {
             "series": [int((counts.get(d) or {}).get(m, 0)) for d in days],
             "total":  int(sum(int((v or {}).get(m, 0)) for v in counts.values())),
             "today":  int((counts.get(today) or {}).get(m, 0)),
+            # New windows. A node that has only just started counting hourly reports small numbers
+            # here rather than wrong ones — the daily series above still carries the older history.
+            "last24": int(sum(int((hours.get(h) or {}).get(m, 0)) for h in h24)),
+            "last1h": int((hours.get(h24[0]) or {}).get(m, 0)),
         }
+    # True only once the hourly store actually REACHES BACK 24h. Hourly counting starts the moment this
+    # ships, so for the first day the window is mostly empty — publishing it then would replace a
+    # mislabelled-but-real number with a confident 0, which is a worse lie than the one being fixed.
+    # Until it is covered the client falls back to the day bucket AND relabels the card, so the number
+    # is never shown under a window it cannot answer. Lexicographic compare is valid: the keys are
+    # zero-padded ISO ("2026-08-02T03"). Self-healing — it flips to true 24h after deploy.
+    oldest = min(hours) if hours else None
+    out["rolling"] = bool(oldest and oldest <= h24[-1])
     # Said out loud on the page: these counters start when the feature ships, unlike the relay-derived
     # series which are historical. A silent 0 would read as "nobody uses this".
     out["since_deploy"] = True
