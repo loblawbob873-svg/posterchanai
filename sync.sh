@@ -146,7 +146,12 @@ _restart_units() {
         return
     fi
     for u in $units; do
-        if systemctl list-unit-files "$u" >/dev/null 2>&1 && systemctl cat "$u" >/dev/null 2>&1; then
+        # LoadState, NOT `systemctl cat`. `cat` READS THE UNIT FILE as the invoking user, so a unit
+        # that happens to be mode 600 (posterchanai.service was, while every sibling was 644) fails
+        # with "Permission denied" — and this loop then skipped the MAIN APP on every deploy, silently,
+        # because "cat failed" was being read as "unit does not exist". LoadState asks systemd instead
+        # and needs no read access.
+        if [ "$(systemctl show -p LoadState --value "$u" 2>/dev/null)" = "loaded" ]; then
             echo "[sync] restarting $u"
             # A failed restart used to pass silently: the unit keeps running OLD code and the deploy
             # still reported success. Say so, and don't let the stamp advance past a commit this node
@@ -155,6 +160,12 @@ _restart_units() {
                 echo "[sync]   FAILED to restart $u -- it is still on the previous code"
                 _RESTART_FAILED=1
             fi
+        else
+            # deploy_targets asked for this unit, so on THIS node it should exist. Skipping quietly is
+            # how the mode-600 bug above stayed invisible: the deploy looked green while the app ran
+            # old code. A node that legitimately lacks a unit (unsplit layout) prints one line and
+            # carries on -- it does not fail the deploy.
+            echo "[sync]   SKIPPED $u (LoadState=$(systemctl show -p LoadState --value "$u" 2>/dev/null)) -- NOT restarted"
         fi
     done
 }

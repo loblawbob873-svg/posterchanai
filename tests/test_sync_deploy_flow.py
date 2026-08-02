@@ -138,6 +138,34 @@ class LocalRestartSetIsMeasuredFromWhatIsRunning(unittest.TestCase):
         self.assertIn("FAILED to restart", src)
 
 
+class UnitExistenceCheckDoesNotNeedToReadTheUnitFile(unittest.TestCase):
+    """`systemctl cat` READS THE UNIT FILE as the invoking user. posterchanai.service was mode 600
+    while every sibling unit was 644, so `cat` returned "Permission denied" -- and the restart loop,
+    which treated a failed `cat` as "this unit does not exist", silently skipped THE MAIN APP on
+    every deploy. The worker restarted, the app did not, and the deploy reported success.
+
+    LoadState asks systemd rather than the filesystem, so it is immune to the unit file's mode.
+    """
+
+    def test_the_guard_uses_loadstate(self):
+        src = _src()
+        self.assertIn('systemctl show -p LoadState --value "$u"', src)
+
+    def test_the_guard_does_not_read_the_unit_file(self):
+        m = re.search(r"_restart_units\(\) \{.*?\n\}", _src(), re.S)
+        self.assertIsNotNone(m)
+        # Comments are allowed to NAME the trap (they explain it); only executable lines must be free
+        # of it, so strip them before asserting.
+        code = "\n".join(ln for ln in m.group(0).splitlines() if not ln.lstrip().startswith("#"))
+        self.assertNotIn("systemctl cat", code,
+                         "reading the unit file makes the check fail on a root-only unit")
+
+    def test_a_skipped_unit_is_reported(self):
+        """Silence is what let the mode-600 bug hide behind a green deploy."""
+        m = re.search(r"_restart_units\(\) \{.*?\n\}", _src(), re.S)
+        self.assertIn("SKIPPED", m.group(0), "a unit that is not restarted must say so")
+
+
 class VerifiesTheDeployLanded(unittest.TestCase):
     def test_every_target_is_verified(self):
         src = _src()
