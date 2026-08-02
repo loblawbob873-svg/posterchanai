@@ -110,14 +110,19 @@ done
 # sudo: /etc/systemd/system is not world-readable on every distro, and a plain grep here
 # returns "Permission denied" — which the verification below correctly treats as "the edit
 # did not land" and aborts, leaving the units written but not enabled.
-if sudo grep -q -- "--role app,bots" "$MAIN_UNIT" 2>/dev/null; then
+# EXACT match (end of line), not a substring: `--role app,bots,git` CONTAINS `--role app,bots`, so a
+# substring test would report "already correct", skip the fix-up, and then install a git unit next to
+# an app that is still supervising the git host — two git hosts on one port.
+if sudo grep -qE -- "--role app,bots\\s*$" "$MAIN_UNIT" 2>/dev/null; then
     echo "[services] posterchanai.service already runs --role app,bots"
 else
     echo "[services] switching posterchanai.service to --role app,bots"
     if [ "$DRY" = 1 ]; then
         echo "  + sed -i 's#^ExecStart=.*\$#&  --role app#' $MAIN_UNIT"
     else
-        sudo sed -i "s#^\(ExecStart=.*$LAUNCHER\)\s*\$#\1 --role app,bots#" "$MAIN_UNIT"
+        # Strip any existing --role first, so a node mid-migration (e.g. the temporary
+        # `app,bots,git` used to restore a git host) converges instead of accumulating roles.
+        sudo sed -i "s#^\(ExecStart=.*$LAUNCHER\).*\$#\1 --role app,bots#" "$MAIN_UNIT"
         sudo grep -q -- "--role app,bots" "$MAIN_UNIT" || {
             echo "ERROR: could not add --role app,bots to $MAIN_UNIT — REFUSING to continue," >&2
             echo "       because installing the new units without it double-runs everything." >&2
