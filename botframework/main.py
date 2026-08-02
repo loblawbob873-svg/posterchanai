@@ -111,11 +111,26 @@ def main():
     # Publish/refresh this bot's Nostr profile (name/nip05/avatar) on startup — runs in a thread so a
     # slow relay doesn't delay the listeners. By now the bot is an operator key → the WoT relay
     # accepts its kind-0 (provision-time publishing races the WoT and often gets rejected).
+    # Bound ONCE here and used by every nested listener below via closure. Those poll loops used to
+    # re-`import os as _os` on each pass: harmless-looking, since os is long since in sys.modules, but
+    # a cached import still goes through importlib._bootstrap — which at interpreter teardown has lost
+    # its own globals and raises a bare `NameError: name 'sys' is not defined`. A statement inside a
+    # loop that runs every ~10s forever is the likeliest one in the process to be executing when the
+    # manager stops the bot, so it was the biggest remaining surface for the shutdown race the block
+    # below describes. Don't reintroduce a local import in a thread body.
     import os as _os
     if _os.getenv("NOSTR_NSEC"):
+        # Imported HERE, on the main thread, for the reason spelled out in the block below — which
+        # this thread was breaking. `import nostr` is the heaviest first-time import in the tree (it
+        # pulls the crypto stack), and it ran INSIDE the thread body, on every nostr-capable bot, from
+        # the earliest thread main() starts. That is precisely the shape the rule exists to forbid:
+        # if the manager stops the bot while this is still on its first line, the import lands in a
+        # finalising interpreter and dies as `NameError: name 'sys' is not defined` several frames
+        # inside CPython — which reads as a broken dependency, not a shutdown race.
+        import nostr as _nk
+
         def _pub_profile():
             try:
-                import nostr as _nk
                 _nk.ensure_profile()
                 _nk.ensure_server_list()   # kind-10063 BUD-03 Blossom failover list
             except Exception as e:
@@ -230,7 +245,6 @@ def main():
                     process_job_requests()
                 except Exception as e:
                     print(f"[ERROR] dvm process_job_requests failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("DVM_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "15"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_dvm, daemon=True)
@@ -257,7 +271,6 @@ def main():
                     process_chess()
                 except Exception as e:
                     print(f"[ERROR] chess process_chess failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("CHESS_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_chess, daemon=True)
@@ -279,7 +292,6 @@ def main():
                     process_ttt()
                 except Exception as e:
                     print(f"[ERROR] ttt process_ttt failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("TTT_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_ttt, daemon=True); t.start(); threads.append(t)
@@ -298,7 +310,6 @@ def main():
                     process_hangman()
                 except Exception as e:
                     print(f"[ERROR] hangman process_hangman failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("HANGMAN_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_hangman, daemon=True); t.start(); threads.append(t)
@@ -317,7 +328,6 @@ def main():
                     process_connect4()
                 except Exception as e:
                     print(f"[ERROR] connect4 process_connect4 failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("CONNECT4_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_connect4, daemon=True); t.start(); threads.append(t)
@@ -335,7 +345,6 @@ def main():
                     process_blackjack()
                 except Exception as e:
                     print(f"[ERROR] blackjack process_blackjack failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("BLACKJACK_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
         if threads or has_daemon:
             t = threading.Thread(target=run_blackjack, daemon=True); t.start(); threads.append(t)
@@ -353,7 +362,6 @@ def main():
                     process_holdem()
                 except Exception as e:
                     print(f"[ERROR] holdem process_holdem failed: {e}", flush=True)
-                import os as _os
                 time.sleep(int(_os.getenv("HOLDEM_POLL_SECONDS", "4")))   # snappy interactive moves (command channel)
         if threads or has_daemon:
             t = threading.Thread(target=run_holdem, daemon=True); t.start(); threads.append(t)
