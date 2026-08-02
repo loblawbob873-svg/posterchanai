@@ -18,7 +18,20 @@
 # never a previously-built cuda one. All backends share the same data volume, so you can switch
 # between them without losing your DB / models.
 
+x-logging: &logging
+  # Docker's default json-file driver does NOT rotate — it grows until the disk fills. That matters
+  # here because tor logs at `notice` to stdout (see tor_service._create_torrc), and a torrenting
+  # session emits "All routers are down or won't exit" hundreds of times a minute; on bare metal
+  # journald rotates and rate-limits that for us, but a container has no such thing by default.
+  # Left uncapped, one long torrent run wrote a 526 MB log file on the systemd node — the container
+  # equivalent just keeps going.
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-common: &common
+  logging: *logging
   # NOTE: no shared `image:` here on purpose. Each backend service sets its OWN tag
   # (posterchanai:<tag>-<backend>) so the profiles can't alias one another. A single shared
   # tag made `--profile nostr up` (no --build) reuse whatever image was built last — e.g. a
@@ -291,6 +304,7 @@ services:
   # NOT a `bots` role: the bot manager must run WITH the app (Admin -> Bots drives it through an
   # in-process registry), which is why the app runs POSTERCHANAI_ROLE=app,bots above.
   relay: &split
+    logging: *logging
     image: posterchanai:${TAG:-local}-${PC_SPLIT_BACKEND:-cpu}
     profiles: ["split"]
     restart: unless-stopped
