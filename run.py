@@ -67,13 +67,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Posterchanai Server")
     parser.add_argument("--port", type=int, default=None, help="Port to run on (default: 3051)")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
-    parser.add_argument("--role", choices=ROLES, default=None, help=ROLE_HELP)
+    # No argparse `choices=`: the value may be COMMA-SEPARATED (e.g. "app,bots"), which
+    # choices= rejects outright — argparse exits 2 and systemd restart-loops the unit.
+    # app.role.current() does the validating, and falls back to 'all' for anything it does
+    # not recognise, so a bad value degrades to the old single-process layout rather than
+    # taking the node down.
+    parser.add_argument("--role", default=None, help=ROLE_HELP)
     args = parser.parse_args()
 
     # CLI beats env; the env var is what the unit files and compose set. Exported either way so every
     # child (and app/main.py's gating) sees the same answer without re-parsing argv.
     from app.role import current as _current_role
-    role = (args.role or _current_role()).strip().lower()
+    if args.role:
+        os.environ["POSTERCHANAI_ROLE"] = args.role.strip().lower()
+    role = _current_role()          # validates; unknown -> "all"
     os.environ["POSTERCHANAI_ROLE"] = role
 
     # Non-app roles are NOT web servers — they must never bind the app port. Each one is a process

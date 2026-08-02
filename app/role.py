@@ -37,7 +37,7 @@ _warned = set()
 
 
 def current() -> str:
-    """This process's role, falling back to 'all' for anything unrecognised.
+    """This process's role string (may be comma-separated), falling back to 'all'.
 
     Falling back rather than trusting the string is the difference between a typo in a unit file
     being noisy and being invisible: an unknown role matched nothing in _OWNERS, so `owns()` returned
@@ -48,13 +48,27 @@ def current() -> str:
     raw = (os.environ.get("POSTERCHANAI_ROLE") or "").strip().lower()
     if not raw:
         return "all"
-    if raw not in ROLES:
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts or any(p not in ROLES for p in parts):
         if raw not in _warned:
             _warned.add(raw)
             logger.warning("[role] unknown POSTERCHANAI_ROLE=%r — treating this process as 'all' "
-                           "(valid: %s)", raw, ", ".join(ROLES))
+                           "(valid: %s, comma-separated)", raw, ", ".join(ROLES))
         return "all"
-    return raw
+    return ",".join(parts)
+
+
+def roles() -> set:
+    """The set of roles this process fills. COMMA-SEPARATED is supported because the split is not
+    all-or-nothing: some components genuinely have to stay with the web app. The bot manager is the
+    worked example — Admin -> Bots reads its live process registry (`_procs`) and drives start/stop/
+    publish through it, and that registry is IN-PROCESS. Run the manager elsewhere and the admin UI
+    shows every bot as stopped (they are running fine) while `reconcile_now()` from a button press
+    makes the APP spawn a second copy of every bot. So that node runs `--role app,bots`."""
+    cur = current()
+    if cur == "all":
+        return set(ROLES)
+    return set(cur.split(","))
 
 
 def owns(component: str) -> bool:
@@ -64,7 +78,10 @@ def owns(component: str) -> bool:
     without a mapping keeps the pre-split behaviour of running with the app instead of silently never
     starting anywhere — a missing feature is easier to notice than a missing supervisor.
     """
-    role = current()
-    if role == "all":
+    mine = roles()
+    if "all" in mine or mine == set(ROLES):
         return True
-    return role in _OWNERS.get(component, (role,))
+    owners = _OWNERS.get(component)
+    if owners is None:
+        return True          # unmapped component: keep the pre-split behaviour (runs with the app)
+    return bool(mine.intersection(owners))
