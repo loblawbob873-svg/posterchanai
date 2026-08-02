@@ -533,7 +533,7 @@ async def startup():
                 # git_server_enabled). MUST start AFTER the relay: the push-auth hook reads the
                 # relay's Postgres for maintainer-signed 30618 state.
                 from app.services.git_http_service import start_git_http
-                start_git_http()
+                if _owns('git'): start_git_http()
             except Exception as e:
                 logging.error(f"Error starting git host: {e}", exc_info=True)
 
@@ -704,80 +704,20 @@ async def startup():
         else:
             logging.info(f"Schedulers disabled on port {app_port} (only run on port 3051)")
 
-        # Auto-start built-in Tor if enabled
+        # Tor + the HTTP proxy that fronts it. Both are now `if _owns(...)` and their bodies live in
+        # the services (start_from_settings) so the `tor` / `proxy` role processes run the identical
+        # code — a second copy here would drift the moment either changed.
         try:
-            from app.services import settings_store as _ss
-            if _ss.get_bool("tor_enabled"):
-                from app.services.tor_service import start_tor_service
-                listen_host = _ss.get("tor_listen_host", "127.0.0.1")
-                socks_port = _ss.get("tor_socks_port", "9052")
-                control_port = _ss.get_int("tor_control_port", 9053)
-                _app_port = os.getenv("POSTERCHANAI_PORT", "3051")   # the .onion forwards Tor → the app
-                tor_service = start_tor_service(
-                    listen_host=listen_host,
-                    socks_port=int(socks_port),
-                    control_port=control_port,
-                    dns_port=_ss.get_int("tor_dns_port", control_port + 2),
-                    exit_nodes=_ss.get("tor_exit_nodes", "{us}"),
-                    data_dir=_ss.get("tor_data_dir", "/var/lib/posterchanai/tor"),
-                    onion_enabled=_ss.get_bool("onion_enabled"),
-                    onion_target=f"127.0.0.1:{_app_port}",
-                    onion_relay_port=_ss.get_int("nostr_relay_port", 3052),
-                )
-                if tor_service:
-                    logging.info(f"Built-in Tor started (SOCKS5 on {listen_host}:{socks_port})")
-                else:
-                    logging.error("Failed to start built-in Tor")
-                # Second Tor daemon (different exit region) so the HTTP proxy can load-balance across two
-                # independent circuits / exit IPs — dodges per-IP rate limits + geo-blocks on busy
-                # upstreams. Own ports + data dir; DNS port derives from its control port (+2), like #1.
-                if _ss.get_bool("tor2_enabled"):
-                    t2_socks = _ss.get_int("tor2_socks_port", 9062)
-                    t2_control = _ss.get_int("tor2_control_port", 9063)
-                    t2_exits = _ss.get("tor2_exit_nodes", "{ca}")
-                    if start_tor_service(
-                        listen_host=listen_host,
-                        socks_port=t2_socks,
-                        control_port=t2_control,
-                        dns_port=t2_control + 2,
-                        exit_nodes=t2_exits,
-                        data_dir=_ss.get("tor2_data_dir", "/var/lib/posterchanai/tor2"),
-                    ):
-                        logging.info(f"Built-in Tor #2 started (SOCKS5 on {listen_host}:{t2_socks}, exits={t2_exits})")
-                    else:
-                        logging.error("Failed to start built-in Tor #2")
+            if _owns('tor'):
+                from app.services.tor_service import start_from_settings as _tor_start
+                _tor_start()
         except Exception as e:
             logging.error(f"Failed to start built-in Tor: {e}", exc_info=True)
 
-        # Auto-start built-in HTTP proxy if enabled
         try:
-            from app.services import settings_store as _ss
-            if _ss.get_bool("proxy_enabled"):
-                socks_host = _ss.get("proxy_socks_host", "")
-                if socks_host:
-                    # Run the proxy as its OWN process so its asyncio loop gets a dedicated core and
-                    # doesn't contend with the app's event loop (all bot/social uploads route through it).
-                    from app.services.http_proxy_service import start_http_proxy_process
-                    _pport = _ss.get_int("proxy_listen_port", 8118)
-                    # Load-balance across both local Tor daemons' SOCKS ports when the 2nd is on.
-                    # Tor-only (no direct fallback) — keeps torrent traffic from ever leaking the real IP.
-                    # Label each backend with its exit region (us/ca) so the proxy logs say which Tor
-                    # daemon served/failed each request. Only LB onto the 2nd daemon's port when WE
-                    # actually run it (it starts inside the tor_enabled block) — else a dead port.
-                    _l1 = ((_ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
-                    _socks_ports = [f"{_ss.get_int('proxy_socks_port', 9052)}:{_l1}"]
-                    if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
-                        _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
-                        _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
-                    start_http_proxy_process(
-                        listen_host=_ss.get("proxy_listen_host", "127.0.0.1"),
-                        listen_port=_pport,
-                        socks_host=socks_host,
-                        socks_ports=_socks_ports,
-                    )
-                    logging.info(f"Built-in HTTP proxy (subprocess) started on port {_pport} → SOCKS {socks_host}:{_socks_ports}")
-                else:
-                    logging.warning("HTTP proxy enabled but no SOCKS5 target host configured")
+            if _owns('proxy'):
+                from app.services.http_proxy_service import start_from_settings as _proxy_start
+                _proxy_start()
         except Exception as e:
             logging.error(f"Failed to start built-in HTTP proxy: {e}", exc_info=True)
 
@@ -878,7 +818,7 @@ async def shutdown():
         # Stop the built-in GRASP git host supervisor + terminate the git-http subprocess
         try:
             from app.services.git_http_service import stop_git_http
-            stop_git_http()
+            if _owns('git'): stop_git_http()
         except Exception:
             pass
 

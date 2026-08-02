@@ -57,7 +57,12 @@ nine bots — the web app, the least stable component, supervises the most stabl
   relay   the Nostr relay process
   worker  background pollers/schedulers
   media   mediamtx (streams) + pion-turn (calls)
-  bots    the bot manager
+  bots    the bot manager (must run WITH the app — see app/role.roles)
+  tor     the Tor daemons (.onion + SOCKS egress)
+  proxy   the HTTP proxy fronting Tor
+  git     the GRASP git host
+
+Roles are comma-separated: the deployed layout is `app,bots`.
 
 DEFAULTS TO 'all' ON PURPOSE. A node whose unit file has not been updated keeps working exactly as
 before after a code deploy, and rolling back is repointing the unit — not a code revert."""
@@ -97,7 +102,11 @@ if __name__ == "__main__":
         sys.argv = [sys.argv[0]]
         runpy.run_module("app.worker", run_name="__main__")
         sys.exit(0)
-    if role in ("media", "bots"):
+    # Every role the runner knows about. Derived from _ROLE_SERVICES rather than hardcoded: a role
+    # added there but missed here would fall through to uvicorn and start a SECOND web server on the
+    # app's port instead of the component.
+    from app.role_runner import _ROLE_SERVICES
+    if role in _ROLE_SERVICES:
         from app.role_runner import run_role
         sys.exit(run_role(role))
 

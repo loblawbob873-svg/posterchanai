@@ -140,8 +140,22 @@ def _monitor_loop() -> None:
             logger.debug("[git-host] watchdog error: %s", e)
 
 
+def _status_path() -> str:
+    return os.path.join(_REPO_ROOT, "data", "git_http.status.json")
+
+
 def start_git_http() -> None:
-    """Idempotent. No-op unless git_server_enabled. Starts the child + the single watchdog thread."""
+    """NOTE: reachable from an admin Settings save (admin.py reconciles the git host when its
+    topology keys change). When this process does NOT own the git host — it runs as
+    posterchanai-git.service — spawning here would put a SECOND git host on the same port as a child
+    of the web app. Delegate instead: signal the owner so its unit restarts it with the new config.
+
+    Idempotent. No-op unless git_server_enabled. Starts the child + the single watchdog thread."""
+    from app.role import owns as _owns, restart_owner_process
+    if not _owns("git"):
+        restart_owner_process(_status_path(), "git")
+        return
+
     global _shutdown, _monitor_thread
     with _lock:
         if _host.proc is not None and _host.proc.poll() is None:

@@ -32,6 +32,15 @@ _ROLE_SERVICES = {
     "bots": [
         ("bot manager", "app.services.bot_manager_service", "start_bot_manager", "stop_bot_manager"),
     ],
+    "tor": [
+        ("tor", "app.services.tor_service", "start_from_settings", "stop_tor_service"),
+    ],
+    "proxy": [
+        ("http proxy", "app.services.http_proxy_service", "start_from_settings", "stop_http_proxy_process"),
+    ],
+    "git": [
+        ("git host", "app.services.git_http_service", "start_git_http", "stop_git_http"),
+    ],
 }
 
 

@@ -1,0 +1,36 @@
+# Posterchan AI — Tor daemons (.onion + SOCKS egress), as its OWN unit.
+#
+# Template. scripts/install_services.sh writes the real file with this node's user/paths/launcher.
+#
+# WHY: under one unit the web app supervises this, so restarting to ship a router change takes it
+# down too — tor loses every circuit (minutes to rebuild, and the .onion with it), and the git host
+# drops in-flight clones and pushes.
+#
+# PAIRED CHANGE: the main unit must run `--role app,bots`, or it keeps supervising this and you get
+# two of them. Control paths reachable from the admin UI (set_onion, the git-host reconcile) detect
+# that they are not the owner and signal THIS unit instead of spawning a second copy.
+
+[Unit]
+Description=Posterchan AI — Tor daemons (.onion + SOCKS egress)
+After=network.target network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/YOUR_USER"
+ExecStart=/path/to/posterchanai/run-intel.sh --role tor
+
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

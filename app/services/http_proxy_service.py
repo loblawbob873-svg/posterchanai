@@ -549,3 +549,34 @@ def _run_standalone():
 
 if __name__ == "__main__":
     _run_standalone()
+
+
+def start_from_settings() -> bool:
+    """Start the built-in HTTP proxy from settings. Returns True if it was started.
+
+    EXTRACTED from app/main.py so the `proxy` role runs the identical code path — see
+    tor_service.start_from_settings for why this is not duplicated into the role runner.
+    """
+    from app.services import settings_store as _ss
+    if not _ss.get_bool("proxy_enabled"):
+        return False
+    socks_host = _ss.get("proxy_socks_host", "")
+    if not socks_host:
+        logger.warning("[PROXY] enabled but no SOCKS5 target host configured")
+        return False
+    _pport = _ss.get_int("proxy_listen_port", 8118)
+    # Load-balance across both local Tor daemons when the 2nd is on. Tor-only (no direct fallback) —
+    # keeps torrent traffic from ever leaking the real IP. Each backend is labelled with its exit
+    # region so the proxy log says which daemon served/failed a request. Only LB onto the 2nd port
+    # when this deployment actually runs it, else it is a dead port.
+    _l1 = ((_ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
+    _socks_ports = [f"{_ss.get_int('proxy_socks_port', 9052)}:{_l1}"]
+    if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
+        _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
+        _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
+    start_http_proxy_process(
+        listen_host=_ss.get("proxy_listen_host", "127.0.0.1"), listen_port=_pport,
+        socks_host=socks_host, socks_ports=_socks_ports)
+    logger.info("[PROXY] built-in HTTP proxy (subprocess) started on port %s -> SOCKS %s:%s",
+                _pport, socks_host, _socks_ports)
+    return True

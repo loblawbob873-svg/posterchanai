@@ -244,13 +244,61 @@ class NoSpawningWhatYouDoNotOwn(unittest.TestCase):
         self.assertFalse(res.get("ok"), res)
 
 
+class NewSplitsDoNotSpawnTwice(unittest.TestCase):
+    """tor / proxy / git, split in the same pass. Each had a control path reachable from the WEB APP
+    that called the component's own start_*() — from a non-owning process that is a second git host
+    on the same port, or a tor toggle that silently did nothing."""
+
+    def test_git_host_delegates_instead_of_spawning(self):
+        """admin.py reconciles the git host on a Settings save (stop_git_http(); start_git_http()).
+        Unguarded that puts a SECOND git host on :3053 as a child of the web app."""
+        from app.services import git_http_service as g
+        with mock.patch.dict(os.environ, {"POSTERCHANAI_ROLE": "app,bots"}), \
+             mock.patch.object(g, "_spawn") as spawn, \
+             mock.patch("app.role.restart_owner_process", return_value={"ok": True}) as delegate:
+            g.start_git_http()
+        spawn.assert_not_called()
+        delegate.assert_called_once()
+
+    def test_git_host_still_spawns_when_it_owns_it(self):
+        from app.services import git_http_service as g
+        with mock.patch.dict(os.environ, {"POSTERCHANAI_ROLE": "all"}), \
+             mock.patch("app.role.restart_owner_process") as delegate, \
+             mock.patch.object(g, "_read_config", return_value={"enabled": False}):
+            g.start_git_http()
+        delegate.assert_not_called()
+
+    def test_set_onion_restarts_the_tor_unit_when_it_does_not_own_tor(self):
+        """primary_service() is None off-owner, so the live SIGHUP reload silently did nothing and the
+        admin toggle appeared to work while the .onion never changed."""
+        from app.services import tor_service as t
+        with mock.patch.dict(os.environ, {"POSTERCHANAI_ROLE": "app,bots"}), \
+             mock.patch("app.role.restart_owner_by_cmdline", return_value={"ok": True}) as delegate, \
+             mock.patch.object(t, "get_onion_address_global", return_value="abc.onion"), \
+             mock.patch.object(t, "primary_service") as prim:
+            res = t.set_onion(True, "127.0.0.1:3051", 3052)
+        prim.assert_not_called()
+        delegate.assert_called_once()
+        self.assertEqual(res, "abc.onion")
+
+    def test_owner_restart_refuses_a_cmdline_that_is_not_ours(self):
+        from app import role
+        with mock.patch("os.kill") as kill:
+            res = role.restart_owner_by_cmdline("--role definitely-not-a-real-role-xyz")
+        kill.assert_not_called()
+        self.assertFalse(res.get("ok"))
+
+
 class RunPyDispatch(unittest.TestCase):
     def test_every_role_has_a_dispatch_or_is_the_app(self):
         with open(os.path.join(REPO, "run.py"), encoding="utf-8") as f:
             src = f.read()
         for r in ("relay", "worker"):
             self.assertIn(f'role == "{r}"', src, f"run.py does not dispatch role {r}")
-        self.assertIn('role in ("media", "bots")', src)
+        # Dispatch is DERIVED from role_runner._ROLE_SERVICES, not a hardcoded tuple: a role added
+        # to the runner but missed in run.py falls through to uvicorn and starts a second web server
+        # on the app's port instead of the component.
+        self.assertIn("if role in _ROLE_SERVICES:", src)
         # 'all' and 'app' fall through to uvicorn — they ARE the web server.
         # ROLES has ONE definition (app/role.py) which run.py imports, so the CLI's --role choices,
         # the unit files and the ownership predicate cannot disagree about what a valid role is. A
@@ -258,11 +306,12 @@ class RunPyDispatch(unittest.TestCase):
         self.assertIn("from app.role import ROLES", src)
         self.assertNotRegex(src, r"(?m)^ROLES\s*=\s*\(",
                             "run.py must import ROLES, not redefine it")
-        self.assertEqual(set(role.ROLES), {"all", "app", "relay", "worker", "media", "bots"})
+        self.assertEqual(set(role.ROLES),
+                         {"all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git"})
 
     def test_role_runner_covers_the_roles_run_py_delegates_to_it(self):
         from app import role_runner
-        self.assertEqual(set(role_runner._ROLE_SERVICES), {"media", "bots"})
+        self.assertEqual(set(role_runner._ROLE_SERVICES), {"media", "bots", "tor", "proxy", "git"})
         for svcs in role_runner._ROLE_SERVICES.values():
             for label, module, start_fn, stop_fn in svcs:
                 mod = __import__(module, fromlist=["*"])

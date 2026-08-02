@@ -396,7 +396,17 @@ def primary_service():
 
 def set_onion(enabled: bool, target: str = "", relay_port: int = 0):
     """Enable/disable the deployment's .onion on the primary daemon (live SIGHUP reload). Returns the
-    .onion address (may be None on the very first enable — Tor needs a moment; poll get_onion_address)."""
+    .onion address (may be None on the very first enable — Tor needs a moment; poll get_onion_address).
+
+    When tor runs in its OWN unit this process holds no daemon handle, so primary_service() is None
+    and the live reload silently did nothing: the admin toggle looked like it worked and the .onion
+    never changed. Restart the owning unit instead — the setting is already persisted, so the fresh
+    daemon comes up with the new torrc."""
+    from app.role import owns as _owns, restart_owner_by_cmdline
+    if not _owns("tor"):
+        restart_owner_by_cmdline("--role tor")
+        return get_onion_address_global()
+
     svc = primary_service()
     if not svc:
         return None
@@ -430,3 +440,60 @@ def request_onion_host(request) -> str:
         return ""
     ours = (get_onion_address() or "").strip().lower()
     return host if ours and host == ours else ""
+
+
+def start_from_settings() -> bool:
+    """Start the Tor daemon(s) this node is configured for. Returns True if the primary came up.
+
+    EXTRACTED from app/main.py's startup so the `tor` role process can start exactly the same thing
+    the app used to. Deliberately one implementation: a copy in the role runner would drift from the
+    app's the first time either changed — the failure mode the duplicated own-media-hosts list had.
+    """
+    import os as _os
+    from app.services import settings_store as _ss
+    if not _ss.get_bool("tor_enabled"):
+        return False
+    listen_host = _ss.get("tor_listen_host", "127.0.0.1")
+    socks_port = int(_ss.get("tor_socks_port", "9052"))
+    control_port = _ss.get_int("tor_control_port", 9053)
+    _app_port = _os.getenv("POSTERCHANAI_PORT", "3051")   # the .onion forwards Tor -> the app
+    primary = start_tor_service(
+        listen_host=listen_host,
+        socks_port=socks_port,
+        control_port=control_port,
+        dns_port=_ss.get_int("tor_dns_port", control_port + 2),
+        exit_nodes=_ss.get("tor_exit_nodes", "{us}"),
+        data_dir=_ss.get("tor_data_dir", "/var/lib/posterchanai/tor"),
+        onion_enabled=_ss.get_bool("onion_enabled"),
+        onion_target=f"127.0.0.1:{_app_port}",
+        onion_relay_port=_ss.get_int("nostr_relay_port", 3052),
+    )
+    logger.info("[TOR] built-in Tor %s (SOCKS5 on %s:%s)",
+                "started" if primary else "FAILED to start", listen_host, socks_port)
+    # Second daemon (different exit region) so the HTTP proxy can load-balance across two independent
+    # circuits / exit IPs — dodges per-IP rate limits + geo-blocks. Own ports + data dir; DNS derives
+    # from its control port (+2), like #1.
+    if _ss.get_bool("tor2_enabled"):
+        t2_control = _ss.get_int("tor2_control_port", 9063)
+        t2_socks = _ss.get_int("tor2_socks_port", 9062)
+        t2_exits = _ss.get("tor2_exit_nodes", "{ca}")
+        ok2 = start_tor_service(
+            listen_host=listen_host, socks_port=t2_socks, control_port=t2_control,
+            dns_port=t2_control + 2, exit_nodes=t2_exits,
+            data_dir=_ss.get("tor2_data_dir", "/var/lib/posterchanai/tor2"))
+        logger.info("[TOR] built-in Tor #2 %s (SOCKS5 on %s:%s, exits=%s)",
+                    "started" if ok2 else "FAILED to start", listen_host, t2_socks, t2_exits)
+    return bool(primary)
+
+
+def get_onion_address_global():
+    """The .onion hostname from the primary daemon's hostname FILE — readable from any process,
+    unlike the in-memory service handle."""
+    from app.services import settings_store as _ss
+    from pathlib import Path
+    try:
+        d = Path(_ss.get("tor_data_dir", "/var/lib/posterchanai/tor")) / "onion_service"
+        hn = (d / "hostname").read_text().strip()
+        return hn or None
+    except Exception:
+        return None

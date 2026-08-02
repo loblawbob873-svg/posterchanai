@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # The single definition — run.py imports this for its --role choices, so the CLI, the unit files and
 # this predicate can never disagree about what a valid role is.
-ROLES = ("all", "app", "relay", "worker", "media", "bots")
+ROLES = ("all", "app", "relay", "worker", "media", "bots", "tor", "proxy", "git")
 
 # component -> the roles that supervise it. 'all' is implicit for every component (see owns()).
 _OWNERS = {
@@ -30,6 +30,14 @@ _OWNERS = {
     # cleanup, git host, stream-end reaper). They live with the web app because they need its loop or
     # its websocket push, so 'app' owns them.
     "app":    ("app",),
+    # Externally visible, slow to re-establish, and independently restartable:
+    #   tor    — circuits take minutes to rebuild and the .onion goes with them
+    #   proxy  — the HTTP proxy fronting tor (its consumers reach it over TCP, so it is already
+    #            cross-process; splitting only decouples its restart)
+    #   git    — a restart kills in-flight clones and pushes
+    "tor":    ("tor",),
+    "proxy":  ("proxy",),
+    "git":    ("git",),
 }
 
 
@@ -85,3 +93,80 @@ def owns(component: str) -> bool:
     if owners is None:
         return True          # unmapped component: keep the pre-split behaviour (runs with the app)
     return bool(mine.intersection(owners))
+
+
+def restart_owner_process(status_path: str, marker: str) -> dict:
+    """Ask the process that OWNS a component to exit, so its unit restarts it with fresh config.
+
+    Used by control paths reachable from the WEB APP for components the app no longer supervises —
+    an admin Settings save that "restarts the relay" or "reconciles the git host". Left unguarded,
+    those call the component's own start_*(), which spawns a SECOND copy as a child of the app: two
+    relays on one Postgres, two git hosts on one port. The newcomer crash-loops on the bound port, so
+    it is loud rather than silent, but it is still wrong.
+
+    `status_path` is the component's status file (it already carries a live pid — that is how the
+    admin UI reports liveness cross-process). `marker` must appear in the target's cmdline.
+
+    The pid is VERIFIED before signalling: it must still exist, its cmdline must name this repo AND
+    contain `marker`. A stale status file whose pid has been recycled would otherwise SIGTERM an
+    unrelated process — including, if the marker were loose enough, the web app itself.
+    """
+    import json as _json
+    import signal as _signal
+    try:
+        with open(status_path) as f:
+            pid = int(_json.load(f).get("pid") or 0)
+    except Exception as e:
+        return {"ok": False, "error": f"owner status file unreadable ({e}); restart the unit by hand"}
+    if pid <= 0:
+        return {"ok": False, "error": "no owner pid recorded; restart the unit by hand"}
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+    except OSError:
+        return {"ok": False, "error": f"pid {pid} is not running; systemd should respawn it"}
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo not in cmd or marker not in cmd:
+        logger.warning("[role] refusing to signal pid %s — cmdline is not %r of this repo: %s",
+                       pid, marker, cmd[:120])
+        return {"ok": False, "error": "could not identify the owning process; restart the unit by hand"}
+    try:
+        os.kill(pid, _signal.SIGTERM)
+        logger.info("[role] asked the %s owner (pid %s) to restart for a config change", marker, pid)
+        return {"ok": True, "restarted": True, "via": "service"}
+    except OSError as e:
+        return {"ok": False, "error": f"could not signal pid {pid}: {e}"}
+
+
+def restart_owner_by_cmdline(marker: str) -> dict:
+    """Same as restart_owner_process, for a component with NO status file: find the owning process by
+    scanning /proc for a cmdline that names this repo and `marker`.
+
+    Tor is the case. Its live onion toggle (set_onion) SIGHUPs a process handle the app no longer
+    has, so from the web app it silently did nothing — the admin toggle appeared to work and the
+    .onion never changed. Signalling the tor unit instead costs a circuit rebuild rather than a
+    SIGHUP reload, which is the honest trade for a toggle that actually takes effect: the settings
+    are already persisted by the time this is called, so the restarted daemon reads the new config.
+    """
+    import signal as _signal
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    me = os.getpid()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == me:
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmd = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if repo in cmd and marker in cmd:
+            try:
+                os.kill(pid, _signal.SIGTERM)
+                logger.info("[role] asked the %s owner (pid %s) to restart for a config change", marker, pid)
+                return {"ok": True, "restarted": True, "via": "service", "pid": pid}
+            except OSError as e:
+                return {"ok": False, "error": f"could not signal pid {pid}: {e}"}
+    return {"ok": False, "error": f"no running process matching {marker!r} in this repo; restart the unit by hand"}

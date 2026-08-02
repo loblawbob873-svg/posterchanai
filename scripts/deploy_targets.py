@@ -31,7 +31,10 @@ MEDIA = "posterchanai-media.service"
 # through an in-process registry, so running it elsewhere showed every bot as stopped and made a
 # button press spawn a second copy of each. Bot code therefore restarts the app.
 BOTS = APP
-ALL = (APP, RELAY, WORKER, MEDIA)
+TOR = "posterchanai-tor.service"
+PROXY = "posterchanai-proxy.service"
+GIT = "posterchanai-git.service"
+ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT)
 
 # (prefix, units) — longest prefix wins. Only paths whose owners are KNOWN belong here.
 #
@@ -61,6 +64,9 @@ _OWNED = (
     ("app/services/turn_service.py", (MEDIA,)),
     ("streamserver/", (MEDIA,)),
     ("turnserver/", (MEDIA,)),
+    ("app/services/tor_service.py", (TOR,)),
+    ("app/services/http_proxy_service.py", (PROXY,)),
+    ("app/services/git_http_service.py", (GIT,)),
     ("botframework/", (BOTS,)),
     ("app/services/bot_manager_service.py", (BOTS,)),
 )

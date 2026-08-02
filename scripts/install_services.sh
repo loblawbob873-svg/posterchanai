@@ -28,7 +28,7 @@ REVERT=0
 # and drives start/stop/publish through it, and that registry is in-process — split out, the UI shows
 # every bot as stopped (they are running) and `reconcile_now()` from a button makes the app spawn a
 # SECOND copy of every bot. The app therefore runs role "app,bots".
-UNITS=(relay worker media)
+UNITS=(relay worker media tor proxy git)
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -67,6 +67,9 @@ for r in "${UNITS[@]}"; do
         relay)  desc="Nostr relay";                              after="postgresql.service" ;;
         worker) desc="background worker (pollers/schedulers)";    after="posterchanai-relay.service" ;;
         media)  desc="streaming + TURN (mediamtx, pion-turn)";    after="network.target" ;;
+        tor)    desc="Tor daemons (.onion + SOCKS egress)";       after="network.target" ;;
+        proxy)  desc="HTTP proxy fronting Tor";                   after="posterchanai-tor.service" ;;
+        git)    desc="git host (GRASP git-over-nostr)";           after="network.target" ;;
         bots)   desc="bot manager";                               after="posterchanai-relay.service" ;;
     esac
     unit="/etc/systemd/system/posterchanai-$r.service"

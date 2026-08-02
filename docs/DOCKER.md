@@ -158,6 +158,9 @@ that matters, run one component per container instead:
 | `relay` | the Nostr relay (`:3052`) |
 | `worker` | background pollers/schedulers |
 | `media` | mediamtx (streams) + pion-turn (calls) |
+| `tor` | the Tor daemons (.onion + SOCKS egress) |
+| `proxy` | the HTTP proxy fronting Tor |
+| `git` | the GRASP git host |
 
 ```bash
 # one component per container, same image, same volumes
