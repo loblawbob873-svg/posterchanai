@@ -100,7 +100,10 @@ WantedBy=multi-user.target
 done
 
 # Switch the app unit to --role app, idempotently.
-if grep -q -- "--role app" "$MAIN_UNIT" 2>/dev/null; then
+# sudo: /etc/systemd/system is not world-readable on every distro, and a plain grep here
+# returns "Permission denied" — which the verification below correctly treats as "the edit
+# did not land" and aborts, leaving the units written but not enabled.
+if sudo grep -q -- "--role app" "$MAIN_UNIT" 2>/dev/null; then
     echo "[services] posterchanai.service already runs --role app"
 else
     echo "[services] switching posterchanai.service to --role app"
@@ -108,7 +111,7 @@ else
         echo "  + sed -i 's#^ExecStart=.*\$#&  --role app#' $MAIN_UNIT"
     else
         sudo sed -i "s#^\(ExecStart=.*$LAUNCHER\)\s*\$#\1 --role app#" "$MAIN_UNIT"
-        grep -q -- "--role app" "$MAIN_UNIT" || {
+        sudo grep -q -- "--role app" "$MAIN_UNIT" || {
             echo "ERROR: could not add --role app to $MAIN_UNIT — REFUSING to continue," >&2
             echo "       because installing the new units without it double-runs everything." >&2
             exit 1

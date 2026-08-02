@@ -107,7 +107,12 @@ _restart_units() {
     done
 }
 
-_TARGETS="$(venv-unified/bin/python scripts/deploy_targets.py "$_PREV_HEAD..HEAD" 2>/dev/null \
+# Resolve python portably: server1 has venv-unified/, nas has venv/, a fresh node may have neither.
+# Hardcoding one path made this silently fall back to "restart the app" on nas — safe, but the
+# targeted-restart feature was simply not running there.
+_PY="$(ls -1 venv-unified/bin/python venv/bin/python 2>/dev/null | head -1 || true)"
+_PY="${_PY:-python3}"
+_TARGETS="$("$_PY" scripts/deploy_targets.py "$_PREV_HEAD..HEAD" 2>/dev/null \
             || echo posterchanai.service)"
 echo "[sync] deploy targets: ${_TARGETS:-<none>}"
 _restart_units "$_TARGETS"
@@ -141,7 +146,9 @@ _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
 # Same targeted restart as server1: only the units this deploy touched. Computed on nas from its OWN
 # pre-pull HEAD, because a node can be behind by more than one commit. Falls back to restarting the
 # app if anything about that fails — never silently restart nothing.
-_NAS_TARGETS=\$(venv-unified/bin/python scripts/deploy_targets.py \$_NAS_PREV..HEAD 2>/dev/null || echo posterchanai.service)
+_NAS_PY=\$(ls -1 venv-unified/bin/python venv/bin/python 2>/dev/null | head -1)
+_NAS_PY=\${_NAS_PY:-python3}
+_NAS_TARGETS=\$(\$_NAS_PY scripts/deploy_targets.py \$_NAS_PREV..HEAD 2>/dev/null || echo posterchanai.service)
 echo \"[nas] deploy targets: \${_NAS_TARGETS:-<none>}\"
 for u in \$_NAS_TARGETS; do
     if systemctl cat \$u >/dev/null 2>&1; then echo \"[nas] restarting \$u\"; sudo systemctl restart \$u; fi
