@@ -306,6 +306,17 @@ services:
   relay: &split
     logging: *logging
     image: posterchanai:${TAG:-local}-${PC_SPLIT_BACKEND:-cpu}
+    # SAME tag and SAME build args as the backend service, so `--profile cpu --profile split up
+    # --build` builds the image ONCE and all four services share it. Without a build: section these
+    # have only an `image:`, so compose tries to PULL posterchanai:local-cpu from a registry that
+    # does not have it, and the split profile fails on any machine that has not already built the
+    # backend. PC_SPLIT_BACKEND must match the backend profile you bring up (default cpu).
+    build:
+      context: .
+      args:
+        GPU: "${PC_SPLIT_BACKEND:-cpu}"
+        INSTALL_MUSIC: "${POSTERCHANAI_MUSIC:-0}"
+        INSTALL_VOICE: "${POSTERCHANAI_VOICE:-0}"
     profiles: ["split"]
     restart: unless-stopped
     depends_on: [postgres]

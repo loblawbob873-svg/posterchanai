@@ -178,7 +178,23 @@ class VoiceInstaller(unittest.TestCase):
         INSTALL the engine at build time and enable it at runtime, or you get an image with the
         feature switched on and no model — exactly the trap the INSTALL_MUSIC comment describes."""
         compose = _read("docker-compose.yml")
-        self.assertEqual(compose.count("INSTALL_VOICE"), 4, "every build profile must pass it")
+        # Assert the INVARIANT, not a magic count: EVERY service that builds an image must pass the
+        # arg. A hardcoded total (it was 4) breaks the moment a service is added — which is a false
+        # alarm when the new one passes it correctly, and worse, would still pass if someone added a
+        # build that DIDN'T while removing one that did.
+        import yaml as _yaml
+        _svcs = _yaml.safe_load(compose).get("services", {})
+        _builders = {n: sv for n, sv in _svcs.items() if isinstance(sv, dict) and "build" in sv}
+        self.assertTrue(_builders, "no build sections found — has compose been restructured?")
+        for _n, _sv in _builders.items():
+            _args = _sv["build"].get("args") or {}
+            # The `nostr` backend is the LEAN image on purpose — no torch/llama/diffusers, so no
+            # voice engine to install. It is the one build that legitimately omits the arg, and the
+            # old hardcoded count of 4 was silently encoding exactly that exclusion.
+            if str(_args.get("GPU", "")).strip() == "nostr":
+                continue
+            self.assertIn("INSTALL_VOICE", _args,
+                          f"service {_n} builds an AI image but never passes INSTALL_VOICE")
         self.assertIn("POSTERCHANAI_VOICE=${POSTERCHANAI_VOICE:-0}", compose)
         self.assertIn("INSTALL_VOICE", _read("Dockerfile"))
         self.assertIn('os.environ.get("POSTERCHANAI_VOICE", "0")', _read("app/main.py"))

@@ -377,8 +377,13 @@ EXPOSE 8189/udp
 
 # TCP health check on the configured port (the UI redirects to /login, so a plain
 # socket connect is a cleaner liveness probe than an HTTP status check).
+# ROLE-AWARE. Only the web app listens on POSTERCHANAI_PORT; a container running --role relay /
+# worker / media never binds it, so a flat port check marks every split container UNHEALTHY forever
+# and anything waiting on `condition: service_healthy` hangs on it. For those roles the process being
+# alive IS the signal — the runner exits non-zero if its component fails to start, and the restart
+# policy handles that — so report healthy and let the exit code do the talking.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD python3 -c "import os,socket; socket.create_connection(('127.0.0.1', int(os.environ.get('POSTERCHANAI_PORT','3051'))), 5)" || exit 1
+    CMD python3 -c "import os,socket,sys; r=(os.environ.get('POSTERCHANAI_ROLE') or 'all').split(','); sys.exit(0) if not ({'all','app'} & set(r)) else socket.create_connection(('127.0.0.1', int(os.environ.get('POSTERCHANAI_PORT','3051'))), 5)" || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "run.py"]
