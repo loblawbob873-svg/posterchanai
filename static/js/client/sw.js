@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v728';
+const CACHE = 'pc-nostr-v729';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -188,6 +188,18 @@ self.addEventListener('fetch', e => {
 
   if (isAppCode) e.respondWith(staleWhileRevalidate(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
+  // CROSS-ORIGIN VIDEO: leave it to the browser, exactly as the APK branch above does.
+  //
+  // A <video> with no crossorigin attribute fetches no-cors, so fetch() hands back an OPAQUE response
+  // (status 0). cacheFirstMedia can never store one — its guard requires status 200 — so intercepting
+  // these bought NOTHING, and cost a failure mode: an opaque body cannot satisfy the Range requests a
+  // media element makes. Chromium tolerates that; FIREFOX fails the load outright with
+  // MEDIA_ERR_SRC_NOT_SUPPORTED, surfaced as "No video with supported format and MIME type found".
+  //
+  // That is why a twimg clip played in the desktop app but not in Firefox: the app's SW is root-scoped
+  // (IS_APP) and already skips video, while the web SW proxied it. Same-origin video still goes through
+  // the cache below — it comes back transparent, so it is both cacheable and range-able.
+  else if (e.request.destination === 'video' && url.origin !== self.location.origin) return;
   // Avatars + images always; videos only get stored if played + small (see cacheFirstMedia).
   else if (e.request.destination === 'image' || e.request.destination === 'video') e.respondWith(cacheFirstMedia(e.request));
   else e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));  // everything else
