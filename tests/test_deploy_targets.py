@@ -60,6 +60,20 @@ class Mapping(unittest.TestCase):
         self.assertEqual(dt.BOTS, dt.APP)
         self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.APP])
 
+    def test_deploy_tooling_restarts_nothing(self):
+        """sync.sh and install.sh are read fresh by whoever runs them and imported by no service.
+        They were UNMAPPED, which means "could affect anything" and therefore every unit — so editing
+        sync.sh restarted the relay and put every connected web client into "reconnecting". The
+        tooling that exists to avoid downtime was causing it."""
+        for p in ("sync.sh", "install.sh"):
+            self.assertEqual(dt.units_for([p]), [], p)
+
+    def test_the_launchers_still_restart_everything(self):
+        """run-*.sh IS each unit's ExecStart, so a change there genuinely needs every unit — the
+        inert list must not grow to swallow them."""
+        for p in ("run-intel.sh", "run-nvidia.sh"):
+            self.assertEqual(sorted(dt.units_for([p])), sorted(dt.ALL), p)
+
     def test_shared_code_restarts_everything(self):
         """app/database.py, app/models.py, settings_store, run.py and the role plumbing itself are
         imported by every role — under-restarting these leaves stale code running somewhere."""

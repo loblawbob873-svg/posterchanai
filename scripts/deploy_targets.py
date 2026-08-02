@@ -76,10 +76,19 @@ _OWNED = (
 # this script and is why "never sync.sh for UI-only changes" exists.
 _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README", "CLAUDE.md")
 _INERT_SUFFIXES = (".md",)
+# DEPLOY TOOLING. These are read fresh by whoever runs them and are imported by no service, so a
+# change to one must restart NOTHING. They were unmapped, which means "could affect anything" and
+# therefore EVERY unit — so editing sync.sh itself restarted the relay and put every connected web
+# client into "reconnecting". The tooling that exists to avoid downtime was causing it.
+#
+# NOT the run-*.sh launchers: those ARE each unit's ExecStart, so a change there genuinely needs a
+# restart and must keep falling through to the shared/everything branch.
+_INERT_FILES = ("sync.sh", "install.sh")
 
 
 def _inert(path: str) -> bool:
-    return path.startswith(_INERT_PREFIXES) or path.endswith(_INERT_SUFFIXES)
+    return (path in _INERT_FILES or path.startswith(_INERT_PREFIXES)
+            or path.endswith(_INERT_SUFFIXES))
 
 
 def units_for(paths) -> list:
