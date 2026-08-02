@@ -142,6 +142,42 @@ base into the clone URLs it hands out. Repos live on the `pc-data` volume
 In production don't publish 3053 — front it with nginx `location /git/` (see [NGINX.md](NGINX.md)) so
 clones/pushes go over TLS. Full walkthrough: [GIT.md](GIT.md).
 
+## Splitting the stack (one component per container)
+
+By default a container runs `POSTERCHANAI_ROLE=all`: the web app **plus** the Nostr relay, the
+background worker, mediamtx/pion-turn and the bots it supervises. That is the single-container layout
+and nothing about it has changed — `docker compose up` behaves exactly as before.
+
+The cost of `all` is that restarting the container to ship a code change also drops every connected
+Nostr client, kills any live stream **mid-broadcast**, drops active calls and restarts the bots. If
+that matters, run one component per container instead:
+
+| role | what it runs |
+|------|--------------|
+| `app` | the web app only — supervises none of the below |
+| `relay` | the Nostr relay (`:3052`) |
+| `worker` | background pollers/schedulers |
+| `media` | mediamtx (streams) + pion-turn (calls) |
+| `bots` | the bot manager |
+
+```bash
+# one component per container, same image, same volumes
+docker compose run -d -e POSTERCHANAI_ROLE=relay  --name pc-relay  intel
+docker compose run -d -e POSTERCHANAI_ROLE=media  --name pc-media  intel
+docker compose run -d -e POSTERCHANAI_ROLE=bots   --name pc-bots   intel
+docker compose run -d -e POSTERCHANAI_ROLE=worker --name pc-worker intel
+# …and the web app itself, which now supervises none of them
+POSTERCHANAI_ROLE=app docker compose up -d intel
+```
+
+Both halves are required. Running the role containers **without** setting the app to `app` gives you
+two of everything; setting the app to `app` **without** the role containers leaves those components
+running nowhere. Two-of-everything fails loudly (they bind the same ports) rather than corrupting
+anything, but neither half alone is a state to leave a deployment in.
+
+The equivalent on bare metal is `scripts/install_services.sh`, which writes the matching systemd
+units and flips the main unit to `--role app` in one step (`--revert` undoes it).
+
 ## Production (HTTPS / TLS)
 
 The container serves plain HTTP/WS — front it with **nginx** to get HTTPS, your own domain, and a

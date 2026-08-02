@@ -318,6 +318,12 @@ VOLUME ["/var/lib/posterchanai", "/app/data"]
 # Persist the build accelerator so the entrypoint can apply per-GPU runtime settings
 # (e.g. Intel: the SYCL device selector + subprocess-per-image VRAM release).
 ENV PC_ACCEL=${GPU}
+# Which part of the stack this container IS. `all` = the single-container layout: the web app plus
+# the relay, worker, mediamtx/TURN and the bots it supervises — unchanged, and what a plain
+# `docker compose up` gives you. Set POSTERCHANAI_ROLE=relay|worker|media|bots|app to run ONE
+# component per container instead (the containerised equivalent of the split systemd units), which
+# is what lets you restart the web app without dropping every Nostr client or killing live streams.
+ENV POSTERCHANAI_ROLE=all
 ENV POSTERCHANAI_PORT=3051 \
     HF_HOME=/var/lib/posterchanai/hf \
     MIOPEN_USER_DB_PATH=/var/lib/posterchanai/miopen \

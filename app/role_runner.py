@@ -1,0 +1,111 @@
+"""Run ONE component of the stack as its own process (see run.py --role).
+
+`media` and `bots` are the two roles with no standalone entrypoint of their own — `relay` is
+relay_main.py and `worker` is `python -m app.worker`, both of which already run this way. This module
+is the thin equivalent for the other two: start the SAME supervisors the app's lifespan starts, then
+block until signalled and shut them down cleanly.
+
+Why they leave the app process at all: under the historical single-process layout the web app
+supervises the relay, mediamtx, pion-turn, tor and nine bots, so restarting to ship a one-line router
+change drops every Nostr client, kills live streams MID-BROADCAST, drops active calls, and restarts
+the bots — which is where their startup-race crashes cluster. The least stable component supervises
+the most stable ones. Splitting them means a deploy restarts only what actually changed.
+
+Deliberately NOT a second implementation: each role calls the existing `start_*`/`stop_*` pair, so
+there is one supervisor per component and it cannot drift from the in-app path. Under `--role all`
+those same functions are still called from app/main.py exactly as before.
+"""
+from __future__ import annotations
+
+import logging
+import signal
+import threading
+
+logger = logging.getLogger(__name__)
+
+# role -> [(label, module, start_fn, stop_fn)]
+_ROLE_SERVICES = {
+    "media": [
+        ("streams (mediamtx)", "app.services.stream_service", "start_stream_server", "stop_stream_server"),
+        ("TURN (pion-turn)", "app.services.turn_service", "start_turn_server", "stop_turn_server"),
+    ],
+    "bots": [
+        ("bot manager", "app.services.bot_manager_service", "start_bot_manager", "stop_bot_manager"),
+    ],
+}
+
+
+def _bootstrap_settings() -> None:
+    """Hydrate this process's OWN settings cache before starting anything.
+
+    Copied in intent from app/worker.py, and load-bearing for the same reason: every process has its
+    own settings_store cache, and a setting-gated supervisor that starts before hydration reads its
+    BUILD-TIME DEFAULT instead of the relay value — so it silently never runs. `stream_enabled` and
+    `bots_manager_enabled` both default to off, so getting this wrong means the role starts, logs
+    nothing interesting, and supervises nothing.
+
+    load_local() first: local-only keys (ports, plumbing) live in local_settings.json and the relay
+    hydrate deliberately skips them.
+    """
+    from app.database import SessionLocal
+    from app.services import settings_store
+    settings_store.load_local()
+    db = SessionLocal()
+    try:
+        n = settings_store.hydrate_from_db(db)
+        logger.info("[role] hydrated %d setting(s) from the relay", n)
+    finally:
+        db.close()
+
+
+def run_role(role: str) -> int:
+    """Start `role`'s services and block until SIGTERM/SIGINT. Returns a process exit code."""
+    logging.basicConfig(level=logging.INFO,
+                        format="%%(asctime)s [role:%s] %%(name)s: %%(message)s" % role)
+    services = _ROLE_SERVICES.get(role)
+    if not services:
+        logger.error("[role] no services defined for role %r", role)
+        return 2
+
+    try:
+        _bootstrap_settings()
+    except Exception as e:
+        # Not fatal: the supervisors have their own retries and the settings may simply not exist yet
+        # on a fresh node. Loud, though — a silent partial start is what this comment exists to avoid.
+        logger.error("[role] settings hydrate failed — services may use defaults: %s", e, exc_info=True)
+
+    started = []
+    for label, module, start_fn, stop_fn in services:
+        try:
+            import importlib
+            getattr(importlib.import_module(module), start_fn)()
+            started.append((label, module, stop_fn))
+            logger.info("[role] started %s", label)
+        except Exception as e:
+            logger.error("[role] failed to start %s: %s", label, e, exc_info=True)
+
+    if not started:
+        logger.error("[role] nothing started for role %r — exiting so systemd restarts us", role)
+        return 1
+
+    # Block. The supervisors run their own threads/subprocesses, so this process only has to stay
+    # alive and own their lifetime — when it exits, systemd's cgroup cleanup takes the children with
+    # it, which is the property that makes `systemctl restart posterchanai-media` mean what it says.
+    stop = threading.Event()
+
+    def _sig(signum, _frame):
+        logger.info("[role] signal %s — shutting down", signum)
+        stop.set()
+
+    signal.signal(signal.SIGTERM, _sig)
+    signal.signal(signal.SIGINT, _sig)
+    stop.wait()
+
+    for label, module, stop_fn in reversed(started):
+        try:
+            import importlib
+            getattr(importlib.import_module(module), stop_fn)()
+            logger.info("[role] stopped %s", label)
+        except Exception as e:
+            logger.warning("[role] error stopping %s: %s", label, e)
+    return 0

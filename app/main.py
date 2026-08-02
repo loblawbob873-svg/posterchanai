@@ -30,6 +30,11 @@ from app.routers.nostr import router as nostr_router
 from app.routers.blossom import router as blossom_router
 from app.routers.client import router as client_router
 from app.services.load_balancer import NoHealthyServersError
+# Which components THIS process supervises — read by BOTH startup and shutdown below, so a
+# component that is started here is always stopped here. Module scope on purpose: a
+# function-local import left the shutdown handler's _owns() undefined, which is a NameError
+# on every stop and a leaked mediamtx/pion-turn.
+from app.role import owns as _owns
 from fastapi.responses import JSONResponse
 
 # Custom JSON encoder to handle bytes and other non-serializable types
@@ -436,6 +441,19 @@ async def startup():
 
         # Only start schedulers on main instance (port 3051) to avoid database locks
         app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
+
+        # …and only supervise the components THIS ROLE owns. Under the default role ('all') every
+        # `_owns()` below is True and this behaves exactly as it always has: one process supervising
+        # the relay, worker, mediamtx, TURN and the bots. When those are split into their own systemd
+        # units the app runs as role 'app' and stops spawning them, which is the entire point — a
+        # deploy of a router change then restarts the web app WITHOUT dropping every Nostr client,
+        # killing live streams mid-broadcast, dropping calls, or restarting nine bots.
+        #
+        # Defaulting to 'all' is what makes this safe to ship: a node whose unit file has not been
+        # updated keeps the old behaviour on the next code deploy.
+        _role = os.environ.get("POSTERCHANAI_ROLE", "all")
+        if app_port == 3051 and _role != "all":
+            logging.info("[role] running as '%s' — supervising only this role's components", _role)
         if app_port == 3051:
             try:
                 # Background pollers (social/nitter/logs)
@@ -443,14 +461,14 @@ async def startup():
                 # with the web/API event loop (the bridge could otherwise stall the reactor).
                 # They're DB-mediated, so the app's reply/action endpoints keep working.
                 from app.worker import start_worker_process
-                start_worker_process()
+                if _owns('worker'): start_worker_process()
             except Exception as e:
                 logging.error(f"Error starting background worker: {e}", exc_info=True)
 
             try:
                 # Start the bot manager (merged ~/posterchan framework; Admin → Bots)
                 from app.services.bot_manager_service import start_bot_manager
-                start_bot_manager()
+                if _owns('bots'): start_bot_manager()
             except Exception as e:
                 logging.error(f"Error starting bot manager: {e}", exc_info=True)
 
@@ -506,7 +524,7 @@ async def startup():
             try:
                 # Start the built-in Nostr WoT relay (own thread; no-op unless enabled)
                 from app.services.nostr_relay import start_nostr_relay
-                start_nostr_relay()
+                if _owns('relay'): start_nostr_relay()
             except Exception as e:
                 logging.error(f"Error starting Nostr relay: {e}", exc_info=True)
 
@@ -523,7 +541,7 @@ async def startup():
                 # Supervise the built-in Pion TURN relay for voice/video calls (subprocess; no-op unless
                 # turn_enabled + the binary is built + a public IP is set)
                 from app.services.turn_service import start_turn_server
-                start_turn_server()
+                if _owns('media'): start_turn_server()
             except Exception as e:
                 logging.error(f"Error starting TURN server: {e}", exc_info=True)
 
@@ -531,7 +549,7 @@ async def startup():
                 # Supervise the built-in MediaMTX server for OBS streaming (subprocess; no-op unless
                 # stream_enabled + the binary is installed)
                 from app.services.stream_service import start_stream_server
-                start_stream_server()
+                if _owns('media'): start_stream_server()
                 # Clear any stream recordings orphaned in tmpfs by a mid-stream restart/crash (they'd
                 # otherwise accumulate until /dev/shm fills). Safe at startup — nothing is served yet.
                 from app.services.stream_vod_service import sweep_orphans
@@ -807,14 +825,14 @@ async def shutdown():
         # logs pollers all run there now).
         try:
             from app.worker import stop_worker_process
-            stop_worker_process()
+            if _owns('worker'): stop_worker_process()
         except Exception:
             pass
 
         # Stop the bot manager (terminates all managed bot child processes)
         try:
             from app.services.bot_manager_service import stop_bot_manager
-            stop_bot_manager()
+            if _owns('bots'): stop_bot_manager()
         except Exception:
             pass
 
@@ -846,10 +864,14 @@ async def shutdown():
         except Exception:
             pass
 
-        # Stop the built-in Nostr WoT relay (final snapshot + join its thread)
+        # Stop the built-in Nostr WoT relay (final snapshot + join its thread) — ONLY if this process
+        # started it. Ungated, an app running as role 'app' would reach in and stop the relay owned by
+        # posterchanai-relay.service: restarting the web app would take the relay down with it, which
+        # is the precise outage the split exists to remove.
         try:
-            from app.services.nostr_relay import stop_nostr_relay
-            stop_nostr_relay()
+            if _owns('relay'):
+                from app.services.nostr_relay import stop_nostr_relay
+                stop_nostr_relay()
         except Exception:
             pass
 
@@ -863,13 +885,13 @@ async def shutdown():
         # Stop the built-in TURN relay supervisor + terminate pion-turn
         try:
             from app.services.turn_service import stop_turn_server
-            stop_turn_server()
+            if _owns('media'): stop_turn_server()
         except Exception:
             pass
         try:
             # Stop the built-in MediaMTX streaming server supervisor + terminate mediamtx
             from app.services.stream_service import stop_stream_server
-            stop_stream_server()
+            if _owns('media'): stop_stream_server()
         except Exception:
             pass
         try:

@@ -30,6 +30,9 @@ else
     echo "[sync] WARN: pyflakes unavailable -- skipping the undefined-name gate"
 fi
 
+# Remember what was deployed BEFORE this commit, so the restart set can be computed from
+# the actual diff rather than from guesswork.
+_PREV_HEAD="$(git rev-parse HEAD 2>/dev/null || echo HEAD)"
 git commit -a -m fix || true
 # Deploy to PRODUCTION. `origin` is now the NOSTR repo on the built-in GRASP host
 # (nostr://<npub>/relay.poster.place/posterchanai -> https://poster.place/git/<npub>/posterchanai.git);
@@ -78,9 +81,36 @@ _wait_gpu_free() {
 }
 
 _wait_gpu_free "arc" /tmp/posterchanai_locks/gpu.lock
-# Unified Intel stack: ONE service does chat + image (the old posterchanai-xpu-image.service
-# on :3052 was retired). Restart just the single service.
-sudo systemctl restart posterchanai.service
+
+# Restart only what this deploy actually TOUCHED. With the relay, worker, mediamtx/TURN and the bots
+# split into their own units, a blanket `restart posterchanai.service` would hand back the very outage
+# the split removed: every connected Nostr client dropped, live streams killed mid-broadcast, active
+# calls dropped, nine bots restarted into their startup race — to ship a one-line router change.
+#
+# scripts/deploy_targets.py maps changed paths -> units and is deliberately conservative: anything it
+# does not recognise restarts EVERYTHING, because under-restarting leaves stale code running with no
+# error anywhere ("the fix didn't work"), which is far harder to notice than an extra restart.
+#
+# A node that has NOT been split still has only posterchanai.service; `systemctl restart` on a unit
+# that does not exist is skipped below, so this is safe on both layouts.
+_restart_units() {
+    local units="$1"
+    if [ -z "$units" ]; then
+        echo "[sync] nothing to restart (no server-side code changed)"
+        return
+    fi
+    for u in $units; do
+        if systemctl list-unit-files "$u" >/dev/null 2>&1 && systemctl cat "$u" >/dev/null 2>&1; then
+            echo "[sync] restarting $u"
+            sudo systemctl restart "$u"
+        fi
+    done
+}
+
+_TARGETS="$(venv-unified/bin/python scripts/deploy_targets.py "$_PREV_HEAD..HEAD" 2>/dev/null \
+            || echo posterchanai.service)"
+echo "[sync] deploy targets: ${_TARGETS:-<none>}"
+_restart_units "$_TARGETS"
 
 # server1 is cut over: the bots now run via the in-app manager (botframework/ + Admin → Bots,
 # bots_manager_enabled). The legacy posterchan.service is stopped+disabled here, so do NOT
@@ -104,10 +134,18 @@ cd ~/posterchanai
 # Pulls from the nostr repo (origin) over https://poster.place/git — no Gitea. The mirror step that
 # used to follow this is gone: the push in the parent script already published these commits to the
 # nostr repo, so there is nothing left to mirror.
+_NAS_PREV=\$(git rev-parse HEAD 2>/dev/null || echo HEAD)
 git fetch origin
 git reset --hard origin/master
 _wait_gpu_free nas /tmp/posterchanai_locks/gpu.lock
-sudo systemctl restart posterchanai
+# Same targeted restart as server1: only the units this deploy touched. Computed on nas from its OWN
+# pre-pull HEAD, because a node can be behind by more than one commit. Falls back to restarting the
+# app if anything about that fails — never silently restart nothing.
+_NAS_TARGETS=\$(venv-unified/bin/python scripts/deploy_targets.py \$_NAS_PREV..HEAD 2>/dev/null || echo posterchanai.service)
+echo \"[nas] deploy targets: \${_NAS_TARGETS:-<none>}\"
+for u in \$_NAS_TARGETS; do
+    if systemctl cat \$u >/dev/null 2>&1; then echo \"[nas] restarting \$u\"; sudo systemctl restart \$u; fi
+done
 # nas is cut over: its bots now run via the in-app manager (botframework/ + Admin → Bots).
 # posterchan.service is stopped+disabled here, so do NOT restart it (a 'restart' would
 # re-activate a disabled unit and double-run the bots). Only refresh/restart it if it's

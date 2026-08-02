@@ -1,0 +1,41 @@
+# Posterchan AI — background worker (pollers/schedulers), as its OWN unit.
+#
+# Template. The installer writes the real file into /etc/systemd/system/ with this node's user+paths.
+#
+# WHY THIS EXISTS: with everything under one unit, the web app supervises the relay, mediamtx,
+# pion-turn, tor and nine bots — so restarting to ship a one-line router change drops every connected
+# Nostr client, kills live streams MID-BROADCAST, drops active calls and restarts the bots (which is
+# where their startup-race crashes cluster). Splitting them means a deploy restarts only what changed.
+#
+# PAIRED CHANGE: the main unit must ALSO be switched to `--role app`, or it keeps supervising these
+# components and you get two of each. That combination fails loudly rather than silently — both bind
+# the same ports — but it is still the one mistake to avoid when enabling this.
+#
+# run-intel.sh (or run.sh) is used rather than python directly so this inherits the SAME environment
+# as the app: LD_LIBRARY_PATH, oneAPI selection, both Postgres DSNs and data/secrets.env.
+
+[Unit]
+Description=Posterchan AI — background worker (pollers/schedulers)
+After=network.target posterchanai-relay.service
+PartOf=posterchanai.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/posterchanai
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/YOUR_USER"
+ExecStart=/path/to/posterchanai/run-intel.sh --role worker
+
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
