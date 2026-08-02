@@ -27,8 +27,11 @@ APP = "posterchanai.service"
 RELAY = "posterchanai-relay.service"
 WORKER = "posterchanai-worker.service"
 MEDIA = "posterchanai-media.service"
-BOTS = "posterchanai-bots.service"
-ALL = (APP, RELAY, WORKER, MEDIA, BOTS)
+# The bot manager deliberately stays IN THE APP (see app/role.py:roles) — Admin -> Bots drives it
+# through an in-process registry, so running it elsewhere showed every bot as stopped and made a
+# button press spawn a second copy of each. Bot code therefore restarts the app.
+BOTS = APP
+ALL = (APP, RELAY, WORKER, MEDIA)
 
 # (prefix, units) — longest prefix wins. Only paths whose owners are KNOWN belong here.
 #

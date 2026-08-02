@@ -154,21 +154,25 @@ that matters, run one component per container instead:
 
 | role | what it runs |
 |------|--------------|
-| `app` | the web app only — supervises none of the below |
+| `app` | the web app — plus the **bot manager**, which cannot be split (see below) |
 | `relay` | the Nostr relay (`:3052`) |
 | `worker` | background pollers/schedulers |
 | `media` | mediamtx (streams) + pion-turn (calls) |
-| `bots` | the bot manager |
 
 ```bash
 # one component per container, same image, same volumes
 docker compose run -d -e POSTERCHANAI_ROLE=relay  --name pc-relay  intel
 docker compose run -d -e POSTERCHANAI_ROLE=media  --name pc-media  intel
-docker compose run -d -e POSTERCHANAI_ROLE=bots   --name pc-bots   intel
 docker compose run -d -e POSTERCHANAI_ROLE=worker --name pc-worker intel
 # …and the web app itself, which now supervises none of them
-POSTERCHANAI_ROLE=app docker compose up -d intel
+POSTERCHANAI_ROLE=app,bots docker compose up -d intel
 ```
+
+**The bots stay with the web app, deliberately.** Admin → Bots reads the manager's *in-process*
+registry and drives start/stop/publish through it. Run the manager elsewhere and the admin UI shows
+every bot as stopped while they are running perfectly, and a button press makes the app spawn a
+SECOND copy of every bot. Roles are comma-separated for exactly this reason — the app runs
+`app,bots`.
 
 Both halves are required. Running the role containers **without** setting the app to `app` gives you
 two of everything; setting the app to `app` **without** the role containers leaves those components

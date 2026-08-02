@@ -64,6 +64,26 @@ class RoleOwnership(unittest.TestCase):
             for c in ("relay", "worker", "media", "bots"):
                 self.assertFalse(role.owns(c), c)
 
+    def test_roles_compose(self):
+        """The deployed layout is `app,bots`: the bot manager has to stay with the web app because
+        Admin -> Bots reads its live in-process registry. Split out, the UI showed every bot as
+        stopped while they were running, and reconcile_now() from a button press would have made the
+        app spawn a SECOND copy of every bot."""
+        with self._as("app,bots"):
+            self.assertEqual(role.roles(), {"app", "bots"})
+            self.assertTrue(role.owns("app"))
+            self.assertTrue(role.owns("bots"))
+            for c in ("relay", "worker", "media"):
+                self.assertFalse(role.owns(c), c)
+
+    def test_a_comma_list_with_one_bad_entry_falls_back_to_all(self):
+        """Half-applying a typo'd list would be worse than ignoring it: 'app,botz' must not leave the
+        node supervising only the app while nothing runs the bots."""
+        with self._as("app,botz"):
+            self.assertEqual(role.current(), "all")
+            for c in COMPONENTS:
+                self.assertTrue(role.owns(c), c)
+
     def test_an_unmapped_component_defaults_to_running_with_the_app(self):
         """A component added later without a mapping keeps the pre-split behaviour rather than
         silently never starting anywhere — a missing feature is easier to spot than a missing

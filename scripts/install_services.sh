@@ -24,7 +24,11 @@ USER_NAME="$(id -un)"
 LAUNCHER="run-intel.sh"
 DRY=0
 REVERT=0
-UNITS=(relay worker media bots)
+# NOT bots: the bot manager stays with the web app. Admin -> Bots reads its live process registry
+# and drives start/stop/publish through it, and that registry is in-process — split out, the UI shows
+# every bot as stopped (they are running) and `reconcile_now()` from a button makes the app spawn a
+# SECOND copy of every bot. The app therefore runs role "app,bots".
+UNITS=(relay worker media)
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -48,7 +52,7 @@ if [ "$REVERT" = 1 ]; then
     done
     # Drop --role app so the app supervises everything again (role defaults to 'all').
     if [ "$DRY" = 1 ]; then echo "  + sed -i 's/ --role app//' $MAIN_UNIT"; else
-        sudo sed -i 's/ --role app//' "$MAIN_UNIT"
+        sudo sed -i 's/ --role app,bots//; s/ --role app//' "$MAIN_UNIT"
         sudo systemctl daemon-reload
         sudo systemctl restart posterchanai.service
     fi
@@ -103,16 +107,16 @@ done
 # sudo: /etc/systemd/system is not world-readable on every distro, and a plain grep here
 # returns "Permission denied" — which the verification below correctly treats as "the edit
 # did not land" and aborts, leaving the units written but not enabled.
-if sudo grep -q -- "--role app" "$MAIN_UNIT" 2>/dev/null; then
-    echo "[services] posterchanai.service already runs --role app"
+if sudo grep -q -- "--role app,bots" "$MAIN_UNIT" 2>/dev/null; then
+    echo "[services] posterchanai.service already runs --role app,bots"
 else
-    echo "[services] switching posterchanai.service to --role app"
+    echo "[services] switching posterchanai.service to --role app,bots"
     if [ "$DRY" = 1 ]; then
         echo "  + sed -i 's#^ExecStart=.*\$#&  --role app#' $MAIN_UNIT"
     else
-        sudo sed -i "s#^\(ExecStart=.*$LAUNCHER\)\s*\$#\1 --role app#" "$MAIN_UNIT"
-        sudo grep -q -- "--role app" "$MAIN_UNIT" || {
-            echo "ERROR: could not add --role app to $MAIN_UNIT — REFUSING to continue," >&2
+        sudo sed -i "s#^\(ExecStart=.*$LAUNCHER\)\s*\$#\1 --role app,bots#" "$MAIN_UNIT"
+        sudo grep -q -- "--role app,bots" "$MAIN_UNIT" || {
+            echo "ERROR: could not add --role app,bots to $MAIN_UNIT — REFUSING to continue," >&2
             echo "       because installing the new units without it double-runs everything." >&2
             exit 1
         }

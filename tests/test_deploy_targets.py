@@ -41,13 +41,24 @@ class Mapping(unittest.TestCase):
         self.assertEqual(dt.units_for(["app/services/stream_service.py"]), [dt.MEDIA])
         self.assertEqual(dt.units_for(["app/services/turn_service.py"]), [dt.MEDIA])
 
-    def test_a_router_change_spares_relay_media_and_bots(self):
-        """The common case, and the one the whole split is for: shipping a router fix must not drop
-        every connected Nostr client or kill a live stream."""
+    def test_a_router_change_spares_the_relay_and_the_streams(self):
+        """The common case, and the one the split is for: shipping a router fix must not drop every
+        connected Nostr client or kill a live stream mid-broadcast.
+
+        The BOTS are deliberately not on that list. They stay in the app process because Admin → Bots
+        drives them through an in-process registry (split out, the UI showed every bot as stopped
+        while they were running, and a button press would have spawned a second copy of each). So
+        `BOTS is APP`, and a router change restarts them — the accepted cost of a working admin UI."""
         got = dt.units_for(["app/routers/client.py"])
         self.assertIn(dt.APP, got)
-        for spared in (dt.RELAY, dt.MEDIA, dt.BOTS):
+        for spared in (dt.RELAY, dt.MEDIA):
             self.assertNotIn(spared, got, f"a router change must not restart {spared}")
+
+    def test_bot_code_restarts_the_app_because_that_is_where_bots_run(self):
+        """If BOTS ever stops aliasing APP without a bots unit existing, bot code changes would
+        restart a unit that isn't there — i.e. ship bot code that never takes effect."""
+        self.assertEqual(dt.BOTS, dt.APP)
+        self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.APP])
 
     def test_shared_code_restarts_everything(self):
         """app/database.py, app/models.py, settings_store, run.py and the role plumbing itself are
