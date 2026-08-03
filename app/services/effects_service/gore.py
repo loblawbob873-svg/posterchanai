@@ -409,16 +409,24 @@ def cum_attachments(
 
 
 def _make_blood(h: int, rng=None, grow: float = 1.0):
-    """Render one wet blood splatter on a transparent tile (pure Pillow).
+    """Render one wet blood SPLATTER on a transparent tile (pure Pillow).
 
-    An irregular central pool with thin radial impact spatter (droplet-tipped
-    arms) AND the signature gravity DRIPS running downward into rounded beads,
-    finished with a soft dark rim, a slightly darker inner edge for depth, and a
-    small wet specular highlight. Ships no image asset (like the cum path).
+    This is impact spatter, not movie blood: a cohesive central blob with flung
+    tapering strands tipped by droplet heads, jagged surface-tension fingers around
+    the rim, and a fine secondary spray. Same geometry as the cum splatter (they are
+    both a fluid hitting something at speed) — what differs is the material: blood
+    colours, a near-opaque body, a darker pooled inner edge and a small wet
+    highlight.
+
+    It used to be the OTHER thing: a pool sitting high on a tall tile with long
+    gravity drips running down it, which is the horror-movie look and reads as
+    painted-on rather than splattered. Nothing needs the tall tile now, so it is
+    square-ish like the cum one, and the caller no longer has to pin rotation to
+    keep drips pointing down.
 
     For animation: pass a seeded ``rng`` (a ``random.Random``) so the splatter's
     shape is stable frame-to-frame, and a ``grow`` in [0,1] that scales how far the
-    gravity drips have run down — advance it across frames and the blood drips.
+    flung strands have shot out — advance it across frames and the splatter throws.
     """
     import math
     import random as _rnd
@@ -426,10 +434,11 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
     random = rng if rng is not None else _rnd
 
     W = max(int(h * 1.5), 24)
-    H = max(int(h * 1.9), 32)             # roomy: fits the spray + downward drips
+    H = max(int(h * 1.5), 24)
     base = random.choice(_BLOOD_COLORS)[:3]
-    cx, cy = W * 0.5, H * 0.30            # pool sits high; drips fall below it
-    main_r = W * 0.14
+    cx, cy = W * 0.5, H * 0.5
+    main_r = W * 0.15
+    phase = random.uniform(0, math.tau)
 
     mask = Image.new("L", (W, H), 0)
     md = ImageDraw.Draw(mask)
@@ -446,20 +455,24 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
             f = s / n
             _dot(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, max(wa + (wb - wa) * f, 1.0))
 
+    # Guaranteed-solid core first: an interior pinhole would let the outer-rim pass
+    # leak inward as a dark ring (the same trap the cum blob documents).
+    md.ellipse([cx - main_r, cy - main_r * 0.88, cx + main_r, cy + main_r * 0.88], fill=255)
+
     # Directional, irregular pool: globs spread ALONG a random impact axis (so it's
-    # elongated, not a round blob) with jagged pointed fingers around the rim — the
-    # surface-tension spikes that make it read as a splat rather than balls.
+    # elongated, not a round blob) with heavy overlap so there are no interior gaps.
     axis = random.uniform(0, math.tau)
     ax, ay = math.cos(axis), math.sin(axis)
     perpx, perpy = -ay, ax
-    _dot(cx, cy, main_r * 0.5)
-    for _ in range(10):
-        t = random.uniform(-1.1, 1.1)            # along the impact axis
+    for _ in range(9):
+        t = random.uniform(-1.0, 1.0)            # along the impact axis
         s = random.uniform(-0.4, 0.4)            # small perpendicular jitter
-        ox = cx + ax * t * main_r * 1.15 + perpx * s * main_r
-        oy = cy + ay * t * main_r * 1.15 + perpy * s * main_r
-        _dot(ox, oy, main_r * random.uniform(0.28, 0.58))
-    # pointed rim fingers (tapering spikes sticking out of the pool edge)
+        ox = cx + ax * t * main_r * 1.05 + perpx * s * main_r
+        oy = cy + ay * t * main_r * 1.05 + perpy * s * main_r
+        _dot(ox, oy, main_r * random.uniform(0.45, 0.75))
+
+    # Pointed rim fingers: the surface-tension spikes that make it read as a splat
+    # rather than a ball of paint.
     for _ in range(random.randint(8, 13)):
         a = random.uniform(0, math.tau)
         r0 = main_r * random.uniform(0.5, 0.95)
@@ -470,49 +483,40 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
         if random.random() < 0.45:
             _dot(ex, ey, main_r * random.uniform(0.04, 0.09))
 
-    # Cast-off arms: a few thin tapering streaks at RANDOM angles (not an even
-    # star), each tipped with a droplet — irregular like real impact spatter.
-    for _ in range(random.randint(4, 7)):
-        ang = random.uniform(0, math.tau)
-        dist = main_r * random.uniform(1.2, 2.9)
+    # Flung strands: tapered tails capped by a fatter droplet head, thrown outward
+    # in every direction. `grow` scales the throw, so the animated version spreads.
+    for i in range(random.randint(5, 8)):
+        ang = phase + i * (math.tau / 6) + random.uniform(-0.5, 0.5)
+        dist = main_r * random.uniform(1.4, 3.1) * grow
         dx, dy = math.cos(ang), math.sin(ang)
         sx, sy = cx + dx * main_r * 0.5, cy + dy * main_r * 0.5
         ex, ey = cx + dx * (main_r * 0.5 + dist), cy + dy * (main_r * 0.5 + dist)
-        _trail(sx, sy, ex, ey, main_r * random.uniform(0.12, 0.20), main_r * 0.03)
-        _dot(ex, ey, main_r * random.uniform(0.08, 0.20))            # droplet head
+        _trail(sx, sy, ex, ey, main_r * random.uniform(0.12, 0.22), main_r * 0.03)
+        _dot(ex, ey, main_r * random.uniform(0.09, 0.21))            # droplet head
 
-    # Fine secondary droplets: a spray clustered along a random impact direction,
-    # plus a few stray specks — the detail that sells it as spatter, not paint.
+    # Fine secondary spray, clustered along a random impact direction, plus a few
+    # stray specks — the detail that sells it as spatter rather than a decal. It
+    # travels with `grow` too, so early animation frames aren't a bare blob ringed
+    # by droplets that were already at their final distance.
     spray = random.uniform(0, math.tau)
     for _ in range(random.randint(14, 28)):
         a = spray + random.uniform(-1.0, 1.0)
-        d = main_r * random.uniform(1.0, 3.2)
+        d = main_r * random.uniform(1.0, 3.2) * grow
         _dot(cx + math.cos(a) * d, cy + math.sin(a) * d,
              main_r * random.uniform(0.03, 0.13))
     for _ in range(random.randint(4, 9)):
         a = random.uniform(0, math.tau)
-        d = main_r * random.uniform(0.8, 3.0)
+        d = main_r * random.uniform(0.8, 3.0) * grow
         _dot(cx + math.cos(a) * d, cy + math.sin(a) * d,
              main_r * random.uniform(0.02, 0.07))
-
-    # Gravity drips: a few tapering trails running DOWN from the pool, each ending
-    # in a rounded bead — the detail that makes it read as blood rather than paint.
-    for _ in range(random.randint(2, 4)):
-        x0 = cx + random.uniform(-main_r * 0.8, main_r * 0.8)
-        top = cy + main_r * 0.3
-        length = H * random.uniform(0.28, 0.58) * grow
-        w0 = main_r * random.uniform(0.16, 0.30)
-        drift = random.uniform(-main_r * 0.18, main_r * 0.18)        # slight lean
-        _trail(x0, top, x0 + drift, top + length, w0, max(w0 * 0.4, 1.2))
-        _dot(x0 + drift, top + length, w0 * random.uniform(1.0, 1.5))  # swelling bead
 
     sil = mask.filter(ImageFilter.GaussianBlur(max(W * 0.005, 0.5)))
 
     tile = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
-    # Soft dark rim just outside the shape → depth / separation from the photo.
-    grow = max(int(W * 0.025) | 1, 3)
-    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(grow)), sil)
+    # Soft dark rim just outside the shape -> depth / separation from the photo.
+    ring_px = max(int(W * 0.025) | 1, 3)
+    ring = ImageChops.subtract(sil.filter(ImageFilter.MaxFilter(ring_px)), sil)
     ring = ring.filter(ImageFilter.GaussianBlur(max(W * 0.02, 1)))
     rim = Image.new("RGBA", (W, H), (20, 0, 0, 0))
     rim.putalpha(ring.point(lambda a: int(a * 0.6)))
@@ -524,7 +528,7 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
     tile.alpha_composite(body)
 
     # Darker inner edge for a pooled, glossy look.
-    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(grow)))
+    inner = ImageChops.subtract(sil, sil.filter(ImageFilter.MinFilter(ring_px)))
     inner = inner.filter(ImageFilter.GaussianBlur(max(W * 0.012, 0.6)))
     shade = Image.new("RGBA", (W, H), _shade(base, 0.55)[:3] + (0,))
     shade.putalpha(ImageChops.multiply(inner, sil).point(lambda a: int(a * 0.5)))
@@ -551,23 +555,23 @@ def _make_blood(h: int, rng=None, grow: float = 1.0):
 def add_blood(data: bytes, count: int = 0) -> bytes:
     """Scatter wet blood splatters over an image.
 
-    `count` <= 0 auto-scales with the image area. Spin is kept small so the drips
-    keep running downward. Returns JPEG bytes.
+    `count` <= 0 auto-scales with the image area. Full spin: a splatter has no
+    "up", unlike the dripping pool this used to draw. Returns JPEG bytes.
     """
-    return _scatter_overlay(data, _make_blood, count, max_rotation=10.0)
+    return _scatter_overlay(data, _make_blood, count)
 
 
 def _blood_tile(size: int, seed: int, grow: float):
-    """One seeded blood tile (stable shape, `grow`-scaled drips) for the animator."""
+    """One seeded blood tile (stable shape, `grow`-scaled throw) for the animator."""
     import random
     return _make_blood(size, rng=random.Random(seed), grow=grow)
 
 
 def add_blood_animated(data: bytes, count: int = 0) -> bytes:
-    """Scatter blood as a short MP4 — the drips run downward then hold. Silent H.264
-    bytes. Spin stays small (like the still) so the drips fall straight down."""
+    """Scatter blood as a short MP4 — each splatter throws outward then holds.
+    Silent H.264 bytes. Full spin, like the still."""
     from app.services.media_service import frames_to_video
-    frames = _scatter_frames(data, _blood_tile, count=count, max_rotation=10.0)
+    frames = _scatter_frames(data, _blood_tile, count=count)
     return frames_to_video(frames, fps=_SCATTER_ANIM_FPS, loops=1)
 
 

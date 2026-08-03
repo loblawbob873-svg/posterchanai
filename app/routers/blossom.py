@@ -29,7 +29,7 @@ router = APIRouter(prefix="/blossom", tags=["blossom"])
 _CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, HEAD, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Content-Type, X-Content-Length, X-SHA-256, X-Filename, X-No-Mirror, *",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Content-Type, X-Content-Length, X-SHA-256, X-Filename, X-No-Mirror, X-Keep, *",
     "Access-Control-Expose-Headers": "*",
 }
 
@@ -245,10 +245,14 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     mime = request.headers.get("content-type", "") or "application/octet-stream"
     # X-No-Mirror: client opt-out of DR mirroring (encrypted music — don't push it to public backups).
     no_mirror = request.headers.get("x-no-mirror", "") in ("1", "true", "yes")
+    # X-Keep: this blob is client-side encrypted DRIVE content (Notes attachment, music track, the
+    # files index) — the only copy of bytes nobody but its owner can read. Exempt it from the age
+    # sweep permanently. Only the uploader can know this: to the server the bytes are opaque.
+    keep = request.headers.get("x-keep", "") in ("1", "true", "yes")
     filename = _upload_filename(request)
     try:
         await blossom_service.save_blob(db, pubkey, data, mime, mirror=not no_mirror,
-                                        filename=filename)
+                                        filename=filename, keep=keep)
     except Exception as e:
         logger.error("[blossom] upload failed: %s", e, exc_info=True)
         return _err(500, "storage error")

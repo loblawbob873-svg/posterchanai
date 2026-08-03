@@ -31,9 +31,34 @@
   // would grow without limit — bloating memory AND making the full-store scans (feed / counts)
   // slower over a long session until the UI goes sluggish. Keep the newest N by created_at.
   const MEM_MAX = 4500, MEM_KEEP = 3000;
+  // PINNED events are never evicted, from memory or from disk. Every cache bound here is "keep the
+  // newest N by created_at", which is right for the firehose — timeline content is refetchable and
+  // endless — and wrong for the one class of event that is the user's OWN DOCUMENT: Notes. A note is
+  // only readable by its author, so an evicted note is not "refetch it when you scroll back", it is a
+  // note MISSING from your notebook, and missing precisely when you have no network to refetch it
+  // with. Browsing the global feed for a few minutes is enough to push a whole imported library out
+  // of a 3000-event window, so this is the normal case, not an edge one.
+  // Matched by the d-tag rather than by author because Store has no idea who is logged in — and it
+  // needs none: `pcai:note…` under kind 30078 is by construction this user's own notes and folders.
+  function _isPinned(ev){
+    if (!ev || ev.kind !== 30078) return false;
+    for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' && t[1].startsWith('pcai:note')) return true;
+    return false;
+  }
+  // Split a list into [pinned, rest-newest-first] — shared by the three places that trim a cache so
+  // they cannot drift on what "keep" means.
+  function _splitPinned(list){
+    const pin = [], rest = [];
+    for (const ev of list) (_isPinned(ev) ? pin : rest).push(ev);
+    rest.sort((a,b)=>b.created_at-a.created_at);
+    return [pin, rest];
+  }
   function _evictMem(){
     if (mem.events.size <= MEM_MAX) return;
-    const arr = [...mem.events.values()].sort((a,b)=>b.created_at-a.created_at).slice(0, MEM_KEEP);
+    const [pin, rest] = _splitPinned([...mem.events.values()]);
+    // Pinned events are kept in full and come OUT of the budget, but never take all of it: a large
+    // notebook must not leave the timeline with nothing cached to render.
+    const arr = pin.concat(rest.slice(0, Math.max(MEM_KEEP - pin.length, 500)));
     mem.events.clear();
     for (const ev of arr) mem.events.set(ev.id, ev);
     _reindex();
@@ -113,8 +138,10 @@
       const n = await pr(tx('events','readonly').count());
       if (n <= IDB_CAP) return;
       const all = await pr(tx('events','readonly').getAll());
-      all.sort((a,b)=>b.created_at-a.created_at);
-      const del = all.slice(IDB_KEEP);
+      // Notes are exempt (see _isPinned): this prune DELETES from disk, so trimming one would
+      // destroy the offline copy of a document only its author can read.
+      const [, rest] = _splitPinned(all);
+      const del = rest.slice(IDB_KEEP);
       const s = tx('events','readwrite');
       for (const ev of del) s.delete(ev.id);
     } catch(e){ console.warn('IDB prune failed', e); }
@@ -126,8 +153,12 @@
       // hydrate recent notes + all profiles into memory
       try {
         const evs = await pr(tx('events','readonly').getAll());
-        evs.sort((a,b)=>b.created_at-a.created_at);
-        for (const ev of evs.slice(0, 2000)) mem.events.set(ev.id, ev);
+        // Every note first, then the newest 2000 of everything else. Hydrating a flat newest-2000
+        // would leave a large notebook on disk but out of memory — and query() only ever reads
+        // memory, so those notes would be invisible in the app while sitting right there in IDB.
+        const [pin, rest] = _splitPinned(evs);
+        for (const ev of pin) mem.events.set(ev.id, ev);
+        for (const ev of rest.slice(0, 2000)) mem.events.set(ev.id, ev);
         _reindex();   // build the local query indexes over the hydrated events
         const profs = await pr(tx('profiles','readonly').getAll());
         for (const p of profs) mem.profiles.set(p.pubkey, p);

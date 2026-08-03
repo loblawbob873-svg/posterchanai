@@ -174,6 +174,7 @@
                  server (CFG.stream_enabled). -->
             <button class="nav-item nav-golive hidden" id="nav-golive"><svg class="ic"><use href="#i-live"></use></svg><span>Go Live</span></button>
             {% if not nostr_only %}<button class="nav-item" data-view="translate"><svg class="ic"><use href="#i-translate"></use></svg><span>Live Translate</span></button>{% endif %}
+            <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
             <button class="nav-item" data-view="drafts"><svg class="ic"><use href="#i-draft"></use></svg><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="meme"><svg class="ic"><use href="#i-tv"></use></svg><span>Meme Builder</span></button>
             <div class="nav-group">
@@ -315,6 +316,8 @@
 <script src="/static/js/client/news.js?v={{ ver }}"></script>
 <script src="/static/js/client/markets.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>
+<script src="/static/js/client/joplin.js?v={{ ver }}"></script>
+<script src="/static/js/client/notes.js?v={{ ver }}"></script>
 <script src="/static/js/client/stats.js?v={{ ver }}"></script>
 <script src="/static/js/client/meme.js?v={{ ver }}"></script>
 <script src="/static/js/client/chess.js?v={{ ver }}"></script>

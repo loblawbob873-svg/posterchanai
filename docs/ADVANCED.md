@@ -4,80 +4,11 @@ This document contains detailed technical documentation for Poster-chan AI. For 
 
 ## Notes System
 
-Posterchanai includes a full-featured notes system for organizing and searching your notes.
+Notes are private, end-to-end encrypted and offline-first. They live in the Nostr client
+(`/client` → **Notes**), not on the server: each note is its own encrypted event and the server
+never holds a key that can read one.
 
-### Features
-
-- **Full-text search** - Search notes by title or content
-- **Folders** - Organize notes into folders/notebooks
-- **Tags** - Tag notes for cross-cutting organization
-- **Pinning** - Pin important notes to the top
-- **Markdown support** - Full markdown formatting
-- **Attachments** - Support for all file types (images, PDFs, documents, etc.)
-- **Natural language** - LLM-trained commands like "note find memes"
-- **Autocomplete** - Tab autocomplete with note title suggestions
-
-### Accessing Notes
-
-**Via UI:**
-- Click "📝 Notes" button in quick actions (under PIM button)
-- Opens full-screen notes browser
-
-**Via Command:**
-- Type `notes` in chat
-- Type `notes search <query>` to search
-- Type `notes folder <name>` to filter by folder
-
-**Via Voice:**
-- Say "show my notes" or "note find <query>"
-
-### Natural Language Commands
-
-The system understands natural language queries:
-
-- `note find memes` → Searches notes for "memes"
-- `find note about groceries` → Searches for notes about groceries
-- `note about project` → Searches for "project"
-- `search notes for recipes` → Searches for recipes
-- `notes in work folder` → Filters by folder
-
-### Autocomplete
-
-Press **Tab** while typing note commands for autocomplete:
-
-- `notes ` + Tab → Shows: `search | folder | new | list`
-- `notes search ` + Tab → Shows matching note titles
-- `note find m` + Tab → Shows notes starting with "m"
-
-### API Endpoints
-
-- `GET /api/notes` - List notes (with search/folder filters)
-- `GET /api/notes/{id}` - Get single note
-- `POST /api/notes` - Create note
-- `PUT /api/notes/{id}` - Update note
-- `DELETE /api/notes/{id}` - Delete note
-- `GET /api/notes/folders` - List folders
-- `POST /api/notes/folders` - Create folder
-- `GET /api/notes/files/{username}/{note_id}/{filename}` - Download attachment
-
-### Storage
-
-Notes are stored in SQLite database. Attachments are stored at:
-```
-{upload_path}/{username}/notes/{note_id}/{filename}
-```
-
-Default `upload_path`: `/var/lib/posterchanai`
-
-### Joplin Migration
-
-Migrate your Joplin notes with full attachment support:
-
-```bash
-python scripts/migrate_joplin.py --user-id 1
-```
-
-See [Joplin Migration Guide](JOPLIN_MIGRATION.md) for complete instructions.
+See **[NOTES.md](NOTES.md)** for the full guide, including importing an existing Joplin library.
 
 ### Continue.dev Configuration
 

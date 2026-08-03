@@ -211,6 +211,40 @@ def test_git_events_survive_a_stray_expiration_tag(store_factory):
     _run(go)
 
 
+def test_datastore_docs_survive_a_stray_expiration_tag(store_factory):
+    """Kind 30078 is the app's own datastore — settings, users, chats, and Notes, whose ONLY copy
+    is this relay. NIP-37 recommends stamping drafts `expiration: now + 90 days`, so any client
+    following that convention would otherwise delete a user's notes 90 days on, silently.
+
+    Both halves are pinned: the tag must not be STORED for these kinds (a stored expiration hides
+    the event from every read, since the query builder filters on `expiration > now` — intact on
+    disk and invisible is worse than deleted), and the sweep must not delete one.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=0)
+        soon = int(time.time()) + 1
+        # Addressable (30000-39999) → same pubkey+kind+d collapses to one. Distinct authors keep
+        # five distinct rows, matching how the git test seeds its 30617s.
+        await store.add_events_bulk(
+            [_ev(i, kind=30078, expiration=soon, pubkey=f"{i:064x}") for i in range(1, 6)]
+            + [_ev(i, kind=1, expiration=soon) for i in range(100, 110)])
+        assert await store.count() == 15, "all 15 must be stored while still unexpired"
+
+        await asyncio.sleep(1.6)
+        # Already visible, and still visible after the sweep: the notes never carried an expiration
+        # at all. A read here that returned 10 would mean the tag was stored and is hiding them.
+        assert len(await store.query([{"kinds": [30078], "limit": 50}])) == 5
+
+        preview = await store.prune_preview()
+        removed = await store.prune(chunk=3)
+
+        assert preview["expired"] == removed == 10, "only the kind-1 notes may expire"
+        assert await store.count() == 5, "every datastore doc survives its expiration tag"
+        assert len(await store.query([{"kinds": [30078], "limit": 50}])) == 5
+
+    _run(go)
+
+
 def test_default_chunk_is_bounded():
     """A 0/None default would silently restore the single-transaction prune this file exists to
     prevent — the ingestion stall was the whole reason for chunking."""

@@ -27,6 +27,7 @@
   <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.4 3.4h3l1.5 4-2 1.5a12.2 12.2 0 006.2 6.2l1.5-2 4 1.5v3a2 2 0 01-2.2 2A17.2 17.2 0 014.4 5.6a2 2 0 012-2.2z"/></symbol>
   <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/><path d="M7.6 7.6a6.3 6.3 0 000 8.8M16.4 16.4a6.3 6.3 0 000-8.8"/><path d="M4.7 4.7a10.4 10.4 0 000 14.6M19.3 19.3a10.4 10.4 0 000-14.6"/></symbol>
   <symbol id="i-translate" viewBox="0 0 24 24"><path d="M3 5.6h8.6M7.3 3.8v1.8M10 5.6c-.6 4.3-3.1 7.7-6.2 9.3M4.8 10.2c1.1 2.5 3.3 4.6 6.2 5.6"/><path d="M12.4 20.2l4-9 4 9M14 17.3h4.8"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M5.5 3.6h9.2l4.8 4.8v12a2 2 0 01-2 2H5.5a2 2 0 01-2-2V5.6a2 2 0 012-2z"/><path d="M14.4 3.6v5h5"/><path d="M7.6 12.4h8.8"/><path d="M7.6 16.2h6"/></symbol>
   <symbol id="i-draft" viewBox="0 0 24 24"><path d="M4 20h4L18.4 9.6a2.4 2.4 0 10-3.4-3.4L4.6 16.6z"/><path d="M13.6 7.6l3.4 3.4"/></symbol>
   <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M15.6 8.4l-2 5.2-5.2 2 2-5.2z"/></symbol>
   <symbol id="i-news" viewBox="0 0 24 24"><path d="M16 6H5.4A1.4 1.4 0 004 7.4v10.2A1.4 1.4 0 005.4 19H17"/><path d="M16 6v11.6a1.4 1.4 0 002.8 0V9.6H16"/><path d="M7 9.4h6M7 12.4h6M7 15.4h4"/></symbol>

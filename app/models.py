@@ -275,6 +275,14 @@ class BlossomBlob(Base):
     # /client/file requires to hand back the DECRYPTED bytes — so an unauthenticated listing was a
     # full read of every user's AI-chat files. Public uploads (normal Blossom media) stay listable.
     private = Column(Boolean, nullable=False, default=False, server_default="false")
+    # KEEP: exempt from the age-based cleanup sweep, forever. Ordinary blobs are swept once they are
+    # older than `blossom_blob_ttl_days` — which is fine for chat media (the message still renders the
+    # loss as a broken image) but is silent, unrecoverable data loss for the client-side ENCRYPTED
+    # drive: Notes attachments, Music tracks and the files-index blob are ciphertext whose only copy
+    # is here, and whose owner has no way to notice until they open a note and the picture is gone.
+    # The flag is set by the uploader (`X-Keep`), so the client that knows a blob is drive content
+    # decides — the server can't tell, the bytes are opaque. Never cleared once set (see save_blob).
+    keep = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class BlossomBlobOwner(Base):

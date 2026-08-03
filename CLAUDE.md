@@ -322,6 +322,43 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   `video_free_music=true` makes a video render stop `acestep` (sudo systemctl) to reclaim VRAM,
   restarting it for music. New dep: `sentencepiece` (T5 tokenizer). Turn-key: `./install.sh --video`,
   Docker `POSTERCHANAI_VIDEO=1`. See `docs/VIDEO.md`.
+- **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
+  encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
+  folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed
+  subscription), NIP-44-encrypted to the user's OWN key like Budget — so there is no `notes`
+  command, nothing on Telegram, and the AI cannot read them. Deliberately NOT one document like
+  Budget: a document is a read-modify-write of everything per save (two devices editing different
+  notes lose one) and a Joplin library does not fit in one event. No index doc anywhere — an index
+  is a second source of truth one empty read can wipe. See `docs/NOTES.md`.
+  **Three auto-cleaners had to be taught about it, and each was a silent total loss:**
+  (1) the relay's **NIP-40 expiration sweep** is otherwise unconditional, and NIP-37 *recommends*
+  `expiration: now+90d` on drafts — so kind 30078 joins `_GIT_KINDS` in `_NEVER_EXPIRE_KINDS`
+  (`nostr_relay/store.py`), and ingest DROPS the tag rather than merely not sweeping it, because a
+  stored expiration hides the event from every read (`expiration > now` in the query builder) —
+  intact on disk and invisible is worse than deleted. (2) Blossom's **age sweep** is driven live by
+  `blossom_blob_ttl_days`, so turning it on later retroactively deletes attachments/music/the
+  files-index — encrypted-drive uploads now send `X-Keep` → `BlossomBlob.keep`, excluded from
+  `_cleanup_once` forever, and `keep` only ever goes False→True (dedup means one blob can be both a
+  throwaway and drive content). (3) the CLIENT cache evicts newest-N by `created_at` in **three**
+  places (`_evictMem`, the IDB hydrate, `_pruneIDB`) — right for the firehose, fatal for a document
+  only its author can decrypt, since minutes of global-feed reading pushes a library out of a
+  3000-event window; `_isPinned` in `store.js` exempts `pcai:note*`. Tests:
+  `test_relay_prune.py`, `test_blossom_keep.py`, `test_client_store_pinning.py` (each verified to
+  FAIL without its guard).
+  **Offline writes need their own queue** — the app's Outbox refuses replaceable kinds on purpose
+  (blind replay caused the follows-wipe). Notes queues the signed ciphertext and, on flush,
+  DISCARDS anything the library already holds a newer version of. `publish()` rolls its optimistic
+  Store save back on failure, so `save()` must re-save or a note typed offline vanishes as you type;
+  `scripts/check_notes_mobile.py` asserts exactly that (run it — `check_client_mobile.py` never
+  opens this screen).
+  **Joplin import** is `joplin.js`, DOM-free so `tests/test_joplin_import.py` can build real `.jex`
+  tars with Python and run the shipped parser under node. Input is the **`.jex` export**, never
+  Joplin's live `database.sqlite` — the previous attempt (`scripts/migrate_joplin.py`, deleted) did
+  that and only ran on the machine Joplin was installed on, broke on schema migrations, and read
+  nothing when E2EE was on. The metadata block can only be found by walking **backwards** from the
+  last line (a body line like `todo: call the bank` is prose, not metadata); an E2EE export is
+  refused loudly rather than importing a wall of blank notes; re-importing UPDATES by Joplin id
+  rather than duplicating (imports of thousands of notes get interrupted).
 - **Budget** (`static/js/client/budget.js`; Discover → Budget): bills, a monthly summary and
   "Plans" (categories of line items), stored as ONE kind-30078 doc `d=pcai:budget` that is
   **NIP-44-encrypted to the user's OWN key** — not the server-held storage key the rest of the app

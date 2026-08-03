@@ -617,12 +617,15 @@ def _mirror_worker() -> None:
 
 
 async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bool = True,
-                    private: bool = False, expires_days: int = 0, filename: str = "") -> dict:
+                    private: bool = False, expires_days: int = 0, filename: str = "",
+                    keep: bool = False) -> dict:
     """Persist a blob (dedup by sha256) and record its row. Returns a descriptor dict
     (without `url`, which the router fills from the request base). `expires_days` > 0 stamps an
     explicit per-blob TTL (expires_at) so transient blobs — e.g. agent workspace backups — are swept
     regardless of the global `blossom_blob_ttl_days`, instead of piling up forever.
-    `filename` is the uploader's original name, kept per-owner for listings and downloads."""
+    `filename` is the uploader's original name, kept per-owner for listings and downloads.
+    `keep` marks the blob exempt from the age sweep forever (encrypted-drive content — Notes
+    attachments, music, the files index — whose only copy is here)."""
     cfg = _cfg(db)
     sha256 = await asyncio.to_thread(compute_sha256, data)
     size = len(data)
@@ -639,8 +642,17 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
         # TTL only ever pushes the expiry LATER, never sooner.
         _want = (int(time.time()) + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
         _cur = existing.expires_at or None
+        _dirty = False
         if _cur and (_want is None or _want > _cur):
             existing.expires_at = _want
+            _dirty = True
+        # `keep` only ever goes False→True, never back: dedup means one set of bytes can be both a
+        # throwaway chat image and a Notes attachment, and the reference that must survive wins. The
+        # same asymmetry as the TTL re-stamp above, for the same reason.
+        if keep and not existing.keep:
+            existing.keep = True
+            _dirty = True
+        if _dirty:
             try:
                 db.commit()
             except Exception:
@@ -682,7 +694,7 @@ async def save_blob(db: Session, pubkey: str, data: bytes, mime: str, mirror: bo
     _exp = (now + int(expires_days) * 86400) if expires_days and int(expires_days) > 0 else None
     blob = BlossomBlob(
         sha256=sha256, pubkey=pubkey, size=size, mime=mime or None, created_at=now,
-        expires_at=_exp, storage=storage, path=path, private=bool(private),
+        expires_at=_exp, storage=storage, path=path, private=bool(private), keep=bool(keep),
     )
     db.add(blob)
     try:
@@ -1264,6 +1276,13 @@ def _cleanup_once() -> int:
     whose `created_at` is older than that many days is swept — so lowering/raising the setting
     in the admin UI takes effect on the next sweep for ALL blobs (including migrated ones), not
     just future uploads. An explicit per-blob `expires_at` (if ever set) is also honoured.
+
+    EXCEPT `keep` blobs, which no rule here may ever delete. They are the client-side encrypted
+    drive — Notes attachments, music tracks, the files index — ciphertext this node holds the only
+    copy of, and which no user could tell had been deleted until they opened the note. Everything
+    else swept here is recoverable or visibly broken; this isn't. Note this makes the setting a
+    one-way promise: turning the TTL on later must not retroactively eat a drive that was uploaded
+    while it was off, which is exactly the shape of the accident this guards.
     """
     from sqlalchemy import or_, and_
     db = SessionLocal()
@@ -1276,7 +1295,9 @@ def _cleanup_once() -> int:
                       BlossomBlob.expires_at <= now)]
         if cfg["ttl_days"] > 0:
             conds.append(BlossomBlob.created_at <= now - cfg["ttl_days"] * 86400)
-        expired = db.query(BlossomBlob).filter(or_(*conds)).limit(500).all()
+        expired = (db.query(BlossomBlob)
+                   .filter(BlossomBlob.keep.is_(False))
+                   .filter(or_(*conds)).limit(500).all())
         gone = []
         for blob in expired:
             try:

@@ -2466,7 +2466,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', '4chan':'4chan', news:'News 🗞️', notes:'Notes 📝', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -2520,6 +2520,7 @@
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='notes'){ if(window.PCNotes) return window.PCNotes.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
@@ -9475,7 +9476,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
+    const items=[['ai','ai','PosterChan AI'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['settings','gear','Settings'],['logout','logout','Logout']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
                    && !(v==='__golive' && CFG.stream_enabled===false));   // hide AI+Translate in Nostr-only; Go Live only where the node streams
     const _wot=Number(CFG.users)||0;   // WoT network size + live online + on-relay (same stats as the desktop sidebar)
@@ -10707,6 +10708,10 @@
       || await sign(24242,'Upload blob',[['t','upload'],['x',hash],['expiration',String(Math.floor(Date.now()/1000)+3600)]]);
     const hdr={ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)), 'Content-Type':file.type||'application/octet-stream' };
     if(opts&&opts.noMirror) hdr['X-No-Mirror']='1';   // don't DR-mirror (e.g. encrypted music) to public backups
+    // Encrypted-drive content (Notes attachments, music, the files index): exempt from the server's
+    // age sweep forever. The server can't tell — the bytes are opaque ciphertext — so the uploader
+    // that knows this is the only copy has to say so. Harmless on a server that predates the header.
+    if(opts&&opts.keep) hdr['X-Keep']='1';
     // Tell the server the original filename. A blob is addressed by its hash and has no name of its
     // own, so without this a download off any other device/client saves as a bare sha256. Percent-
     // encoded because a header can only carry ASCII (a non-ASCII name would throw here).
@@ -11444,7 +11449,7 @@
           // MIRRORED (no noMirror): every ordinary photo is DR-copied to a second host, and the one
           // file holding every filename and folder was the sole exception — backwards. It is
           // ciphertext, so the mirror learns nothing, and it is the blob worth having off-site.
-          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}));
+          const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {keep:true});
           ptr.indexSha=_shaFromUrl(url);
         }
         const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
@@ -11828,9 +11833,25 @@
     setS('encrypting…');
     const blob=await _masterEncrypt(mk, buf, await _contentIV(buf));
     setS('uploading…');
-    const url=await uploadBlob(new File([blob],(file.name||'file')+'.enc',{type:'application/octet-stream'}), {noMirror:true});
+    const url=await uploadBlob(new File([blob],(file.name||'file')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
     FilesIdx.setFile(sha,{name:file.name||'file', folder, mime:file.type||'application/octet-stream', enc:true, mk:true, size:buf.length, ts:Math.floor(Date.now()/1000)});
+    return sha;   // notes.js needs it: a Notes attachment is referenced from the note by its hash
+  }
+  // Decrypt any master-key blob to an object URL — the generic half of trackUrl(), for images and
+  // documents rather than audio. Its own small LRU: the music player pins the playing track in
+  // _trackUrls and a note full of pictures would evict it.
+  const _encUrls={}; const _encOrder=[];
+  async function encFileUrl(sha){
+    if(_encUrls[sha]) return _encUrls[sha];
+    const m=FilesIdx.meta(sha);
+    const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
+    const blob=new Uint8Array(await r.arrayBuffer());
+    const plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);
+    const u=URL.createObjectURL(new Blob([plain],{type:(m&&m.mime)||'application/octet-stream'}));
+    _encUrls[sha]=u; _encOrder.push(sha);
+    while(_encOrder.length>24){ const old=_encOrder.shift(); if(_encUrls[old]){ URL.revokeObjectURL(_encUrls[old]); delete _encUrls[old]; } }
+    return u;
   }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
@@ -11947,7 +11968,7 @@
     const blob=await _masterEncrypt(mk, opus, await _contentIV(opus));   // deterministic IV → identical hash → dedup
     setS('uploading…');
     // noMirror: never DR-mirror encrypted music to the public backup servers (bandwidth/abuse).
-    const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true});
+    const url=await uploadBlob(new File([blob],(file.name||'track')+'.enc',{type:'application/octet-stream'}), {noMirror:true, keep:true});
     const sha=_shaFromUrl(url); if(!sha) throw new Error('upload returned no hash');
     FilesIdx.setFile(sha,{name:(file.name||'track').replace(/\.[^.]+$/,''),folder:'Music',mime:'audio/ogg',enc:true,mk:true,size:opus.length,srcName:file.name,srcSize:file.size,ts:Math.floor(Date.now()/1000)});
   }
@@ -19526,6 +19547,11 @@
     // AI Chat's "Make something" sheet, borrowable with {over, onSubmit} — the Meme Builder opens the
     // IMAGE one to generate a layer, so the two prompt UIs can never drift apart (see openGenStudio).
     openGenStudio,
+    // Notes (notes.js): the SAFE markdown renderer (escapes first — a note body is untrusted the
+    // moment one is imported from a file), and the encrypted-drive pair. uploadEncFile/encFileUrl
+    // are how a Notes attachment stays encrypted end-to-end: the app's master key never leaves the
+    // client, so a sub-module must go through these rather than uploadBlob directly.
+    mdToHtml, uploadEncFile, encFileUrl, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
   };
 

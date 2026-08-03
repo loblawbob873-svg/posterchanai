@@ -175,6 +175,17 @@ _PRUNE_CHUNK = 20000
 _GIT_KINDS = (30617, 30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
 assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be prunable"
 
+# Kinds a NIP-40 `expiration` tag must NEVER be able to delete. The expiration sweep is otherwise
+# unconditional (it ignores the kind allowlist AND the preserve clause, by design — an author's
+# explicit intent), which makes a single stray tag a silent data-loss vector for anything that is
+# somebody's only copy. Git events are a repo's source of truth; kind 30078 is this app's own
+# datastore — settings, users, chats, Notes — and it is the one that would bite by ACCIDENT rather
+# than by attack: NIP-37 (Draft Events) recommends stamping `expiration: now + 90 days`, so a note
+# written or touched by any other client following that convention would quietly disappear 90 days
+# later, from the relay that holds the only copy. Kept regardless, at ingest and in the sweep.
+_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)
+assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS)), "never-expire kinds must never be prunable"
+
 
 class RelayStore:
     def __init__(self, dsn: str = None, *,
@@ -281,6 +292,12 @@ class RelayStore:
                 except (ValueError, TypeError):
                     expiration = None
                 break
+        # _NEVER_EXPIRE_KINDS opt out entirely: the tag is DROPPED rather than merely un-swept.
+        # Storing it and only exempting the sweep would still hide the event from every read —
+        # the query builder filters on `expiration > now` — so the note would be intact on disk
+        # and invisible, which is worse than deleted (it looks like corruption, not policy).
+        if kind in _NEVER_EXPIRE_KINDS:
+            expiration = None
         if expiration is not None and expiration <= int(time.time()):
             return False
         if True:
@@ -876,7 +893,7 @@ class RelayStore:
         conn = self._conn()
         prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
-        _gitk = ",".join(str(k) for k in _GIT_KINDS)
+        _keepk = ",".join(str(k) for k in _NEVER_EXPIRE_KINDS)
         now = int(time.time())
 
         def _n(sql, params=()):
@@ -886,7 +903,7 @@ class RelayStore:
                 return 0
 
         expired = _n(f"SELECT COUNT(*) AS c FROM events WHERE expiration IS NOT NULL AND "
-                     f"expiration <= ? AND kind NOT IN ({_gitk})", (now,))
+                     f"expiration <= ? AND kind NOT IN ({_keepk})", (now,))
         aged = 0
         if self.retention_days:
             aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
@@ -945,10 +962,12 @@ class RelayStore:
         # NIP-40 expiration sweep FIRST — unconditional: an expired event is gone per the AUTHOR's
         # explicit intent, so unlike the age-based prune below this ignores kind allowlist AND the
         # preserve clause (even a local user's / profile / DM event with an `expiration` tag goes).
-        # EXCEPTION: git-over-nostr events (_GIT_KINDS) are a repo's source of truth, so a stray
-        # `expiration` tag must NOT be able to delete a repo/patch/issue — they are kept regardless.
-        _gitk = ",".join(str(k) for k in _GIT_KINDS)
-        ids = _delete(f"expiration IS NOT NULL AND expiration <= ? AND kind NOT IN ({_gitk})",
+        # EXCEPTION: _NEVER_EXPIRE_KINDS — git events (a repo's source of truth) and kind 30078
+        # (this app's datastore: settings/users/chats/Notes). A stray `expiration` tag must not be
+        # able to delete a repo or a note. Ingest already nulls the column for these kinds; this
+        # clause covers rows written before that did, and is the belt to its braces.
+        _keepk = ",".join(str(k) for k in _NEVER_EXPIRE_KINDS)
+        ids = _delete(f"expiration IS NOT NULL AND expiration <= ? AND kind NOT IN ({_keepk})",
                       (int(time.time()),))
         gone += ids; removed += len(ids)
         # Age-based auto-cleaner — THE cleaner. Deletes only old feed content (kinds in
