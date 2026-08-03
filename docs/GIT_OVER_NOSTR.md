@@ -168,6 +168,23 @@ A repo can be marked **private** at create time (`private=true`; default configu
         '!/path/to/venv/bin/python /path/to/scripts/git-credential-nostr'
       git config --global 'credential.https://poster.place.useHttpPath' true
 
+- **Plain git PUSHES to an `https://` remote via `scripts/git-push-nostr`.** The Basic envelope above
+  is the READ gate only, so a bare `git push` to an https GRASP clone URL is refused — nothing in the
+  git client stack emits `Authorization: Nostr`, and `decide_push_ref`'s other route (a maintainer's
+  kind-30618 pinning the exact sha) is what the `nostr://` remote does by publishing one first. The
+  wrapper mints a fresh kind-27235 bound to `<id>.git/git-receive-pack` with `method=POST` and runs
+  the push under `-c http.extraHeader=…`. It has to be a wrapper, not a config value: the host checks
+  `created_at` within **±60s**, so a stored `http.extraHeader` is stale a minute later. Key
+  resolution is imported from `git-credential-nostr` so one place decides which key signs.
+
+      git config alias.pushn '!/path/to/scripts/git-push-nostr'
+      git pushn origin main          # same arguments as `git push`
+
+  Note this route authorizes by NIP-98 and does **not** itself publish a maintainer 30618, so the
+  repo's Nostr-side state is only refreshed by the operator witness that `post-receive` publishes —
+  if that reports `witness 30618 not published`, git reads stay correct (they read the real repo) but
+  an ngit/Nostr client can see a stale sha.
+
 ### ngit + private repos: two things had to be fixed
 
 Stock ngit 2.6.3 cannot read a private repo here, and it fails **silently** — unable to list refs it
