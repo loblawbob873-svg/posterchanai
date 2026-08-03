@@ -491,7 +491,50 @@
     return out;
   }
 
+  /* ---- tar WRITER, for the backup archive ---------------------------------------------------
+   * The backup is a .jex, deliberately: it round-trips through the importer above (one format, one
+   * code path, and the test proves export→import is lossless) AND it opens in Joplin itself, so a
+   * backup is never a hostage to this app still existing. */
+  function _pad(str, len){
+    const b = new Uint8Array(len);
+    for(let i = 0; i < Math.min(str.length, len - 1); i++) b[i] = str.charCodeAt(i) & 0x7f;
+    return b;
+  }
+  function tarHeader(name, size){
+    const h = new Uint8Array(BLOCK);
+    // Long paths would need the ustar prefix split; every name we write is `<32-hex>.md` or
+    // `resources/<32-hex>.<ext>`, comfortably inside 100 bytes.
+    h.set(_pad(String(name).slice(0, 99), 100), 0);
+    h.set(_pad('0000644', 8), 100);                       // mode
+    h.set(_pad('0000000', 8), 108);                       // uid
+    h.set(_pad('0000000', 8), 116);                       // gid
+    h.set(_pad(size.toString(8).padStart(11, '0'), 12), 124);
+    h.set(_pad('00000000000', 12), 136);                  // mtime 0 — a byte-identical backup for
+    h[156] = 0x30;                                        // unchanged content, so re-backups dedup
+    h.set(_pad('ustar', 6), 257); h.set(_pad('00', 2), 263);
+    for(let i = 148; i < 156; i++) h[i] = 0x20;           // checksum field = spaces while summing
+    let sum = 0; for(let i = 0; i < BLOCK; i++) sum += h[i];
+    h.set(_pad(sum.toString(8).padStart(6, '0') + '\0', 8), 148);
+    return h;
+  }
+  /** The 512-byte-aligned padding that follows an entry's data. */
+  function tarPad(size){
+    const rem = size % BLOCK;
+    return rem ? new Uint8Array(BLOCK - rem) : new Uint8Array(0);
+  }
+  /** Two zero blocks end an archive. */
+  function tarEnd(){ return new Uint8Array(BLOCK * 2); }
+
+  /** Serialize an item back into Joplin's own format — the inverse of parseItem. */
+  function serializeItem(title, body, props){
+    const head = body ? `${title}\n\n${body}` : String(title);
+    const meta = Object.keys(props).map(k => `${k}: ${props[k]}`).join('\n');
+    return `${head}\n\n${meta}`;
+  }
+  const _iso = ts => new Date((ts || 0) * 1000).toISOString().replace('Z', 'Z');
+
   const API = { TYPE, untar, parseItem, parseJex, parseJexFile, indexTar, readResource,
+                tarHeader, tarPad, tarEnd, serializeItem, _iso,
                 parseFrontMatter, parseMarkdownFiles,
                 collect, rewriteLinks, linkedIds, folderPaths, tagsByNote, _ts };
   root.PCJoplin = API;

@@ -11842,9 +11842,13 @@
   // documents rather than audio. Its own small LRU: the music player pins the playing track in
   // _trackUrls and a note full of pictures would evict it.
   const _encUrls={}; const _encOrder=[];
-  async function encFileUrl(sha){
+  async function encFileUrl(sha, mimeHint){
     if(_encUrls[sha]) return _encUrls[sha];
-    const m=FilesIdx.meta(sha);
+    // mimeHint: the drive index is not the only record of a blob any more — a Notes attachment also
+    // stores its own name/mime on the note. If a bulk import was interrupted before the index was
+    // flushed, meta() is empty, and an object URL typed application/octet-stream does NOT render in
+    // an <img>. The note's own copy of the type keeps the picture showing.
+    const m=FilesIdx.meta(sha) || (mimeHint ? {mime:mimeHint} : null);
     const r=await fetch(mediaServer()+'/'+sha); if(!r.ok) throw new Error('blob HTTP '+r.status);
     const blob=new Uint8Array(await r.arrayBuffer());
     const plain=await _masterDecrypt(await FilesIdx._ensureMK(), blob);

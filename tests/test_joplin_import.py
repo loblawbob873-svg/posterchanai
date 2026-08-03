@@ -380,6 +380,81 @@ def test_streaming_reads_the_right_bytes_for_every_resource():
     assert r["got"] == expect, "a lazily-read resource returned the wrong bytes"
 
 
+def test_backup_archive_round_trips_and_is_a_real_tar():
+    """The backup export writes a .jex, and the importer must read it back losslessly.
+
+    One format, one code path: the backup is not a private side-format only this app understands —
+    a backup that depends on this app still existing fails at the one job a backup has. So it is a
+    genuine Joplin archive, which means (a) it round-trips through the importer and (b) GNU tar can
+    list it, which is the same thing Joplin's own reader needs.
+
+    The body deliberately contains "todo: call the bank" — the line that breaks any parser scanning
+    forwards for the metadata block.
+    """
+    harness = textwrap.dedent(f"""
+        const J = require({json.dumps(PARSER)});
+        const fs = require('fs');
+        const enc8 = new TextEncoder();
+        const hex32 = v => String(v||'').replace(/[^0-9a-f]/gi,'').toLowerCase().padEnd(32,'0').slice(0,32);
+        const parts = [];
+        const entry = (name, bytes) => {{ parts.push(J.tarHeader(name, bytes.length), bytes, J.tarPad(bytes.length)); }};
+        const fid = hex32('aa11'), nid = hex32('bb22'), rid = hex32('cc33');
+        entry(fid+'.md', enc8.encode(J.serializeItem('Family/Tax Returns','',
+          {{id:fid, created_time:J._iso(1000), updated_time:J._iso(2000), parent_id:'', type_:2}})));
+        // Built from an array rather than written with escapes: this harness lives inside a Python
+        // f-string, where a backslash-n would become a real newline before node ever sees it.
+        const NL = String.fromCharCode(10);
+        const body = ["line one", "", "todo: call the bank", "", "![pic](:/"+rid+")"].join(NL);
+        entry(nid+'.md', enc8.encode(J.serializeItem('Round trip', body,
+          {{id:nid, parent_id:fid, created_time:J._iso(1614834367), updated_time:J._iso(1700000000),
+            is_conflict:0, is_todo:0, type_:1}})));
+        const png = new Uint8Array([0x89,0x50,0x4e,0x47,1,2,3,4,5,6,7,8,9]);
+        entry(rid+'.md', enc8.encode(J.serializeItem('pic.png','',
+          {{id:rid, mime:'image/png', filename:'pic.png', file_extension:'png', size:png.length, type_:4}})));
+        entry('resources/'+rid+'.png', png);
+        parts.push(J.tarEnd());
+        const total = parts.reduce((n,p)=>n+p.length,0);
+        const buf = new Uint8Array(total); let o=0; for(const p of parts){{ buf.set(p,o); o+=p.length; }}
+        fs.writeFileSync('/tmp/pcai-backup-roundtrip.jex', buf);
+        (async () => {{
+          const r = await J.parseJex(buf);
+          const n = r.notes[0];
+          process.stdout.write(JSON.stringify({{
+            notes:r.notes.length, folders:r.folders.length, resources:r.resources.length,
+            title:n.title, bodyIntact:n.body===body, created:n.created, updated:n.updated,
+            folderTitle:r.folders[0].title, parentLinked:n.parent_id===fid,
+            resMime:r.resources[0].mime, resHead:Array.from(r.resources[0].data.slice(0,4)),
+            warnings:r.warnings,
+          }}));
+        }})().catch(e => process.stdout.write(JSON.stringify({{error:e.message}})));
+    """)
+    hpath = "/tmp/pcai-backup-harness.js"
+    with open(hpath, "w") as f:
+        f.write(harness)
+    out = subprocess.run(["node", hpath], capture_output=True, timeout=120)
+    assert out.returncode == 0, out.stderr.decode()[:2000]
+    r = json.loads(out.stdout.decode())
+    assert "error" not in r, r.get("error")
+    assert (r["notes"], r["folders"], r["resources"]) == (1, 1, 1), r
+    assert r["title"] == "Round trip"
+    assert r["bodyIntact"], "the note body did not survive the round trip"
+    assert r["created"] == 1614834367 and r["updated"] == 1700000000, "timestamps were lost"
+    assert r["folderTitle"] == "Family/Tax Returns", "the folder path was lost"
+    assert r["parentLinked"], "the note lost its folder"
+    assert r["resMime"] == "image/png"
+    assert r["resHead"] == [137, 80, 78, 71], "the attachment bytes are wrong"
+    assert r["warnings"] == []
+
+    # …and a real tar reader must accept it, which is what Joplin's own importer needs.
+    with tarfile.open("/tmp/pcai-backup-roundtrip.jex") as t:
+        names = sorted(m.name for m in t if m.isfile())
+    assert len(names) == 4, names
+    assert any(n.startswith("resources/") for n in names)
+    with tarfile.open("/tmp/pcai-backup-roundtrip.jex") as t:
+        png = t.extractfile([m for m in t if m.name.startswith("resources/")][0]).read()
+    assert png[:4] == b"\x89PNG", "GNU tar read the attachment back wrong"
+
+
 def test_a_large_export_parses_whole():
     """Tar reading is offset arithmetic: one bad length silently truncates the archive, and the
     result still looks like a successful import of fewer notes."""

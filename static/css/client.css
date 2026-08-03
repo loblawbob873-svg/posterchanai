@@ -4951,3 +4951,34 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
   .nt-item{padding:12px}
   .nt-ed-head .nt-ico{width:44px;height:44px}
 }
+
+/* Notes: folder TREE. Joplin nests notebooks and the import carries the full path across, so a flat
+   list reads as unrelated top-level folders with slashes in their names. --d is the depth; the caret
+   column is always present (even for leaves) so labels line up down a level instead of stepping in
+   and out as branches open. */
+.nt-frow{display:flex;align-items:center;gap:2px;padding-left:calc(var(--d, 0) * 13px)}
+.nt-frow .nt-folder{flex:1 1 auto;min-width:0}
+.nt-fcaret{flex:none;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;
+  background:none;border:none;color:inherit;cursor:pointer;opacity:.6;padding:0}
+.nt-fcaret svg.ic{width:14px;height:14px;transition:transform .15s}
+.nt-fcaret.open svg.ic{transform:rotate(90deg)}
+.nt-fcaret:hover{opacity:1}
+
+/* Attachment thumbnails. There is no server-side thumbnail for an encrypted blob and there cannot
+   be — the server can't read the picture — so these are decrypted in the client and shown at size. */
+.nt-res-thumb{display:flex;flex-direction:column;gap:3px;width:96px;padding:4px;border-radius:9px;
+  border:1px solid var(--line);background:none;color:inherit;cursor:pointer}
+.nt-res-thumb img{width:100%;height:64px;object-fit:cover;border-radius:6px;background:rgba(128,128,128,.15)}
+.nt-res-thumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.nt-res-thumb:hover{border-color:var(--neon)}
+.nt-thumb-miss img{opacity:.35}
+.nt-img-miss{display:inline-block;padding:2px 6px;border:1px dashed var(--line);border-radius:6px}
+/* An image inside a rendered note: never wider than the pane, and clickable to open full size. */
+.nt-render img{max-width:100%;height:auto;border-radius:8px;cursor:zoom-in}
+
+@media(max-width:820px){
+  .nt-frow{padding-left:calc(var(--d, 0) * 11px)}
+  .nt-fcaret{width:32px;height:32px}      /* thumb-sized, or a tree is unusable on a phone */
+  .nt-res-thumb{width:calc(50% - 5px)}
+  .nt-res-thumb img{height:84px}
+}
