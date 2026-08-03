@@ -36,11 +36,28 @@
 <script>
   const q = new URLSearchParams(location.search);
   const pick = q.get('pick') === '1';
+  const seen = q.get('seen') === '1';        // this machine has loaded the instance successfully before
   const inst = document.getElementById('inst');
   document.getElementById('title').textContent = pick ? 'Choose your instance' : "Can't reach your instance";
+  // Reaching this page at all means the network AND the app's own offline cache came up empty, so say
+  // which of the two situations it is. "Check your connection" is useless advice to someone who has never
+  // opened this instance on this machine — there is nothing saved to fall back to, and that is the fact
+  // that explains why they're looking at a card instead of their timeline.
   document.getElementById('msg').textContent = pick
     ? 'PosterChan can point at any self-hosted instance. Enter its address.'
-    : (q.get('url') || '') + (q.get('err') ? ' — ' + q.get('err') : '') + '. Check your connection, or point the app somewhere else.';
+    : (q.get('url') || '') + (q.get('err') ? ' — ' + q.get('err') : '')
+      + (seen ? '. You are offline and the saved copy could not be opened either.'
+              : '. Nothing is saved for this instance yet, so there is no offline copy to open.')
+      + ' It will open by itself when the connection is back.';
+
+  // Heal without being asked. The window sits here doing nothing while the wifi comes back, and making
+  // someone click Retry at a page that already knows the network returned is busywork. Chromium fires
+  // 'online' on the file:// page too, so this needs nothing from the main process.
+  // Not on the picker: someone who opened "Switch instance…" is mid-edit, and navigating out from under
+  // them because the wifi blinked would throw away what they were typing.
+  let healed = false;
+  const heal = () => { if (healed || pick || !window.pcShell) return; healed = true; window.pcShell.retry(); };
+  if (!pick) window.addEventListener('online', () => setTimeout(heal, 800));   // let the interface settle first
 
   (async () => { try { inst.value = await window.pcShell.getInstance(); } catch (_) {} inst.focus(); inst.select(); })();
 

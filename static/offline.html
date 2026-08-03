@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a2e">
+<title>Offline · Poster-chan AI</title>
+<style>
+  :root{ --bg:#1a1a2e; --panel:#22223a; --line:#33334d; --text:#e8e8f2; --muted:#9a9ab4; --neon:#00f0ff }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px;
+       padding-bottom:calc(24px + env(safe-area-inset-bottom));
+       background:var(--bg);color:var(--text);
+       font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .card{width:min(440px,100%);background:var(--panel);border:1px solid var(--line);
+        border-radius:18px;padding:28px 24px;text-align:center}
+  img{width:72px;height:72px;border-radius:18px;margin-bottom:14px}
+  h1{margin:0 0 8px;font-size:20px}
+  p{margin:0 0 18px;color:var(--muted);font-size:14px}
+  a.btn,button{display:block;width:100%;padding:12px 14px;margin-top:9px;border-radius:12px;
+       border:1px solid var(--line);background:#191926;color:var(--text);
+       font-size:14px;font-family:inherit;cursor:pointer;text-decoration:none}
+  a.btn.go{background:rgba(0,240,255,.12);border-color:var(--neon);color:var(--neon)}
+  a.btn:hover,button:hover{border-color:var(--neon);color:var(--neon)}
+  .note{margin:16px 0 0;font-size:12.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <div class="card">
+    <img src="/static/icon-192.png" alt="" onerror="this.style.display='none'">
+    <h1>You're offline</h1>
+    <!-- Say the true thing rather than "try again". Chat, image generation and search are all calls to
+         this server; none of them has an offline mode to fall back to, and pretending otherwise just
+         wastes taps. The Nostr client DOES keep a local copy of everything you follow, so it is the one
+         honest suggestion to make here. -->
+    <p>Poster-chan AI needs a connection — chat, images and search all run on the server.</p>
+    <a class="btn go" href="/client">Open the Nostr client (works offline)</a>
+    <button id="retry" type="button">Try again</button>
+    <p class="note">This page reloads by itself once you're back online.</p>
+  </div>
+<script>
+  document.getElementById('retry').onclick = () => location.reload();
+  // Reload the moment connectivity returns, so nobody is left staring at a stale error card. A short
+  // settle delay first — 'online' fires when the interface associates, which is a beat before it routes.
+  addEventListener('online', () => setTimeout(() => location.reload(), 800));
+</script>
+</body>
+</html>

@@ -61,6 +61,36 @@ class PullsEveryNode(unittest.TestCase):
                         "router.lan must be pulled before the restart set is even computed")
 
 
+class NothingTheServersDoNotRunCausesARestart(unittest.TestCase):
+    """An unmapped path means "could affect anything", which means EVERY unit — so a file no service
+    loads must be explicitly inert or it takes the whole cluster down to ship a comment. This has now
+    happened for git hooks, for sync.sh itself, for the Dockerfiles and for the Electron app; the
+    assertions are per-path because the failure is silent (a green deploy that dropped every client)."""
+
+    def _units(self, *paths):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "deploy_targets", os.path.join(REPO, "scripts", "deploy_targets.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.units_for(list(paths))
+
+    def test_the_desktop_app_restarts_nothing(self):
+        # electron-builder output, shipped separately. The app is a window onto /client over HTTP, so
+        # no unit imports, reads or serves anything under desktop/.
+        self.assertEqual(self._units("desktop/main.js", "desktop/shell.html"), [])
+
+    def test_client_assets_and_tooling_restart_nothing(self):
+        self.assertEqual(self._units("static/js/client/sw.js", "static/offline.html",
+                                     "tests/test_client_offline_shell.py",
+                                     "scripts/deploy_targets.py"), [])
+
+    def test_real_service_code_still_restarts_its_unit(self):
+        # The guard above must not be so broad that it stops restarting what genuinely needs it.
+        self.assertIn("posterchanai-relay.service", self._units("app/services/nostr_relay/x.py"))
+        self.assertIn("posterchanai.service", self._units("templates/client.html"))
+
+
 class RestartsOnlyWhatChanged(unittest.TestCase):
     def test_the_restart_set_comes_from_deploy_targets(self):
         self.assertIn("scripts/deploy_targets.py", _src())

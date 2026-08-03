@@ -225,9 +225,38 @@ function createWindow() {
   });
 
   // Can't reach the instance (offline, wrong domain, server down) → our own page, not Chromium's.
+  //
+  // Note what has to be TRUE before this fires at all: the client's service worker answers an in-scope
+  // navigation from its cache, so a normal offline launch of an instance this machine has opened before
+  // never reaches here — it opens the saved app. Getting here means the network AND the cache both had
+  // nothing, which is a different situation and deserves different words (see `seen` below).
+  //
+  // Retry once, silently, first. A cold start races the OS network stack: on a laptop resuming from sleep
+  // or a machine that just booted, the first navigation can fail a second before the interface is up, and
+  // flashing an error card at someone whose network is one heartbeat away is the least app-like thing the
+  // shell can do.
+  let failRetried = false;
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return;   // -3 = aborted (a normal in-app navigation)
-    win.loadFile(path.join(__dirname, 'shell.html'), { query: { err: desc || String(code), url: instance() } });
+    if (!failRetried) {
+      failRetried = true;
+      setTimeout(() => { if (win && !win.isDestroyed()) win.loadURL(clientUrl()); }, 1500);
+      return;
+    }
+    win.loadFile(path.join(__dirname, 'shell.html'), {
+      query: { err: desc || String(code), url: instance(), seen: cfg.everLoaded ? '1' : '' },
+    });
+  });
+  win.webContents.on('did-finish-load', () => {
+    failRetried = false;
+    // Record that this machine has successfully loaded the instance at least once. That is what lets the
+    // offline page distinguish "nothing has ever been saved here, so there is nothing to show you" from
+    // "you have used this before and even the saved copy failed", which point at different fixes.
+    try {
+      if (win && !win.isDestroyed() && isOurs(win.webContents.getURL()) && !cfg.everLoaded) {
+        cfg.everLoaded = true; saveCfg();
+      }
+    } catch (_) {}
   });
 
   win.loadURL(clientUrl());

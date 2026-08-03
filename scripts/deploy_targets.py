@@ -85,6 +85,14 @@ _OWNED = (
 # checkout), so a UI-only change must NOT take the ~90s outage a restart costs — that rule predates
 # this script and is why "never sync.sh for UI-only changes" exists.
 _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README", "CLAUDE.md",
+                   # The Electron desktop app. It is built and shipped separately (electron-builder →
+                   # dist/), and NO service on a systemd node imports, reads or serves anything under
+                   # here — the app is a window onto /client over HTTP like any other browser. Left
+                   # unmapped it meant "could affect anything", so a one-line edit to the offline
+                   # card's wording restarted all seven units on both nodes: every connected Nostr
+                   # client dropped, streams killed mid-broadcast, nine bots bounced. Exactly the
+                   # outage the role split removed, for a file the servers never load.
+                   "desktop/",
                    # git_hooks/ is NOT loaded by any service. install_hooks writes a shell shim into
                    # each bare repo that `exec`s "<venv python> <checkout>/git_hooks/<file>.py", so
                    # git-receive-pack spawns a FRESH process per push and reads the file off disk

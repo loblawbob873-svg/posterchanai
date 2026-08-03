@@ -1,6 +1,14 @@
 // Service Worker for Poster-chan AI PWA
-const CACHE_NAME = 'posterchanai-v62';
+//
+// This app is NOT offline-capable and is not pretending to be: chat, image generation, TTS and search are
+// all round trips to this server, so there is no cached state that would make the UI usable without one.
+// What it owes the user offline is an ANSWER instead of the browser's network-error page — hence
+// OFFLINE_URL below. (The Nostr client at /client is the offline-capable half; it has its own worker at
+// /client/sw.js, whose narrower scope wins for every page under /client.)
+const CACHE_NAME = 'posterchanai-v63';
+const OFFLINE_URL = '/static/offline.html';
 const STATIC_ASSETS = [
+  OFFLINE_URL,
   '/static/icon-192.png',
   '/static/icon-512.png',
   '/static/apple-touch-icon.png',
@@ -35,10 +43,22 @@ self.addEventListener('fetch', event => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
-  // Skip API calls, WebSocket, and navigation - let browser handle normally
-  if (url.pathname.startsWith('/api/') ||
-      url.pathname.startsWith('/ws') ||
-      event.request.mode === 'navigate') {
+  // Skip API calls and WebSockets - let the browser handle them normally.
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
+
+  // Navigations: always the network (nothing here is servable from cache), but when it fails, answer with
+  // our own offline card instead of letting Chromium render the dino. Never cache the response — these are
+  // server-rendered, per-user, CSRF-bearing pages, and a stale one is worse than no page at all.
+  if (event.request.mode === 'navigate') {
+    // …except into /client, which is the offline-capable app and owns that scope. On a browser that has
+    // been to / but not yet to /client, this root worker would otherwise answer that first navigation —
+    // and offline it would serve the card below, whose own "Open the Nostr client" link lands right back
+    // here. Passing through lets /client's worker take over the moment it is registered.
+    if (url.pathname === '/client' || url.pathname.startsWith('/client/')) return;
+    event.respondWith(
+      fetch(event.request).catch(() =>
+        caches.match(OFFLINE_URL).then(hit => hit || Response.error()))
+    );
     return;
   }
 

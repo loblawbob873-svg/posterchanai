@@ -18,6 +18,9 @@ Every assertion here corresponds to a bug that reached a user rather than a revi
   trapped-hscroll      A horizontally scrollable strip inside the feed whose drag the swipe-to-navigate
                        handler steals, so it cannot be slid on a phone. Shipped as "can't slide to see
                        all the background choices".
+  offline-bar          The persistent offline banner overlapping the mobile nav, running off the side, or
+                       pushing the page sideways. It is fixed and bottom-anchored precisely so that showing
+                       it reflows nothing; the check forces it visible, since the audit itself runs online.
 
 Needs Chrome and a reachable instance:
 
@@ -38,7 +41,7 @@ PORT = 9471
 PROFILE = "/tmp/pc-mobile-check"
 
 AUDIT = r"""(() => {
-  const out = {overflow:false, zero:[], offCentre:[], stretched:[], hscroll:[]};
+  const out = {overflow:false, zero:[], offCentre:[], stretched:[], hscroll:[], offlineBar:[]};
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
 
   const vis = el => !el.checkVisibility || el.checkVisibility();
@@ -91,6 +94,35 @@ AUDIT = r"""(() => {
       out.hscroll.push({cls: String(n.className).slice(0, 34),
                         scroll: n.scrollWidth + '>' + n.clientWidth});
     });
+  }
+  // Offline banner. It is hidden in every check above (the audit runs online), so force it visible and
+  // measure, then put the page back. Bottom-anchored and fixed SPECIFICALLY so that showing it moves no
+  // layout — if it overlaps .mobilenav, runs off the side, or pushes the page sideways, the reason it was
+  // put at the bottom instead of the top is gone and it should go back to being a top bar with padding.
+  const ob = document.getElementById('offline-bar');
+  if (!ob) out.offlineBar.push('#offline-bar missing from the shell');
+  else {
+    const wasHidden = ob.classList.contains('hidden');
+    const wasOff = document.body.classList.contains('is-offline');
+    ob.classList.remove('hidden'); document.body.classList.add('is-offline');
+    // Kill the slide-in before measuring. Un-hiding STARTS the entry animation, and this runs
+    // synchronously in the same task — so without this the rect is read at t=0 and reports the keyframe's
+    // 8px offset as a layout position. That cost a round of chasing a clearance bug that did not exist.
+    const priorAnim = ob.style.animation; ob.style.animation = 'none'; void ob.offsetHeight;
+    const r = ob.getBoundingClientRect();
+    const nav = document.querySelector('.mobilenav');
+    const nr = (nav && getComputedStyle(nav).display !== 'none') ? nav.getBoundingClientRect() : null;
+    if (document.documentElement.scrollWidth > window.innerWidth + 1) out.offlineBar.push('causes horizontal overflow');
+    if (r.left < -1 || r.right > window.innerWidth + 1)
+      out.offlineBar.push('runs off the side (' + Math.round(r.left) + '..' + Math.round(r.right) + ' of ' + window.innerWidth + ')');
+    if (r.bottom > window.innerHeight + 1) out.offlineBar.push('sits below the fold');
+    if (nr && r.bottom > nr.top + 1)
+      out.offlineBar.push('overlaps the mobile nav (bar bottom ' + Math.round(r.bottom)
+                          + ' vs nav top ' + Math.round(nr.top) + ', nav is ' + Math.round(nr.height) + 'px tall)');
+    if (r.height < 20) out.offlineBar.push('collapsed to ' + Math.round(r.height) + 'px tall');
+    ob.style.animation = priorAnim;
+    if (wasHidden) ob.classList.add('hidden');
+    if (!wasOff) document.body.classList.remove('is-offline');
   }
   return out;
 })()"""
@@ -177,6 +209,8 @@ async def drive():
             for s in res["stretched"]:
                 problems.append((label, "stretched-media",
                                  f"{s['cls'] or '<img>'} {s['box']} ratio {s['got']} vs {s['want']}"))
+            for b in res["offlineBar"]:
+                problems.append((label, "offline-bar", b))
             print(f"{label}: overflow={res['overflow']} zero={len(res['zero'])} "
                   f"offCentre={len(res['offCentre'])} stretched={len(res['stretched'])} "
                   f"hscrollers={len(res['hscroll'])}")

@@ -32,14 +32,19 @@
         // forced the PWA to reload (controllerchange handler), which on Firefox re-reveals the browser
         // toolbar and made cached code "stick". Embedded in an iframe → do nothing.
         if ('serviceWorker' in navigator && window.self === window.top) {
-            // Unregister old service workers first
-            navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                for(let registration of registrations) {
-                    registration.unregister();
-                }
-            });
-            // Register new service worker with cache-busting version
-                    navigator.serviceWorker.register('/sw.js?v=21', { scope: '/' }).catch(() => {});
+            // Register (or refresh) OUR root worker — and nothing else.
+            //
+            // There used to be a getRegistrations()+unregister() sweep here, and it was far more
+            // destructive than it looked: getRegistrations() returns EVERY scope on the origin, so each
+            // top-level visit to / or /admin unregistered the /client Nostr PWA's service worker too,
+            // taking its offline shell and its media cache with it. The iframe guard above was added when
+            // that was noticed from the embedded-/admin direction; the plain top-level tab does exactly
+            // the same damage. Re-registering the same scope already replaces the previous worker, which
+            // is the only thing the sweep was ever needed for.
+            //
+            // updateViaCache:'none' fetches sw.js from the network on each check, so the ?v= bump can't be
+            // pinned for up to 24h by the HTTP cache.
+            navigator.serviceWorker.register('/sw.js?v=22', { scope: '/', updateViaCache: 'none' }).catch(() => {});
         }
     </script>
 </body>

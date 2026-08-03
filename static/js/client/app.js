@@ -387,9 +387,28 @@
     // toast (guarded on r.ok), and destructive ones (delete, repost-with-warning) guard on r.ok so a failed
     // publish can't destroy content. NO queue/replay — replaying a signed event behind the user's back is
     // exactly what caused the follows-wipe / duplicate-post bugs.
-    if (!r.ok){ try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
+    if (!r.ok){
+      // OFFLINE OUTBOX. Before rolling back, offer the one case where keeping the event is safe: a
+      // non-replaceable, id-addressed kind (see outbox.js) that the user signed a moment ago and can see
+      // sitting in their timeline marked "Pending". Re-sending such an event is a no-op at the relay, so
+      // there is no divergence to create — which is exactly what was NOT true of the general replay queue
+      // this replaces. Everything else still rolls back and fails loudly.
+      //
+      // The return stays ok:FALSE even when queued, and that is deliberate: several callers use r.ok to
+      // gate a SECOND, destructive step (delete-the-original on a content-warning repost, for one). A
+      // queued first half with the destructive half already done would be the worst of both worlds, so a
+      // queued write must never read as a completed one. `queued` is there for callers that want to say
+      // something kinder; opts.noQueue opts a multi-step caller out of queueing entirely.
+      const queued = !(opts && opts.noQueue) && window.Outbox && Outbox.canQueue(kind) && Outbox.add(ev);
+      if (queued){
+        try{ refreshOfflineBar(); }catch(_){}
+        if(!(opts && opts.quiet)) toast('saved — this will send when you’re back online');
+        return { ev, ...r, queued:true };
+      }
+      try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
       // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
-      if(!(opts && opts.quiet)) toast('couldn’t reach the relay — try again in a moment'); }
+      if(!(opts && opts.quiet)) toast('couldn’t reach the relay — try again in a moment');
+    }
     return { ev, ...r };
   }
   // A guest tried to do something that needs an account → drop the guest chrome and show login.
@@ -941,8 +960,18 @@
     return false;
   }
 
+  // /client/config mirrored locally. It used to bypass the service worker entirely, so offline the fetch
+  // failed, CFG collapsed to {} and the client came up not knowing which relay to reconnect TO once the
+  // radio returned — a cold offline launch was permanently disconnected rather than merely offline. The SW
+  // now serves a cached copy as well; this is the second belt, and it also covers the very first paint,
+  // before any SW is in control. Only a config that actually carries a relay_url is worth remembering.
+  const _CFG_KEY = 'pc_client_config';
+  function _cfgCached(){ try{ return JSON.parse(localStorage.getItem(_CFG_KEY)||'null'); }catch(_){ return null; } }
+  function _cfgCache(c){ try{ if(c && c.relay_url) localStorage.setItem(_CFG_KEY, JSON.stringify(c)); }catch(_){} }
+
   async function boot(){
-    CFG = await fetch('/client/config').then(r=>r.json()).catch(()=>({}));
+    CFG = (await fetch('/client/config').then(r=>r.json()).catch(()=>null)) || _cfgCached() || {};
+    _cfgCache(CFG);
     // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
@@ -1770,8 +1799,102 @@
   function renderConn(s){
     const map = { ok:['ok','online'], connecting:['','connecting…'], off:['off','reconnecting…'], init:['','…'] };
     const [cls,txt] = map[s]||['',''];
+    updateOfflineBar(s);
+    if(s === 'ok') _flushOutbox();
     const el = $('#conn-status'); if(!el) return; el.className = 'conn ' + cls; el.querySelector('span').textContent = txt;
   }
+  // ---------- offline state ----------
+  // "Offline" here is a UI state, not a network fact. navigator.onLine answers "is there a LAN?", which is
+  // true on a captive portal and true when our relay alone is unreachable — it is the wrong question. The
+  // one that matters to a reader is whether the relay socket is up, so the banner is driven by Relay's own
+  // status. 'connecting' is deliberately NOT offline: a phone reconnects constantly and flashing the bar on
+  // every blip is worse than not having it, so a settled 'off' has to persist through a grace window first.
+  const _OFF_GRACE = 6000, _SYNC_KEY = 'pc_last_sync';
+  let _offT = null, _offTick = null, _lastSyncAt = 0;
+  try{ _lastSyncAt = +(localStorage.getItem(_SYNC_KEY)||0) || 0; }catch(_){}
+  function _markSynced(){ _lastSyncAt = Math.floor(Date.now()/1000); try{ localStorage.setItem(_SYNC_KEY, String(_lastSyncAt)); }catch(_){} }
+  // Deliberately coarse. A live-ticking "43s ago" invites the reader to watch it; the point of the line is
+  // only to answer "is what I'm looking at from minutes ago or from last week?".
+  function _syncAgo(){
+    if(!_lastSyncAt) return '';
+    const d = Math.max(0, Math.floor(Date.now()/1000) - _lastSyncAt);
+    if(d < 90)     return ' · synced just now';
+    if(d < 5400)   return ' · synced ' + Math.round(d/60) + 'm ago';
+    if(d < 172800) return ' · synced ' + Math.round(d/3600) + 'h ago';
+    return ' · synced ' + Math.round(d/86400) + 'd ago';
+  }
+  // "items", not "posts": the queue also holds reactions, reposts and comments, and a reaction has no card
+  // of its own to carry a Pending badge — this count is the only place it is visible at all.
+  function _offlineText(){
+    const q = (window.Outbox && Outbox.count()) || 0;
+    if(q) return 'Offline — ' + q + (q===1 ? ' item' : ' items') + ' waiting to send' + _syncAgo();
+    return 'Offline — showing saved posts' + _syncAgo();
+  }
+  function updateOfflineBar(s){
+    if(s === 'ok'){ clearTimeout(_offT); _offT = null; _markSynced(); _setOffline(false); return; }
+    // Arm the countdown ONCE and let it run. Re-arming on every non-ok status looks equivalent and is not:
+    // Relay only reports CHANGES, and a phone with no signal flaps off→connecting→off every second or two
+    // as the backoff retries, so each flap would restart the grace window and the banner would never appear
+    // — for exactly the person who needs it most. Only reaching 'ok' cancels it.
+    if(!_offT) _offT = setTimeout(()=>{ _offT = null; _setOffline(true); }, _OFF_GRACE);
+  }
+  // The composer's Post button, wherever one happens to be open. Lives here so the composer needs neither a
+  // timer nor a listener of its own (both would leak one per open).
+  function _syncSendLabel(root){
+    const l = $('#cmp-send-label', root || document);
+    if(l) l.textContent = document.body.classList.contains('is-offline') ? 'Queue post' : 'Post';
+  }
+  function _setOffline(on){
+    document.body.classList.toggle('is-offline', on);
+    _syncSendLabel();
+    if(_offTick){ clearInterval(_offTick); _offTick = null; }
+    const bar = $('#offline-bar'); if(!bar) return;
+    bar.classList.toggle('hidden', !on);
+    if(!on) return;
+    const paint = ()=>{ const t = $('#offline-bar-text'); if(t) t.textContent = _offlineText(); };
+    paint();
+    _offTick = setInterval(paint, 60000);   // keep "synced Xm ago" honest without a per-second tick
+  }
+  // Let other code (the Outbox) refresh the banner's wording without knowing how it is built.
+  function refreshOfflineBar(){ if(document.body.classList.contains('is-offline')) _setOffline(true); }
+
+  // ---------- outbox wiring ----------
+  // Drain shortly after the relay comes up, not the instant it does: the socket has just re-armed its live
+  // subscriptions and a burst of publishes into it is the least likely moment for all of them to land.
+  function _flushOutbox(){
+    if(!window.Outbox || !Outbox.count()) return;
+    setTimeout(()=>{ Outbox.flush().then(res=>{
+      const sent = (res && res.sent) || 0, dropped = (res && res.dropped) || [];
+      if(!sent && !dropped.length) return;
+      // An item the relay kept refusing is now gone from the queue, so it must go from the local store too
+      // — left there it would sit in the timeline looking posted with nothing that will ever send it. And
+      // say so out loud: a post that silently evaporates after the user watched it marked "Pending" is the
+      // worst outcome available here, worse than never having queued it at all.
+      if(dropped.length){
+        dropped.forEach(id=>{ try{ Store.removeEvent(id); }catch(_){} });
+        invalidateCounts();
+        toast(dropped.length===1 ? 'gave up on 1 item the relay kept refusing'
+                                 : 'gave up on '+dropped.length+' items the relay kept refusing');
+      }
+      if(sent) toast(sent===1 ? 'sent the post you made offline' : 'sent '+sent+' posts you made offline');
+      renderView(true);          // clear the Pending badges now that they're gone
+    }).catch(()=>{}); }, 1500);
+  }
+  window.addEventListener('pc:outbox', ()=>{ try{ refreshOfflineBar(); }catch(_){} });
+  // Tap a Pending badge: online it means "go now", offline the only useful action is to change your mind.
+  document.addEventListener('click', (e)=>{
+    const b = e.target && e.target.closest && e.target.closest('[data-pending]');
+    if(!b || !window.Outbox) return;
+    e.preventDefault(); e.stopPropagation();
+    const id = b.getAttribute('data-pending');
+    if(window.Relay && Relay.status === 'ok'){ toast('sending…'); _flushOutbox(); return; }
+    uiConfirm('This post is waiting to send.\n\nDiscard it?').then(yes=>{
+      if(!yes) return;
+      Outbox.remove(id);
+      try{ Store.removeEvent(id); }catch(_){}
+      invalidateCounts(); renderView(true);
+    });
+  }, true);
   // Sidebar community stats under ONLINE: network size (WoT) + who's using the site right now.
   // Network size (WoT) comes from CFG once (it barely changes — daily rebuild); only "online now" is
   // polled. So updateUserCount fetches just the live online count, not the WoT size.
@@ -7545,7 +7668,9 @@
       // existing content-warning, and append ours. Keep the same kind so polls/community posts survive.
       const tags=(ev.tags||[]).filter(t=>t[0]!=='content-warning').map(t=>t.slice());
       tags.push(['content-warning', reason]);
-      const r=await publish(ev.kind||1, ev.content||'', tags, {quiet:true});   // we show our own specific messages
+      // noQueue: this is a two-step post-then-delete. A queued replacement that lands an hour later, after
+      // the delete step was skipped, would leave the original and the warned copy both live.
+      const r=await publish(ev.kind||1, ev.content||'', tags, {quiet:true, noQueue:true});   // we show our own specific messages
       // Only delete the original once the REPLACEMENT actually landed — otherwise a relay blip on the new
       // copy would delete the post and lose it entirely (there's no retry queue).
       if(!r || !r.ok){ toast('couldn’t post the warned copy — original kept, try again'); return; }
@@ -7585,7 +7710,7 @@
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
-          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}</div>
+          <span class="handle">${enc(handle)}</span><span class="time">${timeAgo(ev.created_at)}</span>${PINNED.has(ev.id)?'<span class="pin-badge" title="Pinned to your profile">📌</span>':''}${(window.Outbox&&Outbox.has(ev.id))?'<span class="pending-badge" data-pending="'+enc(ev.id)+'" title="Waiting to send — tap to send now or discard">Pending</span>':''}</div>
         ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
         ${mp.mediaFirst?mp.gallery:''}
         <div class="txt${longTxt?' clamp':''}">${applyEmojis(linkify(bodyTxt), ev)}</div>
@@ -9749,11 +9874,11 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="cmp-tools"><button class="btn btn-ghost small" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg>Sensitive</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Background</button>`}<button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="cmp-tools"><button class="btn btn-ghost small needs-net" id="cmp-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="cmp-react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg>React</button>${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg>Poll</button>'}<button class="btn btn-ghost small needs-net" id="cmp-ai" title="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI</button><button class="btn btn-ghost small" id="cmp-cw-btn" title="mark sensitive / NSFW (NIP-36)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg>Sensitive</button>${(quote||community||articleComment)?'':`<button class="btn btn-ghost small needs-net" id="cmp-bg-btn" title="background — post short text as a nice image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg>Background</button>`}<button class="btn btn-ghost small" id="cmp-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Draft</button><input type="file" id="cmp-file" multiple hidden></div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions">${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small" id="cmp-sched-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button>'}<button class="btn btn-neon small" id="cmp-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button></div>
+      <div class="cmp-actions">${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small needs-net" id="cmp-sched-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button>'}<button class="btn btn-neon small" id="cmp-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg><span id="cmp-send-label">Post</span></button></div>
       ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
@@ -9962,6 +10087,10 @@
             setTimeout(()=>{ const st=$('#cmp-status',root); if(st && st.textContent.startsWith('background removed')) st.textContent=''; },2500); } });
         }
       }
+      // Offline, the button says what it will actually do — the post gets signed and queued, not sent.
+      // Set once here for a composer opened while already offline; _setOffline keeps it in sync after that,
+      // so there is no per-composer timer or listener to leak.
+      _syncSendLabel(root);
       $('#cmp-send',root).onclick=async()=>{
         const text=ta.value.trim(); if(!text && !quote)return;   // a quote-repost may have no comment
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
@@ -10046,7 +10175,11 @@
         _saveDraftNow();
         closeModal();
         { const r=await publish(replyKindFor(reply?Store.get(reply):null), content, tags);
-          if(r && r.ok){ _dropDraft(); toast('posted'); } }   // failure toast + kept draft handled by publish()
+          // A QUEUED post drops the draft too. The draft exists as the recovery path for a post that was
+          // lost; a queued one is not lost — it is in the timeline with a Pending badge, and that badge is
+          // where you discard it. Keeping both would leave a stale draft behind every offline post.
+          if(r && (r.ok || r.queued)) _dropDraft();
+          if(r && r.ok) toast('posted'); }   // failure toast + kept draft handled by publish()
         if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
       };
       // ⏰ Schedule (plain top-level posts): sign the note with a future created_at; the backend publishes it.

@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v735';
+const CACHE = 'pc-nostr-v736';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 const SHARE_CACHE = 'pc-share-v1';        // temporary stash for a file/text shared IN via the OS share sheet
 const MEDIA_MAX = 10000;                  // high entry cap (Cache.keys() is insertion-ordered → evict oldest);
@@ -32,8 +32,10 @@ const SHELL = [
   '/static/js/client/store.js',
   '/static/js/client/negentropy.js',
   '/static/js/client/relay.js',
+  '/static/js/client/outbox.js',
   '/static/js/client/app.js',
   '/static/js/client/news.js',
+  '/static/js/client/stats.js',
   '/static/js/client/meme.js',
   '/static/js/client/markets.js',
   '/static/js/client/budget.js',
@@ -58,7 +60,10 @@ self.addEventListener('install', e => {
   // so "Update available" showed forever. Self-activating here is robust; the client reloads onto the new
   // build on controllerchange (rate-limited so it can't thrash). Drafts autosave on pagehide → reload is safe.
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(()=>{}));
+  // Add entries INDIVIDUALLY. addAll is atomic, so ONE bad path (a module renamed without updating SHELL)
+  // rejects the whole batch and precaches NOTHING — a failure that is invisible until someone goes offline,
+  // which is the one moment it matters. Per-entry, a bad path costs only that entry.
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(()=>{})))));
 });
 self.addEventListener('message', e => { if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting(); });
 self.addEventListener('activate', e => {
@@ -74,17 +79,83 @@ self.addEventListener('activate', e => {
 // without blocking on the network, then refresh the cache in the background. New builds still reach the
 // user: the SW-version bump surfaces the in-app "Update available" prompt (deploys aren't silently
 // pinned). First-ever load (cache miss) falls through to the network. This is the cold-start speed win.
+//
+// Matching is EXACT FIRST, {ignoreSearch:true} only as the offline last resort, and the order matters in
+// both directions.
+//
+// Why ignoreSearch is needed at all: client.html requests its assets as `/static/js/client/app.js?v=<mtime>`
+// (the cache-busting token _static_version() stamps on the page) while SHELL above lists the BARE paths.
+// Cache.match is exact-URL INCLUDING the query, so a plain match could never answer a single real request
+// — the entire precache was dead weight. Offline worked only because staleWhileRevalidate had separately
+// stored the versioned URL during an earlier ONLINE visit, so install-then-go-offline failed outright.
+//
+// Why it must NOT be the primary match: a UI-only deploy bumps `?v=` but deliberately does NOT bump CACHE
+// (that is the whole point of shipping static changes without a restart). Matching loosely would then hand
+// back the PREVIOUS build's app.js for the new page — and since no new service worker installed, nothing
+// fires controllerchange and the "Update available" prompt never appears, so the deploy would silently
+// need a second reload to show up. Exact-first keeps a version bump a genuine cache miss, exactly as
+// before; the loose match only ever runs once the network has already failed, where stale beats nothing.
+//
+// _put then prunes same-path/different-query siblings on every write, so the loose fallback can only ever
+// find ONE copy per path — otherwise every deploy would leave another stale build behind, and match()
+// returns the first insertion-ordered hit, i.e. the oldest. (It also drops the bare precached copy once
+// the versioned one arrives; that is the intended handover, not a loss.)
+function _stale(cache, req){ return cache.match(req, { ignoreSearch: true }); }
+async function _put(cache, req, res){
+  await cache.put(req, res);
+  try {
+    const url = new URL(req.url);
+    for (const k of await cache.keys()){
+      const u = new URL(k.url);
+      if (u.origin === url.origin && u.pathname === url.pathname && u.search !== url.search) await cache.delete(k);
+    }
+  } catch (_) {}
+}
 function staleWhileRevalidate(req){
-  return caches.open(CACHE).then(cache => cache.match(req).then(hit => {
-    const net = fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); return res; })
-                          .catch(() => hit);   // offline → the cached copy (if any)
-    return hit || net;                          // cache HIT → instant paint; MISS → wait for the network
-  }));
+  return caches.open(CACHE).then(async cache => {
+    const exact = await cache.match(req);
+    const net = fetch(req).then(res => { if (res && res.ok) _put(cache, req, res.clone()); return res; })
+                          .catch(() => exact || _stale(cache, req));   // offline → this version, else any
+    if (exact){ net.catch(()=>{}); return exact; }        // right build cached → instant paint, refresh behind
+    // MISS + offline leaves `net` resolving to undefined, and respondWith(undefined) is a TypeError that
+    // surfaces as the browser's own network-error page — the dino, from inside a "working" service worker.
+    return (await net) || Response.error();
+  });
 }
 function cacheFirst(req){
-  return caches.match(req).then(hit => hit || fetch(req).then(res => {
-    const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{}); return res;
+  return caches.open(CACHE).then(async cache => {
+    const exact = await cache.match(req);
+    if (exact) return exact;
+    try {
+      const res = await fetch(req);
+      if (res && res.ok) _put(cache, req, res.clone());
+      return res;
+    } catch (_) {
+      return (await _stale(cache, req)) || Response.error();
+    }
+  });
+}
+// SPA navigations (the installed app's launch, a manifest shortcut, the share target, an OAuth return).
+// Cached under the STABLE key '/client' regardless of the query the navigation carried, because the route
+// renders the same shell for all of them — it takes no query params, the SPA reads location.search itself.
+// Without this, /client?compose=1, ?view=notifications, ?view=messages and ?shared=1 — i.e. every
+// home-screen shortcut and the OS share sheet, the most app-like entry points there are — were exact-match
+// cache misses and so the ONLY parts of the app guaranteed to fail offline.
+function shellDoc(req){
+  return caches.open(CACHE).then(cache => cache.match('/client').then(hit => {
+    const net = fetch(req).then(res => { if (res && res.ok) cache.put('/client', res.clone()); return res; })
+                          .catch(() => hit);
+    return hit || net.then(r => r || Response.error());
   }));
+}
+// /client/config: relay_url, blossom_url, admin npubs, branding. It used to bypass the SW entirely, so
+// offline it degraded to `{}` and the client did not even know which relay to reconnect TO when the radio
+// came back. Network-first (it must never go stale while online) with a cache fallback so a cold offline
+// boot still gets the last-known config.
+function networkFirst(req){
+  return caches.open(CACHE).then(cache =>
+    fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); return res; })
+              .catch(() => cache.match(req).then(hit => hit || Response.error())));
 }
 // Cache-first for media (avatars, images, small played videos): serve from cache with zero network, else
 // fetch + store. Bounded so it can't blow the mobile storage quota, and never caches partial/streamed
@@ -178,8 +249,14 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // ---- WEB PWA (unchanged: same ordering as before this feature) ----
-  if (url.pathname === '/relay' || url.pathname.startsWith('/client/config')) return;  // live data / WS
+  // ---- WEB PWA ----
+  if (url.pathname === '/relay') return;                                                          // live WS
+  if (url.pathname.startsWith('/client/config')){ e.respondWith(networkFirst(e.request)); return; }
+
+  // Launching the app (or a shortcut / share / OAuth return) — answer from the shell doc, query and all.
+  if (e.request.mode === 'navigate' && (url.pathname === '/client' || url.pathname === '/client/')){
+    e.respondWith(shellDoc(e.request)); return;
+  }
 
   const isAppCode = url.pathname === '/client' || url.pathname === '/client/' ||
     url.pathname.startsWith('/static/js/client/') || url.pathname === '/static/css/client.css';
