@@ -13,7 +13,8 @@ from .senders import User, _has_pleroma, _media_action_cache, _offer_social_post
 # are appended.
 _TG_BASE_COMMANDS = [
     "help", "new", "ytdl", "geni", "musicgeni", "videogeni", "narrate", "voice", "mail", "news", "dailynews",
-    "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "translate", "post", "share",
+    "search", "images", "yt", "torrents", "nyaa", "4chan", "logs", "syslogs", "syslog",
+    "healthreport", "translate", "post", "share",
     "remind", "reminders", "pin", "pins", "removebackground", "compress", "clip", "convert",
     "extractaudio", "circlecrop", "ocr", "flashcards", "talk",
     "node", "bill", "budget", "bills", "pay", "addbill", "finance", "screenshot", "shot", "ss",
@@ -22,6 +23,11 @@ _TG_EFFECTS = set(CommandService.MOTION_EFFECTS) | set(CommandService.ANIMATED_E
 # The effects' OLD names have to be matchable too — aliases are resolved AFTER this match, so a word
 # that isn't here never gets as far as COMMAND_ALIASES (that's what keeps `anyways` working).
 _TG_EFFECT_WORDS = _TG_EFFECTS | {k for k, v in CommandService.COMMAND_ALIASES.items() if v in _TG_EFFECTS}
+# NOTE: the NON-effect aliases are not derived the same way, and that is a judgement call rather than
+# an oversight. Deriving every alias whose target is a base command would also pull in `read`, `saved`,
+# `study`, `quiz`, `cards`, `torrent` and `youtube` — and matching is bare-word or word-plus-space, so
+# on Telegram "read this for me" would become an OCR command. The web UI resolves them (parse_command
+# checks aliases) and Telegram does not; the ones that matter are listed literally above instead.
 _TG_COMMANDS = _TG_BASE_COMMANDS + sorted(_TG_EFFECT_WORDS - set(_TG_BASE_COMMANDS))
 # Commands that consume the upload's raw BYTES: OCR'ing the image for them is wasted work (they never
 # read the text), and an oversized one has to be reported rather than fed to the chat model.

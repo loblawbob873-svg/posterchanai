@@ -264,6 +264,57 @@ class TestProbeFalseGreens(unittest.TestCase):
         self.assertIn("/usb 100%", detail)      # the fullest mounts are the ones shown
         self.assertIn("more", detail)
 
+    def test_one_filesystem_mounted_many_times_is_listed_once(self):
+        """Verbatim `df -hPl` from the nas: a btrfs root mounted SIX times over one device. Listed
+        per-mount it repeated a single filesystem at 20% six times and pushed the real volumes off
+        the row — '/raid 79%, /boot 42%, / 20%, /.snapshots 20%, /var/lib/libvirt 20%, /home 20%,
+        +2 more'. One row per FILESYSTEM, represented by its shortest mount path."""
+        raw = ("== disk ==\n"
+               "Filesystem          Size  Used Avail Use% Mounted on\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /.snapshots\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /var/lib/libvirt\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /home\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /root\n"
+               "/dev/dm-0           1.9T  360G  1.5T  20% /swap\n"
+               "/dev/nvme0n1p1      2.0G  829M  1.2G  42% /boot\n"
+               "/dev/mapper/vg-nas   22T   17T  4.8T  79% /raid\n")
+        self.assertEqual(L._parse_probe(raw)["disk"], ("yellow", "/ 20%, /boot 42%, /raid 79%"))
+
+    def test_a_space_in_the_FILESYSTEM_field_does_not_drop_the_row(self):
+        """`df` unescapes the source exactly as it does the mount point, so a GPT partlabel or USB
+        label contains spaces. Matching the source as a leading \\S+ dropped the whole row — and a
+        dropped row means a 100% volume vanishes and the row reports GREEN."""
+        raw = ("== disk ==\n"
+               "/dev/dm-0                                    930G 403G 521G  44% /\n"
+               "/dev/disk/by-partlabel/Basic data partition   11T  11T    0 100% /mnt/backup\n")
+        status, detail = L._parse_probe(raw)["disk"]
+        self.assertEqual(status, "red")
+        self.assertIn("/mnt/backup 100%", detail)
+
+    def test_two_filesystems_sharing_a_source_are_both_kept(self):
+        """One source string is NOT one filesystem — 'none' is shared. Keying on the source alone
+        merged them and silently discarded the fuller one."""
+        raw = ("== disk ==\n"
+               "none 5.0G 100M 4.9G   2% /run/a\n"
+               "none 5.0G 5.0G    0 100% /var/lib/full\n")
+        status, detail = L._parse_probe(raw)["disk"]
+        self.assertEqual(status, "red")
+        self.assertIn("/var/lib/full 100%", detail)
+
+    def test_the_representative_mount_does_not_depend_on_df_order(self):
+        # df order is mount order, which is not stable across boots; ties must not flap the row
+        def rows(*mounts):
+            return "== disk ==\n" + "".join("/dev/sdb1 1T 900G 100G 90%% %s\n" % m for m in mounts)
+        self.assertEqual(L._parse_probe(rows("/home", "/root", "/data"))["disk"],
+                         L._parse_probe(rows("/data", "/root", "/home"))["disk"])
+
+    def test_the_probe_does_not_truncate_df_before_python_can_dedupe(self):
+        """The shell cap runs BEFORE the dedupe, so a low one hides real volumes on a host with many
+        datasets/subvolumes — measured: a 100%-full array cut off the end reported 🟢."""
+        cap = int(re.search(r"df -hPl[^\n]*head -(\d+)", L._HEALTH_SHELL).group(1))
+        self.assertGreaterEqual(cap, 200)
+
     def test_a_mount_point_with_a_space_is_not_dropped(self):
         raw = "== disk ==\n/dev/sdb1  11T  11T  0 100% /media/USB Drive\n"
         self.assertEqual(L._parse_probe(raw)["disk"], ("red", "/media/USB Drive 100%"))

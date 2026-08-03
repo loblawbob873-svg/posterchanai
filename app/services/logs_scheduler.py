@@ -82,7 +82,7 @@ _HEALTH_GOAL = (
 _HEALTH_SHELL = r"""
 export LC_ALL=C
 echo '== disk =='
-df -hPl -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | head -40
+df -hPl -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | head -300
 echo; echo '== smart =='
 s=$(for d in $(lsblk -dn -o NAME 2>/dev/null | grep -Ev '^(loop|ram|zram|sr|dm-)'); do
   o=$(sudo -n smartctl -H /dev/$d 2>&1)
@@ -217,11 +217,35 @@ def _probe_disk(lines: list) -> Optional[tuple]:
     captured to END OF LINE, not as one \\S+ token: df prints '/media/USB Drive' unescaped, and a
     token-based capture yields 'Drive', fails the leading-'/' check and drops that filesystem — so a
     full disk with a space in its name would simply be missing from the row."""
-    used = []
+    # Keyed by FILESYSTEM, not by mount point. A btrfs/ZFS root is mounted many times over one device
+    # (/, /home, /.snapshots, /var/lib/libvirt, /root, /swap …), and df reports identical usage for
+    # every one — listing them per-mount repeated a single filesystem six times and pushed the real
+    # volumes off the end of the row. The shortest mount path is the representative, so a subvolume
+    # set collapses to "/" rather than to whichever line df happened to print first.
+    by_fs: dict = {}
     for line in lines:
+        # Anchor on the Use%+mount TAIL and take the source by splitting the head from the RIGHT.
+        # Matching the source as a leading \S+ drops the whole row when it contains a space — and
+        # `df` unescapes the source exactly as it does the mount point, so a GPT partlabel or USB
+        # label ("/dev/disk/by-partlabel/Basic data partition") does exactly that. Dropping a row is
+        # the worst failure available here: a 100%-full volume simply vanishes and the row reports
+        # green, and if EVERY row fails the disk key is absent and the model's invented row is used.
         m = re.search(r"\s(\d+)%\s+(/.*?)\s*$", line)
-        if m:
-            used.append((m.group(2), int(m.group(1))))
+        if not m:
+            continue
+        pct, mount = int(m.group(1)), m.group(2)
+        head = line[:m.start()].strip().rsplit(None, 3)     # <source…> <size> <used> <avail>
+        # Key on the usage figures too, not the source alone: one source string is NOT always one
+        # filesystem ('none' is shared by several), and merging two different ones silently discards
+        # the fuller. Identical subvolume mounts of one device agree on all three, so they still
+        # collapse. Falls back to the mount (= no dedupe, the old behaviour) rather than dropping.
+        key = tuple(head) if len(head) == 4 and head[0] else (mount,)
+        prev = by_fs.get(key)
+        # Shortest mount path represents the filesystem, ties broken by name so the row doesn't flap:
+        # df order is mount order, which is not stable across boots.
+        if prev is None or (len(mount), mount) < (len(prev[0]), prev[0]):
+            by_fs[key] = (mount, pct)
+    used = list(by_fs.values())
     if not used:
         return None
     worst = max(p for _, p in used)

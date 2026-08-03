@@ -77,6 +77,22 @@ class TestAliasResolution(unittest.TestCase):
             self.assertIn(target, EFFECTS, alias)
             self.assertNotIn(alias, EFFECTS, f"{alias} is both an alias and an effect")
 
+    def test_syslogs_reaches_the_health_report_instead_of_the_model(self):
+        """An UNKNOWN command falls through to the LLM, which invents an answer. `syslogs` did, and
+        the model replied with fabricated entries ("User 'Poster-Chan' connected from IP
+        192.168.1.105 (New York, NY)") that read exactly like real output for a host that logged no
+        such thing. A command the model cannot serve must never reach the model."""
+        parse = CS.parse_command
+        for word in ("syslogs", "syslog", "healthreport"):
+            self.assertEqual(parse(CS.__new__(CS), word), ("logs", ""), word)
+            self.assertEqual(parse(CS.__new__(CS), f"{word} nas"), ("logs", "nas"), word)
+            self.assertIn(word, tg._TG_COMMANDS, f"{word} must be matchable on Telegram too")
+
+    def test_health_alone_is_not_a_command(self):
+        """Matching is bare-word-or-word-plus-space, so a `health` alias would answer "health check
+        on the server" with a status board instead of a reply."""
+        self.assertEqual(CS.parse_command(CS.__new__(CS), "health check on the server")[0], None)
+
     def test_anyways_still_reaches_the_monkey_puppet(self):
         # The one people have typed for months, named explicitly so a future rename can't quietly
         # drop it: the alias may point somewhere else, but it may not stop resolving.

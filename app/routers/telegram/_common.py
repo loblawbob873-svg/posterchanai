@@ -221,9 +221,10 @@ _HELP_SECTIONS = {
         "\\(reply to a link\\) `post don't include links`"
     ),
     "logs": (
-        "📋 *System Logs*\n\n"
-        "`logs` — Shows recent system log entries\\.\n"
-        "Useful for checking errors or monitoring activity\\."
+        "📋 *System Health Report*\n\n"
+        "`logs` — Per node: disk, SMART, RAID, failed services, swap and a 6h error count,\n"
+        "with the top error lines quoted underneath\\.\n"
+        "Also answers to `syslogs`\\. It is a STATUS BOARD, not a log tail\\."
     ),
 }
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])

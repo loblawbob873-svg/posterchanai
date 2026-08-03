@@ -33,7 +33,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "torrents": "Torrent search: torrents <query>",
         "nyaa": "Anime torrents: nyaa <query>",
         "dailynews": "Web news: dailynews <source>",
-        "logs": "View system logs",
+        "logs": "System health report (disk, SMART, RAID, services, swap, recent errors)",
         "mail": "Email: mail <to> [subject] <body>",
         "translate": "Translate: translate <text> to <lang>",
         "compress": "Compress attached image(s), video(s) or PDF(s)",
@@ -184,6 +184,16 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
         "unclerukus": "ruckus",
         "nothingever": "nothingeverhappens",
         "nothinghappens": "nothingeverhappens",
+        # `syslogs`/`syslog` are what a sysadmin reaches for, and an UNKNOWN command falls through to
+        # the LLM — which cheerfully invents a system log. That is not a cosmetic miss: it answered
+        # with fabricated entries ("User 'Poster-Chan' connected from IP 192.168.1.105 (New York,
+        # NY)") that read exactly like real output, for a host that logged no such thing. Same trap
+        # RETIRED_COMMANDS exists for: a command the model cannot serve must never reach the model.
+        # (`health` alone is deliberately NOT an alias: parse_command matches a bare word, so it
+        # would swallow "health check on the server" and answer with a report instead of a reply.)
+        "syslogs": "logs",
+        "syslog": "logs",
+        "healthreport": "logs",
         "torrent": "torrents",
         "bt": "torrents",
         "yt-dlp": "ytdl",
