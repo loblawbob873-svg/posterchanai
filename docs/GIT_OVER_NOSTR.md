@@ -168,22 +168,23 @@ A repo can be marked **private** at create time (`private=true`; default configu
         '!/path/to/venv/bin/python /path/to/scripts/git-credential-nostr'
       git config --global 'credential.https://poster.place.useHttpPath' true
 
-- **Plain git PUSHES to an `https://` remote via `scripts/git-push-nostr`.** The Basic envelope above
-  is the READ gate only, so a bare `git push` to an https GRASP clone URL is refused — nothing in the
-  git client stack emits `Authorization: Nostr`, and `decide_push_ref`'s other route (a maintainer's
-  kind-30618 pinning the exact sha) is what the `nostr://` remote does by publishing one first. The
-  wrapper mints a fresh kind-27235 bound to `<id>.git/git-receive-pack` with `method=POST` and runs
-  the push under `-c http.extraHeader=…`. It has to be a wrapper, not a config value: the host checks
-  `created_at` within **±60s**, so a stored `http.extraHeader` is stale a minute later. Key
-  resolution is imported from `git-credential-nostr` so one place decides which key signs.
+- **PUSH over plain https is NOT supported — use a `nostr://` remote.** The Basic envelope above is
+  the READ gate only (`allow_basic` is never passed on the push path), and a plain `git push` to an
+  https clone URL therefore dies as `! [remote rejected] … (pre-receive hook declined)`. The cause is
+  structural, not a missing feature: `decide_push_ref` wants either an `Authorization: Nostr` header,
+  which nothing in the git client stack emits, or a maintainer-signed 30618 pinning the exact sha,
+  which is what the `nostr://` remote publishes for itself. A credential helper cannot bridge the gap
+  — **git hands a helper only the repo path** (`path=git/<npub>/<id>.git`, identical for fetch and
+  push, measured), so it cannot mint a token bound to `<id>.git/git-receive-pack` with `method=POST`.
+  Closing this properly means the host challenging (401) on receive-pack and naming the URL+method to
+  sign in the `WWW-Authenticate` realm, which git does relay to helpers as `wwwauth[]`. Until then:
+  **clone/fetch over https, push over `nostr://`.**
 
-      git config alias.pushn '!/path/to/scripts/git-push-nostr'
-      git pushn origin main          # same arguments as `git push`
-
-  Note this route authorizes by NIP-98 and does **not** itself publish a maintainer 30618, so the
-  repo's Nostr-side state is only refreshed by the operator witness that `post-receive` publishes —
-  if that reports `witness 30618 not published`, git reads stay correct (they read the real repo) but
-  an ngit/Nostr client can see a stale sha.
+  Corollary, and it bites: an https push via a hand-made NIP-98 header authorizes by route 0 and
+  publishes **no** 30618, so the Nostr-side state only moves if `post-receive`'s operator witness
+  lands. While that reports `witness 30618 not published`, such a push leaves the 30618 stale — git
+  reads stay correct (they read the real repo) but a `nostr://` fetch reports the OLD sha and
+  resurrects deleted branches. Pushing the branch over `nostr://` republishes the state and repairs it.
 
 ### ngit + private repos: two things had to be fixed
 
