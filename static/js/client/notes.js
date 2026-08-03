@@ -518,27 +518,57 @@
     });
   }
 
+  /* Turn a File-API failure into something someone can ACT on. The browser's own wording for a
+   * NotReadableError is "The requested file could not be read, typically due to permission problems
+   * that have occurred after a reference to a file was acquired" — accurate, and useless: it names
+   * no file, suggests nothing, and reads like the app is broken. The overwhelmingly common cause on
+   * Linux is a Flatpak/Snap browser that can offer a file in the picker and then not be allowed to
+   * read it, and the fix is always the same: put the file somewhere the browser can reach. */
+  function _readErr(e, mode){
+    const name = (e && e.name) || '';
+    const msg = (e && e.message) || '';
+    if(name === 'NotReadableError' || name === 'SecurityError' || /could not be read/i.test(msg)){
+      return 'The browser was not allowed to read that ' + (mode === 'jex' ? 'file' : 'folder') + '. ' +
+        'This usually means it lives somewhere your browser is sandboxed out of (a Flatpak or Snap ' +
+        'build can only reach places like Downloads), or it moved after you picked it. ' +
+        'Copy the export into your Downloads folder and choose it again.';
+    }
+    if(name === 'NotFoundError') return 'That file is no longer where the picker found it — re-export or pick it again.';
+    return msg || 'could not read that file';
+  }
+
   async function runImport(input, mode, root){
     const out = $('#nt-imp-out', root);
     const say = h => { out.innerHTML = h; };
     if(!input || (Array.isArray(input) && !input.length)) return;
     if(!window.PCJoplin){ say('<div class="empty">the importer didn’t load — reload the page</div>'); return; }
     say('<div class="spinner"></div><div class="muted small">reading the export…</div>');
-    let parsed;
+    let parsed, unreadable = [];
     try{
       if(mode === 'jex') parsed = await PCJoplin.parseJex(await input.arrayBuffer());
       else {
         const files = [];
         for(const f of input){
           const path = f.webkitRelativePath || f.name;
-          if(/\.md$/i.test(path)) files.push({ name:path, text: await f.text() });
-          else files.push({ name:path, data: new Uint8Array(await f.arrayBuffer()) });
+          // PER FILE, not per import: a folder export is thousands of files and the browser can
+          // fail to read any ONE of them (a broken symlink, a file the sandbox can't reach, one
+          // that moved since the picker ran). Aborting the whole run for that would throw away
+          // 2999 readable notes because of one — collect and report them at the end instead.
+          try{
+            if(/\.md$/i.test(path)) files.push({ name:path, text: await f.text() });
+            else files.push({ name:path, data: new Uint8Array(await f.arrayBuffer()) });
+          }catch(_){ unreadable.push(path); }
         }
+        if(!files.length) throw new Error('none of those files could be read');
         parsed = PCJoplin.parseMarkdownFiles(files);
       }
-    }catch(e){ say(`<div class="empty">${enc(e.message||'could not read that file')}</div>`); return; }
+    }catch(e){ say(`<div class="empty">${enc(_readErr(e, mode))}</div>`); return; }
 
     const c = parsed.counts;
+    if(unreadable.length){
+      parsed.warnings.push(`${unreadable.length} file(s) could not be read and were skipped` +
+        (unreadable.length <= 3 ? ': ' + unreadable.join(', ') : ''));
+    }
     say(`<div class="nt-imp-sum">
         <b>Found ${c.notes} note${c.notes===1?'':'s'}</b>
         <span class="muted small">${c.folders} folder(s) · ${c.tags||0} tag(s) · ${c.resources} attachment(s)</span>
